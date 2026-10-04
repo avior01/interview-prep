@@ -1,0 +1,354 @@
+{
+  "domain": "bugs",
+  "subtopic": "races",
+  "lessons": [
+    {
+      "id": "bugs.races",
+      "title": "Races",
+      "what": "יש שני מושגים שונים. **data race** (ב-C++): שני threads ניגשים לאותו מיקום זיכרון, לפחות אחד כותב, לפחות אחד לא atomic, ואין ביניהם יחס happens-before. זה undefined behavior. **race condition**: התוצאה תלויה בתזמון, גם בלי data race, למשל check-then-act על atomics.",
+      "when": [
+        "משתנה גלובלי או member שנגיש מיותר מ-thread אחד, בלי mutex או atomic",
+        "read-modify-write: `++x`, `x += y`, `table[k]++` שנראים כמו פעולה אחת אבל הם שלוש",
+        "check-then-act: `if (!p) p = create();` או `if (n > 0) n--;`",
+        "flags לעצירה או ל-'ready' שמסומנים כ-bool רגיל",
+        "lock רק בצד הכותב, והקוראים 'רק קוראים'",
+        "condition variable בלי predicate"
+      ],
+      "how": [
+        "מפה את המידע המשותף: לכל משתנה, אילו threads נוגעים בו ובאיזה סנכרון",
+        "פעולה מורכבת (בדיקה + שינוי) חייבת להיות אטומית כולה: אותו lock, או compare_exchange בלולאה",
+        "קוראים צריכים סנכרון בדיוק כמו כותבים: גם קריאה בלי lock מול כתיבה עם lock היא data race",
+        "publish של נתונים דרך flag או אינדקס: הכותב עושה store עם release, הקורא load עם acquire",
+        "volatile אינו כלי סנכרון ב-C++. הוא לא נותן אטומיות ולא סדר בין threads",
+        "כלים: ThreadSanitizer (`-fsanitize=thread`) מזהה data races שקרו בריצה לפי happens-before, בהאטה של בערך פי 5-15; stress tests עם הרבה threads ו-sleep אקראי; code review עם 'מי נוגע במה'"
+      ],
+      "complexity": "ל-lock לא מתחרה עלות של עשרות ns; atomic RMW (lock xadd ב-x86) כ-20 מחזורים ויותר תחת contention; load/store רגיל של atomic עם relaxed או acquire/release ב-x86 הוא mov פשוט.",
+      "pitfalls": [
+        "'זה רק counter לסטטיסטיקה' עדיין data race ו-UB",
+        "GIL של Python לא הופך את `n += 1` לאטומי",
+        "double-checked locking עם מצביע רגיל",
+        "shared_ptr: ה-refcount אטומי, אבל האובייקט shared_ptr עצמו לא",
+        "TSan לא מוצא race שלא קרה בריצה שנבדקה, ולכן כיסוי טסטים חשוב"
+      ],
+      "senior": [
+        "להבחין בין data race (UB) לבין race condition לוגי, ולתת דוגמה לכל אחד",
+        "לבחור את הסנכרון הזול ביותר שנכון: relaxed לסטטיסטיקה, acquire/release ל-publish, mutex לשינוי מורכב",
+        "להכיר את ה-idioms הבטוחים: static מקומי (magic statics), std::call_once, atomic<shared_ptr>",
+        "להסביר למה קוד עם race 'עובד' על x86 (TSO) ונשבר על ARM או אחרי שינוי אופטימיזציה"
+      ],
+      "diagram": "T1: load 5 ----- add ----- store 6\nT2:    load 5 ----- add ----- store 6\nresult 6, expected 7 (lost update)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "bugs.races.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "לפי מודל הזיכרון של C++, מתי יש data race?",
+      "choices": [
+        "כששני threads קוראים את אותו משתנה בו-זמנית",
+        "כששני threads ניגשים לאותו מיקום, לפחות אחד כותב, לפחות אחד לא atomic, ואין ביניהם happens-before",
+        "כשהתוצאה של התוכנית תלויה בסדר התזמון",
+        "כשמשתמשים ב-std::atomic עם memory_order_relaxed"
+      ],
+      "answer": 1,
+      "explanation": "זו ההגדרה מהתקן, ותוכנית עם data race היא UB. קריאות בלבד אינן race. 'תוצאה תלויה בתזמון' היא race condition, מושג רחב יותר שיכול להתקיים גם בלי data race. גישות atomic, גם relaxed, אינן data race.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה כלי מיועד לזהות data races בזמן ריצה בקוד C++?",
+      "choices": [
+        "AddressSanitizer",
+        "UndefinedBehaviorSanitizer",
+        "ThreadSanitizer",
+        "Valgrind memcheck"
+      ],
+      "answer": 2,
+      "explanation": "ThreadSanitizer (`-fsanitize=thread`) עוקב אחרי יחסי happens-before בין גישות לזיכרון ומדווח על גישות סותרות בלי סנכרון. ASan מיועד לשגיאות זיכרון, UBSan ל-UB כמו overflow, ו-memcheck לזיכרון לא מאותחל ודליפות. ל-Valgrind יש כלי נפרד, Helgrind, אבל memcheck עצמו לא מזהה races.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "שני threads משתמשים ב-`std::atomic<int> seats`. כל אחד בודק `if (seats.load() > 0)` ואז עושה `seats.fetch_sub(1)`. מה נכון?",
+      "choices": [
+        "אין כאן שום בעיה, כי כל הגישות atomic",
+        "יש data race, ולכן זה UB",
+        "יש race condition לוגי (check-then-act), אבל אין data race",
+        "הקומפיילר ימזג את שתי הפעולות לפעולה אטומית אחת"
+      ],
+      "answer": 2,
+      "explanation": "כל גישה בנפרד אטומית, ולכן אין data race ואין UB. אבל בין הבדיקה להורדה thread אחר יכול להוריד, ושני threads יכולים לראות 1 ולהוריד ל-1-. זה race condition: באג לוגי של תזמון. קומפיילר לא ממזג פעולות atomic נפרדות.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q04",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "main מריץ שני threads של worker ומחכה לשניהם. התוצאה לעיתים קרובות קטנה מ-200000. מה הבאג?",
+      "code": "int hits = 0;\n\nvoid worker() {\n    for (int i = 0; i < 100000; ++i)\n        ++hits;\n}",
+      "bugLine": 5,
+      "choices": [
+        "`int` קטן מדי ל-200000",
+        "הלולאה צריכה להתחיל מ-1",
+        "חסר `volatile` על hits",
+        "`++hits` הוא read-modify-write לא אטומי על משתנה משותף: data race ו-lost updates"
+      ],
+      "answer": 3,
+      "explanation": "`++hits` הוא load, add, store. כששני threads עושים load לאותו ערך, אחד העדכונים נדרס. מבחינת התקן זה UB, ובפועל הקומפיילר אף עשוי לצבור ברגיסטר ולכתוב פעם אחת בסוף. תיקון: `std::atomic<int>` עם `fetch_add`, או עדיף, counter מקומי לכל thread וחיבור בסוף. volatile לא נותן אטומיות. int מחזיק עד כ-2.1 מיליארד.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מובטח לגבי הפלט ב-CPython עם GIL?",
+      "code": "import threading\n\nn = 0\ndef work():\n    global n\n    for _ in range(1_000_000):\n        n += 1\n\nts = [threading.Thread(target=work) for _ in range(4)]\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(n == 4_000_000)",
+      "choices": [
+        "תמיד True, כי ה-GIL מאפשר רק thread אחד בכל רגע",
+        "תמיד False, כי threads ב-Python לא משתפים globals",
+        "לא מובטח: `n += 1` הוא כמה bytecodes (load, add, store), וה-GIL יכול לעבור thread ביניהם, כך שעדכונים יכולים ללכת לאיבוד",
+        "RuntimeError על שינוי global מתוך thread"
+      ],
+      "answer": 2,
+      "explanation": "ה-GIL מגן על מבני הנתונים של ה-interpreter, לא על פעולות מורכבות בקוד שלך. `n += 1` מתורגם ל-LOAD_GLOBAL, BINARY_OP, STORE_GLOBAL, ומעבר thread ביניהם מאבד עדכונים. בגרסאות מסוימות של CPython זה קורה לעיתים רחוקות, וזה בדיוק מה שהופך את הבאג למסוכן; ב-free-threaded Python (3.13t) זה קורה הרבה. תיקון: `threading.Lock`.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q06",
+      "level": 2,
+      "type": "multi",
+      "prompt": "`int counter` מוגדל על ידי כמה threads. אילו שינויים מונעים את ה-data race? (בחר את כל הנכונים)",
+      "choices": [
+        "להחליף ל-`std::atomic<int>` ולהשתמש ב-`fetch_add` (או `++`)",
+        "להגן על כל גישה (קריאה וכתיבה) עם אותו `std::mutex`",
+        "להגדיר `volatile int counter`",
+        "להריץ את התהליך עם affinity לליבה אחת"
+      ],
+      "answer": [0, 1],
+      "explanation": "atomic RMW ו-mutex משותף שניהם נותנים אטומיות וסדר. volatile רק מונע מהקומפיילר להשמיט גישות, אבל `++` עדיין load/add/store וזה עדיין data race. ליבה אחת לא עוזרת: preemption יכול לקרות בין ה-load ל-store, ומבחינת התקן זה עדיין UB שהקומפיילר מנצל.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q07",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "flow control מבוסס credits. תחת עומס `credits` יורד מתחת לאפס. מה הבאג?",
+      "code": "std::atomic<int> credits{8};\n\nbool trySend() {\n    if (credits.load() > 0) {\n        credits.fetch_sub(1);\n        return true;\n    }\n    return false;\n}",
+      "bugLine": 4,
+      "choices": [
+        "check-then-act: בין ה-load ל-fetch_sub thread אחר יכול לקחת את ה-credit האחרון, ושניהם מורידים",
+        "צריך `memory_order_seq_cst` מפורש",
+        "`fetch_sub` לא אטומי על int",
+        "חסר `volatile` על credits"
+      ],
+      "answer": 0,
+      "explanation": "כל פעולה אטומית בנפרד, אבל הצירוף לא. כש-credits=1 שני threads יכולים לראות 1 ושניהם מורידים ל-1-. זה race condition בלי data race. תיקון: לולאת compare_exchange שמורידה רק אם הערך שנקרא עדיין חיובי, או `fetch_sub` ובדיקת הערך הקודם עם החזרה (`fetch_add(1)`) אם הוא היה 0 או פחות. ברירת המחדל של load ו-fetch_sub היא כבר seq_cst.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "thread אחד מריץ את rxLoop, ו-thread אחר כותב `stop = true` בסיום. ב-build עם `-O2` הלולאה לפעמים לא נעצרת לעולם. מה הבאג?",
+      "code": "bool stop = false;\n\nvoid rxLoop() {\n    while (!stop) {\n        processBlock();\n    }\n}",
+      "bugLine": 1,
+      "choices": [
+        "צריך `volatile bool stop` כדי שהשינוי ייראה",
+        "`stop` הוא bool רגיל שנקרא ונכתב משני threads: data race. אם הקומפיילר רואה ש-processBlock לא כותב ל-stop, מותר לו לקרוא אותו פעם אחת ולהפוך את הלולאה לאינסופית",
+        "processBlock חייב להיות noexcept",
+        "צריך `sleep` בתוך הלולאה כדי לאפשר ל-thread השני לרוץ"
+      ],
+      "answer": 1,
+      "explanation": "מאחר ש-data race הוא UB, הקומפיילר רשאי להניח שאף thread אחר לא משנה את `stop`. כש-processBlock inlined ולא נוגע ב-stop, `while(!stop)` הופך ל-`if(!stop) for(;;)`. התיקון: `std::atomic<bool> stop{false}` (אפשר load עם relaxed או acquire). volatile 'עובד' בפועל ב-GCC/Clang אבל זה עדיין data race לפי התקן ולא נותן ordering לנתונים אחרים.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.races.q09",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "טבלת סטטיסטיקה. thread אחד קורא ל-update ו-thread של monitoring קורא ל-get. מדי פעם get קורס. מה הבאג?",
+      "code": "std::mutex m;\nstd::unordered_map<int, Stats> table;\n\nvoid update(int k) {\n    std::lock_guard<std::mutex> g(m);\n    table[k].count++;\n}\n\nStats get(int k) {\n    return table.at(k);\n}",
+      "bugLine": 10,
+      "choices": [
+        "`at` זורק exception כשהמפתח לא קיים, וזה מה שקורס",
+        "lock_guard משחרר את ה-mutex מוקדם מדי",
+        "get קורא בלי lock בזמן ש-update כותב; insert של מפתח חדש יכול לגרום ל-rehash ולשחרר את מערך ה-buckets שהקורא עובר עליו",
+        "unordered_map דורש `std::shared_mutex`"
+      ],
+      "answer": 2,
+      "explanation": "'רק קורא' זה לא פטור: קריאה בלי lock מול כתיבה עם lock היא data race. `table[k]` עם מפתח חדש מכניס צומת ועלול לעשות rehash, ובזמן הזה get עובר על buckets משוחררים. תיקון: אותו lock ב-get (shared_mutex הוא אופטימיזציה, לא חובה). `at` אכן זורק על מפתח חסר, אבל זה exception מוגדר ולא crash אקראי.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q10",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "cache מקביל לפתיחת חיבורים לרכיבי חומרה. `expensive` פותח חיבור, ואסור לפתוח שני חיבורים לאותו מפתח. מה הבאג?",
+      "code": "cache = {}\nlock = threading.Lock()\n\ndef get(key):\n    if key not in cache:\n        with lock:\n            cache[key] = expensive(key)\n    return cache[key]",
+      "bugLine": 5,
+      "choices": [
+        "dict ב-Python לא thread-safe לקריאה",
+        "הבדיקה נעשית מחוץ ל-lock ולא חוזרת בתוכו: שני threads יכולים לראות שהמפתח חסר, ושניהם יקראו ל-expensive בזה אחר זה",
+        "`with lock` לא משחרר את ה-lock אם expensive זורק",
+        "צריך `RLock` במקום `Lock`"
+      ],
+      "answer": 1,
+      "explanation": "check-then-act. שני threads עוברים את הבדיקה, אחד נכנס ל-lock ופותח, השני מחכה ואז פותח שוב ודורס. תיקון: לבדוק שוב בתוך ה-lock (double-checked), או לבצע את כל הבדיקה בתוך ה-lock. ב-CPython קריאה בודדת מ-dict בטוחה, ו-with משחרר את ה-lock גם ב-exception.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q11",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "double-checked locking לאתחול עצל. TSan מדווח race, והמפתח טוען שזה false positive כי 'יש lock'. מי צודק ובאיזו שורה הבעיה?",
+      "code": "Config* g_cfg = nullptr;\nstd::mutex g_m;\n\nConfig& getConfig() {\n    if (!g_cfg) {\n        std::lock_guard<std::mutex> lk(g_m);\n        if (!g_cfg)\n            g_cfg = new Config(load());\n    }\n    return *g_cfg;\n}",
+      "bugLine": 5,
+      "choices": [
+        "TSan טועה; הבדיקה הכפולה בתוך ה-lock מספיקה",
+        "הבעיה בשורת ה-lock_guard: צריך unique_lock",
+        "הבעיה ב-`new`: צריך make_unique",
+        "TSan צודק: הקריאה הראשונה של `g_cfg` היא בלי סנכרון מול הכתיבה. thread יכול לראות מצביע לא-null ולקרוא שדות של Config שעוד לא נראים לו"
+      ],
+      "answer": 3,
+      "explanation": "הקריאה בשורה 5 לא מוגנת, וה-write ל-g_cfg לא release, ולכן אין happens-before בין בניית Config לקריאת השדות שלו ב-thread אחר. גם הקומפיילר רשאי לכתוב את המצביע לפני שסיים לאתחל. תיקונים: `static Config cfg = load(); return cfg;` (magic statics, thread-safe מ-C++11), `std::call_once`, או `std::atomic<Config*>` עם acquire בקריאה ו-release בכתיבה.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.races.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "thread בקרה מחליף פרמטרים, ו-thread ה-DSP לוקח snapshot בכל בלוק. המפתח הניח ש-shared_ptr הוא thread-safe. מה הבאג?",
+      "code": "std::shared_ptr<const Params> g_params;\n\nvoid dspBlock() {\n    auto p = g_params;   // snapshot\n    run(*p);\n}\n\nvoid control(Params np) {\n    g_params = std::make_shared<const Params>(np);\n}",
+      "bugLine": 1,
+      "choices": [
+        "ה-refcount של shared_ptr לא אטומי",
+        "האובייקט `g_params` עצמו נקרא ונכתב משני threads בלי סנכרון: data race. ה-control block אטומי, אבל העתקה מול השמה לאותו מופע shared_ptr לא",
+        "`const Params` מונע את השינוי",
+        "צריך `std::move` בהשמה"
+      ],
+      "answer": 1,
+      "explanation": "ה-refcount אכן מעודכן אטומית, ולכן שני threads יכולים להחזיק עותקים נפרדים בבטחה. אבל קריאה וכתיבה של אותו אובייקט shared_ptr (שני מצביעים) אינן אטומיות: הקורא יכול לקרוא את מצביע האובייקט החדש עם control block ישן, או להעלות refcount של בלוק שכבר שוחרר. תיקון: `std::atomic<std::shared_ptr<const Params>>` (C++20) או mutex קצר סביב ההעתקה. זה גם הדפוס הנכון ל-RCU פשוט.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.races.q13",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "consumer מחכה ל-producer. לפעמים ה-consumer נתקע לנצח, ולפעמים ממשיך לפני שהנתונים מוכנים. מה הבאג?",
+      "code": "std::mutex m;\nstd::condition_variable cv;\nbool ready = false;\n\nvoid consumer() {\n    std::unique_lock<std::mutex> lk(m);\n    cv.wait(lk);\n    use();\n}\n\nvoid producer() {\n    { std::lock_guard<std::mutex> g(m); ready = true; }\n    cv.notify_one();\n}",
+      "bugLine": 7,
+      "choices": [
+        "notify_one חייב להיקרא בתוך ה-lock",
+        "צריך notify_all",
+        "wait בלי predicate: אם ה-producer הודיע לפני שה-consumer התחיל לחכות ההודעה אובדת (נתקע), ו-spurious wakeup מעיר אותו בלי ש-ready נכון",
+        "unique_lock צריך להיות lock_guard"
+      ],
+      "answer": 2,
+      "explanation": "condition variable לא זוכר הודעות. התיקון: `cv.wait(lk, []{ return ready; });`, שבודק את ה-predicate לפני ההמתנה ואחרי כל התעוררות, תחת ה-lock. notify מחוץ ל-lock תקין ואף חוסך התעוררות מיותרת. lock_guard לא עובד עם wait.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q14",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על ThreadSanitizer נכונות? (בחר את כל הנכונים)",
+      "choices": [
+        "הוא מדווח רק על גישות שקרו בפועל בריצה הנבדקת, אבל הן לא חייבות לקרות באותו רגע: מספיק שאין ביניהן happens-before",
+        "אפשר לשלב אותו עם AddressSanitizer באותו binary",
+        "ההאטה הטיפוסית היא בערך פי 5-15, והזיכרון גדל בערך פי 5-10",
+        "הוא מדווח על race בין שני `std::atomic` עם memory_order_relaxed",
+        "הוא מבין סנכרון שמומש ב-inline assembly בלי annotations"
+      ],
+      "answer": [0, 2],
+      "explanation": "TSan הוא happens-before detector: הוא תופס race גם אם ה-threads לא התנגשו בפועל באותו רגע, אבל רק על נתיבי קוד שרצו. TSan ו-ASan לא משתלבים באותו build. גישות atomic אינן data race, גם relaxed. סנכרון ידני ב-asm שקוף לו ודורש annotations, אחרת יהיו false positives.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "תקן את trySend מהשאלה על credits: הפונקציה תוריד credit רק אם יש, באופן אטומי, בלי mutex. בחר memory order מתאים ונמק.",
+      "starter": "bool trySend(std::atomic<int>& credits);",
+      "modelAnswer": "bool trySend(std::atomic<int>& credits) {\n    int c = credits.load(std::memory_order_relaxed);\n    while (c > 0) {\n        // on failure c is reloaded with the current value\n        if (credits.compare_exchange_weak(c, c - 1,\n                std::memory_order_acquire,\n                std::memory_order_relaxed))\n            return true;\n    }\n    return false;\n}\n// release side: credits.fetch_add(1, std::memory_order_release)\n// when the receiver returns a credit",
+      "rubric": [
+        "לולאת compare_exchange שמורידה רק כשהערך הנוכחי חיובי",
+        "מבין ש-compare_exchange_weak מעדכן את c בכשלון ויכול להיכשל spuriously, ולכן בלולאה",
+        "memory order מנומק: acquire בהצלחה כדי לראות את מה שהצד שהחזיר credit פרסם, relaxed בכשלון",
+        "lock-free, O(1) amortized; מזכיר ABA לא רלוונטי כאן כי זה counter"
+      ],
+      "explanation": "CAS הופך check-then-act לפעולה אחת: אם ערך אחר נכתב בין הקריאה לניסיון, ה-CAS נכשל ומנסה שוב עם הערך העדכני. אם הערך הגיע ל-0, יוצאים בלי להוריד.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.races.q16",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "SPSC queue בין thread ה-RX ל-thread ה-DSP. עובר את כל הטסטים על x86, ועל ARM ה-DSP מקבל לפעמים דגימות ישנות. באיזו שורה הבאג?",
+      "code": "template <size_t N> struct Spsc {\n    float buf[N];\n    std::atomic<size_t> head{0}, tail{0};\n    bool push(float x) {          // producer only\n        size_t h = head.load(std::memory_order_relaxed);\n        if (h - tail.load(std::memory_order_acquire) == N) return false;\n        buf[h % N] = x;\n        head.store(h + 1, std::memory_order_relaxed);\n        return true;\n    }\n    bool pop(float& x) {          // consumer only\n        size_t t = tail.load(std::memory_order_relaxed);\n        if (head.load(std::memory_order_acquire) == t) return false;\n        x = buf[t % N];\n        tail.store(t + 1, std::memory_order_release);\n        return true;\n    }\n};",
+      "bugLine": 8,
+      "choices": [
+        "`tail.load` ב-push צריך להיות relaxed",
+        "`head.store` עם relaxed לא מפרסם את הכתיבה ל-`buf`: ה-acquire של הצרכן לא מסתנכרן עם store שאינו release, ולכן הוא יכול לראות את head החדש לפני הדגימה",
+        "`h % N` לא נכון כש-N אינו חזקה של 2",
+        "`tail.store` ב-pop צריך להיות seq_cst"
+      ],
+      "answer": 1,
+      "explanation": "publish דורש זוג release/acquire: כתיבת הנתונים, ואז store עם release על האינדקס; הצד השני load עם acquire ורק אז קורא את הנתונים. עם relaxed אין synchronizes-with, ולכן הקריאה של `buf` היא data race. על x86 (TSO) ה-store לא מוקדם בחומרה, אז זה 'עובד' כל עוד הקומפיילר לא מסדר מחדש; ARM מסדר מחדש stores. `% N` נכון לכל N כש-head ו-tail רצים מונוטונית (wrap של size_t דורש N חזקה של 2, אבל זה רק אחרי 2^64). `tail.store` עם release כבר נכון.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.races.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "thread כותב יחיד מגדיל `uint64_t packets` בכל חבילה (מיליוני פעמים בשנייה), ו-thread monitoring קורא אותו פעם בשנייה. על x86-64, מה התיקון הנכון עם התקורה הנמוכה ביותר?",
+      "choices": [
+        "`volatile uint64_t`, כי store של 64 ביט מיושר אטומי בחומרה",
+        "`std::atomic<uint64_t>` עם `fetch_add(1, std::memory_order_relaxed)`",
+        "mutex סביב ההגדלה וסביב הקריאה",
+        "`std::atomic<uint64_t>`; הכותב עושה `c.store(c.load(relaxed) + 1, relaxed)` והקורא `c.load(relaxed)`"
+      ],
+      "answer": 3,
+      "explanation": "volatile עדיין data race לפי התקן (גם אם עובד בפועל). `fetch_add` נכון אבל מתקמפל ל-`lock xadd`, RMW עם lock prefix שעולה בערך 20 מחזורים ויותר. כשיש כותב יחיד, אין צורך ב-RMW אטומי: load ו-store נפרדים עם relaxed מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם. mutex נכון אבל היקר מכולם במסלול החם.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.races.q18",
+      "level": 5,
+      "type": "oral",
+      "prompt": "ב-pipeline של SDR עם 4 threads יש corruption בבלוק אחד בערך פעם בשבוע של ריצה. TSan על הטסטים הקיימים לא מדווח כלום. איך מתקדמים?",
+      "modelAnswer": "TSan שקט כי הוא מדווח רק על מסלולים שרצו, והטסטים כנראה לא מכסים את התזמון הבעייתי: למשל overflow, reconfiguration באמצע stream, או shutdown. צעד ראשון: להריץ את ה-pipeline המלא תחת TSan עם קלט מוקלט או מסונתז ותרחישי קצה (שינוי פרמטרים, עומס, עצירה), כי TSan תופס race גם אם ההתנגשות בפועל לא קרתה. במקביל, review שיטתי של כל נקודת שיתוף: מה כל thread קורא וכותב, ובאיזה סנכרון, עם דגש על publish של אינדקסים ב-ring buffers (release/acquire), פרמטרים שמוחלפים בזמן ריצה, ו-buffers שחוזרים ל-pool לפני שהצרכן סיים. להוסיף instrumentation זול: sequence number ו-checksum לכל בלוק, assertions על invariants של ה-queue, כדי לזהות מתי ואיפה מופיע הנזק. stress: יותר threads מליבות, sleep אקראי, affinity שונה, הרצה על ARM אם אפשר. אם הקוד משתמש בסנכרון ידני (inline asm, DMA, lock-free מותאם), להוסיף annotations ל-TSan או להחליף ב-std::atomic. אחרי מציאת הגורם: טסט רגרסיה שמשחזר את התזמון ו-TSan ב-CI על התרחיש המלא.",
+      "rubric": [
+        "מבין למה TSan לא מצא: מכסה רק נתיבים שרצו, ולא צריך התנגשות בפועל",
+        "מגדיל כיסוי: pipeline מלא, תרחישי קצה, stress ו-jitter מלאכותי",
+        "review ממוקד של publish/ownership ב-ring buffers וב-buffer pools",
+        "instrumentation לזיהוי: sequence numbers, checksums, assertions",
+        "מניעה: טסט רגרסיה ו-TSan ב-CI"
+      ],
+      "explanation": "מראיין מחפש גישה שיטתית ולא 'להוסיף mutex בכל מקום': הבנת מגבלות הכלי, הגדלת כיסוי, וזיהוי הגורם לפני תיקון.",
+      "lesson": "bugs.races",
+      "tags": ["nvidia"]
+    }
+  ]
+}

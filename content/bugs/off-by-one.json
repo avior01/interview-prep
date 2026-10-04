@@ -1,0 +1,333 @@
+{
+  "domain": "bugs",
+  "subtopic": "off-by-one",
+  "lessons": [
+    {
+      "id": "bugs.off-by-one",
+      "title": "Off-by-one",
+      "what": "באג שבו לולאה, אינדקס או אורך חורגים באחד: איבר אחד יותר מדי או אחד פחות מדי. המקור הקלאסי הוא fencepost: 10 קטעים של גדר צריכים 11 עמודים. זה הבאג הנפוץ ביותר בקוד שעובד עם מערכים, buffers ו-ranges.",
+      "when": [
+        "כל לולאה עם תנאי `<` מול `<=`, או אינדקס כמו `n-1` / `i+1`",
+        "חישובי אורך: כמה איברים יש בין a ל-b, כמה frames נכנסים ב-buffer",
+        "חיפוש בינארי: איפה מתחיל ומסתיים הטווח, ומה קורה כשהמטרה לא קיימת",
+        "ring buffers: האם head מצביע על האיבר האחרון שנכתב או על המקום הבא",
+        "slicing ב-Python ו-substr ב-C++: האם הפרמטר השני הוא אינדקס סוף או אורך"
+      ],
+      "how": [
+        "בחר convention אחד ודבוק בו: טווחים half-open מהצורה [begin, end). האורך הוא end-begin, טווח ריק הוא begin==end, ושני טווחים סמוכים מתחברים בלי חפיפה",
+        "כתוב invariant לכל לולאה: מה נכון על lo, hi או head לפני ואחרי כל איטרציה. רוב ה-off-by-one נובע מ-invariant לא מוגדר",
+        "בדוק ערכי קצה באופן שיטתי: n=0, n=1, n=2, ערך קטן מכל האיברים, ערך גדול מכל האיברים, buffer מלא בדיוק",
+        "זהירות כפולה עם unsigned: `size()-1` על vector ריק הוא SIZE_MAX, ו-`i >= 0` על size_t תמיד נכון",
+        "כלים: AddressSanitizer תופס קריאה/כתיבה מחוץ ל-heap או stack buffer; `-D_GLIBCXX_ASSERTIONS` או `.at()` בודקים אינדקס של std::vector; Valgrind memcheck תופס גישה מחוץ לבלוק heap",
+        "בדיקות: unit tests על גבולות, property-based tests (למשל: סכום כל ה-chunks שווה לאורך הקלט), והשוואה למימוש naive"
+      ],
+      "complexity": "לא נושא של סיבוכיות. נוסחאות שכדאי לזכור: מספר שלמים ב-[a,b] הוא b-a+1; מספר frames שלמים באורך F עם hop H באות באורך n הוא floor((n-F)/H)+1 כש-n>=F.",
+      "pitfalls": [
+        "`<=` במקום `<` בלולאה על מערך: קריאה של איבר אחד מעבר לסוף, UB שלרוב לא קורס",
+        "`for (size_t i = n-1; i >= 0; --i)`: לולאה אינסופית כי unsigned לעולם לא שלילי",
+        "`strncpy(dst, src, sizeof dst)` לא מוסיף '\\0' כשהמקור ארוך מדי",
+        "ב-Python, `xs[-k:]` עם k=0 מחזיר את כל הרשימה ולא רשימה ריקה",
+        "`np.linspace(0, 1, 5)` כולל את נקודת הסוף, לכן הצעד הוא 0.25 ולא 0.2",
+        "ב-overlap-save עם FFT באורך N ומסנן באורך L, רק N-L+1 דגימות תקינות בכל בלוק"
+      ],
+      "senior": [
+        "להסביר למה half-open ranges הם ה-convention של ה-STL ושל Python, ואיך זה מבטל סוגים שלמים של באגים",
+        "לנסח invariant לחיפוש בינארי ולהראות שהוא מטפל במקרה שהמטרה לא קיימת או גדולה מכל האיברים",
+        "להזכיר שקריאה של איבר אחד מעבר לסוף היא UB גם אם הבדיקות עוברות, ולהציע sanitizer ב-CI",
+        "לזהות שבקוד DSP כמעט כל באג אורך הוא fencepost: overlap, hop, latency של מסנן ב-(L-1)/2 דגימות"
+      ],
+      "diagram": "posts:  |---|---|---|\n        0   1   2   3\n3 segments, 4 posts\n\n[begin, end):  b . . . e\n               ^ in    ^ out\nlength = e - b"
+    }
+  ],
+  "questions": [
+    {
+      "id": "bugs.off-by-one.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "בונים גדר באורך 100 מטר עם עמוד כל 10 מטרים, כולל עמוד בשני הקצוות. כמה עמודים צריך?",
+      "choices": ["9", "10", "11", "12"],
+      "answer": 2,
+      "explanation": "זה בדיוק ה-fencepost problem: 10 קטעים של 10 מטר צריכים 11 עמודים, כי יש עמוד גם בהתחלה וגם בסוף. התשובה 10 היא טעות ה-off-by-one הקלאסית: ספירת קטעים במקום ספירת נקודות.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "כמה איברים מייצר `range(2, 10)` ב-Python?",
+      "choices": ["7", "9", "10", "8"],
+      "answer": 3,
+      "explanation": "range הוא half-open: [2, 10) כולל את 2 עד 9, כלומר 10-2 = 8 איברים. 9 הוא מה שמקבלים אם חושבים שהגבול העליון כלול, ו-7 אם מפספסים גם את ההתחלה.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה מספרים שלמים יש בטווח הסגור [a, b] (כולל שני הקצוות), כש-a<=b? כתוב ביטוי ב-a ו-b.",
+      "accept": ["b-a+1", "1+b-a", "b+1-a"],
+      "explanation": "בטווח סגור יש b-a+1 שלמים. למשל [3,5] מכיל 3,4,5 שזה 3 = 5-3+1. בטווח half-open [a,b) יש b-a, ולכן ה-STL ו-Python מעדיפים אותו: אין +1 שאפשר לשכוח.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q04",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה אמורה לסכום את כל איברי הווקטור. מה הבאג?",
+      "code": "int sum(const std::vector<int>& v) {\n    int s = 0;\n    for (size_t i = 0; i <= v.size(); ++i)\n        s += v[i];\n    return s;\n}",
+      "bugLine": 3,
+      "choices": [
+        "`s` צריך להיות `long` כי הסכום עלול לגלוש",
+        "התנאי `<=` גורם לקריאת `v[v.size()]`, איבר אחד מעבר לסוף: undefined behavior",
+        "`size_t` לא מתאים כאן, צריך `int` כדי שההשוואה תעבוד",
+        "צריך `++i` לפני הגישה, אחרת האיבר הראשון לא נסכם"
+      ],
+      "answer": 1,
+      "explanation": "האינדקס התקין האחרון הוא `size()-1`, ולכן התנאי צריך להיות `i < v.size()`. עם `<=` קוראים איבר אחד מעבר לסוף, UB שלעיתים קרובות לא קורס ופשוט מוסיף זבל לסכום. גלישה של `int` היא חשש לגיטימי אבל לא הבאג שמשבר את הנכונות כאן, ו-`size_t` הוא הטיפוס הנכון להשוואה מול `size()`.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "s = 'abcdef'\nprint(s[1:4], s[-2:])",
+      "choices": ["bcd ef", "bcde ef", "abcd f", "bcd def"],
+      "answer": 0,
+      "explanation": "slice הוא half-open: `s[1:4]` לוקח אינדקסים 1,2,3 כלומר 'bcd'. `s[-2:]` מתחיל שני תווים מהסוף ולוקח עד הסוף: 'ef'. 'bcde' הוא טעות של מי שחושב שהגבול העליון כלול.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q06",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה אמורה להדפיס את הווקטור מהסוף להתחלה. מה הבאג?",
+      "code": "void printReverse(const std::vector<int>& v) {\n    for (size_t i = v.size() - 1; i >= 0; --i)\n        std::cout << v[i] << ' ';\n}",
+      "bugLine": 2,
+      "choices": [
+        "`size_t` הוא unsigned, ולכן `i >= 0` תמיד נכון: אחרי i=0 הערך עוטף ל-SIZE_MAX והלולאה קוראת מחוץ לווקטור",
+        "האיבר האחרון לא מודפס כי מתחילים מ-`size()-1`",
+        "`--i` צריך להיות `i--` כדי שהאיבר הראשון יודפס",
+        "`std::cout` לא thread-safe ולכן ההדפסה עלולה להתערבב"
+      ],
+      "answer": 0,
+      "explanation": "לטיפוס unsigned אין ערכים שליליים, אז `i >= 0` הוא tautology והקומפיילר אף מזהיר על כך ב-`-Wextra`. אחרי i=0, `--i` עוטף ל-SIZE_MAX והגישה `v[i]` חורגת. גם וקטור ריק נשבר כבר בהתחלה כי `0-1` עוטף. idiom נכון: `for (size_t i = v.size(); i-- > 0; )`. ההבדל בין `--i` ל-`i--` במקום הזה לא משנה דבר.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q07",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה אמורה להחזיר את האינדקס הראשון שבו `a[i] >= x` (כמו std::lower_bound), או `a.size()` אם אין כזה. a ממוין. מה הבאג?",
+      "code": "int lowerBound(const std::vector<int>& a, int x) {\n    int lo = 0, hi = a.size() - 1;\n    while (lo < hi) {\n        int mid = lo + (hi - lo) / 2;\n        if (a[mid] < x) lo = mid + 1;\n        else hi = mid;\n    }\n    return lo;\n}",
+      "bugLine": 2,
+      "choices": [
+        "`mid` מחושב בצורה שעלולה לגלוש, צריך `(lo + hi) / 2`",
+        "`hi = mid` צריך להיות `hi = mid - 1`, אחרת הלולאה לא מסתיימת",
+        "`hi` מאותחל ל-`size()-1`, ולכן הפונקציה לעולם לא מחזירה `a.size()`: כש-x גדול מכל האיברים מוחזר n-1",
+        "התנאי צריך להיות `lo <= hi`, אחרת האיבר האחרון לא נבדק"
+      ],
+      "answer": 2,
+      "explanation": "עם ה-invariant 'התשובה ב-[lo, hi]' ו-`hi = mid`, מרחב התשובות חייב לכלול את n, כלומר `hi = a.size()`. כפי שזה כתוב, עבור x גדול מכל האיברים מוחזר n-1 למרות ש-`a[n-1] < x`. `lo + (hi-lo)/2` הוא דווקא הנוסחה הבטוחה. `hi = mid - 1` עם `lo < hi` היה מפספס את התשובה, ו-`lo <= hi` עם `hi = mid` היה לולאה אינסופית.",
+      "lesson": "bugs.off-by-one",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.off-by-one.q08",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "הפונקציה אמורה לחלק רשימה ל-chunks בגודל k (האחרון יכול להיות קצר יותר). מה מודפס?",
+      "code": "def chunks(xs, k):\n    return [xs[i:i+k] for i in range(0, len(xs) - k, k)]\n\nprint(chunks(list(range(7)), 3))",
+      "choices": [
+        "[[0, 1, 2], [3, 4, 5], [6]]",
+        "[[0, 1, 2], [3, 4, 5]]",
+        "[[0, 1, 2]]",
+        "[[0, 1, 2], [3, 4, 5], [6, None, None]]"
+      ],
+      "answer": 1,
+      "explanation": "`range(0, 7-3, 3)` = `range(0, 4, 3)` נותן 0 ו-3 בלבד, ולכן ה-chunk [6] הולך לאיבוד. החמור יותר: כשהאורך מתחלק ב-k (למשל 6), `range(0, 3, 3)` נותן רק 0 ומאבד chunk מלא. התיקון: `range(0, len(xs), k)`, וה-slicing כבר מטפל בסוף הקצר.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q09",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ממוצע נע על חלונות של k דגימות (k>=1). כל פלט הוא ממוצע של k הדגימות האחרונות. מה הבאג?",
+      "code": "std::vector<double> movAvg(const std::vector<double>& x,\n                           size_t k) {\n    std::vector<double> out;\n    double s = 0;\n    for (size_t i = 0; i < x.size(); ++i) {\n        s += x[i];\n        if (i > k) s -= x[i - k];\n        if (i >= k - 1) out.push_back(s / k);\n    }\n    return out;\n}",
+      "bugLine": 7,
+      "choices": [
+        "`k - 1` עוטף כש-k=0 ולכן התנאי בשורה הבאה שגוי",
+        "החלוקה `s / k` היא חלוקת שלמים",
+        "צריך `i >= k`: כש-i=k הדגימה x[0] לא מוסרת, והחלון מכיל k+1 דגימות מאותו רגע והלאה",
+        "צריך לאפס את `s` בכל איטרציה"
+      ],
+      "answer": 2,
+      "explanation": "החלון צריך להכיל את x[i-k+1..i]. ב-i=k יש להוציא את x[0], אבל `i > k` מתחיל להוציא רק ב-i=k+1, כך שמ-i=k כל הפלטים כוללים דגימה אחת עודפת (ומוציאים את x[1] במקום את x[0] וכן הלאה). `s` הוא double ולכן החלוקה היא floating-point. k=0 מוחרג בהנחה.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "בקוד יש `v[v.size()]` על std::vector (עם GCC/libstdc++). אילו מהבאים יתפסו את הבאג באופן אמין בזמן ריצה? (בחר את כל הנכונים)",
+      "choices": [
+        "קומפילציה עם `-D_GLIBCXX_ASSERTIONS`",
+        "החלפת `v[i]` ב-`v.at(i)`",
+        "קומפילציה עם `-O2 -Wall -Wextra`",
+        "קומפילציה עם `-fsanitize=undefined` בלבד"
+      ],
+      "answer": [0, 1],
+      "explanation": "`_GLIBCXX_ASSERTIONS` מפעיל בדיקת גבולות ב-`operator[]` של libstdc++, ו-`at()` זורק `std::out_of_range`. אזהרות קומפילציה לא רואות אינדקס דינמי. UBSan לא מכשיר את `operator[]` של vector. ASan תופס רק אם `size()==capacity()` (כי אחרת הזיכרון מוקצה) או עם container-overflow annotations, ולכן הוא לא ברשימה כ'אמין'.",
+      "lesson": "bugs.off-by-one",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.off-by-one.q11",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד שומר שם במערך קבוע. מה הבאג?",
+      "code": "char name[8];\n\nvoid setName(const char* s) {\n    strncpy(name, s, sizeof(name));\n}\n\nvoid show() { std::puts(name); }",
+      "bugLine": 4,
+      "choices": [
+        "`sizeof(name)` מחזיר את גודל המצביע (8 ב-64 ביט) ולא את גודל המערך",
+        "כש-`strlen(s) >= 8`, strncpy לא כותב '\\0' בסוף, ו-`puts` קורא מעבר למערך",
+        "strncpy לא מעתיק את התו האחרון של s",
+        "צריך `memcpy` כי strncpy איטי"
+      ],
+      "answer": 1,
+      "explanation": "strncpy מעתיק לכל היותר n בתים, ואם המקור ארוך או שווה ל-n הוא לא מסיים ב-'\\0'. אז `puts` ממשיך לקרוא מחוץ למערך. התיקון: להעתיק `sizeof(name)-1` ולכתוב `name[sizeof(name)-1] = '\\0'`, או snprintf. כאן `name` הוא מערך גלובלי ולכן `sizeof` מחזיר 8 כנדרש; הוא היה שגוי רק אם `name` היה פרמטר.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ring buffer של דגימות. `recent(0)` אמור להחזיר את הדגימה החדשה ביותר, `recent(1)` את זו שלפניה וכו' (k < count). מה הבאג?",
+      "code": "struct Ring {\n    std::array<float, 1024> buf{};\n    size_t head = 0;   // next write slot\n    size_t count = 0;\n    void push(float x) {\n        buf[head] = x;\n        head = (head + 1) % 1024;\n        if (count < 1024) ++count;\n    }\n    // k = 0 -> newest sample\n    float recent(size_t k) const {\n        return buf[(head - k) % 1024];\n    }\n};",
+      "bugLine": 12,
+      "choices": [
+        "`head - k` עוטף כש-k > head ונותן אינדקס שגוי",
+        "`count` צריך להתעדכן לפני הכתיבה",
+        "חסר `std::atomic` על `head`",
+        "`head` מצביע על המקום הבא לכתיבה, לכן הדגימה החדשה היא ב-`head-1`: `recent(0)` מחזיר את הדגימה הישנה ביותר (או slot ריק)"
+      ],
+      "answer": 3,
+      "explanation": "לפי ה-invariant 'head = next write slot', הדגימה האחרונה נמצאת ב-`head-1`, והביטוי הנכון הוא `(head - 1 - k) % 1024`. המסיח על wraparound הוא המלכודת: חיסור unsigned עוטף מודולו 2^64, ו-1024 מחלק את 2^64, ולכן `(head - k) % 1024` נותן בדיוק את האינדקס המעגלי הנכון גם כש-k > head. זה עובד רק כי הגודל הוא חזקה של 2; עם גודל 1000 זה היה באג נוסף. אין כאן ריבוי threads.",
+      "lesson": "bugs.off-by-one",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.off-by-one.q13",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "בודק אם ווקטור ממוין. עובד בכל הטסטים חוץ מאחד. מה הבאג?",
+      "code": "bool isSorted(const std::vector<int>& v) {\n    for (int i = 0; i < v.size() - 1; ++i)\n        if (v[i] > v[i + 1]) return false;\n    return true;\n}",
+      "bugLine": 2,
+      "choices": [
+        "צריך `i <= v.size() - 1` כדי לבדוק גם את הזוג האחרון",
+        "`v[i + 1]` חורג בזוג האחרון",
+        "צריך `>=` בהשוואה כדי לזהות כפילויות",
+        "על וקטור ריק `v.size() - 1` עוטף ל-SIZE_MAX, ה-`int` מומר ל-unsigned בהשוואה, והלולאה קוראת מחוץ לווקטור"
+      ],
+      "answer": 3,
+      "explanation": "עבור n>=1 הלולאה נכונה: i רץ עד n-2 ו-`v[i+1]` מגיע לכל היותר ל-n-1. אבל ל-v ריק, `0u - 1` הוא SIZE_MAX, ובהשוואה `int < size_t` ה-int מומר ל-unsigned, ולכן הלולאה נכנסת וקוראת `v[0]` על וקטור ריק. תיקון: `for (size_t i = 1; i < v.size(); ++i) if (v[i-1] > v[i])`. `-Wsign-compare` מזהיר על השורה הזו.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q14",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "def last_k(xs, k):\n    \"\"\"return the last k items\"\"\"\n    return xs[-k:]\n\nprint(last_k([1, 2, 3], 2), last_k([1, 2, 3], 0))",
+      "choices": [
+        "[2, 3] []",
+        "[2, 3] [1, 2, 3]",
+        "[3] []",
+        "[2, 3] [3]"
+      ],
+      "answer": 1,
+      "explanation": "`-0` הוא 0, ולכן `xs[-0:]` הוא `xs[0:]`: כל הרשימה. זה off-by-one בגבול k=0 שבודקים כמעט אף פעם. תיקון: `xs[len(xs)-k:]` (עם k<=len(xs)). אותו באג קיים ב-NumPy: `x[-k:]` עם k=0.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `numFrames(n, frame, hop)` שמחזירה כמה frames שלמים באורך `frame` עם צעד `hop` נכנסים באות באורך `n` דגימות (frame>=1, hop>=1, כל הפרמטרים size_t). זה החישוב שמגדיר כמה עמודות יהיו ב-STFT.",
+      "starter": "size_t numFrames(size_t n, size_t frame, size_t hop);",
+      "modelAnswer": "size_t numFrames(size_t n, size_t frame, size_t hop) {\n    if (n < frame) return 0;          // avoid unsigned underflow\n    return (n - frame) / hop + 1;     // first frame + full hops\n}\n// n=1024, frame=256, hop=128 -> (768/128)+1 = 7\n// n=256, frame=256 -> 1;  n=255 -> 0",
+      "rubric": [
+        "נוסחה נכונה floor((n-frame)/hop)+1, כולל ה-+1 על ה-frame הראשון",
+        "בדיקת n < frame לפני החיסור כדי למנוע unsigned underflow",
+        "בדיקת מקרי קצה: n==frame נותן 1, hop>frame (frames לא חופפים) עובד",
+        "O(1), בלי לולאה"
+      ],
+      "explanation": "ה-frame הראשון תופס `frame` דגימות, וכל frame נוסף צריך עוד `hop`. לכן floor((n-frame)/hop)+1. בלי הבדיקה, `n - frame` עוטף ל-ערך עצום כש-n<frame ומחזיר מספר frames מופרך.",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "id": "bugs.off-by-one.q16",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "חיפוש בינארי קלאסי. a ממוין ולא ריק. הקוד עובר את רוב הטסטים, אבל קורס או נתקע עבור קלט מסוים. באיזו שורה הבעיה ולמה?",
+      "code": "// a is sorted and non-empty; returns index or -1\nlong find(const std::vector<int>& a, int x) {\n    size_t lo = 0, hi = a.size() - 1;\n    while (lo <= hi) {\n        size_t mid = lo + (hi - lo) / 2;\n        if (a[mid] == x) return mid;\n        if (a[mid] < x) lo = mid + 1;\n        else hi = mid - 1;\n    }\n    return -1;\n}",
+      "bugLine": 8,
+      "choices": [
+        "כש-x קטן מ-a[0], בסוף mid=0 ו-`hi = mid - 1` עוטף ל-SIZE_MAX; התנאי `lo <= hi` נשאר נכון והגישה `a[mid]` חורגת",
+        "כש-x גדול מכל האיברים, `lo = mid + 1` חורג מ-`size()` והלולאה ניגשת ל-`a[size()]`",
+        "`lo + (hi - lo) / 2` עלול לגלוש עבור וקטורים גדולים",
+        "החזרת `mid` (size_t) כ-long היא UB לערכים גדולים"
+      ],
+      "answer": 0,
+      "explanation": "גרסת closed-interval [lo, hi] מניחה ש-hi יכול לרדת ל-lo-1, כלומר ל-'-1' כש-lo=0. עם size_t זה SIZE_MAX, ואז `lo <= hi` עדיין נכון, mid יוצא עצום והגישה קורסת. כש-x גדול מכולם, lo מגיע ל-n ו-hi נשאר n-1, אז הלולאה פשוט יוצאת: אין חריגה. `lo + (hi-lo)/2` בטוח. תיקון: half-open `[lo, hi)` עם `hi = mid`, או אינדקסים signed.",
+      "lesson": "bugs.off-by-one",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.off-by-one.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מימוש overlap-save עם FFT באורך N=1024 ומסנן FIR באורך L=129 taps. כמה דגימות פלט תקינות שומרים מכל בלוק, ובכמה דגימות מתקדם הקלט בין בלוקים?",
+      "choices": [
+        "שומרים 895, מתקדמים 895",
+        "שומרים 896, מתקדמים 896",
+        "שומרים 896, מתקדמים 895",
+        "שומרים 897, מתקדמים 897"
+      ],
+      "answer": 1,
+      "explanation": "קונבולוציה מעגלית באורך N עם מסנן באורך L מזהמת את L-1 = 128 הדגימות הראשונות (wrap-around). נשארות N-L+1 = 896 דגימות תקינות, ובשביל רצף פלט בלי חורים וכפילויות הקלט חייב להתקדם בדיוק באותו מספר, 896, כך שכל בלוק חופף בקודמו ב-L-1 = 128 דגימות. 895 הוא שגיאת N-L הקלאסית, וחוסר התאמה בין שומרים למתקדמים יוצר דגימה כפולה או חסרה בכל בלוק, שנשמעת כ-click מחזורי.",
+      "lesson": "bugs.off-by-one",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.off-by-one.q18",
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ring buffer בגודל N (לא בהכרח חזקה של 2). `head` הוא המקום הבא לכתיבה (0<=head<N). כתוב `readLast` שמעתיקה את n הדגימות האחרונות, מהישנה לחדשה, ל-`out` רציף, עם לכל היותר שתי קריאות memcpy. הנח n <= count <= N.",
+      "starter": "void readLast(const float* buf, size_t N, size_t head,\n              size_t n, float* out);",
+      "modelAnswer": "void readLast(const float* buf, size_t N, size_t head,\n              size_t n, float* out) {\n    size_t start = (head + N - n) % N;      // oldest of the n\n    size_t first = std::min(n, N - start);  // until end of buf\n    std::memcpy(out, buf + start, first * sizeof(float));\n    std::memcpy(out + first, buf, (n - first) * sizeof(float));\n}\n// N=8, head=1, n=3: start=6, first=2 -> buf[6],buf[7],buf[0]\n// n=N: start=head, copies head..N-1 then 0..head-1",
+      "rubric": [
+        "start מחושב כ-(head + N - n) % N, בלי unsigned underflow (מוסיפים N לפני החיסור)",
+        "החלוקה לשני חלקים נכונה: first = min(n, N-start), השני באורך n-first",
+        "עובד במקרי קצה: n=0, n=N, head=0, טווח שלא חוצה את סוף ה-buffer",
+        "O(n), שתי memcpy לכל היותר, בלי % לכל דגימה"
+      ],
+      "explanation": "הדגימה החדשה ב-head-1, ולכן הישנה מבין n האחרונות ב-head-n מודולו N. הוספת N לפני החיסור מונעת עטיפה כש-n>head; כאן, בניגוד לגודל חזקה של 2, עטיפה של size_t הייתה נותנת תוצאה שגויה. אם הטווח לא חוצה את הסוף, first=n והעתקה שנייה היא באורך 0.",
+      "lesson": "bugs.off-by-one",
+      "tags": ["nvidia"]
+    }
+  ]
+}

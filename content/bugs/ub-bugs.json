@@ -1,0 +1,346 @@
+{
+  "domain": "bugs",
+  "subtopic": "ub-bugs",
+  "lessons": [
+    {
+      "id": "bugs.ub-bugs",
+      "title": "UB בקוד אמיתי",
+      "what": "undefined behavior הוא קוד שהתקן לא מגדיר לו שום התנהגות. הבעיה האמיתית היא לא 'מה יקרה', אלא שהאופטימייזר רשאי להניח ש-UB לעולם לא קורה, ולבנות קוד לפי ההנחה הזו: למחוק בדיקות, לקפל לולאות, ולסדר מחדש גישות. לכן קוד עם UB עובד ב-`-O0` ונשבר ב-`-O2`, או עובד היום ונשבר אחרי עדכון קומפיילר.",
+      "when": [
+        "באג שמופיע רק ב-release, או רק בקומפיילר/פלטפורמה מסוימים",
+        "קוד 'חכם' שקורא ביטים של float דרך מצביע לטיפוס אחר, או קורא שדות מ-buffer של bytes ישירות",
+        "בדיקת null או overflow שמופיעה אחרי השימוש",
+        "משתנה מקומי בלי אתחול, פונקציה לא-void שלא מחזירה בכל מסלול",
+        "comparator ל-std::sort שאינו strict weak ordering (`<=`, NaN)",
+        "shift בכמות שגדולה או שווה לרוחב הטיפוס"
+      ],
+      "how": [
+        "המקורות הנפוצים: גישה מחוץ לגבולות, קריאה של משתנה לא מאותחל, dereference של null, signed overflow, strict aliasing, גישה לא מיושרת, data race, שינוי אובייקט const, ו-shift לא חוקי",
+        "strict aliasing: הקומפיילר מניח שמצביעים לטיפוסים שונים (למשל `int*` ו-`float*`) לא מצביעים לאותו מקום. רק char, unsigned char ו-std::byte מותרים לקרוא כל אובייקט",
+        "הדרך החוקית לקרוא ביטים של אובייקט כטיפוס אחר: `std::bit_cast` (C++20) או `memcpy`, שהקומפיילר מתרגם לאותה פקודה בודדת",
+        "time travel: אם מסלול מסוים מוביל בהכרח ל-UB, הקומפיילר רשאי להניח שהמסלול לא נלקח, ולהשפיע גם על קוד שלפניו",
+        "כלים: `-Wall -Wextra` (uninitialized, return-type, shift), UBSan (`-fsanitize=undefined`), ASan, `-fsanitize=alignment`, clang-tidy ו-static analyzers, ו-constexpr evaluation בטסטים (UB בזמן קומפילציה הוא שגיאה)",
+        "בניסוי, דגלים כמו `-fno-strict-aliasing`, `-fwrapv` ו-`-fno-delete-null-pointer-checks` עוזרים לאתר את סוג ה-UB, אבל הם לא תיקון"
+      ],
+      "complexity": "UBSan מוסיף בערך 20%-50% לזמן הריצה, ולכן אפשר להריץ אותו על כל הטסטים ב-CI. bit_cast ו-memcpy בגודל קבוע עולים אפס אחרי אופטימיזציה.",
+      "pitfalls": [
+        "'זה עובד על x86' אינו הוכחה: גם x86 נשבר כשהקומפיילר מוקטר עם פקודות שדורשות alignment",
+        "union type punning חוקי ב-C ולא ב-C++ (GCC מתיר אותו כ-extension)",
+        "`std::vector::reserve` לא מגדיל את size, וגישה ב-`[]` מעבר ל-size היא UB",
+        "shift של 1u ב-32 ב-x86 נותן 1 בפועל, כי החומרה ממסכת את ה-count",
+        "comparator עם `>` על floats שמכילים NaN אינו strict weak ordering"
+      ],
+      "senior": [
+        "להסביר למה UB קיים: הוא מאפשר אופטימיזציות (vectorization, הסרת בדיקות) ופורטביליות",
+        "לתת דוגמה לבדיקה שהקומפיילר מחק (null check אחרי dereference, overflow check אחרי חיבור)",
+        "לדעת להבחין בין UB, implementation-defined ו-unspecified",
+        "לבנות תהליך: warnings כ-errors, sanitizers ב-CI, fuzzing לקוד שמפרסר קלט"
+      ],
+      "diagram": "source:  if (!p) return; (after p->x)\noptimizer: p was dereferenced\n           => p != null\n           => delete the check"
+    }
+  ],
+  "questions": [
+    {
+      "id": "bugs.ub-bugs.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של undefined behavior ב-C++?",
+      "choices": [
+        "התוכנית תקרוס בוודאות",
+        "התוצאה תלויה בקומפיילר, והקומפיילר חייב לתעד אותה",
+        "התקן לא מטיל שום דרישה על התוכנית: היא יכולה לקרוס, לתת תוצאה שגויה, או להיראות תקינה",
+        "הקומפיילר חייב להוציא אזהרה"
+      ],
+      "answer": 2,
+      "explanation": "UB אומר שאין שום דרישה, כולל על קוד שרץ לפני נקודת ה-UB. 'תלוי בקומפיילר ומתועד' הוא implementation-defined (למשל sizeof(long)). אין חובה לקרוס או להזהיר, ולכן UB מסוכן כל כך: לרוב הוא נראה תקין.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה מהבאים הוא undefined behavior?",
+      "choices": [
+        "`unsigned x = 0; x--;`",
+        "`int* p = nullptr; delete p;`",
+        "`int x; int y = x + 1;` כש-x משתנה מקומי שלא אותחל",
+        "`unsigned y = -1;`"
+      ],
+      "answer": 2,
+      "explanation": "קריאה של משתנה מקומי שלא אותחל היא UB (ב-C++26 זה הופך ל-'erroneous behavior', אבל עדיין באג). unsigned שיורד מ-0 עוטף באופן מוגדר ל-UINT_MAX, `delete` על nullptr מוגדר כ-no-op, ו-`unsigned y = -1` הוא המרה מוגדרת ל-UINT_MAX.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-NumPy, מה מכיל `np.empty(4)` מיד אחרי היצירה?",
+      "choices": [
+        "ערכים שרירותיים: מה שהיה בזיכרון, כי המערך לא מאותחל",
+        "ארבעה אפסים",
+        "ארבעה NaN",
+        "מערך ריק באורך 0"
+      ],
+      "answer": 0,
+      "explanation": "np.empty מקצה בלי לאתחל, בדיוק כמו `malloc`. לפעמים זה נראה כמו אפסים (דף זיכרון חדש מה-OS), וזה מה שהופך את הבאג לחמקמק: קוד שקורא לפני שכתב 'עובד' בטסט קטן ונותן זבל במערכת אמיתית. אם צריך ערך התחלתי: `np.zeros` או `np.full`.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q04",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ב-Clang עם `-O2`, `sign(0)` גורם ל-crash (illegal instruction) או לקפיצה לקוד אחר. מה הבאג?",
+      "code": "int sign(int x) {\n    if (x > 0) return 1;\n    if (x < 0) return -1;\n}",
+      "bugLine": 4,
+      "choices": [
+        "`-1` צריך להיות `~0`",
+        "חסר `return 0;` למקרה x==0: יציאה מסוף פונקציה לא-void בלי return היא UB",
+        "שני ה-if צריכים להיות else-if",
+        "הפונקציה צריכה להיות constexpr"
+      ],
+      "answer": 1,
+      "explanation": "ב-C++ (בניגוד ל-C, ובניגוד ל-main) הגעה לסוף פונקציה שמחזירה ערך היא UB. Clang מסמן את המסלול כבלתי אפשרי ולעיתים פולט `ud2` או לא פולט כלום, כך שהביצוע ממשיך לפונקציה הבאה. `-Wreturn-type` (חלק מ-`-Wall`) מזהיר כאן, ולכן warnings כ-errors חשובים.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "חיפוש הערך המקסימלי בבלוק דגימות (n>=1). התוצאה לפעמים גדולה מכל הדגימות. מה הבאג?",
+      "code": "float peak(const float* x, int n) {\n    float m;\n    for (int i = 0; i < n; ++i)\n        if (x[i] > m) m = x[i];\n    return m;\n}",
+      "bugLine": 2,
+      "choices": [
+        "`m` לא מאותחל: ההשוואה הראשונה קוראת ערך שרירותי, וזה UB. אם הזבל גדול מכל הדגימות, הוא מוחזר",
+        "`x[i] > m` לא עובד עם NaN",
+        "הלולאה מתחילה מ-0 במקום מ-1",
+        "צריך `std::max_element` כי לולאה ידנית איטית"
+      ],
+      "answer": 0,
+      "explanation": "משתנה מקומי בלי אתחול מכיל מה שהיה ב-stack או ברגיסטר. התיקון: `float m = x[0];` (ואז אפשר להתחיל מ-1), או `-INFINITY`. `-Wmaybe-uninitialized` ו-MemorySanitizer/Valgrind יתפסו את זה. NaN הוא שיקול אמיתי אבל לא הבאג שמתואר.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "ב-CPython, מה מודפס?",
+      "code": "a = 256\nb = 256\nc = int('257')\nd = int('257')\nprint(a is b, c is d)",
+      "choices": ["True True", "False False", "True False", "False True"],
+      "answer": 2,
+      "explanation": "CPython שומר cache של אובייקטי int מ-5- עד 256, ולכן `a` ו-`b` הם אותו אובייקט. `int('257')` יוצר אובייקט חדש בכל קריאה, ולכן `c is d` הוא False. זו התנהגות של המימוש ולא של השפה: קוד שמשווה מספרים או מחרוזות עם `is` עובד בטסטים ונשבר בערכים אחרים. תמיד `==`.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q07",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ב-production מגיעה לפעמים חבילה null, והמפתח הוסיף בדיקה. ב-`-O2` עדיין יש crash, ובדיקת ה-assembly מראה שהבדיקה פשוט לא קיימת. למה?",
+      "code": "int readLen(const Packet* p) {\n    int len = p->len;\n    if (!p) return -1;\n    return len;\n}",
+      "bugLine": 2,
+      "choices": [
+        "הקומפיילר מוחק את הבדיקה כי `p` הוא const",
+        "`p->len` צריך להיות `(*p).len`",
+        "ה-dereference בשורה 2 מתבצע לפני הבדיקה. מאחר ש-dereference של null הוא UB, הקומפיילר מסיק ש-p לא null ומוחק את `if (!p)` כקוד מת",
+        "צריך להשוות ל-nullptr במפורש ולא `!p`"
+      ],
+      "answer": 2,
+      "explanation": "זה בדיוק הבאג שהיה בדרייבר tun של Linux (2009): dereference ואחריו null check, שהקומפיילר מחק. מאז הקרנל מקומפל עם `-fno-delete-null-pointer-checks`. התיקון הנכון: לבדוק לפני השימוש. `!p` ו-`p == nullptr` זהים.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ה-fast inverse square root המפורסם, בגרסה של Quake. מה ה-UB בקוד הזה ב-C++?",
+      "code": "float fastInvSqrt(float x) {\n    int32_t i = *(int32_t*)&x;\n    i = 0x5f3759df - (i >> 1);\n    float y = *(float*)&i;\n    return y * (1.5f - 0.5f * x * y * y);\n}",
+      "bugLine": 2,
+      "choices": [
+        "`i >> 1` על מספר שלילי הוא UB",
+        "הקבוע 0x5f3759df לא נכנס ב-int32",
+        "חוסר דיוק של האלגוריתם הוא UB",
+        "גישה ל-float דרך מצביע ל-int32_t מפרה strict aliasing (וכך גם שורה 4). הקומפיילר רשאי להניח שהם לא מתייחסים לאותו זיכרון"
+      ],
+      "answer": 3,
+      "explanation": "strict aliasing: אסור לקרוא אובייקט מסוג float דרך lvalue מסוג int32_t. התיקון: `int32_t i = std::bit_cast<int32_t>(x);` (C++20) או memcpy, שמתקמפלים לאותו movd. x חיובי בשימוש הזה, וגם אם לא, shift ימינה של שלילי מוגדר מ-C++20. 0x5f3759df קטן מ-2^31.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q09",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מחזיר מסכה של `bits` הביטים הנמוכים. `mask(8)` מחזיר 0xFF כמצופה, אבל `mask(32)` מחזיר 0 על x86 במקום 0xFFFFFFFF. מה הבאג?",
+      "code": "uint32_t mask(int bits) {   // bits in [0, 32]\n    return (1u << bits) - 1;\n}",
+      "bugLine": 2,
+      "choices": [
+        "צריך `1 << bits` בלי u",
+        "shift בכמות ששווה לרוחב הטיפוס (32) הוא UB. בפועל x86 ממסך את ה-count ל-5 ביטים, אז `1u << 32` נותן 1, והמסכה יוצאת 0",
+        "`- 1` עוטף כש-bits=0",
+        "uint32_t לא יכול להחזיק 0xFFFFFFFF"
+      ],
+      "answer": 1,
+      "explanation": "shift ב-n כש-n >= רוחב הטיפוס הוא UB. ב-x86 פקודת shl משתמשת רק ב-5 הביטים הנמוכים של ה-count, ולכן 32 הופך ל-0. תיקון: `bits >= 32 ? ~0u : (1u << bits) - 1`, או חישוב ב-uint64_t. `1 << 31` בלי u הוא UB עד C++20 בגלל signed overflow. כש-bits=0 מתקבל 1-1 = 0, נכון.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q10",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "ניקוי חיבורים שלא היו פעילים 30 שניות. מה הבאג?",
+      "code": "def drop_stale(conns, now):\n    for k, c in conns.items():\n        if now - c.last > 30:\n            del conns[k]",
+      "bugLine": 4,
+      "choices": [
+        "מחיקה מ-dict בזמן איטרציה עליו: ברגע שמוחקים משהו נזרק RuntimeError: dictionary changed size during iteration",
+        "`items()` מחזיר עותק ולכן המחיקה לא משפיעה",
+        "צריך `conns.pop(k)` במקום del",
+        "השוואת זמנים צריכה להיות `>=`"
+      ],
+      "answer": 0,
+      "explanation": "Python מזהה שינוי גודל של dict תוך כדי איטרציה וזורק RuntimeError, אבל רק אם באמת נמחק משהו, ולכן טסט בלי חיבורים ישנים עובר. ב-Python 3 `items()` הוא view חי ולא עותק. ב-list המצב גרוע יותר: אין exception, פשוט מדלגים על איברים. תיקון: `for k in [k for k, c in conns.items() if now - c.last > 30]: del conns[k]`, או לבנות dict חדש.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q11",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "פרסור header של חבילה מ-buffer של bytes. עבד שנים על x86, ואחרי שדרוג קומפיילר קורס עם SIGSEGV בלולאה שקוראת הרבה שדות. מה הבאג?",
+      "code": "uint32_t readU32(const uint8_t* pkt, size_t off) {\n    return *reinterpret_cast<const uint32_t*>(pkt + off);\n}",
+      "bugLine": 2,
+      "choices": [
+        "חסרה המרת endianness",
+        "צריך static_cast",
+        "`pkt + off` לא בהכרח מיושר ל-4, וגם קריאת uint8_t buffer דרך uint32_t* מפרה strict aliasing. שניהם UB, והקומפיילר רשאי להשתמש בפקודות וקטוריות שדורשות alignment",
+        "`off` צריך להיות int"
+      ],
+      "answer": 2,
+      "explanation": "על x86 גישה לא מיושרת לרוב 'עובדת' בחומרה, אבל אחרי inlining ו-vectorization הקומפיילר עשוי להניח alignment ולהשתמש בפקודה כמו movaps, שקורסת על כתובת לא מיושרת. על ARM ישן זה יכול להיכשל גם בלי אופטימיזציה. תיקון: `uint32_t v; std::memcpy(&v, pkt + off, 4); return v;`, שמתקמפל ל-mov אחד. endianness היא שאלה לגיטימית, אבל היא באג לוגי ולא הסיבה ל-crash. `-fsanitize=alignment` יתפוס את זה.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מיון peaks לפי עוצמה, מהגדול לקטן. עם הרבה peaks בעלי עוצמה זהה התוכנית קורסת בתוך std::sort. מה הבאג?",
+      "code": "void sortPeaks(std::vector<Peak>& peaks) {\n    std::sort(peaks.begin(), peaks.end(),\n        [](const Peak& a, const Peak& b) { return a.mag >= b.mag; });\n}",
+      "bugLine": 3,
+      "choices": [
+        "lambda צריך לקבל by value",
+        "std::sort לא יציב, צריך stable_sort",
+        "צריך `std::greater<>`",
+        "`>=` אינו strict weak ordering (comp(a,a) מחזיר true). זה UB, ו-introsort ב-libstdc++ יכול לרוץ מעבר לסוף הטווח בלולאת ה-partition"
+      ],
+      "answer": 3,
+      "explanation": "std::sort דורש comparator שמתנהג כמו `<`: irreflexive, transitive, ו-incomparability טרנזיטיבית. עם `>=`, הלולאה הפנימית של ה-partition (unguarded) מסתמכת על כך ש-pivot לא 'גדול' מעצמו, ועם הרבה ערכים שווים היא חוצה את הגבול. תיקון: `a.mag > b.mag`. stable_sort הוא החלטה על סדר שווים, לא תיקון. `_GLIBCXX_DEBUG` מזהה comparator לא תקין.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q13",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו מהבאים הם undefined behavior? (בחר את כל הנכונים)",
+      "choices": [
+        "`memcpy(buf + 1, buf, n);` כשהטווחים חופפים",
+        "`int* p = new int[4]; delete p;`",
+        "`const int k = 5; *const_cast<int*>(&k) = 6;`",
+        "`unsigned u = 0; --u;`",
+        "`int8_t c = 300;` (C++20)"
+      ],
+      "answer": [0, 1, 2],
+      "explanation": "memcpy עם חפיפה הוא UB (צריך memmove). delete על מה שהוקצה עם new[] הוא UB. שינוי אובייקט שהוגדר const הוא UB, גם עם const_cast; בפועל הוא עלול לשבת ב-rodata או שהקומפיילר כבר קיפל את 5 לכל השימושים. unsigned עוטף באופן מוגדר, והמרה צרה לטיפוס signed מוגדרת מ-C++20 כמודולו (300 הופך ל-44).",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך את הייצוג הבינארי של `float f` כ-`uint32_t`. איזו אפשרות מוגדרת היטב ב-C++20?",
+      "choices": [
+        "`union { float f; uint32_t u; } x; x.f = f; return x.u;`",
+        "`return *reinterpret_cast<uint32_t*>(&f);`",
+        "`return static_cast<uint32_t>(f);`",
+        "`return std::bit_cast<uint32_t>(f);`"
+      ],
+      "answer": 3,
+      "explanation": "bit_cast מעתיק את הייצוג בין טיפוסים trivially copyable באותו גודל, והוא גם constexpr. קריאה מ-member לא פעיל של union היא UB ב-C++ (חוקית ב-C, ו-GCC מתיר אותה כ-extension). reinterpret_cast מפר strict aliasing. static_cast ממיר ערך: 1.5f הופך ל-1, לא לביטים. memcpy היה גם הוא חוקי.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "באג שמופיע רק ב-release build (`-O2`): תוצאה שגויה בחישוב, בלי crash. ב-debug הכל תקין. איך אתה ניגש לזה?",
+      "modelAnswer": "באג שתלוי ברמת אופטימיזציה הוא כמעט תמיד UB (או data race, או הבדל floating-point כמו -ffast-math). קודם להפעיל warnings מלאים (-Wall -Wextra -Wconversion -Wshadow) ולטפל בכל uninitialized, return-type ו-strict-aliasing. אחר כך לבנות את ה-release עם `-fsanitize=undefined,address` ו-`-g` (sanitizers עובדים גם ב-O2) ולהריץ את התרחיש. אם לא נמצא: TSan למקרה של race, ו-MemorySanitizer או Valgrind לקריאות לא מאותחלות. במקביל אפשר לצמצם: לבנות עם -O1, או להוסיף דגלים כמו -fno-strict-aliasing, -fwrapv, -fno-delete-null-pointer-checks; אם אחד מהם 'מתקן', זה מצביע על סוג ה-UB (אבל לא מתקן אותו). ניתן גם לעשות bisect לפי קבצים: לקמפל חצי מהקבצים ב-O0 כדי למצוא את הקובץ, ואז פונקציה. לבסוף להשוות assembly או להוסיף asserts על invariants. להזכיר הבדלי floating-point: -O2 לבד לא משנה סמנטיקה של IEEE, אבל -ffast-math או x87 extended precision כן. אחרי התיקון: טסט רגרסיה ו-UBSan ב-CI.",
+      "rubric": [
+        "מזהה שהתלות באופטימיזציה מצביעה על UB, race או הבדל floating-point",
+        "warnings מלאים ו-sanitizers על ה-build עם אופטימיזציה",
+        "שיטת צמצום: דגלי ניסוי, bisect לפי קבצים או פונקציות",
+        "מבחין בין דגל שמסתיר את הבאג לבין תיקון",
+        "מניעה: UBSan ב-CI, warnings כ-errors"
+      ],
+      "explanation": "התשובה החזקה היא מתודית: היפותזה (UB), כלים לאישור, צמצום, ואז תיקון ומניעה.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.ub-bugs.q16",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "GCC עם `-O2` מקמפל את `exists` ל-`return true;` בלבד, בלי לולאה. למה זה חוקי?",
+      "code": "int table[4];\n\nbool exists(int v) {\n    for (int i = 0; i <= 4; ++i)\n        if (table[i] == v) return true;\n    return false;\n}",
+      "bugLine": 4,
+      "choices": [
+        "התנאי `i <= 4` גורם לקריאת `table[4]`, שהיא UB. לכן כל ביצוע שבו אף אחד מ-4 האיברים הראשונים לא שווה ל-v מוביל ל-UB, והקומפיילר רשאי להניח שזה לא קורה: אחד מהם בהכרח שווה, והתוצאה true",
+        "הקומפיילר מניח שמערך גלובלי מאותחל לאפסים ושה-v תמיד 0",
+        "זה באג בקומפיילר",
+        "לולאה בלי side effects מותר למחוק"
+      ],
+      "answer": 0,
+      "explanation": "זה 'time travel' של UB: הקומפיילר לא חייב להגיע ל-UB כדי להשתמש בו; מספיק שכל מסלול שמגיע ל-`return false` עובר דרך `table[4]`. המסלולים החוקיים היחידים מחזירים true, ולכן `return true` הוא קימפול חוקי. 'לולאה בלי side effects' מתייחס ללולאות אינסופיות, ולא רלוונטי לקוד שמחזיר ערך. תיקון: `i < 4`.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q17",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "הקוד קורא ל-`f((int*)&v, (float*)&v)` כש-`int v`. מה נכון לגבי הערך המוחזר ב-GCC עם `-O2`?",
+      "code": "int f(int* i, float* x) {\n    *i = 1;\n    *x = 0.0f;\n    return *i;\n}",
+      "choices": [
+        "תמיד 0, כי ה-float 0.0 מיוצג באפסים",
+        "UB (strict aliasing). בפועל GCC מחזיר 1: הוא מניח ש-`float*` לא יכול לשנות `int`, ולכן לא קורא שוב מהזיכרון",
+        "תמיד 1, באופן מוגדר",
+        "לא מתקמפל בגלל ה-cast"
+      ],
+      "answer": 1,
+      "explanation": "תחת strict aliasing הקומפיילר מניח שכתיבה דרך `float*` לא משנה אובייקט `int`, ולכן מחזיר את הקבוע 1 בלי load. ב-`-O0`, או עם `-fno-strict-aliasing`, מתקבל 0. התשובה 'תמיד 1 באופן מוגדר' שגויה: ההתנהגות לא מוגדרת, ו-1 הוא רק מה שהאופטימייזר בוחר. זה הסיבה ש-Linux מקומפל עם `-fno-strict-aliasing`.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "המיון מהשאלה על peaks תוקן ל-`a.mag > b.mag` (float). בייצור עדיין יש לפעמים crash בתוך std::sort, רק כשה-FFT מקבל קלט שגוי. מה הסיבה הסבירה?",
+      "choices": [
+        "ערכי `-0.0` ו-`+0.0` שווים בהשוואה, וזה שובר את ה-sort",
+        "ערכי NaN: NaN לא גדול ולא קטן מכלום, ולכן 'לא-בר-השוואה' לכל ערך. היחס הזה לא טרנזיטיבי (1~NaN, NaN~2, אבל 1<2), כך ש-`>` אינו strict weak ordering על הקלט, וזה UB",
+        "ערכי Inf גורמים ל-overflow בהשוואה",
+        "denormals גורמים להשוואות לא עקביות בין SSE ל-x87"
+      ],
+      "answer": 1,
+      "explanation": "strict weak ordering דורש ש'שקילות' (אף אחד לא קטן מהשני) תהיה טרנזיטיבית. -0.0 ו-+0.0 שקולים זה לזה באופן עקבי, וזה חוקי. Inf משתווה כרגיל. NaN שובר את הטרנזיטיביות, וזה UB ב-std::sort. תיקון: לסנן NaN לפני המיון (ולהבין למה ה-FFT מייצר NaN), או להשתמש בסדר מלא כמו `std::strong_order` (C++20), שממיין floats לפי IEEE totalOrder. השוואות denormal עקביות.",
+      "lesson": "bugs.ub-bugs"
+    }
+  ]
+}

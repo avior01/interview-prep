@@ -1,0 +1,312 @@
+{
+  "domain": "conc",
+  "subtopic": "threads",
+  "lessons": [
+    {
+      "id": "conc.threads",
+      "title": "Threads",
+      "what": "thread הוא רצף ביצוע עצמאי בתוך process: יש לו stack, רגיסטרים ו-TID משלו, אבל הוא חולק עם שאר ה-threads את מרחב הזיכרון (heap, משתנים גלובליים), את טבלת ה-file descriptors ואת ה-signal handlers. ב-C++ יוצרים אותו עם std::thread או std::jthread, וב-Linux כל thread הוא task שה-scheduler מתזמן בנפרד.",
+      "when": [
+        "צריך לנצל כמה cores לעבודה חישובית שאפשר לחלק (למשל FFT על בלוקים בלתי תלויים)",
+        "צריך להפריד שלב חוסם (I/O, קבלת דגימות מה-SDR) משלב חישובי כדי שלא יעכב אותו",
+        "בשאלות על pipeline: כל שלב ב-thread משלו, ותורים ביניהם"
+      ],
+      "how": [
+        "יצירה: הבנאי של std::thread מעתיק (decay-copy) את הפונקציה והארגומנטים ומתחיל להריץ מיד. כדי להעביר reference צריך std::ref",
+        "סיום: חובה לקרוא ל-join (לחכות) או ל-detach (לנתק) לפני שהאובייקט נהרס. אם ה-thread עדיין joinable בהריסה נקרא std::terminate",
+        "std::jthread (C++20) עושה join אוטומטית ב-destructor ותומך בביטול שיתופי דרך std::stop_token",
+        "סנכרון בסיסי מובטח: סוף הבנאי של std::thread הוא synchronizes-with תחילת הפונקציה, וסיום ה-thread הוא synchronizes-with החזרה מ-join. כל השאר דורש mutex או atomics",
+        "exception שלא נתפס בתוך thread גורם ל-std::terminate. מעבירים שגיאות החוצה עם std::promise/std::future או std::exception_ptr",
+        "thread_local נותן לכל thread עותק משלו של משתנה, נוצר בפעם הראשונה שה-thread משתמש בו",
+        "ב-Linux ה-thread נוצר ב-clone() עם CLONE_VM ודגלים נוספים, ה-stack ברירת המחדל הוא בדרך כלל 8MB וירטואליים (לפי RLIMIT_STACK) ודפים פיזיים מוקצים רק כשנוגעים בהם"
+      ],
+      "complexity": "יצירת thread עולה בערך עשרות מיקרו-שניות (syscall, הקצאת stack, מבני kernel); context switch עולה בערך 1–5 מיקרו-שניות ישירות, ועוד הרבה יותר בעקיפין דרך cache ו-TLB קרים. לכן למשימות קטנות ורבות משתמשים ב-thread pool עם מספר threads קרוב למספר ה-cores.",
+      "pitfalls": [
+        "lambda עם [&] ו-detach: ה-thread ממשיך לרוץ אחרי שהמשתנים המקומיים מתו, dangling reference",
+        "שכחה של join או detach, ואז std::terminate ב-destructor",
+        "oversubscription: יותר threads פעילים מ-cores, במיוחד threads שעושים busy-wait, גורם ל-context switches ו-latency לא צפוי",
+        "sleep אינו סנכרון: קריאה של משתנה לא-atomic אחרי sleep היא עדיין data race ו-UB",
+        "fork() בתוכנית multithreaded משכפל רק את ה-thread הקורא, ו-locks שהוחזקו ע״י threads אחרים נשארים נעולים בילד"
+      ],
+      "senior": [
+        "לדעת להסביר את ה-happens-before של create ו-join, ולמה detach כמעט אף פעם אינו התשובה הנכונה",
+        "thread pool, affinity (pthread_setaffinity_np), isolcpus ו-IRQ affinity במערכות זמן-אמת",
+        "הגדרת SCHED_FIFO דרך pthread_attr דורשת PTHREAD_EXPLICIT_SCHED, ואחרת ה-thread יורש את מדיניות היוצר",
+        "שיקולי NUMA ו-cache locality: איפה ה-thread רץ ואיפה הזיכרון שלו הוקצה"
+      ],
+      "diagram": "process\n+--------------------------------+\n| heap, globals, fds  (shared)   |\n| +--------+ +--------+ +------+ |\n| |thread 1| |thread 2| |thr 3 | |\n| | stack  | | stack  | |stack | |\n| | regs   | | regs   | |regs  | |\n| +--------+ +--------+ +------+ |\n+--------------------------------+"
+    }
+  ],
+  "questions": [
+    {
+      "id": "conc.threads.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה קורה כשאובייקט `std::thread` נהרס בזמן שהוא עדיין joinable (לא נקרא join ולא detach)?",
+      "choices": [
+        "ה-destructor מבצע join אוטומטית ומחכה לסיום",
+        "ה-destructor מבצע detach אוטומטית וה-thread ממשיך ברקע",
+        "נקרא `std::terminate` והתוכנית מסתיימת",
+        "זה undefined behavior, לרוב לא קורה כלום"
+      ],
+      "answer": 2,
+      "explanation": "התקן מגדיר שה-destructor של `std::thread` קורא ל-`std::terminate` אם ה-thread joinable. זו החלטה מכוונת: join מרומז עלול לתקוע, ו-detach מרומז עלול להשאיר dangling references. את ה-join האוטומטי מקבלים רק ב-`std::jthread` מ-C++20.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "conc.threads.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה מהבאים **אינו** משותף בין threads של אותו process?",
+      "choices": [
+        "ה-heap",
+        "משתנים גלובליים ו-static",
+        "טבלת ה-file descriptors",
+        "הרגיסטרים וה-stack pointer"
+      ],
+      "answer": 3,
+      "explanation": "לכל thread יש context משלו: רגיסטרים, program counter, stack pointer ו-stack נפרד. ה-heap, המשתנים הגלובליים וטבלת ה-file descriptors שייכים ל-process ומשותפים לכל ה-threads, ולכן גישה אליהם דורשת סנכרון.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו פונקציה סטטית ב-C++ מחזירה רמז למספר ה-threads שהחומרה יכולה להריץ במקביל? (שם הפונקציה)",
+      "accept": ["hardware_concurrency", "std::thread::hardware_concurrency", "hardware_concurrency()", "std::thread::hardware_concurrency()"],
+      "explanation": "`std::thread::hardware_concurrency()` מחזירה את מספר ה-hardware threads (cores כפול SMT), או 0 אם לא ידוע. זה רק רמז: הוא לא מתחשב ב-cpuset, ב-isolcpus או במגבלות container.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q04",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה קורה עם הקוד הבא?",
+      "lang": "cpp",
+      "code": "void inc(int& x) { ++x; }\n\nint main() {\n  int v = 0;\n  std::thread t(inc, v);\n  t.join();\n  std::cout << v;\n}",
+      "choices": [
+        "מדפיס 0",
+        "מדפיס 1",
+        "שגיאת קומפילציה",
+        "undefined behavior"
+      ],
+      "answer": 2,
+      "explanation": "הבנאי של `std::thread` מעתיק את הארגומנטים ומעביר אותם לפונקציה כ-rvalues. `int&` לא יכול להיקשר ל-rvalue, ולכן הקוד לא מתקמפל. כדי להעביר reference צריך `std::thread t(inc, std::ref(v));` ואז יודפס 1. התשובה 0 הייתה נכונה אילו הפונקציה הייתה מקבלת `const int&`.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "conc.threads.q05",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הפונקציה מפעילה חישוב ברקע. מה הבאג?",
+      "lang": "cpp",
+      "code": "void start() {\n  std::vector<int> data(1000, 1);\n  std::thread t([&] {\n    long s = 0;\n    for (int x : data) s += x;\n    log(s);\n  });\n  t.detach();\n}",
+      "bugLine": 3,
+      "choices": [
+        "חסר mutex סביב הלולאה על data",
+        "ה-lambda לוכדת את data ב-reference, ואחרי detach הפונקציה חוזרת ו-data נהרס בזמן שה-thread עוד קורא ממנו",
+        "אסור לקרוא ל-detach על thread שמריץ lambda",
+        "long עלול לגלוש, צריך int64_t"
+      ],
+      "answer": 1,
+      "explanation": "`start` חוזרת מיד אחרי detach, ה-vector המקומי נהרס, וה-thread ממשיך לקרוא זיכרון משוחרר: dangling reference ו-UB. אין כאן data race כי רק thread אחד ניגש ל-data. התיקון: ללכוד by value (`[data = std::move(data)]`) או לעשות join.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל העיקרי בין `std::jthread` ל-`std::thread`?",
+      "choices": [
+        "jthread רץ תמיד על core נפרד",
+        "jthread מבצע join אוטומטית ב-destructor ומספק stop_token לביטול שיתופי",
+        "jthread הורג את ה-thread בכוח כשהאובייקט נהרס",
+        "jthread הוא thread קל (green thread) שלא נוצר דרך מערכת ההפעלה"
+      ],
+      "answer": 1,
+      "explanation": "`std::jthread` (C++20) קורא ב-destructor ל-`request_stop()` ואז ל-`join()`. הביטול שיתופי: הפונקציה צריכה לבדוק את ה-`stop_token` בעצמה, אין הריגה בכוח. מתחת למכסה זה thread רגיל של מערכת ההפעלה.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q07",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי threads ב-Linux (glibc/NPTL)?",
+      "choices": [
+        "כל thread הוא task עם TID משלו שה-scheduler מתזמן בנפרד",
+        "גודל ה-stack ברירת המחדל נקבע בדרך כלל לפי RLIMIT_STACK (לרוב 8MB וירטואליים), ודפים פיזיים מוקצים רק כשנוגעים בהם",
+        "יצירת thread מעתיקה את טבלאות הדפים של ה-process כמו fork",
+        "signal שנשלח ל-process עם kill() נמסר ל-thread כלשהו שלא חוסם אותו",
+        "thread שקורא ל-exit() מסיים רק את עצמו"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "threads נוצרים ב-clone() עם CLONE_VM, כלומר חולקים את אותו mm ואין העתקה של page tables (זה מה ש-fork עושה, עם copy-on-write). signal ברמת process נמסר ל-thread שרירותי שלא חוסם אותו, ולכן מקובל לחסום signals בכל ה-threads ולטפל בהם ב-thread ייעודי עם sigwait. `exit()` מסיים את כל ה-process; כדי לסיים thread בודד חוזרים מהפונקציה או קוראים ל-`pthread_exit`.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "worker thread זורק exception שאף אחד לא תופס בתוך הפונקציה שלו. מה קורה?",
+      "choices": [
+        "ה-exception מועבר ל-thread שקורא ל-join ונזרק שם מחדש",
+        "ה-thread מסתיים בשקט ושאר התוכנית ממשיכה",
+        "נקרא `std::terminate` וכל ה-process מסתיים",
+        "ה-exception נשמר באובייקט ה-`std::thread` וניתן לשלוף אותו"
+      ],
+      "answer": 2,
+      "explanation": "exception שיוצא מהפונקציה הראשית של thread גורם ל-`std::terminate`. כדי להעביר שגיאה ל-thread אחר משתמשים ב-`std::promise::set_exception`, או ב-`std::async` שה-future שלו זורק מחדש ב-`get()`. האפשרויות של העברה ל-join ושמירה באובייקט מתארות בדיוק את מה ש-future עושה, לא את מה ש-std::thread עושה.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q09",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש `long long parallel_sum(const std::vector<int>& v, unsigned nthreads)` שמחלקת את הווקטור ל-nthreads קטעים, סוכמת כל קטע ב-thread נפרד ומחזירה את הסכום. הקפד על נכונות, על חלוקה נכונה כשהגודל לא מתחלק, ועל ביצועים.",
+      "lang": "cpp",
+      "starter": "long long parallel_sum(const std::vector<int>& v, unsigned nthreads);",
+      "modelAnswer": "long long parallel_sum(const std::vector<int>& v, unsigned nthreads) {\n  if (nthreads == 0) nthreads = 1;\n  const size_t n = v.size();\n  std::vector<long long> partial(nthreads, 0);\n  std::vector<std::thread> ts;\n  ts.reserve(nthreads);\n  for (unsigned i = 0; i < nthreads; ++i) {\n    size_t lo = n * i / nthreads;\n    size_t hi = n * (i + 1) / nthreads;\n    ts.emplace_back([&v, &partial, i, lo, hi] {\n      long long s = 0;            // local accumulator: no false sharing\n      for (size_t k = lo; k < hi; ++k) s += v[k];\n      partial[i] = s;             // single write at the end\n    });\n  }\n  for (auto& t : ts) t.join();    // join gives happens-before for partial[]\n  long long total = 0;\n  for (long long p : partial) total += p;\n  return total;\n}",
+      "rubric": [
+        "חלוקה נכונה לקטעים כולל שארית (למשל lo = n*i/k, hi = n*(i+1)/k) וטיפול ב-nthreads == 0",
+        "צבירה למשתנה מקומי ולא ישירות ל-partial[i] בתוך הלולאה, כדי להימנע מ-false sharing",
+        "join לכל ה-threads לפני קריאת התוצאות, כך שאין data race",
+        "סיבוכיות O(n/k + k) זמן, ושימוש ב-long long כדי למנוע overflow",
+        "בונוס: להזכיר std::reduce עם std::execution::par או thread pool במקום יצירת threads בכל קריאה"
+      ],
+      "explanation": "הנקודות שבודקים: חלוקה נכונה, אין data race (כל thread כותב לתא שלו, וה-join מבטיח happens-before), וצבירה למשתנה מקומי. כתיבה חוזרת ל-`partial[i]` בתוך הלולאה יוצרת false sharing, כי כמה תאים יושבים באותו cache line של 64 בתים.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "conc.threads.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך לעבד 10,000 משימות קטנות (כל אחת כ-20 מיקרו-שניות) על מכונה עם 8 cores. מה הגישה הנכונה?",
+      "choices": [
+        "thread חדש לכל משימה, כדי למקסם מקביליות",
+        "thread pool עם כ-8 workers ותור משימות משותף",
+        "thread אחד בלבד, כי threads תמיד מוסיפים overhead",
+        "10,000 threads שנוצרים מראש וממתינים על condition variable"
+      ],
+      "answer": 1,
+      "explanation": "יצירת thread עולה עשרות מיקרו-שניות, באותו סדר גודל כמו המשימה עצמה, ו-10,000 threads פעילים גורמים ל-oversubscription ולהרבה context switches. thread pool בגודל מספר ה-cores מחלק את העלות פעם אחת. thread יחיד מוותר על פי 8 בלי סיבה, כי המשימות בלתי תלויות.",
+      "lesson": "conc.threads",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "conc.threads.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "pipeline של SDR: 6 threads בעדיפות SCHED_OTHER רגילה רצים על 4 cores, וכל צרכן עושה busy-poll על התור שלפניו. מדי פעם ה-latency קופץ לכמה מילי-שניות. מה ההסבר הסביר ביותר?",
+      "choices": [
+        "busy-poll תמיד מהיר יותר מ-blocking, אז הבעיה בטוח ב-cache misses",
+        "יש יותר threads רצים מ-cores: צרכן שמסתובב שורף את ה-time slice שלו בזמן שהיצרן שהוא מחכה לו לא מתוזמן, ו-time slice של CFS הוא בסדר גודל של מילי-שניות",
+        "התורים צריכים להיות גדולים יותר, ואז ה-latency ייעלם",
+        "SCHED_OTHER לא מתזמן threads של אותו process על cores שונים"
+      ],
+      "answer": 1,
+      "explanation": "busy-poll עובד רק כשלכל thread שמסתובב יש core משלו. עם 6 threads שרצים כל הזמן על 4 cores, ה-scheduler מחלק זמן, וצרכן שמסתובב יכול לתפוס את ה-core בזמן שהיצרן מחכה בתור ה-runqueue, כך שה-latency הופך לגודל של time slice. תור גדול יותר לא משנה את ה-latency של פריט בודד. הפתרונות: מספר threads קטן או שווה למספר ה-cores המבודדים, pinning, או blocking/backoff בשלבים שלא קריטיים.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "conc.threads.q12",
+      "level": 4,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "thread_local int cnt = 0;\nvoid work() { for (int i = 0; i < 3; ++i) ++cnt; }\n\nint main() {\n  std::thread a(work), b(work);\n  a.join(); b.join();\n  work();\n  std::cout << cnt;\n}",
+      "choices": [
+        "9",
+        "3",
+        "0",
+        "לא מוגדר בגלל data race על cnt"
+      ],
+      "answer": 1,
+      "explanation": "לכל thread יש עותק משלו של `cnt`. ה-threads a ו-b מגדילים כל אחד את העותק שלו ל-3, והעותקים האלה נהרסים כשהם מסתיימים. main מגדיל את העותק שלו שלוש פעמים ומדפיס 3. אין data race כי אף עותק לא משותף.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q13",
+      "level": 4,
+      "type": "oral",
+      "prompt": "יש לך X310 שמזרים 200 MS/s לשרת Linux עם 16 cores. איך תמקם את ה-threads של ה-pipeline (RX, DSP, TX) על ה-cores כדי לקבל jitter נמוך? מה עוד צריך להגדיר מעבר ל-affinity?",
+      "modelAnswer": "קודם מבודדים cores: `isolcpus` (או cpusets) כדי שה-scheduler לא ישים שם tasks אחרים, ו-`nohz_full` ו-`rcu_nocbs` כדי לצמצם את ה-tick ואת ה-RCU callbacks על ה-cores האלה. מצמידים כל thread קריטי ל-core משלו עם `pthread_setaffinity_np`, thread אחד לכל core, בלי oversubscription. את ה-IRQ של כרטיס הרשת (10GbE) מפנים דרך /proc/irq/*/smp_affinity ל-core קרוב לזה של ה-RX thread, אבל לא לאותו core אם ה-RX עושה busy-poll, ומכבים את irqbalance. בודקים NUMA: ה-NIC מחובר ל-socket מסוים, אז ה-RX thread והבאפרים שלו צריכים להיות באותו node. מעבר לזה: SCHED_FIFO לשלבים הקריטיים, mlockall כדי שלא יהיו page faults, prefault של buffers, ביטול C-states עמוקים ו-frequency scaling (governor performance), ומדידה עם cyclictest והיסטוגרמות latency ולא רק ממוצע.",
+      "rubric": [
+        "בידוד cores: isolcpus/cpusets, nohz_full, ו-thread אחד לכל core מבודד",
+        "ניהול IRQ affinity של ה-NIC וכיבוי irqbalance",
+        "מודעות ל-NUMA: thread, זיכרון ו-NIC על אותו node",
+        "SCHED_FIFO, mlockall/prefault, והגדרות power (C-states, governor)",
+        "מדידה: cyclictest, היסטוגרמה, worst-case ולא ממוצע"
+      ],
+      "explanation": "מראיין סניור מחפש תמונה מלאה: affinity לבדו לא מספיק אם interrupts, ticks, page faults או C-states עדיין נוחתים על ה-core הקריטי.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "conc.threads.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "הלולאה הבאה אמורה להריץ 100 משימות במקביל, אבל בפועל היא רצה סדרתית. למה?\n\n```cpp\nfor (int i = 0; i < 100; ++i)\n  std::async(std::launch::async, task, i);\n```",
+      "choices": [
+        "std::async מוגבל ל-thread אחד בכל רגע",
+        "ה-future שמוחזר הוא temporary שנהרס בסוף הביטוי, וה-destructor שלו חוסם עד שהמשימה מסתיימת",
+        "std::launch::async מריץ את המשימה בצורה עצלה (deferred) רק כשקוראים ל-get",
+        "חסר std::ref סביב i"
+      ],
+      "answer": 1,
+      "explanation": "ה-future שמגיע מ-`std::async` הוא מקרה מיוחד: ה-destructor שלו חוסם עד סיום המשימה. בגלל שהערך לא נשמר, ה-temporary נהרס מיד וכל איטרציה מחכה לקודמת. deferred זו המדיניות `std::launch::deferred`, לא async. התיקון: לשמור את ה-futures ב-vector ולחכות להם בסוף.",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q15",
+      "level": 5,
+      "type": "multi",
+      "prompt": "`x` הוא `int` רגיל (לא atomic). באילו תרחישים **אין** data race לפי מודל הזיכרון של C++?",
+      "choices": [
+        "main כותב `x = 1` ואז יוצר `std::thread` שקורא את x",
+        "thread כותב ל-x, ו-main קורא את x אחרי `t.join()`",
+        "thread כותב ל-x ומבוצע לו detach. main עושה sleep של שנייה ואז קורא את x",
+        "thread כותב ל-x ואז `done.store(true, relaxed)`. main מסתובב עד `done.load(relaxed)` ואז קורא את x",
+        "כמו הקודם, אבל עם `memory_order_release` ב-store ו-`memory_order_acquire` ב-load"
+      ],
+      "answer": [0, 1, 4],
+      "explanation": "סוף הבנאי של std::thread הוא synchronizes-with תחילת הפונקציה, וסיום ה-thread הוא synchronizes-with החזרה מ-join, ולכן תרחישי הבנאי וה-join בטוחים. sleep אינו פעולת סנכרון במודל הזיכרון, ולכן תרחיש ה-detach עם sleep הוא data race ו-UB גם אם בפועל זה כמעט תמיד עובד. ב-relaxed אין synchronizes-with, ולכן גם הוא race, ורק זוג release/acquire יוצר happens-before.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "conc.threads.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "תוכנית multithreaded קוראת ל-`fork()`. הילד, לפני `exec`, קורא לפונקציית logging של האפליקציה שנועלת `std::mutex` פנימי, ונתקע לפעמים לנצח. מה הסיבה?",
+      "choices": [
+        "הילד יורש את כל ה-threads של האב, והם מתחרים על ה-mutex",
+        "copy-on-write גורם ל-deadlock בתוך ה-kernel בזמן הקצאת דפים",
+        "fork משכפל רק את ה-thread הקורא. אם thread אחר החזיק את ה-mutex ברגע ה-fork, ה-mutex מועתק במצב נעול ואין בילד אף אחד שישחרר אותו",
+        "std::mutex אינו async-signal-safe, ולכן ה-kernel חוסם אותו בילד"
+      ],
+      "answer": 2,
+      "explanation": "בילד קיים רק העתק של ה-thread שקרא ל-fork, אבל הזיכרון כולו מועתק, כולל mutexes שהיו נעולים ע״י threads שלא קיימים בילד. לכן POSIX מתיר בילד רק פונקציות async-signal-safe עד ה-exec. התשובה האחרונה קרובה, אבל ה-kernel לא חוסם שום דבר: async-signal-safe הוא כלל שימוש, והתקיעה היא deadlock בתוך user space. glibc מגן על ה-locks הפנימיים של malloc סביב fork, אבל locks של האפליקציה ושל ספריות אחרות לא מוגנים (אלא אם משתמשים ב-pthread_atfork).",
+      "lesson": "conc.threads"
+    },
+    {
+      "id": "conc.threads.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "הקוד מגדיר `pthread_attr_setschedpolicy(&a, SCHED_FIFO)` ו-priority 80, יוצר thread עם ה-attr, וה-pthread_create מצליח. אבל `chrt -p` מראה שה-thread רץ ב-SCHED_OTHER. מה הסיבה הסבירה ביותר?",
+      "choices": [
+        "חסרה הרשאת CAP_SYS_NICE, וה-kernel הוריד את ה-thread בשקט ל-SCHED_OTHER",
+        "ברירת המחדל של inheritsched ב-glibc היא PTHREAD_INHERIT_SCHED, ולכן ה-policy שב-attr מתעלמת וה-thread יורש את מדיניות היוצר. צריך pthread_attr_setinheritsched(PTHREAD_EXPLICIT_SCHED)",
+        "SCHED_FIFO נכנס לתוקף רק אחרי ה-sleep הראשון של ה-thread",
+        "priority 80 מחוץ לטווח, ולכן ה-kernel בחר ברירת מחדל"
+      ],
+      "answer": 1,
+      "explanation": "זו מלכודת מוכרת: בלי PTHREAD_EXPLICIT_SCHED, ערכי ה-policy וה-priority ב-attr לא נלקחים בחשבון. בלי הרשאות מתאימות (CAP_SYS_NICE או RLIMIT_RTPRIO), pthread_create עם EXPLICIT_SCHED נכשל עם EPERM ולא מוריד את ה-thread בשקט. הטווח של SCHED_FIFO ב-Linux הוא 1–99, אז 80 תקין.",
+      "lesson": "conc.threads",
+      "tags": ["nvidia"]
+    }
+  ]
+}

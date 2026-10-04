@@ -1,0 +1,296 @@
+{
+  "domain": "design",
+  "subtopic": "pipelines",
+  "lessons": [
+    {
+      "id": "design.pipelines",
+      "title": "שלבי pipeline",
+      "what": "pipeline הוא שרשרת שלבים שכל אחד מקבל פריטים מהקודם, מעבד ומעביר הלאה. השלבים רצים במקביל על פריטים שונים, וכך ה-throughput נקבע על ידי השלב האיטי ביותר ולא על ידי סכום השלבים.",
+      "when": [
+        "עיבוד זרם רציף: samples מ-SDR, טלמטריה, לוגים, events",
+        "שאלות על bottleneck, כמה workers לכל שלב, ואיך שומרים על סדר",
+        "streaming systems (Kafka, Flink, Spark Streaming, Azure Stream Analytics) ושאלות על delivery semantics ו-windows"
+      ],
+      "how": [
+        "מפרקים את העיבוד לשלבים עם אחריות ברורה; מסמנים כל שלב כ-stateless (כל פריט עצמאי) או stateful (תלוי בהיסטוריה)",
+        "מודדים את זמן העיבוד של כל שלב; השלב האיטי הוא ה-bottleneck וקובע את ה-throughput",
+        "שלב stateless איטי משכפלים ל-k workers; שלב stateful מחלקים לפי key (partitioning) כדי שה-state של key יישאר במקום אחד",
+        "בין שלבים שמים תורים bounded; שלבים קלים וצמודים עדיף לאחד (fusion) כדי לחסוך handoff ו-cache misses",
+        "מגדירים delivery semantics: at-most-once, at-least-once, או effectively-once (at-least-once + sink אידמפוטנטי או טרנזקציה)",
+        "ב-streaming מבחינים בין event time (מתי האירוע קרה) ל-processing time (מתי עיבדנו), ומשתמשים ב-windows (tumbling, sliding, session) וב-watermarks כדי להחליט מתי חלון סגור"
+      ],
+      "complexity": "throughput = min על השלבים של (workers / זמן לפריט). latency = סכום זמני השלבים + ההמתנה בתורים. workers נדרשים לשלב = ⌈ קצב יעד × זמן לפריט ⌉.",
+      "pitfalls": [
+        "לשכפל שלב stateful בלי partitioning: ה-state מתפצל והתוצאות שגויות",
+        "לפצל ל-thread לכל פעולה זעירה: עלות ה-handoff גדולה מהעבודה",
+        "at-least-once בלי sink אידמפוטנטי: כפילויות אחרי כל restart",
+        "חלונות לפי processing time כשהנתונים מגיעים באיחור: אותו קלט נותן תוצאות שונות",
+        "הודעה פגומה אחת (poison message) שגורמת לשלב לקרוס שוב ושוב ולתקוע את כל ה-partition"
+      ],
+      "senior": [
+        "לחשב workers לכל שלב ולהראות איפה ה-bottleneck",
+        "להסביר exactly-once באמת: מה מובטח בתוך המערכת ומה דורש idempotency בגבולות",
+        "לדבר על late data, watermarks ו-allowed lateness",
+        "לתכנן replay ו-reprocessing: אותו קוד על היסטוריה, checkpoints, dead letter queue"
+      ],
+      "diagram": "src -> [A 2ms] -> q -> [B 5ms]x3 -> q -> [C 1ms] -> sink\n                       bottleneck"
+    }
+  ],
+  "questions": [
+    {
+      "id": "design.pipelines.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-pipeline שבו כל שלב רץ במקביל לאחרים, מה קובע את ה-throughput המקסימלי?",
+      "choices": [
+        "סכום זמני העיבוד של כל השלבים",
+        "השלב הראשון",
+        "השלב האיטי ביותר (ה-bottleneck)",
+        "גודל התורים בין השלבים"
+      ],
+      "answer": 2,
+      "explanation": "במצב יציב, כל שלב יכול להוציא פריטים רק בקצב שבו הוא מקבל אותם, והשלב האיטי מגביל את כולם. סכום הזמנים קובע את ה-latency, לא את ה-throughput. תורים גדולים סופגים bursts אבל לא מעלים את הקצב הממוצע.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין שלב stateless לשלב stateful?",
+      "choices": [
+        "שלב stateless לא משתמש בזיכרון בכלל",
+        "בשלב stateless הפלט של כל פריט תלוי רק בפריט עצמו; בשלב stateful הוא תלוי גם בפריטים קודמים (למשל ספירה לפי key, filter עם memory)",
+        "שלב stateful תמיד כותב לדיסק",
+        "שלב stateless לא יכול לרוץ במקביל"
+      ],
+      "answer": 1,
+      "explanation": "ההבחנה היא בתלות בהיסטוריה. שלב stateless אפשר לשכפל בחופשיות. שלב stateful (aggregation, FIR עם delay line, NCO עם phase) דורש שה-state יגיע לאותו worker, ולכן משכפלים אותו רק עם partitioning.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה tumbling window של דקה?",
+      "choices": [
+        "חלונות של דקה שמתחילים כל שנייה וחופפים",
+        "חלונות צמודים ולא חופפים של דקה בדיוק: 10:00-10:01, 10:01-10:02 וכן הלאה",
+        "חלון שנסגר אחרי דקה של חוסר פעילות",
+        "חלון שמכיל תמיד את 60 האירועים האחרונים"
+      ],
+      "answer": 1,
+      "explanation": "tumbling window הוא חלוקה לא חופפת של הזמן; כל אירוע שייך לחלון אחד בדיוק. חלונות חופפים הם sliding (או hopping), חלון שנסגר אחרי שקט הוא session window, ו-60 אירועים אחרונים הוא count window.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q04",
+      "level": 2,
+      "type": "short",
+      "prompt": "pipeline של שלושה שלבים עם worker אחד לכל שלב: A לוקח 2 ms לפריט, B לוקח 5 ms, C לוקח 1 ms. מה ה-throughput המקסימלי, בפריטים לשנייה?",
+      "accept": ["200"],
+      "explanation": "B הוא ה-bottleneck: worker אחד ב-5 ms לפריט מוציא 200 פריטים לשנייה. ה-latency של פריט (בלי המתנה) הוא 8 ms, אבל זה לא משנה את הקצב.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q05",
+      "level": 2,
+      "type": "multi",
+      "prompt": "מה היתרונות של פיצול עיבוד לשלבי pipeline נפרדים (thread או שירות לכל שלב)?",
+      "choices": [
+        "שלבים שונים רצים במקביל על פריטים שונים, ולכן throughput עולה",
+        "אפשר להגדיל (scale) רק את השלב שהוא bottleneck",
+        "ה-latency של פריט בודד תמיד יורד",
+        "שלב איטי או לא יציב (I/O) מבודד מהשלבים הקריטיים בעזרת תור",
+        "אין צורך יותר בסנכרון"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "פיצול נותן מקביליות, scaling ממוקד ובידוד. ה-latency של פריט בודד בדרך כלל עולה מעט בגלל ה-handoffs והתורים. והתורים בין השלבים הם בדיוק סנכרון.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "טלפונים שולחים אירועים עם timestamp מקומי; חלק מהם במצב offline ושולחים באיחור של דקות. רוצים לספור אירועים לפי הדקה שבה הם קרו. לפי איזה זמן צריך לקבץ?",
+      "choices": [
+        "processing time: הזמן שבו השרת קיבל את האירוע",
+        "event time: ה-timestamp שבאירוע עצמו, עם מנגנון לטיפול באירועים מאחרים",
+        "הזמן שבו האירוע נכתב לדיסק",
+        "זמן אקראי בתוך החלון"
+      ],
+      "answer": 1,
+      "explanation": "השאלה היא מתי האירוע קרה, ולכן event time. processing time פשוט יותר אבל ישייך אירועים מאחרים לדקה הלא נכונה, וריצה חוזרת על אותם נתונים תיתן תוצאה אחרת. המחיר של event time הוא שצריך להחליט מתי חלון 'נסגר' (watermarks).",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q07",
+      "level": 3,
+      "type": "short",
+      "prompt": "שלב stateless לוקח 5 ms לפריט על worker אחד. כמה workers צריך לכל הפחות כדי לעמוד בקצב של 500 פריטים לשנייה?",
+      "accept": ["3"],
+      "explanation": "worker אחד עושה 200 פריטים לשנייה. 500 / 200 = 2.5, ומעגלים למעלה: 3. בפועל מוסיפים מרווח (ה-utilization עם 3 workers הוא 83%, וה-latency בתור יעלה ב-bursts), ולכן הרבה פעמים בוחרים 4.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צרכן קורא הודעות מ-Kafka, מעדכן רשומה בבסיס נתונים, ורק אז מבצע commit ל-offset. אם הוא קורס בין העדכון ל-commit, מה קורה ואיך מבטיחים תוצאה נכונה?",
+      "choices": [
+        "ההודעה הולכת לאיבוד; צריך לבצע commit לפני העדכון",
+        "ההודעה תעובד שוב (at-least-once); העדכון צריך להיות אידמפוטנטי, למשל upsert לפי מזהה הודעה",
+        "Kafka מזהה את זה ומונע עיבוד כפול אוטומטית",
+        "אין בעיה כי הבסיס נתונים transactional"
+      ],
+      "answer": 1,
+      "explanation": "commit אחרי העיבוד נותן at-least-once: אחרי restart הצרכן מתחיל מה-offset האחרון שבוצע לו commit ומעבד שוב. commit לפני העיבוד הופך את זה ל-at-most-once (איבוד). Kafka לא יודע מה קרה ב-DB חיצוני. הפתרון הוא sink אידמפוטנטי, או לשמור את ה-offset באותה טרנזקציה של ה-DB.",
+      "lesson": "design.pipelines",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.pipelines.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-pipeline DSP יש שלב המרה מ-int16 ל-float ושלב הכפלה ב-window, כל אחד ב-thread משלו עם תור ביניהם. כל אחד לוקח כ-0.3 מיקרו-שניות לבלוק. מה הכי נכון לעשות?",
+      "choices": [
+        "להוסיף thread נוסף לכל שלב",
+        "לאחד אותם לשלב אחד (fusion) שעושה את שתי הפעולות במעבר אחד על הנתונים",
+        "להגדיל את התור ביניהם",
+        "להעביר את שניהם ל-GPU"
+      ],
+      "answer": 1,
+      "explanation": "כשהעבודה של שלב קטנה מעלות ה-handoff (תור, wakeup, העברת cache line בין cores), הפיצול רק מאט. fusion חוסך את התור ומשאיר את הנתונים חמים ב-cache: מעבר אחד במקום שניים. GPU לעבודה כזאת קטנה ישלם הרבה יותר על העברת הנתונים מאשר על החישוב.",
+      "lesson": "design.pipelines",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.pipelines.q10",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את שלבי ה-pipeline של מקלט שמזהה אותות ומגיב אליהם:",
+      "items": [
+        "קבלת samples מה-radio (RX streaming)",
+        "המרה ותיקון (DC offset, scaling לרמה נומינלית)",
+        "חלוקה לחלונות והכפלה ב-window",
+        "FFT",
+        "detection: השוואת עוצמה לסף לכל bin",
+        "החלטה ושליחת פקודה ל-TX"
+      ],
+      "explanation": "הנתונים זורמים מהרכישה, דרך הכנה (תיקונים, windowing), טרנספורם, ואז החלטה. detection לפני FFT לא אפשרי כשהסף מוגדר לכל bin, ו-windowing חייב לבוא לפני ה-FFT כדי להקטין leakage.",
+      "lesson": "design.pipelines",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.pipelines.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-stream processor עם event-time windows, ה-watermark הנוכחי הוא 10:05:00. מגיע אירוע עם timestamp 10:03:30. מה המשמעות ומה קורה לו?",
+      "choices": [
+        "ה-watermark הוא זמן השרת, והאירוע מעובד כרגיל",
+        "האירוע הוא late data: ה-watermark הצהיר שלא צפויים אירועים לפני 10:05; לפי ה-allowed lateness הוא מעדכן את החלון ומפיק תוצאה מתוקנת, או נזרק / מנותב ל-side output",
+        "המערכת קורסת כי זה מפר את ה-watermark",
+        "האירוע משויך אוטומטית לחלון הנוכחי"
+      ],
+      "answer": 1,
+      "explanation": "watermark הוא הערכה (heuristic) ש'כל האירועים עד זמן T כבר הגיעו', והוא מאפשר לסגור חלונות. אירוע שמגיע עם timestamp ישן יותר הוא late. מערכות כמו Flink ו-Beam נותנות לבחור: allowed lateness שמעדכן את החלון ופולט תוצאה חדשה, או side output לטיפול נפרד. שיוך לחלון הנוכחי היה שובר את סמנטיקת event time.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q12",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו מהבאים נחוצים כדי ש-pipeline stateful (כמו ב-Flink) יגיע ל-exactly-once על ה-state הפנימי אחרי כשל?",
+      "choices": [
+        "snapshot עקבי של ה-state של כל השלבים (למשל barriers שזורמים עם הנתונים)",
+        "מקור שאפשר להריץ ממנו מחדש מ-offset שנשמר יחד עם ה-snapshot",
+        "שליחת כל הודעה פעמיים כגיבוי",
+        "שחזור כל השלבים מאותו snapshot ונגינה מחדש מה-offsets שבו",
+        "שעונים מסונכרנים בין כל המכונות"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "המנגנון (Chandy-Lamport / asynchronous barrier snapshotting): barriers מסמנים נקודת חיתוך, כל שלב שומר state כשה-barrier עובר, וה-snapshot כולל את ה-offsets של המקור. אחרי כשל משחזרים הכל ומנגנים מחדש, כך שכל אירוע משפיע על ה-state פעם אחת. לא צריך שעונים מסונכרנים, ושכפול הודעות רק יוצר כפילויות. ל-sink חיצוני צריך בנוסף טרנזקציה או idempotency.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "הודעה אחת ב-partition גורמת ל-exception בכל ניסיון לעבד אותה. הצרכן נכשל, עושה restart, ונתקע עליה שוב, וכל ה-partition עומד. מה הפתרון הסטנדרטי?",
+      "choices": [
+        "לבצע skip שקט להודעה ולהמשיך",
+        "מספר ניסיונות מוגבל, ואחריהם להעביר את ההודעה ל-dead letter queue עם פרטי השגיאה, להתריע ולהמשיך",
+        "להגדיל את ה-timeout של הצרכן",
+        "למחוק את ה-partition"
+      ],
+      "answer": 1,
+      "explanation": "poison message צריך לצאת מהנתיב הראשי בלי לאבד אותו: DLQ שומר את ההודעה לחקירה ולעיבוד מחדש אחרי תיקון, ומונה ב-DLQ הוא מדד שמתריעים עליו. skip שקט מאבד נתונים בלי עקבות. timeout לא רלוונטי לשגיאה דטרמיניסטית.",
+      "lesson": "design.pipelines",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.pipelines.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן pipeline שקולט טלמטריה מ-50,000 מכשירים (הודעה של 1 KB כל שנייה ממכשיר), מחשב ממוצע ומקסימום לכל מכשיר בכל דקה, ומתריע תוך 10 שניות אם ערך חורג מסף.",
+      "modelAnswer": "חשבון: 50k הודעות לשנייה כפול 1 KB = 50 MB/s, כ-4.3 TB ליום גולמי. ingestion: gateway stateless מאחורי load balancer שמאמת וכותב ל-log מבוזר (Kafka / Event Hubs) עם partitioning לפי device_id, נניח 32 partitions, כך שכל ההודעות של מכשיר באותו partition ובסדר. שני צרכנים נפרדים: (1) נתיב התראות: stateless, בודק כל הודעה מול סף (הספים ב-cache מקומי שמתעדכן), ושולח לשירות התראות עם dedup לפי device+סוג כדי לא להציף. latency של כמה מאות ms, הרבה מתחת ל-10 s. (2) נתיב aggregation: stream processor עם tumbling window של דקה לפי event time, state לכל device (count, sum, max), watermark עם allowed lateness של כמה דקות למכשירים שמאחרים, ופלט ל-time-series DB עם upsert לפי (device, minute) כך ש-replay אידמפוטנטי. retention בלוג של כמה ימים מאפשר reprocessing אחרי באג. מדדים: consumer lag לכל partition, late events, DLQ להודעות פגומות. scaling: הוספת partitions וצרכנים; מכשיר 'רועש' אחד לא מפיל partition כי הקצב פר מכשיר מוגבל ב-gateway (rate limit).",
+      "rubric": [
+        "חשבון קצב ונפח, ובחירת log מבוזר עם partitioning לפי device",
+        "הפרדת נתיב התראות מהיר מנתיב aggregation",
+        "windows לפי event time, טיפול באיחורים, sink אידמפוטנטי",
+        "התמודדות עם כשלים: replay, DLQ, consumer lag",
+        "rate limiting ו-scaling"
+      ],
+      "explanation": "שאלת system design קלאסית: מחפשים מספרים, הפרדה בין דרישות latency שונות, ובחירות סמנטיות (event time, idempotency) ולא רק רשימת מוצרים.",
+      "lesson": "design.pipelines",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.pipelines.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "אפליקציה משתמשת ב-Kafka transactions (exactly-once) בתבנית read-process-write: קוראת מ-topic A וכותבת ל-topic B. בעיבוד היא גם שולחת email ללקוח. מה מובטח?",
+      "choices": [
+        "גם הכתיבה ל-B וגם ה-email יקרו בדיוק פעם אחת",
+        "הכתיבה ל-B וה-commit של ה-offsets ב-A אטומיים, ולכן צרכנים ב-read_committed יראו כל תוצאה פעם אחת; ה-email יכול להישלח יותר מפעם אחת אחרי abort ו-retry",
+        "שום דבר לא מובטח כי Kafka לא תומך ב-exactly-once",
+        "ה-email יישלח בדיוק פעם אחת אבל ב-B עלולות להיות כפילויות"
+      ],
+      "answer": 1,
+      "explanation": "Kafka transactions מאחדות את הכתיבה ל-B ואת ה-commit של offsets של A לטרנזקציה אחת, אבל רק בתוך Kafka. אם הטרנזקציה עושה abort, ה-records ב-B לא ייראו לצרכני read_committed, אבל ה-email כבר יצא, ובניסיון החוזר יישלח שוב. side effects חיצוניים דורשים idempotency key בצד המקבל או outbox pattern.",
+      "lesson": "design.pipelines",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.pipelines.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "צריך max לכל key על sliding window של 10 דקות שזז כל 10 שניות, עם מיליוני keys. מה המימוש היעיל ביותר מבחינת זיכרון וחישוב?",
+      "choices": [
+        "לשמור את כל האירועים בחלון לכל key ולחשב max מחדש בכל הזזה",
+        "לחשב max חלקי לכל pane של 10 שניות, ולשמור לכל key את 60 ה-panes; את ה-max של החלון מתחזקים עם monotonic deque או two-stacks על ה-panes",
+        "לשמור max רץ ולהחסיר את האירוע שיוצא מהחלון",
+        "לשמור רק את ה-max הנוכחי ולאפס אותו כל 10 דקות"
+      ],
+      "answer": 1,
+      "explanation": "panes (slices) מקטינים את ה-state מכמות האירועים לכמות קבועה של 60 ערכים לכל key. max אינו הפיך, ולכן אי אפשר 'להחסיר' אירוע יוצא כמו בסכום; צריך מבנה כמו monotonic deque או two-stacks שנותן max ב-O(1) amortized בהזזה. איפוס כל 10 דקות הוא tumbling ולא sliding.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "רוצים להעביר את שלב ה-FFT וה-detection של pipeline זמן-אמת ל-GPU. הקלט הוא 200 Msps complex float. איך תתכנן את השלב כך שה-GPU באמת ייתן יתרון, ומה ה-trade-offs מול latency?",
+      "modelAnswer": "קצב הקלט: 200 Msps כפול 8 bytes = 1.6 GB/s לכיוון H2D, הרבה מתחת לקיבולת של PCIe Gen3/4 x16 (כ-12 עד 25 GB/s בפועל), כך שהקישור לא חוסם אבל לכל העברה יש latency קבוע של מיקרו-שניות. GPU משתלם רק עם batches גדולים: cuFFT על FFT בודד של 1024 נקודות מבזבז את רוב ה-GPU, ולכן צוברים למשל 256 חלונות ומריצים batched FFT. זה מוסיף latency: 256 × 1024 / 200e6 ≈ 1.3 ms רק לצבירה. מבנה: pinned host memory (cudaHostAlloc) כדי ש-DMA יעבוד בלי העתקה נוספת, double או triple buffering עם CUDA streams כך שהעתקת batch k+1, חישוב batch k והחזרת תוצאות batch k-1 חופפים. ה-detection רץ ב-GPU ומחזיר רק רשימה קצרה של detections ולא את כל הספקטרום, מה שמקטין D2H. מנגנון סנכרון עם CUDA events ולא cudaDeviceSynchronize. ה-trade-off: throughput גבוה פי כמה מ-CPU, latency של מילישניות וג'יטר של ה-driver; לכן GPU מתאים לניטור רחב-סרט ולסיווג, אבל לא ללולאת תגובה של עשרות מיקרו-שניות, שנשארת ב-FPGA או ב-CPU על בלוקים קטנים. מודדים: זמן kernel, זמן העתקה, ו-latency מקצה לקצה בעזרת timestamps, ומוודאים שה-GPU לא הופך ל-bottleneck כשה-batch קטן.",
+      "rubric": [
+        "חישוב רוחב פס מול PCIe והבנה של latency קבוע להעברה",
+        "batching של FFTs ומחיר ה-latency שלו במספרים",
+        "pinned memory, streams ו-overlap של copy וחישוב (double buffering)",
+        "הקטנת נתוני חזרה: detection ב-GPU והחזרת תוצאות בלבד",
+        "הכרעה מתי GPU מתאים ומתי לא (לולאת תגובה מהירה)"
+      ],
+      "explanation": "שאלה ברוח NVIDIA: מחפשים הבנה שה-GPU הוא מכונת throughput, ושהתכנון סובב סביב batching, overlap והעברות נתונים, לא סביב ה-kernel עצמו.",
+      "lesson": "design.pipelines",
+      "tags": ["nvidia"]
+    }
+  ]
+}

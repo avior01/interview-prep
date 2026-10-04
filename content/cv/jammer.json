@@ -1,0 +1,321 @@
+{
+  "domain": "cv",
+  "subtopic": "jammer",
+  "lessons": [
+    {
+      "id": "cv.jammer",
+      "title": "ארכיטקטורת ה-pipeline של פרויקט ה-SDR",
+      "what": "הפרויקט: pipeline זמן-אמת לניטור ספקטרום ותגובה, כתוב ב-C++ על USRP X310 דרך ה-driver של UHD, ב-50 MS/s. thread קליטה (RX) קורא buffers, שלב זיהוי ספקטרלי מבוסס FFT, שלב החלטה ומסלול שידור (TX streaming). קונפיגורציה ב-JSON עם hot reload מבוסס polling, build ב-CMake, unit tests ומודל ייחוס ב-Python. בראיון תוכנה המטרה היא להסביר data flow, מספרים, החלטות ומה נמדד בפועל ומה רק חושב.",
+      "when": [
+        "כשמבקשים לספר על הפרויקט מקורות החיים: פותחים בדיאגרמת בלוקים ובמספר מעוגן אחד (50 MS/s, buffer של 8192 דגימות = 163.84 µs).",
+        "כששואלים על producer-consumer, real-time, backpressure או throughput: זו הדוגמה האישית שלך.",
+        "מראיין NVIDIA יחפור ב-performance, ב-hot path ובמדידה; מראיין Microsoft ב-design, ב-testing וב-trade-offs."
+      ],
+      "how": [
+        "RX streaming thread: קורא מ-UHD לתוך buffer מוקצה מראש של 8192 דגימות complex. buffer חדש מגיע כל 8192 / 50e6 = 163.84 µs, וזה תקציב הזמן לעיבוד buffer אחד אם רוצים לעמוד בקצב.",
+        "Buffers: ה-buffer עובר לשלב העיבוד דרך תור; בתכנון נכון הוא מוקצה מראש וממוחזר, בלי הקצאות זיכרון ב-hot path.",
+        "זיהוי ספקטרלי: כל buffer של 8192 דגימות מצומצם פי 4 (averaging) ל-FFT יחיד של 2048 נקודות. לכן כ-6,100 FFT/s (50e6 / 8192 ≈ 6,103.5), וזה מספר מחושב ולא נמדד.",
+        "Decision stage: מקבל את הספקטרום ומחליט אם להפעיל את מסלול ה-TX ובאיזה תדר.",
+        "TX streaming path: שולח דגימות ל-UHD. שינוי תדר ב-main נעשה ב-retune של ה-LO (ה-NCO התוכנתי קיים רק בכלי ה-file playback). מסלול ה-TX מנוטרל לגמרי אלא אם הועבר דגל --arm מפורש (ברירת מחדל: כבוי).",
+        "בזמן שמסלול ה-TX פעיל ה-RX לא צופה, ולכן ה-observation time קטן מ-100%.",
+        "Config ב-JSON (gain ברירת מחדל 0 dB) נטען מחדש כשה-mtime של הקובץ משתנה, בבדיקת polling."
+      ],
+      "complexity": "FFT של N=2048: O(N log N), בקירוב 5·N·log2(N) ≈ 112,640 flops, ובקצב 6,103.5 FFT/s זה כ-0.69 GFLOP/s, עומס קטן לליבה אחת. על החוט: sc16 הוא 4 bytes לדגימה, 50e6 × 4 = 200 MB/s = 1.6 Gb/s, יותר ממה ש-1 GbE נושא. בזיכרון: 8192 דגימות fc32 (8 bytes) = 64 KiB לכל buffer.",
+      "pitfalls": [
+        "להציג 24,414 FFT/s (50e6 / 2048): החישוב מניח 2048 דגימות חדשות לכל FFT, וזה לא מה שה-pipeline עושה.",
+        "לומר 'רץ ב-50 MS/s' בלי סייג: קצב מתמשך על החומרה לא אומת, והערות מעבדה מזכירות underruns על 1 GbE בקצב הזה.",
+        "לבלבל בין מחושב לנמדד: לא היה timing instrumentation, ולכן כל מספר ביצועים הוא חישוב.",
+        "לשכוח שה-observation time קטן מ-100% כי ה-RX לא צופה כשה-TX פעיל.",
+        "הקצאות, logging או I/O חוסם בתוך ה-hot loop: אלה הגורמים הקלאסיים ל-overflow ול-underrun."
+      ],
+      "senior": [
+        "להבחין בין throughput (האם עומדים ב-6,103.5 buffers לשנייה) לבין latency (מקליטה ועד תגובה). שניהם לא נמדדו, ולכן מציגים תוכנית מדידה.",
+        "Backpressure: מה קורה כשעיבוד buffer לוקח יותר מ-163.84 µs. UHD מדווח overflow, ועדיף drop מבוקר עם counter על פני תור שגדל בלי גבול.",
+        "Real-time hygiene: thread priority (SCHED_FIFO), CPU pinning, buffers מוקצים מראש, בלי mutex ובלי syscalls מיותרים ב-hot path.",
+        "Testing: unit tests, השוואה למודל ייחוס ב-Python עם tolerance, וה-interlock של --arm כ-safety by default.",
+        "כנות לגבי מה נמדד ומה חושב מבדילה סניור מג'וניור. כשאין מספר נמדד, אומרים את זה ומיד מתארים איך היית מודד."
+      ],
+      "diagram": "UHD RX -> [RX thread] -> queue\n          8192 smp / 163.84 us\nqueue -> [avg x4 -> FFT 2048]\n      -> [decision] -> [TX path]\n                      (needs --arm)\nconfig.json --poll mtime--> params"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cv.jammer.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד של UHD בפרויקט?",
+      "choices": [
+        "ספריית FFT שמריצה את הזיהוי הספקטרלי על ה-host",
+        "ה-driver וה-API של ה-USRP: הגדרת המכשיר (תדר, gain, rate) ו-streaming של דגימות RX/TX בין ה-host למכשיר",
+        "מערכת הפעלה זמן-אמת שרצה על ה-X310",
+        "כלי build שמייצר את ה-FPGA image של ה-X310"
+      ],
+      "answer": 1,
+      "explanation": "UHD (USRP Hardware Driver) הוא ה-driver וה-API ב-host: יוצרים דרכו rx_streamer ו-tx_streamer, קובעים תדר, gain ו-sample rate, ומקבלים metadata כמו timestamps ו-error codes (למשל overflow). ה-FFT רץ בקוד שלך או בספרייה כמו FFTW, לא ב-UHD. ה-X310 לא מריץ RTOS של המשתמש, ו-FPGA images נבנים בכלים של Xilinx ולא ב-UHD.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q02",
+      "level": 1,
+      "type": "order",
+      "prompt": "סדר את שלבי ה-data flow של ה-pipeline, מהדגימה ועד השידור.",
+      "items": [
+        "ה-RX thread קורא buffer של 8192 דגימות מ-UHD",
+        "ה-buffer מועבר בתור לשלב העיבוד",
+        "צמצום פי 4 ו-FFT של 2048 נקודות",
+        "Decision stage מחליט על סמך הספקטרום",
+        "מסלול ה-TX streaming שולח דגימות ל-UHD (רק אם הועבר --arm)"
+      ],
+      "explanation": "זה ה-pipeline הקלאסי producer → queue → consumer: קליטה, העברה, עיבוד ספקטרלי, החלטה ושידור. ה-interlock של --arm יושב בכניסה למסלול ה-TX, כך שבלי הדגל השלב האחרון לא קורה בכלל.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה דגימות יש בכל buffer שה-RX thread קורא?",
+      "accept": ["8192", "8k", "8K"],
+      "explanation": "ה-RX קורא buffers של 8192 דגימות, וכל buffer כזה מצומצם פי 4 ל-FFT אחד של 2048 נקודות. מכאן נגזרים כל מספרי הקצב: buffer כל 163.84 µs וכ-6,103.5 FFT/s.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q04",
+      "level": 2,
+      "type": "short",
+      "prompt": "ב-50 MS/s, כמה מיקרו-שניות לוקח למלא buffer של 8192 דגימות? (זה תקציב הזמן לעיבוד buffer אחד)",
+      "accept": ["163.84", "163.84us", "163.84µs", "163.8", "164", "164us"],
+      "explanation": "8192 / 50e6 = 163.84e-6 s = 163.84 µs. אם עיבוד buffer (צמצום, FFT, זיהוי והחלטה) לוקח יותר מזה באופן מתמשך, התור מתמלא ובסוף UHD מדווח overflow. במבחן אמיתי מסתכלים על ה-tail (p99.9 ו-max) ולא רק על הממוצע.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-pipeline ה-RX לא צופה בזמן שמסלול ה-TX פעיל. מה ההשלכה הישירה שחייבים לציין כשמציגים את המערכת?",
+      "choices": [
+        "קצב ה-FFT התיאורטי עולה, כי יש פחות buffers לעבד",
+        "אין השלכה, כי ה-TX וה-RX משתמשים ב-streamers נפרדים ב-UHD",
+        "ה-observation time קטן מ-100%: יש חלונות זמן שבהם המערכת לא רואה את הספקטרום, וגם מספר ה-FFT בפועל בשנייה נמוך מ-6,103.5",
+        "ה-latency של ה-decision stage יורד לאפס בזמן שידור"
+      ],
+      "answer": 2,
+      "explanation": "קיום streamers נפרדים לא אומר שה-pipeline צופה בזמן שידור: בפרויקט הזה הוא לא. לכן ה-observation time נמוך מ-100%, ו-6,103.5 FFT/s הוא חסם עליון שמתקבל רק כשה-TX כבוי. קצב התיאורטי לא 'עולה'; פשוט מעבדים פחות. מציג סניור אומר את זה בעצמו לפני שהמראיין מגלה.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה קצב הנתונים על החוט ל-50 MS/s בפורמט sc16 (I ו-Q, כל אחד int16)?",
+      "choices": [
+        "800 Mb/s",
+        "1.6 Gb/s",
+        "1.6 GB/s",
+        "3.2 Gb/s"
+      ],
+      "answer": 1,
+      "explanation": "sc16 הוא 2 × 16 bit = 4 bytes לדגימה. 50e6 × 4 = 200 MB/s = 1.6 Gb/s, יותר מ-1 GbE. 800 Mb/s הוא sc8 (2 bytes לדגימה), 1.6 GB/s הוא בלבול בין bits ל-bytes (פי 8 יותר מדי), ו-3.2 Gb/s הוא fc32 (8 bytes לדגימה, הפורמט בזיכרון ה-host ולא על החוט).",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q07",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו פרקטיקות נכונות בתוך ה-hot loop של ה-RX/עיבוד (תקציב של 163.84 µs לכל buffer)? סמן את כל הנכונות.",
+      "choices": [
+        "buffers מוקצים פעם אחת באתחול ומוחזרים לשימוש חוזר (pool), בלי new/malloc לכל buffer",
+        "הדפסת שורת סטטוס ל-std::cout עבור כל buffer כדי לראות שהמערכת חיה",
+        "ספירת overflows ו-drops ב-counters (למשל std::atomic) שthread אחר קורא ומדווח פעם בשנייה",
+        "נעילת mutex שמשותף עם thread ה-config reload לכל משך עיבוד ה-buffer",
+        "קריאת snapshot של ה-config פעם אחת בתחילת כל buffer ושימוש בו עד סוף ה-buffer"
+      ],
+      "answer": [0, 2, 4],
+      "explanation": "הקצאה דינמית יכולה לקחת זמן לא חסום (lock פנימי ב-allocator, page faults), ולכן pool מוקצה מראש. הדפסה לכל buffer היא I/O חוסם, כ-6,100 פעמים בשנייה, ומייצרת jitter. mutex משותף עם thread ה-reload מאפשר ל-thread בעדיפות נמוכה לחסום את ה-hot path (priority inversion). counters אטומיים ו-snapshot של config לכל buffer שומרים על hot path צפוי.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q08",
+      "level": 3,
+      "type": "oral",
+      "prompt": "המראיין: 'תעביר אותי על הארכיטקטורה של הפרויקט בשתי דקות. אני מתוכנה, לא מ-RF.'",
+      "modelAnswer": "זה pipeline זמן-אמת ב-C++ על USRP X310 דרך UHD, ב-50 MS/s. יש RX streaming thread שקורא buffers של 8192 דגימות complex; buffer מגיע כל 163.84 µs, וזה התקציב לעבד אותו. ה-buffer עובר לשלב עיבוד שמצמצם אותו פי 4 ל-FFT של 2048 נקודות, כלומר FFT אחד לכל buffer, בערך 6,100 בשנייה. זה מספר שחישבתי מהקצב, לא מדדתי. על הספקטרום יושב decision stage, ואם הוא מחליט לפעול הוא מפעיל TX streaming path. שינוי תדר ב-main נעשה ב-retune של ה-LO. מסלול ה-TX כבוי לגמרי אלא אם מעבירים --arm: safety by default. כשה-TX פעיל ה-RX לא צופה, כך שה-observation time קטן מ-100%. הקונפיגורציה ב-JSON עם hot reload: thread בודק את ה-mtime של הקובץ ב-polling וטוען מחדש. build ב-CMake, unit tests ומודל ייחוס ב-Python שאליו אני משווה. מה לא אומת: קצב 50 MS/s מתמשך על החומרה. על 1 GbE זה פיזית לא נכנס, 1.6 Gb/s, וצריך 10 GbE או קצב נמוך יותר. אם הייתי ממשיך, הדבר הראשון שהייתי מוסיף הוא timing instrumentation.",
+      "rubric": [
+        "מתאר את ה-data flow לפי הסדר: RX thread → buffers → FFT → decision → TX",
+        "נותן מספרים מעוגנים: 8192 דגימות, 163.84 µs, 2048-point FFT, כ-6,100 FFT/s מחושב",
+        "מזכיר את ה-safety interlock (--arm, ברירת מחדל כבוי) ואת ה-observation time שקטן מ-100%",
+        "מזכיר config reload, CMake, unit tests ומודל ייחוס ב-Python",
+        "כן לגבי מה לא נמדד או לא אומת (קצב מתמשך, 1 GbE) ומה היה מוסיף"
+      ],
+      "explanation": "תשובה טובה בנויה מלמעלה למטה: בלוקים, מספרים, החלטות ומגבלות. מראייני תוכנה מחפשים מבנה ברור ומספרים שאתה יודע לגזור, לא מונחי RF. הכנות לגבי מה לא נמדד בונה אמינות לשאר התשובות.",
+      "lesson": "cv.jammer",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "cv.jammer.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "UHD מדפיס 'O' ומחזיר ב-rx_metadata את error_code של overflow. מה זה אומר על ה-pipeline?",
+      "choices": [
+        "מסלול ה-TX לא סיפק דגימות בזמן ולמכשיר נגמרו דגימות לשידור",
+        "ה-host לא קרא דגימות מהר מספיק, buffers במכשיר או בדרך התמלאו ודגימות נזרקו, ולכן יש פער ברצף הדגימות",
+        "ערך דגימה חרג מטווח ה-int16 ונחתך",
+        "ה-FFT יצר ערך גדול מהטווח של float"
+      ],
+      "answer": 1,
+      "explanation": "Overflow ב-RX פירושו שהצרכן (ה-host) איטי מהיצרן (המכשיר) ודגימות אבדו. אפשר לזהות את זה גם מקפיצה ב-time_spec בין buffers עוקבים. האות 'U' היא underflow ב-TX: המכשיר רעב לדגימות, וזו התופעה שתוקנה בכלי ה-playback בעזרת streaming בחלקים. saturation של int16 ו-overflow ב-float לא קשורים להודעה הזו.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q10",
+      "level": 3,
+      "type": "oral",
+      "prompt": "המראיין: 'איך בדקת שהקוד נכון? ומה היית מוסיף לבדיקות היום?'",
+      "modelAnswer": "יש שתי שכבות. unit tests ב-C++ בודקים רכיבים בבידוד: למשל שה-NCO מייצר טון בתדר הצפוי, שה-saturation של int16 מתנהג נכון בקצוות, ושה-parser של ה-config דוחה קלט לא תקין. ויש מודל ייחוס ב-Python: אותו עיבוד ב-NumPy על אותו קלט, והשוואה עם tolerance ולא bit-exact, כי סדר הפעולות ב-float שונה ויש quantization ל-int16. מה הייתי מוסיף: הפרדה בין הלוגיקה לבין ה-device מאחורי interface, כדי להריץ את כל ה-pipeline בלי חומרה עם מקור דגימות מקובץ או מ-generator; golden vectors שנשמרים ב-repo ורצים ב-CI; בדיקה שעיבוד בחלקים נותן אותה תוצאה כמו עיבוד חד-פעמי (חשוב למצב פאזה שעובר בין buffers); בדיקה שבלי --arm לא נוצר TX streamer בכלל; ובדיקות ביצועים עם timestamps ו-histograms של זמן עיבוד לכל buffer, כי היום כל מספרי הביצועים מחושבים ולא נמדדים.",
+      "rubric": [
+        "מתאר unit tests קונקרטיים (NCO, saturation, config parsing)",
+        "מסביר השוואה למודל Python עם tolerance ולמה לא bit-exact",
+        "מציע הפרדת device מהלוגיקה (interface/mock) כדי לבדוק בלי חומרה",
+        "מציע בדיקת invariance בין עיבוד בחלקים לעיבוד חד-פעמי ובדיקה של ה-interlock",
+        "מזהה בעצמו את החוסר ב-performance testing ומציע מדידה"
+      ],
+      "explanation": "Microsoft שמים דגש על testability. התשובה החזקה מבחינה בין נכונות מתמטית (מודל ייחוס), נכונות הנדסית (מצב בין buffers, saturation, safety) ונכונות ביצועים (שלא נבדקה), ומציעה שיפורים קונקרטיים.",
+      "lesson": "cv.jammer",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "cv.jammer.q11",
+      "level": 4,
+      "type": "oral",
+      "prompt": "המראיין: 'נניח שלפעמים עיבוד buffer לוקח 300 µs, והממוצע הוא 60 µs. מה קורה ב-pipeline שלך, ואיך היית מתכנן את התור ואת מדיניות ה-backpressure?'",
+      "modelAnswer": "התקציב הוא 163.84 µs לכל buffer. ממוצע של 60 µs אומר שיש headroom, וספייק בודד של 300 µs נספג אם יש תור בין ה-RX thread לעיבוד: ה-RX ממשיך לקרוא מ-UHD ולדחוף לתור, והעיבוד מדביק אחר כך. בלי תור, ה-RX thread עצמו מתעכב, buffers ב-UHD או ב-NIC מתמלאים ומקבלים overflow. התכנון: SPSC ring buffer עם slots מוקצים מראש. העומק נבחר לפי הספייק הגרוע שרוצים לספוג: ספייק של 300 µs דורש לפחות 2 slots נוספים, ובפועל נותנים מרווח, נניח 8 עד 16 slots (64 KiB כל אחד ב-fc32). אם התור מלא, ה-RX thread לא חוסם, כי חסימה רק מעבירה את ה-overflow ל-UHD. הוא זורק buffer באופן מבוקר, מעלה counter ושומר את ה-time_spec, כדי שהשלב הבא יידע שיש פער. במערכת ניטור עדיף בדרך כלל לזרוק את הישן ולעבד את הטרי, כי ההחלטה צריכה להתבסס על מצב עדכני. בנוסף: thread העיבוד ב-SCHED_FIFO ו-pinned לליבה, ומדידה של histogram של זמני עיבוד כדי להבין מה גורם לספייקים (page faults, allocation, cache misses, ה-thread של ה-reload). לבסוף אגיד בכנות שבפרויקט עצמו לא מדדתי את התפלגות זמני העיבוד, וזו בדיוק המדידה שהייתי מוסיף.",
+      "rubric": [
+        "משווה ל-163.84 µs ומבחין בין ממוצע ל-tail",
+        "מסביר שתור סופג ספייקים ושבלעדיו ה-overflow עובר ל-UHD",
+        "מתכנן SPSC ring buffer מוקצה מראש עם עומק מנומק",
+        "מגדיר מדיניות כשהתור מלא (drop עם counter ו-timestamp, לא חסימה) ומנמק drop-oldest מול drop-newest",
+        "מציע RT hygiene ומדידה, וכן לגבי מה שלא נמדד"
+      ],
+      "explanation": "זו שאלת producer-consumer קלאסית בעטיפה של הפרויקט שלך. מראיין סניור מחפש הבנה שתור קובע איפה המידע נזרק, לא אם הוא נזרק, ושמדיניות drop היא החלטה מכוונת עם observability.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "גרסה ראשונה של התור בין RX לעיבוד: std::deque<std::vector<std::complex<float>>> מוגן ב-mutex, וה-RX עושה push_back של vector חדש בגודל 8192 לכל buffer. מה הבעיה העיקרית מבחינת real-time?",
+      "choices": [
+        "std::deque לא thread-safe גם כשהוא מוגן ב-mutex",
+        "כל buffer מקצה 64 KiB מה-heap בתוך ה-hot path, והזמן של ההקצאה (lock פנימי של ה-allocator, page faults בזיכרון חדש) לא חסום ויוצר jitter",
+        "push_back ב-deque עושה reallocation של כל האיברים ולכן עולה O(n)",
+        "std::vector<std::complex<float>> לא מאפשר העברה ל-UHD כי הזיכרון לא רציף"
+      ],
+      "answer": 1,
+      "explanation": "הבעיה היא allocation לכל buffer: ה-allocator עשוי לקחת lock פנימי, לבצע syscall כדי להגדיל את ה-heap, ולהחזיר זיכרון שהמגע הראשון בו גורם ל-page faults. זמן לא חסום הוא הבעיה ב-real-time. deque מוגן ב-mutex הוא thread-safe. push_back ב-deque לא מזיז איברים קיימים (amortized O(1)). vector הוא רציף ואפשר להעביר את data() ל-recv. הפתרון: pool של buffers מוקצים מראש ותור של מצביעים או אינדקסים.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q13",
+      "level": 4,
+      "type": "oral",
+      "prompt": "המראיין: 'מה ה-latency מקליטה ועד תגובה במערכת שלך? איך היית מודד אותו?'",
+      "modelAnswer": "קודם כל בכנות: לא מדדתי, כי לא היה timing instrumentation. אפשר לפרק את ה-latency לרכיבים: (1) מילוי buffer, עד 163.84 µs, כי אירוע שמתחיל בתחילת buffer מחכה עד שה-buffer מתמלא; (2) transport והעתקות ב-UHD וב-NIC; (3) המתנה בתור; (4) עיבוד: צמצום, FFT והחלטה; (5) מסלול TX: retune של ה-LO, שכולל settling time, ו-buffering של TX במכשיר. כדי למדוד: בצד ה-host, timestamps מ-steady_clock בכל מעבר שלב, נשמרים ל-ring buffer ומודפסים כ-histogram ו-percentiles (p50, p99, p99.9, max) ולא רק כממוצע. בצד המכשיר, UHD נותן time_spec לכל RX buffer בשעון המכשיר, ואפשר לשלוח TX עם time_spec ידוע, כך ששני הקצוות נמדדים באותו שעון. מדידה end-to-end אמיתית: loopback, כבל עם attenuator מה-TX ל-RX שני או למכשיר מדידה, הזרקת אות בזמן ידוע ומדידה מתי התגובה מופיעה. בדיקת חלוקה: אם ה-p99 נשלט על ידי מילוי ה-buffer, buffer קטן יותר מוריד latency במחיר יותר overhead לכל buffer ופחות רזולוציה תדרית לכל FFT.",
+      "rubric": [
+        "מודה שלא נמדד",
+        "מפרק את ה-latency לרכיבים כולל מילוי buffer (עד 163.84 µs) ו-settling של ה-LO",
+        "מציע מדידה ב-host עם percentiles ולא ממוצע",
+        "מציע שימוש ב-time_spec של המכשיר או loopback למדידה end-to-end",
+        "מזהה את ה-trade-off בין גודל buffer ל-latency ול-overhead"
+      ],
+      "explanation": "השאלה בודקת אם אתה מבחין בין throughput ל-latency, יודע לפרק latency budget ויודע למדוד tail. תשובה כמו 'בערך מיקרו-שניות' בלי פירוק ובלי מדידה היא דגל אדום.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נניח שמסלול ה-TX פעיל 20% מהזמן, וכל עוד הוא פעיל ה-RX לא צופה. כמה FFT בשנייה מעובדים בפועל בממוצע?",
+      "choices": [
+        "כ-6,103",
+        "כ-19,531",
+        "כ-1,221",
+        "כ-4,883"
+      ],
+      "answer": 3,
+      "explanation": "6,103.5 × 0.8 ≈ 4,883 FFT/s, ובהתאם observation time של 80%. 19,531 הוא 24,414 × 0.8, כלומר מבוסס על החישוב הנאיבי השגוי. 1,221 הוא 20% בלבד, הפוך. 6,103 מתעלם מהזמן שבו ה-RX לא צופה.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q15",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "אם מעלים את הקצב ל-200 MS/s ומשאירים buffer של 8192 דגימות ו-FFT אחד לכל buffer, מה תקציב הזמן לכל buffer ומה קצב ה-sc16 על החוט?",
+      "choices": [
+        "40.96 µs ו-6.4 Gb/s",
+        "40.96 µs ו-3.2 Gb/s",
+        "655.36 µs ו-6.4 Gb/s",
+        "10.24 µs ו-12.8 Gb/s"
+      ],
+      "answer": 0,
+      "explanation": "8192 / 200e6 = 40.96 µs, ו-200e6 × 32 bit = 6.4 Gb/s, שנכנס בקישור 10 GbE אחד אבל בלי הרבה מרווח. 3.2 Gb/s מתקבל כשסופרים 16 bit לדגימה במקום 32. 655.36 µs מתקבל מכפל במקום חילוק. 10.24 µs ו-12.8 Gb/s מתאימים ל-800 MS/s. מכאן גם קצב ה-FFT: 24,414 בשנייה, פי 4.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q16",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'בקורות החיים כתוב 50 MS/s. זה באמת רץ ככה על החומרה, באופן מתמשך?'",
+      "modelAnswer": "תשובה כנה: ה-pipeline מוגדר ל-50 MS/s וכל החישובים שלי מבוססים על זה, אבל קצב מתמשך על החומרה לא אומת. יותר מזה, יש בהערות המעבדה underruns בקצב הזה על 1 GbE, וזה מתיישב עם החשבון: sc16 הוא 4 bytes לדגימה, 50e6 × 4 = 200 MB/s = 1.6 Gb/s, ו-1 GbE נושא פחות מ-1 Gb/s נטו. ב-sc16 על 1 GbE אפשר לכל היותר כ-25 עד 30 MS/s בפועל. כדי לעמוד ב-50 MS/s צריך 10 GbE, שה-X310 תומך בו, או sc8 over-the-wire (800 Mb/s, צמוד מדי לגבול), או קצב נמוך יותר. הדרך לאמת: לרוץ שעה על 10 GbE ולספור overflows ו-underflows מה-metadata של UHD, לבדוק רציפות ב-time_spec, למדוד histogram של זמני עיבוד לכל buffer מול 163.84 µs, ולכוונן את המערכת: socket buffers גדולים, MTU 9000 (jumbo frames), CPU governor על performance, thread priority ו-pinning. ככה הייתי מנסח את זה בקורות החיים: 'pipeline שתוכנן ל-50 MS/s', ומוסיף 'אומת ב-X MS/s' רק אחרי מדידה.",
+      "rubric": [
+        "עונה בכנות: לא אומת, ומזכיר את ה-underruns על 1 GbE",
+        "גוזר נכון 1.6 Gb/s ומסביר למה 1 GbE לא מספיק",
+        "מציע פתרונות: 10 GbE, sc8, קצב נמוך יותר, עם trade-offs",
+        "מתאר תוכנית אימות: counters של overflow/underflow, רציפות time_spec, histogram מול 163.84 µs, ריצה ארוכה",
+        "מציע ניסוח מדויק לקורות החיים במקום ניסוח מנופח"
+      ],
+      "explanation": "זו שאלת האמינות החשובה ביותר בראיון. מראיין שמגלה בעצמו שהמספר לא אומת יפקפק בכל השאר. מראיין שמקבל ממך את החשבון, את הסיבה ואת תוכנית האימות יראה בזה שיקול דעת של סניור.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia", "microsoft"]
+    },
+    {
+      "id": "cv.jammer.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'עכשיו צריך 4 ערוצים, כל אחד ב-200 MS/s. איך היית משנה את הארכיטקטורה? תן מספרים.'",
+      "modelAnswer": "קודם חשבון. לכל ערוץ: sc16 → 6.4 Gb/s, כלומר 25.6 Gb/s לארבעה. זה כבר לא נכנס בשני קישורי 10 GbE (20 Gb/s), ולכן צריך לצמצם ב-FPGA (DDC וצמצום קצב לפני ה-host), לעבור ל-sc8, או להשתמש בחומרה עם רשת מהירה יותר. בנוסף, X310 אחד מכיל שני ערוצים, כך שארבעה ערוצים דורשים שני מכשירים מסונכרנים (שעון 10 MHz ו-PPS משותפים). בצד ה-host: buffer של 8192 ב-200 MS/s מגיע כל 40.96 µs, כלומר 24,414 FFT/s לערוץ ו-97,656 לכולם. בקירוב 5N·log2N ≈ 112,640 flops ל-FFT, זה כ-11 GFLOP/s, אפשרי על כמה ליבות עם FFTW ו-SIMD, אבל רוחב פס הזיכרון וה-jitter הם הבעיה האמיתית. ארכיטקטורה: pipeline נפרד לכל ערוץ (RX thread, תור SPSC, worker) עם pinning לליבות על אותו NUMA node כמו ה-NIC, בלי מצב משותף ב-hot path. FFT: batching עם plan_many כדי לעבד כמה buffers יחד; אם עוברים ל-GPU, cuFFT batched עם pinned host memory וכמה CUDA streams כדי למקבל העתקה וחישוב, במחיר latency של העתקה ו-batching. זה משתלם לthroughput, פחות ל-latency נמוך. decision stage מרכזי שמקבל תוצאות מכל הערוצים דרך תור, עם timestamps משעון המכשיר כדי לסדר אירועים בין ערוצים. ולבסוף observability: counters לכל ערוץ ו-histograms, כי ב-scale הזה בלי מדידה לא יודעים איפה צוואר הבקבוק.",
+      "rubric": [
+        "מחשב רוחב פס (25.6 Gb/s) ומסיק שצריך צמצום ב-FPGA, sc8 או קישורים מהירים יותר",
+        "מחשב קצב FFT ו-GFLOP/s ומזהה שזיכרון ו-jitter הם המגבלה, לא flops",
+        "מציע pipeline לכל ערוץ עם pinning ו-NUMA awareness, בלי מצב משותף ב-hot path",
+        "דן ב-batching וב-GPU עם trade-off של throughput מול latency",
+        "מתייחס לסנכרון בין מכשירים ולסידור אירועים לפי timestamps"
+      ],
+      "explanation": "שאלת scaling בסגנון NVIDIA: לא מחפשים את הארכיטקטורה המושלמת אלא חשבון גס נכון, זיהוי של צוואר הבקבוק האמיתי (I/O וזיכרון לפני compute), ו-trade-offs מנומקים. מועמד שקופץ ישר ל-GPU בלי לחשב רוחב פס מפספס את העיקר.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q18",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'אמרת שה-RX לא צופה כשה-TX פעיל. איך היית מקטין את זמן העיוורון בלי לשבור נכונות?'",
+      "modelAnswer": "קודם כל מודדים: counter של זמן TX פעיל מול זמן כולל נותן observation time אמיתי, וזה הבסיס לכל שיפור. אחר כך יש כמה כיוונים מהזול ליקר. (1) לקצר את חלונות ה-TX ולתזמן אותם במדויק עם timed commands של UHD (time_spec ב-TX metadata), כך שה-RX חוזר לצפות ברגע ידוע. אחרי מעבר כדאי לזרוק את הדגימות הראשונות, כי יש transients מה-switching ומה-settling של ה-LO, ולתייג את ה-buffers האלה כלא תקינים במקום לעבד אותם. (2) לעבוד full-duplex בתדרים שונים: ערוץ RX נפרד (ל-X310 יש שני ערוצים) שצופה כל הזמן, בתנאי שיש מספיק בידוד בין ה-TX ל-RX. אחרת ה-TX של עצמך רווה את ה-RX ומייצר false detections. (3) self-interference cancellation דיגיטלי: אות ה-TX ידוע, אז אפשר להעריך את ערוץ הדליפה ולחסר אותו ב-RX. זה עובד רק עד גבול ה-dynamic range של ה-ADC ודורש סנכרון וכיול. בכל כיוון ההחלטה היא trade-off בין מורכבות, חומרה ואמינות הזיהוי. ומבחינת נכונות: ה-decision stage חייב לדעת לאילו buffers אפשר לסמוך, לפי timestamps ודגלי validity, ולא להניח רצף.",
+      "rubric": [
+        "מתחיל במדידה של observation time",
+        "מציע תזמון מדויק עם timed commands וזריקת transients אחרי מעבר",
+        "מציע full-duplex עם ערוץ נפרד ומזהה את בעיית הבידוד וה-self-interference",
+        "מזכיר ביטול self-interference דיגיטלי ואת מגבלת ה-dynamic range",
+        "שומר על נכונות: validity flags ו-timestamps, בלי להניח רצף"
+      ],
+      "explanation": "שאלת design תחת אילוצים: לא מחפשים פתרון קסם אלא סולם פתרונות לפי עלות, עם הבנה של מה שובר נכונות. ההתחלה במדידה וה-validity flags מראים חשיבה של מערכת ולא רק של אלגוריתם.",
+      "lesson": "cv.jammer"
+    }
+  ]
+}

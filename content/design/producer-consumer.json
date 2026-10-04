@@ -1,0 +1,321 @@
+{
+  "domain": "design",
+  "subtopic": "producer-consumer",
+  "lessons": [
+    {
+      "id": "design.producer-consumer",
+      "title": "Producer-consumer",
+      "what": "דפוס שבו רכיב אחד (producer) מייצר פריטי עבודה ורכיב אחר (consumer) מעבד אותם, ותור (buffer) ביניהם מנתק את הקצבים. התור סופג bursts ומאפשר לכל צד לרוץ ב-thread או בתהליך משלו.",
+      "when": [
+        "יש שני שלבים בקצבים שונים או עם jitter שונה (למשל RX מה-SDR מול עיבוד DSP)",
+        "רוצים להוציא עבודה כבדה (כתיבה לדיסק, logging, רשת) מה-thread הקריטי",
+        "שאלה שמזכירה bounded buffer, work queue, thread pool או pipeline"
+      ],
+      "how": [
+        "בוחרים תור: bounded (קיבולת קבועה) כמעט תמיד. unbounded רק מעביר את הבעיה לזיכרון",
+        "מגדירים מה קורה כשהתור מלא: לחסום את ה-producer, לזרוק פריט (drop newest/oldest), או להחזיר שגיאה",
+        "סנכרון קלאסי: mutex אחד ושני condition variables (not_full, not_empty). מחכים תמיד בלולאה על התנאי",
+        "ב-SPSC (producer יחיד, consumer יחיד) אפשר ring buffer lock-free עם שני אינדקסים atomic ו-acquire/release",
+        "מעבירים בעלות (ownership) ולא מעתיקים: מצביעים לבלוקים מתוך pool מוקצה מראש",
+        "מגדירים shutdown: דגל closed ו-notify_all, או poison pill אחד לכל consumer"
+      ],
+      "complexity": "push/pop הם O(1). העלות האמיתית היא סנכרון: mutex לא-מתחרה עולה עשרות ns, wakeup של thread ישן עולה כמה מיקרו-שניות. batching מחלק את העלות הזאת על הרבה פריטים.",
+      "pitfalls": [
+        "wait בלי לולאה על התנאי: spurious wakeup או consumer אחר שגנב את הפריט",
+        "condition variable אחד ל-producers ול-consumers יחד עם notify_one: ה-notify יכול להעיר את הצד הלא נכון",
+        "תור unbounded שגדל בלי גבול כשה-consumer איטי, עד OOM",
+        "הקצאת זיכרון (new/malloc) בתוך ה-thread הזמן-אמתי בכל push",
+        "head ו-tail על אותו cache line ב-SPSC: false sharing"
+      ],
+      "senior": [
+        "להגדיר במפורש מדיניות overflow ולמדוד אותה (מונה drops), לא להשאיר אותה למקרה",
+        "להסביר מתי SPSC lock-free משתלם ומתי mutex פשוט מספיק ובטוח יותר",
+        "לדבר על סדר: עם כמה consumers הסדר נשבר, ופתרונות כמו partitioning לפי key או resequencing",
+        "לקשר גודל תור ל-latency דרך Little's law: תור ארוך = latency ארוך"
+      ],
+      "diagram": "[producer] -> |_|_|x|x|x|_| -> [consumer]\n             tail ^     ^ head\n push at tail, pop at head"
+    }
+  ],
+  "questions": [
+    {
+      "id": "design.producer-consumer.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד העיקרי של התור בין producer ל-consumer?",
+      "choices": [
+        "להאיץ את ה-consumer כך שיעבד מהר יותר",
+        "לנתק בין הקצבים של שני הצדדים ולספוג bursts זמניים",
+        "להבטיח שכל פריט יעובד בדיוק פעם אחת גם אחרי קריסה",
+        "למנוע את הצורך בסנכרון בין ה-threads"
+      ],
+      "answer": 1,
+      "explanation": "התור מאפשר לכל צד לרוץ בקצב שלו ובולע הפרשים זמניים. הוא לא מאיץ את ה-consumer: אם הקצב הממוצע של ה-consumer נמוך מזה של ה-producer, התור יתמלא בכל מקרה. exactly-once אחרי קריסה דורש persistence, ותור משותף בזיכרון עדיין דורש סנכרון.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "תור bounded עם מדיניות blocking מלא. מה קורה כשה-producer מנסה לבצע push?",
+      "choices": [
+        "הפריט הישן ביותר נדרס",
+        "התור מגדיל את עצמו אוטומטית",
+        "ה-producer נחסם עד שה-consumer מפנה מקום",
+        "ה-push נכשל ומחזיר false"
+      ],
+      "answer": 2,
+      "explanation": "במדיניות blocking ה-producer ממתין (בדרך כלל על condition variable not_full) עד שיש מקום. דריסת הישן ביותר והחזרת false הן מדיניות אחרות (drop oldest / try_push). הגדלה אוטומטית סותרת את ההגדרה של bounded.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q03",
+      "level": 1,
+      "type": "multi",
+      "prompt": "אילו מהמערכות הבאות הן מקרה של producer-consumer?",
+      "choices": [
+        "thread שקורא samples מה-USRP ומעביר בלוקים ל-thread של FFT",
+        "thread pool שמקבל משימות מתור עבודה",
+        "פונקציה רקורסיבית שמחשבת Fibonacci",
+        "async logger שבו ה-threads כותבים הודעות לתור ו-thread רקע כותב לדיסק",
+        "לולאת for שסוכמת מערך"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "RX→FFT, thread pool ו-async logger הם כולם רכיב מייצר, תור ורכיב צורך. רקורסיה ולולאת סכימה הן חישוב סדרתי בתוך אותו הקשר, בלי תור שמנתק בין שני צדדים.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה ה-consumer כותב `while (q.empty()) cv.wait(lock);` ולא `if (q.empty()) cv.wait(lock);`?",
+      "choices": [
+        "כי if לא מקמפל עם condition_variable",
+        "כי wait עלול לחזור בלי שהתנאי מתקיים: spurious wakeup, או consumer אחר שלקח את הפריט קודם",
+        "כי while מחזיק את ה-mutex לאורך זמן קצר יותר",
+        "כי notify_one מעיר תמיד את כל ה-threads"
+      ],
+      "answer": 1,
+      "explanation": "condition variable לא מבטיח שהתנאי נכון כשה-wait חוזר. spurious wakeups מותרים בתקן, ובנוסף בין ה-notify ללקיחת ה-mutex מחדש consumer אחר יכול לרוקן את התור. לכן תמיד בודקים מחדש בלולאה (או משתמשים ב-overload עם predicate). notify_one מעיר thread אחד לכל היותר.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q05",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את הצעדים של push בתור bounded חוסם שמבוסס mutex ושני condition variables:",
+      "items": [
+        "נועלים את ה-mutex (unique_lock)",
+        "ממתינים על not_full בלולאה כל עוד התור מלא",
+        "מכניסים את הפריט לתור",
+        "משחררים את ה-mutex",
+        "קוראים ל-not_empty.notify_one()"
+      ],
+      "explanation": "קודם נועלים, אחר כך ממתינים בלולאה (wait משחרר את ה-mutex בזמן ההמתנה ונועל שוב כשהוא חוזר), מכניסים, ומעירים consumer. notify אחרי השחרור חוסך מה-consumer שהתעורר להיתקע מיד על mutex שעדיין נעול. גם notify לפני השחרור נכון מבחינת correctness.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q06",
+      "level": 2,
+      "type": "short",
+      "prompt": "ring buffer מסוג SPSC עם 1024 slots משתמש בקונבנציה ש-head == tail פירושו ריק, ומשאיר slot אחד ריק כדי להבחין בין מלא לריק. כמה פריטים לכל היותר אפשר לאחסן בו?",
+      "accept": ["1023"],
+      "explanation": "אם היו מאפשרים 1024 פריטים, מצב מלא היה נראה בדיוק כמו מצב ריק (head == tail). לכן מוותרים על slot אחד: מלא הוא (tail+1) % N == head. החלופה היא מונים שרצים בלי wrap (או ביט נוסף) ואז אפשר לנצל את כל ה-N.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-thread זמן-אמת שמקבל בלוקים מה-SDR, ה-producer מבצע `new Block` לכל בלוק וה-consumer מבצע `delete`. מה הבעיה העיקרית?",
+      "choices": [
+        "new ו-delete לא thread-safe",
+        "זה דליפת זיכרון מובטחת",
+        "הקצאה עלולה לקחת זמן לא חסום (lock פנימי ב-allocator, page faults), מה שיוצר jitter ו-overflows",
+        "אסור להעביר מצביעים בין threads"
+      ],
+      "answer": 2,
+      "explanation": "ה-allocator הסטנדרטי thread-safe, אבל זמן הריצה שלו לא דטרמיניסטי: נעילות פנימיות, בקשת זיכרון מה-OS ו-page faults. ב-thread זמן-אמת מקצים pool של בלוקים מראש ומעבירים מצביעים לבלוקים חופשיים דרך תור חזרה (free list). אין כאן דליפה כל עוד יש delete תואם.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "יש 4 consumers שממתינים על תור משותף. רוצים לסגור את המערכת בצורה מסודרת אחרי שכל הפריטים עובדו. מה הפתרון הנכון?",
+      "choices": [
+        "להכניס poison pill אחד; ה-consumer שמקבל אותו יודיע לשאר",
+        "להכניס 4 poison pills (אחד לכל consumer) אחרי הפריט האחרון, או דגל closed עם notify_all שבו pop מחזיר 'סגור' רק כשהתור גם ריק",
+        "לקרוא ל-std::thread::detach על כל ה-consumers",
+        "להגדיר דגל closed ולקרוא ל-notify_one"
+      ],
+      "answer": 1,
+      "explanation": "כל consumer צריך לקבל אות עצירה משלו. poison pill אחד נצרך על ידי consumer אחד בלבד. דגל closed עובד אם משתמשים ב-notify_all (notify_one יעיר רק אחד והשאר יישנו לנצח) ואם pop ממשיך לרוקן את התור לפני שהוא מחזיר 'סגור'. detach לא עוצר כלום, רק מאבד את השליטה ב-thread.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread RX יחיד מעביר בלוקים ל-thread DSP יחיד, בקצב של עשרות אלפי בלוקים לשנייה, וה-RX אסור שייחסם לעולם. איזה מנגנון מתאים ביותר?",
+      "choices": [
+        "std::queue מוגן ב-mutex ו-condition variable, עם notify על כל בלוק",
+        "SPSC ring buffer lock-free של מצביעים לבלוקים מוקצים מראש, עם try_push שסופר drops כשהתור מלא",
+        "pipe של מערכת ההפעלה בין ה-threads",
+        "תור MPMC כללי עם CAS על כל פעולה"
+      ],
+      "answer": 1,
+      "explanation": "producer וצרכן יחידים, דרישה שה-producer לא ייחסם וקצב גבוה הם בדיוק המקרה של SPSC: שני אינדקסים atomic בלי CAS ובלי syscall. mutex+cv עובד אבל ה-notify על כל בלוק עלול לעלות syscall ו-RX עלול להיחסם על ה-mutex. pipe עולה syscall והעתקה לכל בלוק. MPMC משלם על כלליות שלא צריך.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "ה-consumer עובר מ-pop של פריט אחד ל-pop_batch שמוציא עד 64 פריטים בבת אחת תחת נעילה אחת. מה נכון?",
+      "choices": [
+        "עלות הנעילה וה-wakeup מתחלקת על הרבה פריטים, ולכן throughput עולה",
+        "ה-latency של כל פריט בודד יורד תמיד",
+        "אם ה-consumer מחכה למלא batch שלם, הפריט הראשון בו מחכה יותר ולכן ה-latency שלו עולה",
+        "ה-mutex מוחזק פחות פעמים, ולכן ה-producer נחסם פחות",
+        "batching מבטל את הצורך בתור bounded"
+      ],
+      "answer": [0, 2, 3],
+      "explanation": "batching הוא trade-off קלאסי של throughput מול latency: פחות נעילות ו-wakeups, ופחות contention מול ה-producer. אבל מי שמחכה לצבור batch מלא מוסיף latency לפריטים הראשונים, ולכן משתמשים בדרך כלל ב'עד 64 או timeout'. batching לא משנה את הצורך להגביל את גודל התור.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q11",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש תור bounded thread-safe עם קיבולת קבועה, `push` חוסם, `pop` חוסם שמחזיר `std::optional<T>` (ריק אחרי close והתרוקנות), ו-`close()` שמשחרר את כל הממתינים. תומך בכמה producers וכמה consumers.",
+      "starter": "template <class T>\nclass BoundedQueue {\npublic:\n  explicit BoundedQueue(size_t cap);\n  bool push(T v);            // false if closed\n  std::optional<T> pop();    // nullopt when closed and empty\n  void close();\n};",
+      "modelAnswer": "template <class T>\nclass BoundedQueue {\n  std::mutex m_;\n  std::condition_variable notFull_, notEmpty_;\n  std::deque<T> q_;\n  size_t cap_;\n  bool closed_ = false;\npublic:\n  explicit BoundedQueue(size_t cap) : cap_(cap) {}\n  bool push(T v) {\n    std::unique_lock lk(m_);\n    notFull_.wait(lk, [&]{ return closed_ || q_.size() < cap_; });\n    if (closed_) return false;\n    q_.push_back(std::move(v));\n    lk.unlock();\n    notEmpty_.notify_one();\n    return true;\n  }\n  std::optional<T> pop() {\n    std::unique_lock lk(m_);\n    notEmpty_.wait(lk, [&]{ return closed_ || !q_.empty(); });\n    if (q_.empty()) return std::nullopt;   // closed and drained\n    T v = std::move(q_.front());\n    q_.pop_front();\n    lk.unlock();\n    notFull_.notify_one();\n    return v;\n  }\n  void close() {\n    { std::lock_guard lk(m_); closed_ = true; }\n    notFull_.notify_all();\n    notEmpty_.notify_all();\n  }\n};",
+      "rubric": [
+        "שני condition variables נפרדים (not_full, not_empty), wait עם predicate או בלולאה",
+        "close מעדכן דגל תחת ה-mutex וקורא notify_all לשני ה-cv",
+        "pop ממשיך לרוקן פריטים שנשארו אחרי close ומחזיר nullopt רק כשריק",
+        "push אחרי close מחזיר false ולא נתקע",
+        "שימוש ב-move, ו-notify אחרי unlock (או הסבר למה לפני זה גם תקין)"
+      ],
+      "explanation": "המבנה הקנוני: mutex אחד, שני cv, predicate שכולל את closed_ כדי שהממתינים ישתחררו. הנקודה העדינה היא סמנטיקת ה-close: לא מאבדים פריטים שכבר בתור. כל פעולה O(1) amortized.",
+      "lesson": "design.producer-consumer",
+      "tags": ["microsoft", "nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בתור MPMC יש mutex אחד ו-condition variable אחד בלבד, שעליו ממתינים גם producers (כשמלא) וגם consumers (כשריק). כל פעולה קוראת ל-notify_one. מה הסיכון?",
+      "choices": [
+        "אין סיכון; notify_one תמיד מעיר את ה-thread שממתין הכי הרבה זמן",
+        "data race על התור",
+        "notify_one של producer יכול להעיר producer אחר במקום consumer; ה-wakeup 'נבלע' וכל ה-threads יכולים להיתקע בהמתנה",
+        "spurious wakeups יגרמו לפריטים להיכפל"
+      ],
+      "answer": 2,
+      "explanation": "כשיש שני סוגי ממתינים על אותו cv, notify_one בוחר thread שרירותי. אם producer מעיר producer אחר שבודק את התנאי שלו (מלא) וחוזר לישון, ה-consumer שהיה צריך להתעורר לא קיבל אות, ותיתכן תקיעה מלאה. הפתרון: שני cv נפרדים, או notify_all (יקר יותר). התקן לא מבטיח FIFO בין הממתינים, ו-race אין כי הכל תחת ה-mutex.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה ההבדל המעשי בין קריאה ל-`notify_one()` לפני שחרור ה-mutex לבין אחריו?",
+      "choices": [
+        "רק notify לפני השחרור נכון; אחרת יש lost wakeup",
+        "רק notify אחרי השחרור נכון; אחרת יש deadlock",
+        "שניהם נכונים כל עוד שינוי המצב נעשה תחת ה-mutex; אחרי השחרור חוסך ל-thread שהתעורר להיחסם מיד על ה-mutex, אבל צריך לוודא שה-cv לא יכול להיהרס בינתיים",
+        "אין שום הבדל, אפילו לא בביצועים"
+      ],
+      "answer": 2,
+      "explanation": "מה שמונע lost wakeup הוא שהשינוי במצב המשותף נעשה תחת ה-mutex ושהממתין בודק את התנאי תחת אותו mutex. notify לפני השחרור עלול לגרום ל-'hurry up and wait' (חלק מהמימושים מתמודדים עם זה ב-wait morphing). notify אחרי השחרור יעיל יותר, אבל במקרה שה-waiter יכול להשמיד את האובייקט שמכיל את ה-cv מיד כשהוא רואה את התנאי, notify אחרי unlock הוא use-after-free.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q14",
+      "level": 4,
+      "type": "multi",
+      "prompt": "thread pool עם 16 workers. משווים תור משותף יחיד (MPMC) מול תור לכל worker עם work stealing. מה נכון?",
+      "choices": [
+        "תור משותף יחיד הופך לנקודת contention כשהמשימות קצרות ורבות",
+        "עם תור לכל worker, worker שגמר עבודה גונב מהקצה השני של תור של worker אחר, מה שמקטין התנגשויות",
+        "work stealing מבטיח שהמשימות יבוצעו בסדר ההגשה",
+        "עם תורים פר-worker, משימה שנוצרת על ידי worker נשארת לרוב חמה ב-cache של אותו core",
+        "תור משותף יחיד תמיד איטי יותר, גם כשהמשימות ארוכות (מילישניות)"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "כשמשימות קצרות, כל ה-workers מתחרים על אותו lock או אותו cache line וזה צוואר בקבוק. work stealing (כמו ב-TBB ו-Go) נותן ל-owner לעבוד על קצה אחד ולגנבים על הקצה השני, ושומר locality. הוא לא שומר על סדר גלובלי. כשהמשימות ארוכות, תקורת התור זניחה ותור משותף פשוט מצוין.",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "id": "design.producer-consumer.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן את ההעברה של samples מ-thread ה-RX של USRP X310 (100 Msps, complex int16) ל-thread של עיבוד DSP. מה גודל הבלוקים, איך מנהלים את הזיכרון, ומה קורה כשה-DSP לא עומד בקצב?",
+      "modelAnswer": "קצב הנתונים: 100 Msps כפול 4 bytes = 400 MB/s. בוחרים בלוק של למשל 8192 samples (32 KB, כ-82 מיקרו-שניות) כפשרה: מספיק גדול כדי שתקורת התור לכל בלוק תהיה זניחה (כ-12k בלוקים בשנייה), מספיק קטן כדי שה-latency יישאר נמוך. מקצים מראש pool של N בלוקים (נניח 256, כ-8 MB, כ-21 מילישניות של buffering), רצוי עם mlock כדי למנוע page faults. שני תורי SPSC: full queue מ-RX ל-DSP ו-free queue בכיוון ההפוך; עוברים רק מצביעים, אין העתקה ואין הקצאה בזמן ריצה. ה-RX לעולם לא נחסם: אם free queue ריק, הוא סופר drop (או דורס את הבלוק הישן ביותר) ומסמן discontinuity עם timestamp כדי שה-DSP יידע שיש חור. ה-threads מוצמדים ל-cores נפרדים, עם SCHED_FIFO ל-RX. מנטרים: עומק תור מקסימלי, מונה drops ו-overflows של UHD. אם יש drops באופן קבוע, הבעיה היא קצב ממוצע ולא burst, ותור גדול יותר לא יעזור: צריך לחלק את ה-DSP לכמה workers (עם resequencing), להוריד קצב (decimation מוקדם), או לייעל את העיבוד.",
+      "rubric": [
+        "חישוב קצב בבתים ובחירת גודל בלוק עם נימוק throughput מול latency",
+        "pool מוקצה מראש ו-free list, העברת מצביעים בלי העתקה ובלי malloc",
+        "מדיניות overflow מפורשת: RX לא נחסם, ספירת drops וסימון discontinuity",
+        "הבחנה בין burst (תור סופג) לבין קצב ממוצע לא מספיק (צריך יותר compute או פחות נתונים)",
+        "פרטי זמן-אמת: core pinning, SCHED_FIFO, mlock, מדדים"
+      ],
+      "explanation": "מראיין רוצה לראות חשבון מספרי, הפרדה בין מנגנון (SPSC + pool) למדיניות (מה עושים במחסור), והבנה שתור רק סופג bursts.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-SPSC ring buffer, ה-producer כותב את הנתון ל-slot ואז מעדכן את `tail` (atomic). ה-consumer קורא את `tail` ואז את ה-slot. מהו ה-memory ordering המינימלי הנכון?",
+      "choices": [
+        "relaxed בשני הצדדים, כי יש רק producer אחד",
+        "store של tail עם release ב-producer, load של tail עם acquire ב-consumer",
+        "seq_cst בשני הצדדים הוא המינימום הנכון",
+        "store של tail עם acquire ב-producer, load של tail עם release ב-consumer"
+      ],
+      "answer": 1,
+      "explanation": "release על ה-store מבטיח שהכתיבה ל-slot נראית לכל מי שקורא את ערך ה-tail החדש עם acquire. עם relaxed ה-consumer עלול לראות tail מעודכן ולקרוא slot ישן (במיוחד על ARM). seq_cst נכון אבל לא מינימלי ויקר יותר על חלק מהארכיטקטורות. acquire על store ו-release על load אינם orderings חוקיים לפעולות האלה. באופן סימטרי, head משוחרר עם release על ידי ה-consumer ונקרא עם acquire על ידי ה-producer.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "SPSC ring נכון לוגית אבל מגיע רק ל-30M ops/s במקום 150M הצפויים. head ו-tail ב-alignas(64) נפרדים. מה האופטימיזציה הבאה עם ההשפעה הגדולה ביותר?",
+      "choices": [
+        "להחליף את ה-atomics ב-volatile",
+        "כל צד שומר עותק מקומי (cached) של האינדקס של הצד השני וקורא את ה-atomic המשותף רק כשהעותק מראה מלא או ריק",
+        "להגדיל את הקיבולת פי 10",
+        "לעבור ל-seq_cst כדי למנוע reordering"
+      ],
+      "answer": 1,
+      "explanation": "גם בלי false sharing, כל push קורא את head וכל pop קורא את tail, ולכן ה-cache line של כל אינדקס עובר בין ה-cores על כל פעולה. עם עותק מקומי, ה-producer קורא את head האמיתי רק כשנראה לו שהתור מלא, וכך התעבורה בין ה-cores יורדת בסדר גודל (הטכניקה של rigtorp/folly). volatile לא נותן סנכרון ב-C++, הגדלת קיבולת לא משנה את ה-ping-pong, ו-seq_cst רק מוסיף fences.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.producer-consumer.q18",
+      "level": 5,
+      "type": "oral",
+      "prompt": "שלב DSP אחד לא עומד בקצב, ולכן מחליפים אותו ב-4 workers שמקבלים בלוקים מתור משותף. השלב הבא דורש את הבלוקים בסדר המקורי ובלי חורים. איך שומרים על סדר, ומה המחיר?",
+      "modelAnswer": "ה-producer מצמיד לכל בלוק sequence number רץ. ה-workers מעבדים במקביל ומסיימים בסדר שרירותי. אחריהם יש שלב resequencer: מבנה (ring indexed לפי seq % W, או min-heap) שמחזיק בלוקים שהגיעו מוקדם ומשחרר רצף רציף החל מ-next_expected. החלון W חייב להיות חסום: אם בלוק אחד מתעכב (worker שנקטע על ידי ה-scheduler), כל הבלוקים אחריו מחכים, וזה head-of-line blocking. המחיר: latency נוסף בגודל ה-tail latency של ה-worker האיטי ולא הממוצע, וזיכרון לחלון. צריך גם להחליט מה עושים עם בלוק שאבד או שה-worker נכשל בו: timeout שאחריו מכריזים על gap ומדלגים. חלופות: round-robin קבוע (בלוק i ל-worker i%4) וקבלה באותו סדר מ-4 תורי SPSC, שזה פשוט ודטרמיניסטי אבל worker איטי אחד מעכב הכל; או partitioning לפי key (למשל לפי ערוץ) כשנדרש סדר רק בתוך key. לבסוף, אם העיבוד תלוי state בין בלוקים (filter עם memory, NCO phase), צריך overlap-save או להעביר את ה-state, ואחרת חלוקה ל-workers פשוט לא נכונה.",
+      "rubric": [
+        "sequence numbers ושלב resequencing עם חלון חסום",
+        "זיהוי head-of-line blocking ושה-latency נקבע על ידי ה-tail ולא הממוצע",
+        "טיפול בבלוק אבוד או worker תקוע (timeout, סימון gap)",
+        "חלופות: round-robin דטרמיניסטי, partitioning לפי key",
+        "זיהוי בעיית state בין בלוקים (filter state, phase) ופתרון כמו overlap"
+      ],
+      "explanation": "ההבחנה הסניורית היא שהמקביליות קונה throughput במחיר של tail latency וסיבוכיות, ושעיבוד עם state בין בלוקים לא ניתן לפיצול נאיבי.",
+      "lesson": "design.producer-consumer",
+      "tags": ["nvidia", "microsoft"]
+    }
+  ]
+}

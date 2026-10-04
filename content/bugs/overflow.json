@@ -1,0 +1,333 @@
+{
+  "domain": "bugs",
+  "subtopic": "overflow",
+  "lessons": [
+    {
+      "id": "bugs.overflow",
+      "title": "Integer overflow",
+      "what": "overflow קורה כשתוצאה של פעולה לא נכנסת בטיפוס. ב-C++ יש שני עולמות: **signed overflow הוא undefined behavior**, והקומפיילר מנצל את זה לאופטימיזציות; **unsigned עוטף מודולו 2^N** באופן מוגדר, אבל זה עדיין באג לוגי. ב-Python ה-int לא מוגבל, אבל NumPy עובד עם טיפוסים ברוחב קבוע ועוטף בשקט.",
+      "when": [
+        "חישובי גודל: `n * sizeof(T)`, `rows * cols`, אורך buffer שמגיע מקלט חיצוני",
+        "timestamps ו-tick counters: 32 ביט ב-200 MHz עוטף כל 21.5 שניות",
+        "DSP בנקודה קבועה: int16 ו-Q15, חיבור דגימות, מכפלה של -1 ב-1-",
+        "ערבוב signed ו-unsigned: `a - b` כש-a<b ב-unsigned, השוואה `int < size_t`",
+        "בדיקות overflow שנכתבו אחרי הפעולה, כמו `if (a + b < a)` על signed"
+      ],
+      "how": [
+        "integer promotion: כל טיפוס קטן מ-int (int8, int16, uint16) מקודם ל-int לפני פעולה אריתמטית. לכן int16+int16 לא גולש, אבל uint16*uint16 יכול לגלוש ב-int",
+        "usual arithmetic conversions: כשיש signed ו-unsigned באותו רוחב, ה-signed מומר ל-unsigned. ככה `-1 < 1u` הוא false",
+        "לבדוק לפני הפעולה ולא אחריה: `if (b > 0 && a > INT_MAX - b)`, או `__builtin_add_overflow` / `__builtin_mul_overflow`",
+        "להרחיב לפני הפעולה: `int64_t{a} * b` ולא `int64_t(a * b)`",
+        "ב-DSP: saturation במקום wrap. wrap של דגימה נשמע כ-click חזק כי ערך חיובי גדול הופך לשלילי גדול",
+        "כלים: UBSan (`-fsanitize=signed-integer-overflow`, ו-Clang גם `unsigned-integer-overflow` שאינו UB), `-Wconversion -Wsign-compare`, ו-unit tests עם INT_MIN, INT_MAX, 0, -1"
+      ],
+      "complexity": "בדיקת overflow עולה מחזור או שניים (ה-builtins מתקמפלים ל-add ואז jo). saturation בחומרה: SIMD מציע פעולות saturating (למשל `_mm_adds_epi16`) בלי עלות נוספת.",
+      "pitfalls": [
+        "`if (a + b < a)` על signed: הקומפיילר רשאי למחוק את הבדיקה",
+        "`int64_t x = a * b;` כש-a ו-b הם int: הגלישה קורית לפני ההרחבה",
+        "Q15: (-32768)*(-32768)>>15 = 32768, שלא נכנס ב-int16",
+        "`std::abs(INT_MIN)` הוא UB",
+        "המרת float ל-int מחוץ לטווח היא UB ב-C++, ותוצאה לא מוגדרת ב-NumPy"
+      ],
+      "senior": [
+        "להסביר למה signed overflow הוא UB ומה הקומפיילר מרוויח מזה (למשל הנחה ש-`i+1 > i` ו-vectorization של לולאות)",
+        "להכיר serial-number arithmetic להשוואת timestamps שעוטפים",
+        "לבחור בין wrap, saturation ו-widening לפי הדרישה, ולהסביר את מחיר הדינמיקה בנקודה קבועה",
+        "לדעת שחולשות אבטחה רבות מתחילות ב-overflow בחישוב גודל הקצאה"
+      ],
+      "diagram": "int16:  32767 + 1  -> wrap -> -32768\n        |-------------|-------------|\n     -32768           0           32767"
+    }
+  ],
+  "questions": [
+    {
+      "id": "bugs.overflow.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-C++, `int x = INT_MAX; x = x + 1;`. מה קורה?",
+      "choices": [
+        "x הופך ל-INT_MIN, באופן מוגדר",
+        "undefined behavior",
+        "x נשאר INT_MAX (saturation)",
+        "נזרק std::overflow_error"
+      ],
+      "answer": 1,
+      "explanation": "signed overflow הוא UB ב-C++. בפועל במכונה רגילה תראה בדרך כלל INT_MIN, אבל הקומפיילר רשאי להניח שזה לא קורה ולבנות קוד לפי ההנחה הזו. רק unsigned עוטף באופן מוגדר. C++ לא זורק exceptions על אריתמטיקה של שלמים.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "`uint8_t x = 250; x += 10;`. מה הערך של x?",
+      "choices": ["260", "255", "4", "undefined behavior"],
+      "answer": 2,
+      "explanation": "x מקודם ל-int, החישוב נותן 260, וההמרה חזרה ל-uint8_t היא מודולו 256: 260-256 = 4. המרה לטיפוס unsigned תמיד מוגדרת כמודולו. 255 הוא מה שהיה יוצא עם saturation, שלא קיים בשלמים רגילים.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה הערך המקסימלי של `int16_t`?",
+      "accept": ["32767", "32,767", "2^15-1"],
+      "explanation": "int16_t הוא two's complement ב-16 ביט: טווח מ-32768- עד 32767. האסימטריה (יש ערך שלילי אחד יותר) היא המקור לבאגים כמו `-x` ו-`abs` על הערך המינימלי.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס?",
+      "code": "unsigned a = 3, b = 5;\nstd::cout << (a - b > 0);",
+      "choices": ["0", "1", "-2", "לא מתקמפל"],
+      "answer": 1,
+      "explanation": "`a - b` ב-unsigned עוטף ל-2^32-2 = 4294967294, שגדול מ-0, והביטוי true מודפס כ-1. זה באג נפוץ בחישוב הפרש בין אינדקסים או גדלים: `if (v.size() - k > 0)` נכון כמעט תמיד. השוואה נכונה: `a > b`.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס? (int הוא 32 ביט)",
+      "code": "int16_t a = 20000, b = 20000;\nauto c = a + b;\nstd::cout << c << ' ' << sizeof(c);",
+      "choices": ["-25536 2", "40000 2", "-25536 4", "40000 4"],
+      "answer": 3,
+      "explanation": "integer promotion: שני ה-int16_t מקודמים ל-int לפני החיבור, ו-`auto` מסיק int. התוצאה 40000 נכנסת, ו-sizeof הוא 4. אם היה כתוב `int16_t c = a + b;` ההמרה חזרה הייתה נותנת 25536- (מודולו 2^16, מוגדר מ-C++20).",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q06",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מיקסר של שני ערוצי אודיו int16. כשהעוצמה גבוהה שומעים clicks חזקים. מה הבאג?",
+      "code": "int16_t mixSample(int16_t a, int16_t b) {\n    int32_t s = a + b;\n    return static_cast<int16_t>(s);\n}",
+      "bugLine": 3,
+      "choices": [
+        "`a + b` גולש כבר ב-int16 לפני ההשמה ל-int32",
+        "ההמרה חזרה ל-int16 עוטפת: סכום כמו 40000 הופך ל-25536-, קפיצה מקסימום למינימום. צריך saturation (clamp ל-[-32768, 32767])",
+        "static_cast צריך להיות reinterpret_cast",
+        "צריך לחלק ב-2 לפני החיבור, אחרת UB"
+      ],
+      "answer": 1,
+      "explanation": "החיבור עצמו בטוח בזכות promotion ל-int, והסכום ב-int32 נכון. הבעיה היא ההמרה בחזרה: wrap של ערך גדול לשלילי יוצר קפיצה של כמעט 65536 בדגימה אחת, שנשמעת כ-click. תיקון: `std::clamp(s, -32768, 32767)` לפני ההמרה. חלוקה ב-2 מונעת overflow אבל מורידה 6 dB בכל ערבוב, וזו החלטת תכנון, לא תיקון ל-UB שלא קיים כאן.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q07",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "nFrames ו-frameLen מגיעים מ-header של קובץ. קובץ זדוני גורם ל-heap overflow. באיזו שורה השורש?",
+      "code": "float* allocFrames(uint32_t nFrames, uint32_t frameLen) {\n    uint32_t total = nFrames * frameLen;\n    float* p = static_cast<float*>(malloc(total * sizeof(float)));\n    if (!p) return nullptr;\n    for (uint32_t f = 0; f < nFrames; ++f)\n        readFrame(p + size_t(f) * frameLen, frameLen);\n    return p;\n}",
+      "bugLine": 2,
+      "choices": [
+        "malloc יכול להחזיר nullptr",
+        "`total * sizeof(float)` גולש",
+        "`nFrames * frameLen` מחושב ב-uint32 ועוטף: למשל 65536*65536 נותן 0, מוקצה buffer זעיר, והלולאה כותבת את כל ה-frames אל מחוץ לו",
+        "צריך `new[]` במקום malloc"
+      ],
+      "answer": 2,
+      "explanation": "המכפלה ב-uint32_t עוטפת מודולו 2^32 בלי שום אזהרה, וההקצאה קטנה בהרבה ממה שהלולאה כותבת. זה דפוס קלאסי של CVE. `total * sizeof(float)` מחושב ב-size_t (64 ביט) ולכן הוא לא הגורם. תיקון: לבדוק `frameLen != 0 && nFrames > SIZE_MAX / sizeof(float) / frameLen`, או `__builtin_mul_overflow`, ולהגביל גודל מקסימלי הגיוני.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה עובדת לבלוקים קטנים, אבל עם n=65536 התוכנית נתקעת וכותבת לזיכרון אקראי. מה הבאג?",
+      "code": "void scale(float* x, int n, float g) {\n    for (int16_t i = 0; i < n; ++i)\n        x[i] *= g;\n}",
+      "bugLine": 2,
+      "choices": [
+        "`int16_t i` לא יכול להגיע ל-32768: אחרי 32767 ה-`++i` מחזיר אותו ל-32768-, ו-i < n תמיד נכון; האינדקסים השליליים כותבים לפני x",
+        "x צריך להיות `const float*`",
+        "`x[i] *= g` עלול לגלוש ב-float",
+        "השוואה של int16_t מול int היא UB"
+      ],
+      "answer": 0,
+      "explanation": "`++i` מקדם ל-int, מחשב 32768, וממיר חזרה ל-int16_t: 32768- (מודולו, מוגדר מ-C++20 ו-implementation-defined לפני). זה לא signed overflow ולכן לא UB, אבל הלולאה לא נגמרת ו-`x[-32768]` חורג. ההשוואה מקדמת את i ל-int והיא תקינה. תיקון: אינדקס מסוג size_t או int.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q09",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "חישוב מספר ticks של שעון 200 MHz לפרק זמן. עבור 20 שניות יוצא מספר שלילי. מה הבאג?",
+      "code": "int64_t ticksFor(int seconds) {\n    int64_t ticks = seconds * 200'000'000;\n    return ticks;\n}",
+      "bugLine": 2,
+      "choices": [
+        "`200'000'000` לא ליטרל חוקי",
+        "int64_t לא מספיק ל-4e9",
+        "צריך להחזיר uint64_t",
+        "המכפלה מחושבת ב-int (שני האופרנדים int) וגולשת לפני ההמרה ל-int64_t: signed overflow, UB"
+      ],
+      "answer": 3,
+      "explanation": "הטיפוס של צד שמאל לא משפיע על חישוב צד ימין. `seconds * 200'000'000` הוא int*int, ו-4e9 גדול מ-INT_MAX (בערך 2.147e9). תיקון: `int64_t{seconds} * 200'000'000` או `200'000'000LL`. מפרידי ספרות `'` חוקיים מ-C++14, ו-int64_t מחזיק עד 9.2e18.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהבאים עוזרים **לזהות** signed overflow (ולא רק לשנות את ההתנהגות)? (בחר את כל הנכונים)",
+      "choices": [
+        "`-fsanitize=signed-integer-overflow` (UBSan)",
+        "`__builtin_add_overflow(a, b, &r)` במקומות הקריטיים",
+        "`-fwrapv`",
+        "`-ftrapv`",
+        "`-O0` כדי שהקומפיילר לא ינצל את ה-UB"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "UBSan מדווח בזמן ריצה, ה-builtin מחזיר true כשיש overflow ונותן תוצאה עטופה, ו-`-ftrapv` גורם ל-abort על signed overflow בפעולות שהוא מכסה. `-fwrapv` דווקא מגדיר signed overflow כ-wrap: ה-UB נעלם אבל הבאג מוסתר. `-O0` משנה התנהגות ולא מזהה כלום.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q11",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\na = np.array([10, 200], dtype=np.uint8)\nb = np.array([20, 100], dtype=np.uint8)\nprint(a - b, np.abs(a - b))",
+      "choices": [
+        "[-10 100] [10 100]",
+        "[246 100] [10 100]",
+        "[246 100] [246 100]",
+        "[0 100] [0 100]"
+      ],
+      "answer": 2,
+      "explanation": "פעולות על מערכי NumPy נשארות ב-dtype של הקלט: 10-20 ב-uint8 עוטף ל-246, בלי אזהרה. `np.abs` על unsigned לא עושה כלום, כי הערך כבר 246. זה באג נפוץ בעיבוד תמונה ובדגימות ADC. תיקון: `a.astype(np.int16) - b`.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "פונקציית חיבור 'בטוחה'. בטסט עם `-O2` היא מחזירה true גם כשיש overflow. מה הבאג?",
+      "code": "bool safeAdd(int a, int b, int& out) {\n    if (b > 0 && a + b < a) return false;  // overflow\n    if (b < 0 && a + b > a) return false;  // underflow\n    out = a + b;\n    return true;\n}",
+      "bugLine": 2,
+      "choices": [
+        "הבדיקה מבוצעת אחרי ה-overflow: `a + b` עם overflow הוא UB, והקומפיילר רשאי לפשט את `a + b < a` ל-`b < 0`, שהוא false כש-b>0. הבדיקה נמחקת",
+        "הסדר של שני ה-if הפוך",
+        "`out` צריך להיות מצביע",
+        "חסר מקרה b==0"
+      ],
+      "answer": 0,
+      "explanation": "מאחר ש-signed overflow 'לא יכול לקרות', `a + b < a` שקול מתמטית ל-`b < 0`, ו-GCC/Clang עושים את הפישוט הזה. בדיקה נכונה לפני הפעולה: `if (b > 0 && a > INT_MAX - b)` ו-`if (b < 0 && a < INT_MIN - b)`, או `__builtin_add_overflow`. b==0 אף פעם לא גולש.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q13",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "כפל Q15 (ערכים ב-[-1, 1) מיוצגים כ-int16). עבור רוב הקלטים התוצאה נכונה. איפה הבאג ובאיזה קלט?",
+      "code": "// Q15 x Q15 -> Q15\nint16_t qmul(int16_t a, int16_t b) {\n    int32_t p = int32_t(a) * b;\n    return int16_t(p >> 15);\n}",
+      "bugLine": 4,
+      "choices": [
+        "המכפלה ב-int32 גולשת עבור ערכים גדולים",
+        "shift ימינה של מספר שלילי הוא UB",
+        "עבור a=b=-32768 (כלומר 1- כפול 1-) מתקבל p=2^30, ו-`p >> 15` = 32768, שלא נכנס ב-int16 ועוטף ל-32768-: 1- במקום כמעט 1+",
+        "חסר rounding, ולכן התוצאה תמיד שגויה ב-LSB"
+      ],
+      "answer": 2,
+      "explanation": "המכפלה המקסימלית בערך מוחלט היא 2^30, שנכנסת ב-int32. אבל +1 לא ייצוגי ב-Q15, ולכן המקרה היחיד 1- כפול 1- עוטף ל-1-. תיקון: saturation לפני ההמרה. גם הוראות SIMD נבדלות כאן: `SQRDMULH` ב-ARM עושה saturation ל-0x7FFF, ואילו `_mm_mulhrs_epi16` ב-x86 מחזיר 0x8000 בדיוק באותו מקרה. shift ימינה של שלילי הוא implementation-defined לפני C++20 ומוגדר כ-arithmetic מ-C++20. חוסר rounding הוא הטיה של חצי LSB, לא באג נכונות.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q14",
+      "level": 4,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "המרת אות float בטווח [-1.0, 1.0] ל-int16 לפני שליחה ל-DAC. דגימות בשיא הטווח החיובי יוצאות כשליליות. מה הבאג?",
+      "code": "import numpy as np\n\ndef to_int16(x):\n    q = np.round(x * 32768)\n    return q.astype(np.int16)",
+      "bugLine": 4,
+      "choices": [
+        "`np.round` מעגל חצאים לזוגי (banker's rounding)",
+        "הסקאלה 32768 הופכת את 1.0 ל-32768, מחוץ לטווח int16; `astype` לא עושה saturation, וההמרה של ערך מחוץ לטווח נותנת ערך שגוי (בדרך כלל 32768-)",
+        "`astype` מעתיק את המערך",
+        "צריך `np.int16(q)` במקום astype"
+      ],
+      "answer": 1,
+      "explanation": "int16 מגיע רק עד 32767. ההמרה של 32768.0 ל-int16 ב-NumPy לא מוגדרת וב-C++ היא UB; בפועל לרוב מתקבל 32768-, כלומר glitch מקסימלי. תיקון: `np.clip(np.round(x * 32767), -32768, 32767)` או סקאלה של 32767. round-half-to-even נכון ולא רלוונטי כאן. np.int16(q) היה נכשל באותה צורה.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `allocSamples(uint64_t nFrames, uint64_t frameLen)` שמקצה `nFrames*frameLen` דגימות float עם new (nothrow) ומחזירה nullptr אם המכפלה או הגודל בבתים גולשים, או אם הגודל עולה על 1 GiB. בלי builtins של הקומפיילר.",
+      "starter": "float* allocSamples(uint64_t nFrames, uint64_t frameLen);",
+      "modelAnswer": "float* allocSamples(uint64_t nFrames, uint64_t frameLen) {\n    constexpr uint64_t kMaxBytes = 1ull << 30;   // 1 GiB\n    constexpr uint64_t kMaxElems = kMaxBytes / sizeof(float);\n    if (nFrames == 0 || frameLen == 0) return nullptr;\n    // check before multiplying: nFrames * frameLen <= kMaxElems\n    if (nFrames > kMaxElems / frameLen) return nullptr;\n    uint64_t n = nFrames * frameLen;   // cannot overflow now\n    return new (std::nothrow) float[n];\n}",
+      "rubric": [
+        "בודק לפני הכפל באמצעות חלוקה: a > MAX / b, ולא אחרי",
+        "מטפל ב-0 (חלוקה באפס) באופן מפורש",
+        "הגבול מוגדר במספר איברים כך שגם הגודל בבתים לא גולש",
+        "משתמש ב-new(std::nothrow) ובודק nullptr, או מסביר למה exception עדיף",
+        "O(1), בלי UB"
+      ],
+      "explanation": "הדרך הניידת לבדוק כפל היא חלוקה: אם a > MAX/b אז a*b > MAX. הגבלת מספר האיברים ל-kMaxBytes/sizeof(float) מבטיחה שגם ההכפלה הפנימית ב-sizeof שבתוך new[] לא תגלוש.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q16",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "המפתח רצה לספור כמה צעדים עד שה-int 'עוטף לשלילי'. ב-`-O0` הפונקציה מחזירה מספר סביר, וב-`-O2` היא לא חוזרת לעולם. מה קורה?",
+      "code": "int stepsUntilWrap(int start) {\n    int n = 0;\n    for (int i = start; i > 0; i += 1000000)\n        ++n;\n    return n;\n}",
+      "bugLine": 3,
+      "choices": [
+        "ב-`-O2` הקומפיילר מבטל את הלולאה כי אין לה side effects",
+        "`++n` גולש לפני i",
+        "הלולאה תלויה ב-signed overflow של i, שהוא UB. הקומפיילר רשאי להניח ש-i חיובי ורק עולה, ולכן `i > 0` נשאר תמיד true: הוא מסיק שהלולאה אינסופית ומקמפל אותה כך",
+        "start שלילי גורם ללולאה אינסופית"
+      ],
+      "answer": 2,
+      "explanation": "הלוגיקה של הפונקציה כולה נשענת על wrap שהתקן מגדיר כ-UB. אחרי ש-i>0 ומוסיפים לו חיובי, 'ידוע' ש-i נשאר חיובי, והתנאי מתקפל ל-true. ב-`-O0` אין את הניתוח הזה ולכן מתקבל wrap בחומרה. start שלילי פשוט מחזיר 0. תיקון: לחשב ב-unsigned או ב-int64_t ולבדוק מול INT_MAX במפורש.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q17",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "int הוא 32 ביט. מה נכון לגבי הקוד?",
+      "code": "uint16_t a = 65535, b = 65535;\nuint32_t p = a * b;\nstd::cout << p;",
+      "choices": [
+        "מדפיס 4294836225, כי הכל unsigned",
+        "מדפיס 1, כי המכפלה מחושבת ב-uint16 ועוטפת",
+        "undefined behavior: שני האופרנדים מקודמים ל-int (signed), והמכפלה 4294836225 גדולה מ-INT_MAX",
+        "לא מתקמפל בגלל narrowing"
+      ],
+      "answer": 2,
+      "explanation": "integer promotion ממיר uint16_t ל-int (כי int מכיל את כל הערכים של uint16_t), ולא ל-unsigned. הכפל הוא int*int וגולש: signed overflow, UB. בפועל כנראה יודפס 4294836225, אבל UBSan ידווח, והקומפיילר רשאי לנצל את זה. תיקון: `uint32_t(a) * b`. השמה רגילה (לא brace-init) לא בודקת narrowing.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ל-FPGA יש tick counter של 32 ביט ב-200 MHz, ו-`t0`, `t1` הם `uint32_t`. ידוע שההפרש האמיתי בין שני אירועים קטן משנייה. איזה ביטוי בודק נכון ש-t1 מאוחר מ-t0, גם כשהמונה עוטף (C++20)?",
+      "choices": [
+        "`t1 > t0`",
+        "`int64_t(t1) - int64_t(t0) > 0`",
+        "`t1 - t0 > 0`",
+        "`int32_t(t1 - t0) > 0`"
+      ],
+      "answer": 3,
+      "explanation": "המונה עוטף כל 2^32/200e6 ≈ 21.5 שניות. `t1 - t0` ב-unsigned נותן את ההפרש הנכון מודולו 2^32, והמרה ל-int32_t (מוגדרת כמודולו מ-C++20) מפרשת אותו כחיובי אם הוא קטן מ-2^31 ticks, בערך 10.7 שניות. זה serial-number arithmetic (RFC 1982), ואותו טריק משמש ב-Linux `time_after`. `t1 > t0` ו-int64 נכשלים כשהמונה עוטף בין האירועים, ו-`t1 - t0 > 0` ב-unsigned נכון לכל t1 != t0.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    }
+  ]
+}

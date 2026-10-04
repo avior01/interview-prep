@@ -1,0 +1,329 @@
+{
+  "domain": "cpp",
+  "subtopic": "raii",
+  "lessons": [
+    {
+      "id": "cpp.raii",
+      "title": "RAII",
+      "what": "Resource Acquisition Is Initialization: קושרים כל משאב (זיכרון, mutex, file descriptor, socket, buffer על GPU) לאורך החיים של אובייקט. ה-constructor רוכש את המשאב וה-destructor משחרר אותו. מכיוון שה-destructor נקרא אוטומטית ביציאה מה-scope, גם ב-return מוקדם וגם כשעובר exception, המשאב משתחרר תמיד.",
+      "when": [
+        "בכל פעם שיש זוג פעולות של רכישה ושחרור: new/delete, lock/unlock, open/close, cudaMalloc/cudaFree",
+        "קוד עם כמה נקודות יציאה או קוד שעלול לזרוק exception",
+        "כשרוצים exception safety בלי try/catch בכל מקום",
+        "שאלות ראיון שבהן מופיעים delete ידני, unlock ידני או close ידני: כמעט תמיד התשובה היא wrapper של RAII"
+      ],
+      "how": [
+        "ה-constructor רוכש את המשאב. אם הרכישה נכשלת הוא זורק exception, ולכן אף פעם לא קיים אובייקט חצי-מאותחל.",
+        "ה-destructor משחרר את המשאב. הוא noexcept באופן מרומז, ואסור לו לזרוק.",
+        "משתנים מקומיים נהרסים בסדר הפוך לסדר הבנייה. members נהרסים בסדר הפוך לסדר ההצהרה במחלקה (לא לפי סדר ה-initializer list), ואחריהם ה-base classes.",
+        "אם constructor זורק באמצע, ה-destructor של האובייקט עצמו לא נקרא, אבל כל member ו-base שכבר נבנו במלואם נהרסים. לכן members מסוג RAII (unique_ptr, vector) מונעים דליפות.",
+        "stack unwinding: כש-exception נזרק, כל ה-locals ב-frames שבין ה-throw ל-catch נהרסים לפני שה-handler מתחיל לרוץ.",
+        "העתקה של משאב בדרך כלל לא הגיונית, ולכן wrapper של RAII הוא בדרך כלל move-only (כמו unique_ptr ו-unique_lock).",
+        "rule of zero: מחלקה שמורכבת רק מ-members מסוג RAII לא צריכה destructor, copy או move שנכתבו ידנית."
+      ],
+      "complexity": "RAII עצמו בלי עלות נוספת: ה-destructor הוא בדיוק הקוד שהיית כותב ידנית, והקומפיילר עושה לו inline. עלות ה-unwinding קיימת רק כשנזרק exception בפועל (zero-cost exceptions ב-Itanium ABI).",
+      "pitfalls": [
+        "temporary במקום משתנה: std::lock_guard<std::mutex>{m}; נהרס מיד בסוף ה-statement",
+        "std::unique_lock<std::mutex>(m); מצהיר על משתנה חדש בשם m ולא נועל כלום",
+        "destructor שזורק בזמן unwinding גורם ל-std::terminate",
+        "std::thread שנהרס כשהוא עדיין joinable גורם ל-std::terminate; std::jthread (C++20) עושה join ב-destructor",
+        "exception שלא נתפס בכלל: התקן משאיר ל-implementation להחליט אם יתבצע unwinding לפני std::terminate"
+      ],
+      "senior": [
+        "exception safety guarantees (basic, strong, nothrow) נבנות על RAII",
+        "scope guards: scope_exit, scope_fail ו-scope_success. scope_fail משתמש ב-std::uncaught_exceptions() (מונה) ולא ב-uncaught_exception() הישן",
+        "RAII בזמן-אמת: שחרור (free, close, cudaFree) ב-destructor על thread קריטי עלול לעלות latency. פתרונות: pools ושחרור נדחה ב-thread אחר",
+        "שגיאה בשחרור (close שנכשל, cudaFree שמחזיר error) לא אפשר לזרוק מ-destructor. מתעדים ב-log, או מוסיפים מתודה close() מפורשת שמחזירה status"
+      ],
+      "diagram": "{                       stack\n  Lock l(m);   ctor -> lock\n  File f(path);ctor -> open\n  ...throw...\n}  <- unwind: ~f close, ~l unlock\n   (reverse order)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.raii.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הרעיון המרכזי של RAII?",
+      "choices": [
+        "כל משאב נקשר לאורך החיים של אובייקט: נרכש ב-constructor ומשוחרר ב-destructor",
+        "כל ההקצאות נעשות ב-stack במקום ב-heap",
+        "garbage collector משחרר משאבים כשאין יותר references אליהם",
+        "חובה לעטוף כל קריאה שמקצה זיכרון ב-try/catch"
+      ],
+      "answer": 0,
+      "explanation": "RAII קושר משאב לאובייקט, ולכן השחרור נעשה דטרמיניסטית ביציאה מה-scope. האובייקט עצמו יכול להיות על ה-stack ולנהל זיכרון ב-heap, כמו std::vector. אין כאן garbage collector, והמטרה היא לחסוך try/catch.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מתי נקרא ה-destructor של משתנה מקומי (automatic storage)?",
+      "choices": [
+        "רק כשהפונקציה מסתיימת ב-return רגיל",
+        "כשהתוכנית מסתיימת",
+        "ביציאה מה-scope שבו הוא הוגדר, כולל return מוקדם, break, ו-exception שעובר דרך ה-scope ונתפס בהמשך",
+        "כשה-garbage collector רץ"
+      ],
+      "answer": 2,
+      "explanation": "כל יציאה מה-block מפעילה את ה-destructors של ה-locals שבו. כש-exception נתפס בהמשך, ה-stack unwinding מבטיח שה-locals נהרסים בדרך. אם ה-exception לא נתפס בכלל, ההחלטה אם יתבצע unwinding לפני terminate היא implementation-defined.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "בתוך פונקציה מוגדרים לפי הסדר `A a; B b; C c;`. באיזה סדר הם נהרסים? (כתוב את שמות המשתנים, למשל abc)",
+      "accept": ["cba", "c b a", "c,b,a"],
+      "explanation": "locals נהרסים בסדר הפוך לסדר הבנייה, כמו stack. זה מבטיח שאובייקט שנבנה מאוחר יותר ואולי תלוי בקודמים נהרס לפניהם.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct T {\n  char c;\n  T(char x) : c(x) { std::cout << '+' << c; }\n  ~T() { std::cout << '-' << c; }\n};\n\nint main() {\n  T a('a');\n  { T b('b'); }\n  T c('c');\n}",
+      "choices": [
+        "+a+b+c-c-b-a",
+        "+a+b-b+c-c-a",
+        "+a+b-b+c-a-c",
+        "+a+b+c-a-b-c"
+      ],
+      "answer": 1,
+      "explanation": "b חי רק בתוך הבלוק הפנימי, ולכן הוא נהרס מיד בסוף הבלוק, לפני שבונים את c. בסוף main נהרסים c ואחריו a, בסדר הפוך לבנייה.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבעיה בקוד?",
+      "code": "void process(int n) {\n  float* buf = new float[n];\n  if (!fill(buf, n))\n    return;\n  compute(buf, n);\n  delete[] buf;\n}",
+      "bugLine": 4,
+      "choices": [
+        "צריך delete ולא delete[]",
+        "new float[n] לא מאתחל את הזיכרון, ולכן fill קורא זבל",
+        "return מוקדם (וגם exception מ-compute) מדלג על delete[], ולכן יש דליפת זיכרון. הפתרון: std::vector<float> או std::unique_ptr<float[]>",
+        "אסור להקצות מערך בגודל שנקבע בזמן ריצה"
+      ],
+      "answer": 2,
+      "explanation": "כל מסלול יציאה שלא עובר דרך delete[] מדליף. ניהול ידני מחייב לזכור את כל המסלולים, כולל exceptions שלא רואים בקוד. std::vector<float> buf(n) או make_unique<float[]>(n) משחררים אוטומטית. delete[] הוא הצורה הנכונה למערך.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "איזה מהבאים אינו מנהל את המשאב שלו בשיטת RAII?",
+      "choices": [
+        "std::lock_guard<std::mutex>",
+        "FILE* שמתקבל מ-fopen",
+        "std::ifstream",
+        "std::unique_ptr<T>"
+      ],
+      "answer": 1,
+      "explanation": "FILE* הוא handle של C: אין לו destructor, ואם לא קוראים ל-fclose יש דליפה. אפשר לעטוף אותו ב-std::unique_ptr<FILE, decltype(&fclose)>. שאר האפשרויות משחררות את המשאב ב-destructor.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q07",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct G { ~G() { std::cout << 'G'; } };\n\nvoid f() {\n  G g;\n  throw 1;\n}\n\nint main() {\n  try { f(); }\n  catch (int) { std::cout << 'C'; }\n}",
+      "choices": ["CG", "C", "GC", "G ואז std::terminate"],
+      "answer": 2,
+      "explanation": "stack unwinding מתבצע לפני שה-handler מתחיל: ביציאה מ-f, g נהרס ומדפיס G, ורק אחר כך ה-catch מדפיס C. אין terminate, כי ה-destructor לא זורק וה-exception נתפס.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\nstruct Widget {\n  std::unique_ptr<A> a;\n  std::unique_ptr<B> b;\n  Widget() : a(new A), b(new B) {}\n  ~Widget() { std::cout << \"~W\"; }\n};\n```\n\nה-constructor של B זורק. מה קורה?",
+      "choices": [
+        "~Widget נקרא ומשחרר את a",
+        "ה-A דולף, כי ~Widget לא נקרא",
+        "std::terminate, כי זורקים exception מתוך constructor",
+        "~Widget לא נקרא (האובייקט לא נבנה במלואו), אבל a נבנה במלואו ולכן ה-destructor שלו נקרא וה-A משוחרר. הזיכרון של ה-B עצמו משוחרר אוטומטית על ידי ה-new expression"
+      ],
+      "answer": 3,
+      "explanation": "אם constructor זורק, רק sub-objects שנבנו במלואם נהרסים, וה-destructor של המחלקה עצמה לא רץ. בגלל ש-a הוא unique_ptr אין דליפה. עם A* גולמי, ה-A היה דולף. כש-constructor זורק בתוך new expression, ה-new expression משחרר את הזיכרון שהוקצה.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q09",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את מה שקורה מ-throw ועד סוף הטיפול (exception שנתפס ב-catch בפונקציה קוראת, בלי rethrow):",
+      "items": [
+        "נוצר exception object (עותק או move של הביטוי ב-throw)",
+        "ה-runtime מחפש handler מתאים במעלה ה-call stack",
+        "ה-destructors של ה-locals בכל frame שבדרך נקראים, בסדר הפוך לבנייה (stack unwinding)",
+        "גוף ה-catch מתבצע",
+        "ה-exception object נהרס בסוף ה-catch"
+      ],
+      "explanation": "ב-Itanium C++ ABI (Linux) יש two-phase unwinding: קודם search phase שמוצא handler בלי להרוס כלום, ורק אחר כך cleanup phase שמריץ destructors. לכן כשאין handler בכלל אפשר לקרוא ל-terminate בלי unwinding. ה-exception object חי עד שה-handler האחרון יוצא בלי rethrow.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה אסור ל-destructor לזרוק exception?",
+      "choices": [
+        "זה לא אסור, רק לא מומלץ מטעמי ביצועים",
+        "destructors הם noexcept באופן מרומז מאז C++11, ולכן throw שיוצא מהם קורא ל-std::terminate. וגם עם noexcept(false), throw בזמן stack unwinding קורא ל-terminate",
+        "הקומפיילר לא מאפשר לכתוב throw בתוך destructor",
+        "exception מ-destructor נבלע בשקט ולכן השגיאה הולכת לאיבוד"
+      ],
+      "answer": 1,
+      "explanation": "ה-destructor מקבל noexcept(true) מרומז, אלא אם member או base מצהירים אחרת. exception שיוצא מפונקציה noexcept גורם ל-terminate. גם כשמסמנים noexcept(false), exception שני בזמן unwinding גורם ל-terminate. לכן containers ו-RAII מניחים destructors שלא זורקים.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q11",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct L {\n  L()  { std::cout << 'L'; }\n  ~L() { std::cout << 'U'; }\n};\n\nint main() {\n  L{};\n  std::cout << 'W';\n  L l;\n  std::cout << 'W';\n}",
+      "choices": ["LWLWUU", "LUWLWU", "LWLUWU", "LUWLUW"],
+      "answer": 1,
+      "explanation": "L{} יוצר temporary שנהרס בסוף ה-full-expression, ולכן מודפס LU מיד. l הוא משתנה עם שם וחי עד סוף main, ולכן ה-U שלו מודפס אחרי ה-W השני. זה בדיוק הבאג של std::lock_guard<std::mutex>{m}; בלי שם: ה-lock משתחרר מיד.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מתקמפל, אבל יש data race כש-add נקרא מכמה threads. למה?",
+      "code": "class Stats {\n  std::mutex mtx_;\n  long total_ = 0;\npublic:\n  void add(long v) {\n    std::unique_lock<std::mutex>(mtx_);\n    total_ += v;\n  }\n};",
+      "bugLine": 6,
+      "choices": [
+        "זה temporary שננעל ומשתחרר מיד בסוף ה-statement",
+        "unique_lock לא נועל ב-constructor, צריך לקרוא ל-lock() במפורש",
+        "צריך lock_guard, כי unique_lock לא בטוח לשימוש בין threads",
+        "זו הצהרה על משתנה מקומי חדש בשם mtx_ מסוג unique_lock (default-constructed, לא מחזיק mutex). ה-mutex לא ננעל בכלל"
+      ],
+      "answer": 3,
+      "explanation": "לפי כלל הפענוח של C++, T(x); הוא הצהרה של משתנה x מטיפוס T, כאילו נכתב T x;. נוצר unique_lock ריק שמסתיר את ה-member mtx_. עם סוגריים מסולסלים, std::unique_lock<std::mutex>{mtx_};, היה נוצר temporary שנועל ומשחרר מיד, וזה באג אחר. התיקון: std::unique_lock lk(mtx_); או std::scoped_lock lk(mtx_);.",
+      "lesson": "cpp.raii",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.raii.q13",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "כל struct מדפיס את האות הגדולה שלו ב-constructor ואת הקטנה ב-destructor (X/x, A/a, B/b). מה הפלט של `{ S s; }`?",
+      "code": "struct S : X {\n  B b;\n  A a;\n  S() : a(), b() { std::cout << 'S'; }\n  ~S() { std::cout << 's'; }\n};",
+      "choices": ["XABSsbax", "XBASsabx", "XBASsbax", "SXBAxabs"],
+      "answer": 1,
+      "explanation": "סדר הבנייה: base classes, אחר כך members בסדר ההצהרה (b ואז a, בלי קשר לסדר ב-initializer list), ואחר כך גוף ה-constructor. ההריסה היא בדיוק בסדר ההפוך: גוף ה-destructor, a, b, ולבסוף ה-base. GCC ו-Clang מזהירים על הסדר עם -Wreorder.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q14",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש `UniqueFd`, wrapper של RAII ל-POSIX file descriptor: move-only, סוגר ב-destructor (רק fd >= 0), ועם `get()`, `release()`, `reset(int fd = -1)` ו-`explicit operator bool`. דאג ל-noexcept נכון ולהתנהגות נכונה ב-self-move.",
+      "starter": "class UniqueFd {\n  int fd_ = -1;\npublic:\n  // ...\n};",
+      "modelAnswer": "#include <unistd.h>\n#include <utility>\n\nclass UniqueFd {\n  int fd_ = -1;\npublic:\n  UniqueFd() noexcept = default;\n  explicit UniqueFd(int fd) noexcept : fd_(fd) {}\n  ~UniqueFd() { reset(); }\n\n  UniqueFd(const UniqueFd&) = delete;\n  UniqueFd& operator=(const UniqueFd&) = delete;\n\n  UniqueFd(UniqueFd&& o) noexcept : fd_(std::exchange(o.fd_, -1)) {}\n  UniqueFd& operator=(UniqueFd&& o) noexcept {\n    if (this != &o) reset(o.release());\n    return *this;\n  }\n\n  int get() const noexcept { return fd_; }\n  int release() noexcept { return std::exchange(fd_, -1); }\n  void reset(int fd = -1) noexcept {\n    int old = std::exchange(fd_, fd);\n    if (old >= 0) ::close(old);   // error from close cannot be thrown here\n  }\n  explicit operator bool() const noexcept { return fd_ >= 0; }\n};",
+      "rubric": [
+        "copy נמחק, ו-move constructor ו-move assignment הם noexcept ומשאירים את המקור במצב -1",
+        "move assignment סוגר את ה-fd הקודם לפני שהוא לוקח את החדש, ומטפל ב-self-move",
+        "reset מעדכן את fd_ לפני close (אין double close גם אם reset נקרא שוב)",
+        "release מחזיר את ה-fd בלי לסגור ומוותר על הבעלות",
+        "מזכיר שאי אפשר לזרוק מ-destructor אם close נכשל (log, או מתודת close מפורשת)"
+      ],
+      "explanation": "זה מימוש של unique_ptr עם custom deleter ו-sentinel של -1 במקום nullptr. כל פעולה צריכה להשאיר את האובייקט במצב תקין גם אחרי move.",
+      "lesson": "cpp.raii",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.raii.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "אתה כותב pipeline זמן-אמת שמשתמש ב-buffers על GPU (cudaMalloc/cudaFree) וב-CUDA streams. איך תיישם RAII, ומה המלכודות הייחודיות לזמן-אמת ול-GPU?",
+      "modelAnswer": "עוטפים כל משאב במחלקה move-only: DeviceBuffer עם cudaMalloc ב-constructor (ו-throw אם הקריאה נכשלה) ו-cudaFree ב-destructor, Stream עם cudaStreamCreate/Destroy, ו-Event בדומה. אפשרות קצרה יותר היא unique_ptr עם custom deleter. המלכודות: (1) cudaFree ו-cudaStreamDestroy עלולים לסנכרן את ה-device או לחכות, ולכן שחרור ב-destructor על ה-thread הקריטי מוסיף jitter. מקצים מראש ב-init, משתמשים ב-pool או ב-cudaMallocAsync עם memory pool, ושחרורים נדחים עוברים ל-thread רקע. (2) אי אפשר לזרוק מ-destructor כשה-API מחזיר error: עושים log, ובנוסף אפשר להוסיף פונקציה מפורשת שמחזירה status. (3) סדר הריסה: buffer שעדיין בשימוש על stream חייב להיהרס אחרי סנכרון של ה-stream, ולכן ה-stream מוצהר לפני ה-buffers, או שה-destructor ממתין ל-event. (4) destructors של משאבי CUDA שרצים אחרי שה-context נהרס (globals סטטיים בסוף התוכנית) נכשלים, ולכן עדיף להימנע מ-globals כאלה. (5) הכל move-only, כי העתקה של buffer היא פעולה יקרה ומפורשת, למשל clone().",
+      "rubric": [
+        "wrapper של move-only לכל משאב, או unique_ptr עם custom deleter",
+        "מזכיר latency ו-sync של שחרור ופתרון של pool, הקצאה מראש או שחרור נדחה",
+        "טיפול בשגיאות בלי throw מה-destructor",
+        "סדר הריסה מול עבודה אסינכרונית על stream",
+        "בעיה של globals סטטיים מול teardown של ה-context"
+      ],
+      "explanation": "מראיין ב-NVIDIA ירצה לשמוע שאתה מבין ש-RAII פותר דליפות אבל לא את התזמון: בזמן-אמת חשוב גם מתי ובאיזה thread השחרור קורה.",
+      "lesson": "cpp.raii",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.raii.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה קורה?\n\n```cpp\nstruct Bad {\n  ~Bad() noexcept(false) { throw std::runtime_error(\"dtor\"); }\n};\nvoid f() { Bad b; throw std::logic_error(\"f\"); }\nint main() {\n  try { f(); }\n  catch (const std::exception& e) { std::cout << e.what(); }\n}\n```",
+      "choices": [
+        "מודפס f",
+        "מודפס dtor, כי ה-exception החדש מחליף את הקודם",
+        "std::terminate נקרא: exception יצא מ-destructor בזמן stack unwinding של exception אחר",
+        "מודפס fdtor"
+      ],
+      "answer": 2,
+      "explanation": "ה-logic_error מתחיל unwinding, ו-~Bad נקרא כחלק ממנו. ה-destructor זורק, ו-exception שיוצא מ-destructor בזמן unwinding גורם ל-std::terminate ([except.terminate]). noexcept(false) רק מאפשר ל-exception לצאת כשאין unwinding פעיל. ב-C++ אין שרשור של exceptions כמו ב-Java או Python.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "scope guard מסוג ScopeFail אמור להריץ rollback רק אם ה-scope שלו יוצא בגלל exception. למה מימוש נכון שומר את `std::uncaught_exceptions()` ב-constructor ומשווה ב-destructor, במקום לבדוק ב-destructor את `std::uncaught_exception()` (הישנה, שמחזירה bool)?",
+      "choices": [
+        "uncaught_exception() הוסרה ב-C++20, וזו הסיבה היחידה",
+        "ה-guard עשוי להיווצר בתוך destructor שרץ בזמן unwinding. אז ה-bool הוא true גם כשה-scope של ה-guard יוצא באופן רגיל, וההשוואה של המונה מזהה רק exception חדש",
+        "uncaught_exceptions() מהירה יותר כי היא לא ניגשת ל-thread-local storage",
+        "uncaught_exception() מחזירה true גם בתוך catch block, ולכן היא שגויה תמיד"
+      ],
+      "answer": 1,
+      "explanation": "נניח ש-destructor של אובייקט Transaction רץ בזמן unwinding ומשתמש בפנים ב-ScopeFail לפעולה קטנה שמצליחה. הפונקציה הישנה תחזיר true, כי יש exception בטיסה, וה-rollback ירוץ בטעות. אם המונה ב-destructor גדול מהמונה שנשמר ב-constructor, נזרק exception חדש בתוך ה-scope. בגלל זה הוסיפו את uncaught_exceptions ב-C++17. uncaught_exception הוצאה משימוש (deprecated) ב-C++17 והוסרה ב-C++20, אבל זה לא ההסבר לבעיה.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "id": "cpp.raii.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-C++20, מה נכון לגבי הלולאה?\n\n```cpp\nstruct Holder {\n  std::vector<int> v{1, 2, 3};\n  const std::vector<int>& get() const { return v; }\n};\nHolder make();\n\nfor (int x : make().get())\n  std::cout << x;\n```",
+      "choices": [
+        "תקין: range-based for מאריך את חיי כל ה-temporaries בביטוי",
+        "תקין, כי get() מחזיר const& וזה מאריך את חיי ה-Holder",
+        "שגיאת קומפילציה: אי אפשר לקרוא ל-member function על prvalue",
+        "UB: ה-Holder הזמני נהרס בסוף האתחול של auto&& __range, ו-__range מצביע ל-vector מת"
+      ],
+      "answer": 3,
+      "explanation": "range-for מתורגם ל-auto&& __range = make().get(); ואחריו הלולאה. ה-reference נקשר לתוצאה של get(), ולא ל-temporary Holder עצמו, ולכן ה-Holder נהרס בסוף ה-statement. C++23 (P2718) תיקן זאת: temporaries ב-range initializer חיים עד סוף הלולאה. עד אז כותבים auto h = make(); for (int x : h.get()).",
+      "lesson": "cpp.raii",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.raii.q19",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון `void f(std::shared_ptr<A> p, int x); int g();` (g עלולה לזרוק). מה נכון לגבי הקריאה `f(std::shared_ptr<A>(new A), g());`?",
+      "choices": [
+        "ב-C++14 יכולה להיות דליפה: הקומפיילר רשאי לבצע new A, אחר כך g() שזורקת, לפני שה-shared_ptr נבנה. ב-C++17 אתחול כל פרמטר הוא indeterminately sequenced ביחס לאחרים, ולכן זה לא יכול לקרות",
+        "אין דליפה בשום תקן, כי shared_ptr נבנה מיד אחרי new",
+        "יש דליפה גם ב-C++17, ולכן חובה make_shared",
+        "התקן מחייב סדר הערכה משמאל לימין של ארגומנטים מ-C++17, ולכן אין דליפה"
+      ],
+      "answer": 0,
+      "explanation": "לפני C++17 ההערכה של ארגומנטים יכלה להשתלב זו בזו (interleaving): new A, g(), ורק אז בניית ה-shared_ptr. P0145 ב-C++17 קבע שאתחול של כל פרמטר מסתיים לפני שמתחיל אחר, אבל הסדר בין הפרמטרים עדיין unspecified ולא בהכרח משמאל לימין. make_shared עדיין עדיף: הקצאה אחת ל-control block ולאובייקט.",
+      "lesson": "cpp.raii"
+    }
+  ]
+}

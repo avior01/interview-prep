@@ -1,0 +1,338 @@
+{
+  "domain": "cpp",
+  "subtopic": "pointers-refs",
+  "lessons": [
+    {
+      "id": "cpp.pointers-refs",
+      "title": "Pointers ו-references",
+      "what": "pointer הוא אובייקט שמחזיק כתובת: יש לו storage משלו, הוא יכול להיות nullptr ואפשר להצביע איתו על אובייקט אחר (reseat). reference הוא שם נוסף (alias) לאובייקט קיים: חייב להיקשר באתחול, אי אפשר לקשור אותו מחדש, ואין reference תקין ל-null.",
+      "when": [
+        "פרמטר לקריאה בלבד של אובייקט גדול: const T&",
+        "פרמטר אופציונלי (יכול לא להיות): T* או const T* שמותר להיות nullptr",
+        "פרמטר שהפונקציה משנה (out/in-out): T& כשהוא חובה, T* כשהוא אופציונלי",
+        "גישה לרצף רציף של איברים בלי בעלות: std::span (C++20) או זוג pointer+size",
+        "שאלות על lifetime: מתי reference הופך ל-dangling ומתי temporary מקבל הארכת חיים"
+      ],
+      "how": [
+        "קוראים הצהרה מימין לשמאל: const int* p הוא pointer ל-const int (אסור לשנות את *p, מותר לשנות את p); int* const p הוא pointer קבוע ל-int (מותר לשנות את *p, אסור לשנות את p).",
+        "השמה ל-reference (r = b) לא קושרת אותו מחדש: היא מעתיקה את הערך של b לתוך האובייקט ש-r כבר מצביע עליו.",
+        "lvalue reference (T&) נקשר רק ל-lvalue שאינו const. const T& נקשר גם ל-rvalue, ואז ה-temporary חי כל עוד ה-reference חי (lifetime extension). rvalue reference (T&&) נקשר רק ל-rvalue.",
+        "הארכת חיים עובדת רק בקשירה ישירה של reference ל-temporary. היא לא עוברת דרך ערך החזרה של פונקציה שמקבלת ומחזירה reference.",
+        "pointer arithmetic מוגדר רק בתוך אותו מערך, כולל הכתובת one-past-the-end. מותר ליצור את a+N אבל אסור לבצע עליו dereference. יצירת a+N+1 או a-1 היא UB גם בלי dereference.",
+        "מערך שמועבר לפונקציה עובר decay ל-pointer לאיבר הראשון, ו-sizeof בתוך הפונקציה נותן את גודל ה-pointer ולא את גודל המערך."
+      ],
+      "complexity": "pointer תופס 8 בתים ב-64 ביט (LP64/LLP64). reference בדרך כלל ממומש כ-pointer, אבל התקן לא קובע אם יש לו storage. העברה by-value של טיפוס קטן (עד בערך 16 בתים, trivially copyable) זולה לרוב מהעברה ב-const& כי הערך עובר ברגיסטרים ואין indirection.",
+      "pitfalls": [
+        "החזרת reference או pointer ל-local: dangling, UB ברגע השימוש",
+        "החזקת reference/pointer לאיבר של std::vector ואז push_back שגורם ל-reallocation",
+        "השוואת pointers לאובייקטים שונים עם < נותנת תוצאה unspecified; std::less<T*> מבטיח total order",
+        "המרת float* ל-uint32_t* וקריאה דרכו מפרה strict aliasing; משתמשים ב-std::memcpy או std::bit_cast",
+        "rvalue reference עם שם (int&& r) הוא lvalue בביטוי"
+      ],
+      "senior": [
+        "aliasing: כשיש שני pointers מאותו טיפוס הקומפיילר חייב להניח שהם יכולים לחפוף, וזה פוגע ב-vectorization. __restrict הוא הרחבה של הקומפיילר ולא חלק מתקן C++",
+        "בחירת סוג פרמטר מבטאת חוזה: T& חובה, T* אופציונלי ובלי בעלות, unique_ptr<T> העברת בעלות, std::span<const T> תצוגה על רצף",
+        "member מסוג reference מבטל את ה-copy assignment שנוצר אוטומטית; std::reference_wrapper פותר את זה",
+        "lifetime extension: מתי היא חלה (קשירה ישירה, כולל לתת-אובייקט של temporary) ומתי לא (דרך פונקציה, ב-member initializer list של constructor)"
+      ],
+      "diagram": "int x = 5;   int* p = &x;   int& r = x;\n\n  p [0x1000] ---> x [5]  <--- r (alias)\n  ^ own storage       ^ same object"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.pointers-refs.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו טענה על reference ב-C++ נכונה?",
+      "choices": [
+        "אפשר לקשור reference מחדש לאובייקט אחר בעזרת השמה r = other",
+        "reference חייב להיות מאותחל בהצהרה, ואי אפשר לקשור אותו מחדש",
+        "מותר לאתחל reference ל-nullptr כדי לסמן שאין ערך",
+        "התקן מחייב ש-sizeof של reference יהיה שווה ל-sizeof של pointer"
+      ],
+      "answer": 1,
+      "explanation": "reference הוא alias שנקשר פעם אחת באתחול. השמה r = other מעתיקה את הערך של other לאובייקט המקורי ולא קושרת מחדש. אין reference ל-null: קשירה ל-*nullptr היא UB. sizeof(T&) מחזיר את sizeof(T), והתקן לא קובע אם ל-reference יש storage בכלל.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של ההצהרה `const int* p;`?",
+      "choices": [
+        "p הוא pointer קבוע: אסור לשנות את p, מותר לשנות את *p",
+        "גם p וגם *p קבועים",
+        "p הוא pointer ל-const int: מותר לשנות את p, אסור לשנות את *p דרכו",
+        "זו שגיאת קומפילציה כי const חייב להופיע אחרי הטיפוס"
+      ],
+      "answer": 2,
+      "explanation": "קוראים מימין לשמאל: p הוא pointer ל-int שהוא const. אפשר להפנות את p לכתובת אחרת, אבל אי אפשר לכתוב דרכו. pointer קבוע נכתב int* const p, ושניהם קבועים נכתב const int* const p. הכתיב const int ו-int const זהים.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "על Linux 64 ביט (LP64), אחרי `int a[10]; int* p = a;` מה הערך של `sizeof(p)`?",
+      "accept": ["8", "8 bytes", "8 בתים"],
+      "explanation": "p הוא pointer, וב-LP64 גודל pointer הוא 8 בתים. לעומת זאת sizeof(a) הוא 40, כי a הוא מערך של 10 int בגודל 4. ההבדל הזה הוא בדיוק מה שהולך לאיבוד ב-array decay.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "void f(int x)  { x = 5; }\nvoid g(int& x) { x = 7; }\nvoid h(int* x) { x = nullptr; }\n\nint main() {\n  int a = 1;\n  f(a);  std::cout << a;\n  g(a);  std::cout << a;\n  h(&a); std::cout << a;\n}",
+      "choices": ["157", "177", "577", "17 ואז קריסה בגלל nullptr"],
+      "answer": 1,
+      "explanation": "f מקבלת עותק, ולכן a נשאר 1. g מקבלת reference ומשנה את a ל-7. h מקבלת עותק של ה-pointer ומאפסת את העותק המקומי בלבד, בלי dereference, ולכן a נשאר 7 ואין קריסה. הפלט הוא 177.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג בקוד?",
+      "code": "const std::string& name() {\n  std::string s = \"nvidia\";\n  return s;\n}\n\nint main() {\n  std::cout << name().size();\n}",
+      "bugLine": 3,
+      "choices": [
+        "חסר std::move(s), ולכן ה-string מועתק פעמיים",
+        "const& מאריך את חיי s, אבל size() נקרא על אובייקט שעבר move",
+        "NRVO לא חל כשמחזירים reference, ולכן יש העתקה מיותרת",
+        "מוחזר reference ל-local שנהרס ביציאה מהפונקציה; השימוש ב-main הוא UB (dangling)"
+      ],
+      "answer": 3,
+      "explanation": "s נהרס ביציאה מ-name, וה-reference שמוחזר מצביע לזיכרון מת. lifetime extension חלה רק כשקושרים reference ישירות ל-temporary, ולא על local שמוחזר כ-reference. התיקון הוא להחזיר std::string by value: עם NRVO או move זה זול.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q06",
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו שורות מתקמפלות? (כל שורה בנפרד)",
+      "choices": [
+        "`int& r = 5;`",
+        "`const int& r = 5;`",
+        "`int&& r = 5;`",
+        "`int x = 1; int&& r = x;`",
+        "`int x = 1; int* const p = &x; *p = 3;`"
+      ],
+      "answer": [1, 2, 4],
+      "explanation": "lvalue reference שאינו const לא נקשר ל-rvalue (5). const int& ו-int&& נקשרים ל-temporary ומאריכים את חייו. int&& לא נקשר ל-lvalue x בלי std::move. ב-int* const ה-pointer עצמו קבוע, אבל מותר לכתוב דרכו.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q07",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-C++17?",
+      "code": "int a[] = {10, 20, 30, 40};\nint* p = a + 1;\nstd::cout << *p++ << ' ' << *p << ' '\n          << p[1] << ' ' << (p - a);",
+      "choices": ["20 30 40 2", "20 20 30 1", "30 30 40 2", "20 30 40 8"],
+      "answer": 0,
+      "explanation": "*p++ מחזיר את *p הישן (20) ומקדם את p ל-a+2. אחר כך *p הוא 30, ו-p[1] הוא *(p+1), כלומר 40. p - a נותן מספר איברים (2) ולא בתים. ב-C++17 האופרנדים של << מבוצעים משמאל לימין. לפני C++17 הביטוי הזה היה unsequenced.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q08",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int a = 1, b = 2;\nint& r = a;\nr = b;\nb = 9;\nstd::cout << a << r << b;",
+      "choices": ["299", "999", "229", "192"],
+      "answer": 2,
+      "explanation": "r = b לא קושר את r ל-b, אלא מעתיק את הערך 2 לתוך a. r עדיין alias של a. השינוי של b ל-9 לא משפיע על a. הפלט: a=2, r=2, b=9.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "פונקציה מקבלת buffer גדול לקריאה בלבד, וה-buffer יכול גם לא להיות (הפונקציה מתנהגת אחרת כשאין buffer). הפונקציה לא לוקחת בעלות. מה סוג הפרמטר הכי מתאים?",
+      "choices": [
+        "`const std::vector<float>& buf` ולבדוק buf.empty()",
+        "`std::optional<std::vector<float>> buf`",
+        "`std::shared_ptr<const std::vector<float>> buf`",
+        "`const std::vector<float>* buf` כש-nullptr מסמן שאין buffer"
+      ],
+      "answer": 3,
+      "explanation": "pointer ל-const מבטא בדיוק את החוזה: אופציונלי, בלי בעלות, בלי העתקה. vector ריק הוא ערך תקין ולא אותו דבר כמו היעדר buffer. optional by value מעתיק את כל ה-buffer. shared_ptr כופה שיתוף בעלות ועלות של atomic refcount בלי צורך.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q10",
+      "level": 3,
+      "type": "short",
+      "prompt": "מה הטיפוס של fp בהצהרה `int (*fp)(double);`? (תשובה קצרה באנגלית)",
+      "accept": ["function pointer", "pointer to function", "pointer to a function", "מצביע לפונקציה"],
+      "explanation": "הסוגריים קושרים את * ל-fp, ולכן fp הוא pointer לפונקציה שמקבלת double ומחזירה int. בלי הסוגריים, int* fp(double) היא הצהרה על פונקציה שמחזירה int*.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q11",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "באיזו שורה יש undefined behavior ולמה?",
+      "code": "std::vector<int> v = {1, 2, 3};\nint& first = v[0];\nv.push_back(4);\nstd::cout << first;",
+      "bugLine": 4,
+      "choices": [
+        "push_back יכול לגרום ל-reallocation; first נשאר מצביע לזיכרון הישן שכבר שוחרר",
+        "v[0] מחזיר עותק ולא reference, ולכן first הוא reference ל-temporary",
+        "אסור להחזיק reference לאיבר של vector, צריך להשתמש ב-at()",
+        "push_back זורק exception כשה-capacity מלא"
+      ],
+      "answer": 0,
+      "explanation": "כש-size() == capacity(), push_back מקצה buffer חדש, מעביר אליו את האיברים ומשחרר את הישן. כל reference, pointer ו-iterator לאיברים נהיה invalid. השורה 3 גורמת לבעיה, וה-UB קורה בקריאה בשורה 4. פתרונות: reserve מראש, החזקת אינדקס, או לקחת את ה-reference אחרי ה-push_back.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נתון `struct S { int v; }; S make(); const S& g(const S& s) { return s; }`. אילו מההצהרות הבאות (ב-scope של פונקציה) משאירות reference תלוי (dangling)?\n\n(1) `const S& r1 = make();`\n(2) `const int& r2 = make().v;`\n(3) `const S& r3 = g(make());`",
+      "choices": [
+        "רק (3)",
+        "(2) ו-(3)",
+        "כולן: lifetime extension לא קיימת ב-C++17",
+        "רק (2), כי reference ל-member לא מאריך את חיי האובייקט"
+      ],
+      "answer": 0,
+      "explanation": "ב-(1) ה-reference נקשר ישירות ל-temporary, ולכן חייו מוארכים. ב-(2) הקשירה היא לתת-אובייקט של temporary, והתקן ([class.temporary]) מאריך את חיי האובייקט השלם. ב-(3) ה-temporary נקשר לפרמטר של g, וזו קשירה שמסתיימת בסוף ה-full-expression. ה-reference שמוחזר לא מאריך שום דבר, ולכן r3 תלוי.",
+      "lesson": "cpp.pointers-refs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.pointers-refs.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "p ו-q מצביעים לשני אובייקטים int נפרדים (לא באותו מערך). מה נכון לגבי `p < q` ולגבי `std::less<int*>{}(p, q)`?",
+      "choices": [
+        "שניהם UB",
+        "p < q הוא UB, ו-std::less מוגדר היטב",
+        "התוצאה של p < q היא unspecified, ו-std::less<int*> מבטיח strict total order עקבי",
+        "שניהם מוגדרים ומשווים כתובות מספריות לפי התקן"
+      ],
+      "answer": 2,
+      "explanation": "השוואה רלציונית בין pointers לאובייקטים שאינם קשורים היא לא UB, אבל התקן לא מחייב תוצאה מסוימת (unspecified). std::less, וגם std::greater וכו', על pointers מחויבים לתת implementation-defined strict total order. לכן std::map<T*, X> ו-std::sort על pointers משתמשים בהם. בפועל, בארכיטקטורות flat, שני הביטויים מתנהגים אותו דבר.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q14",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי הפונקציה?\n\n```cpp\nvoid add(float* out, const float* a,\n         const float* b, int n) {\n  for (int i = 0; i < n; ++i)\n    out[i] = a[i] + b[i];\n}\n```",
+      "choices": [
+        "הקומפיילר חייב להניח ש-out יכול לחפוף ל-a או ל-b",
+        "בגלל זה הקומפיילר עשוי לייצר בדיקת חפיפה בזמן ריצה (loop versioning) לפני הלולאה המוקטרת, או לוותר על vectorization",
+        "`__restrict` על הפרמטרים (הרחבה של GCC/Clang/MSVC, לא תקן C++) מבטיח לקומפיילר שאין חפיפה",
+        "const על a מבטיח לקומפיילר שהזיכרון של a לא משתנה בזמן הלולאה",
+        "העברת std::vector<float>& במקום pointers פותרת את בעיית ה-aliasing"
+      ],
+      "answer": [0, 1, 2],
+      "explanation": "שלושה pointers ל-float יכולים לחפוף לפי התקן, ולכן כתיבה ל-out[i] עשויה לשנות את a[i+1]. הקומפיילר מוסיף runtime check או מוותר על vectorization. const רק אוסר כתיבה דרך a, ולא מבטיח שאף אחד אחר לא כותב לאותו זיכרון. שלושה vector& יכולים להיות אותו vector, ולכן הבעיה נשארת.",
+      "lesson": "cpp.pointers-refs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.pointers-refs.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "אתה מתכנן API של ספרייה לעיבוד אותות. איך תבחר בין T&, const T&, T*, std::span<const T>, std::unique_ptr<T> ו-std::shared_ptr<T> כפרמטרים? תן דוגמה לכל אחד.",
+      "modelAnswer": "סוג הפרמטר הוא חוזה. const T& מתאים לקלט חובה לקריאה בלבד של אובייקט גדול. טיפוס קטן ו-trivially copyable (int, double, std::complex<float>) מעבירים by value, כי הוא עובר ברגיסטרים ואין indirection או aliasing. T& מתאים ל-in-out חובה. T* או const T* מתאים לאופציונלי בלי בעלות, כש-nullptr הוא ערך משמעותי. std::span<const T> מתאים לרצף רציף כמו buffer של samples: הוא מחליף זוג pointer+size, עובד עם vector, array ומערך C, ושומר את הגודל. unique_ptr<T> by value אומר שהפונקציה לוקחת בעלות (sink), והקורא כותב std::move ורואה את זה בקוד. shared_ptr<T> מעבירים by value רק כשהפונקציה באמת שומרת עותק ושותפה לבעלות. אם היא רק משתמשת באובייקט, עדיף T& או T*, בלי atomic increment. מוסיפים גם את ההשפעה על ביצועים: aliasing בין כמה pointers פוגע ב-vectorization, ו-reference שנשמר כ-member עלול להפוך ל-dangling.",
+      "rubric": [
+        "מבחין בין בעלות (unique_ptr/shared_ptr) לגישה בלבד (ref/pointer/span)",
+        "nullable מול חובה: T* מול T&",
+        "מזכיר span לרצף וקטנים by value",
+        "מזכיר עלות של shared_ptr (atomic refcount) ומתי לא להעביר אותו",
+        "מזכיר lifetime או aliasing כשיקול"
+      ],
+      "explanation": "מראיין סניור מחפש שתבחר סוג פרמטר לפי החוזה (בעלות, nullability, רצף) ושתזכיר את ההשלכות על ביצועים, ולא רק את התחביר.",
+      "lesson": "cpp.pointers-refs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.pointers-refs.q16",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש מחלקה `Span<T>` שאינה בעלים: pointer ו-size, constructor ממערך C (גודל נגזר אוטומטית), constructor מ-std::vector, operator[], size(), begin()/end(), ו-`subspan(offset, count)` שזורק std::out_of_range אם הטווח חורג.",
+      "starter": "template <class T>\nclass Span {\npublic:\n  // ...\n};",
+      "modelAnswer": "#include <cstddef>\n#include <stdexcept>\n#include <type_traits>\n#include <vector>\n\ntemplate <class T>\nclass Span {\n  T* p_ = nullptr;\n  std::size_t n_ = 0;\npublic:\n  constexpr Span() noexcept = default;\n  constexpr Span(T* p, std::size_t n) noexcept : p_(p), n_(n) {}\n  template <std::size_t N>\n  constexpr Span(T (&arr)[N]) noexcept : p_(arr), n_(N) {}\n  template <class U, class A,\n            class = std::enable_if_t<std::is_convertible_v<U(*)[], T(*)[]>>>\n  Span(std::vector<U, A>& v) noexcept : p_(v.data()), n_(v.size()) {}\n  template <class U, class A,\n            class = std::enable_if_t<std::is_const_v<T> &&\n                                     std::is_convertible_v<const U(*)[], T(*)[]>>>\n  Span(const std::vector<U, A>& v) noexcept : p_(v.data()), n_(v.size()) {}\n\n  constexpr T& operator[](std::size_t i) const noexcept { return p_[i]; }\n  constexpr std::size_t size() const noexcept { return n_; }\n  constexpr bool empty() const noexcept { return n_ == 0; }\n  constexpr T* data() const noexcept { return p_; }\n  constexpr T* begin() const noexcept { return p_; }\n  constexpr T* end() const noexcept { return p_ + n_; }\n\n  Span subspan(std::size_t off, std::size_t cnt) const {\n    if (off > n_ || cnt > n_ - off)   // no overflow: compare against n_ - off\n      throw std::out_of_range(\"subspan\");\n    return Span(p_ + off, cnt);\n  }\n};",
+      "rubric": [
+        "constructor ממערך עם template<size_t N> ו-T(&)[N] שגוזר את הגודל",
+        "תמיכה ב-Span<const T> מ-const vector, והמרה מ-T ל-const T בלבד (לא בין טיפוסים שונים)",
+        "בדיקת גבולות ב-subspan בלי overflow (cnt > n - off ולא off + cnt > n)",
+        "operator[] ו-begin/end הם const ומחזירים T& / T* (span הוא view: const על ה-view ולא על האיברים)",
+        "noexcept ו-constexpr כשמתאים; כל הפעולות O(1)"
+      ],
+      "explanation": "הנקודות העדינות: בדיקת הגבולות ב-subspan שלא גולשת ב-size_t, תמיכה ב-const, וההבנה ש-const של ה-view לא הופך את האיברים ל-const. כך גם מתנהג std::span.",
+      "lesson": "cpp.pointers-refs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.pointers-refs.q17",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "void f(int&)       { std::cout << 'L'; }\nvoid f(int&&)      { std::cout << 'R'; }\nvoid f(const int&) { std::cout << 'C'; }\n\nint main() {\n  int x = 0;\n  const int cx = 0;\n  int&& rr = 1;\n  f(x);\n  f(cx);\n  f(rr);\n  f(std::move(rr));\n  f(static_cast<const int&&>(x));\n}",
+      "choices": ["LCRRC", "LCLRR", "LCLRC", "LCRRR"],
+      "answer": 2,
+      "explanation": "x הוא lvalue לא-const, ולכן int& הוא התאמה מדויקת. cx הוא const ונקשר רק ל-const int&. rr הוא משתנה עם שם, ולכן הוא lvalue גם שהטיפוס שלו int&&, ונבחר int&. std::move(rr) הוא xvalue לא-const, ולכן int&& עדיף. const int&& לא יכול להיקשר ל-int&& (זה היה מוריד const) או ל-int&, ולכן נבחר const int&.",
+      "lesson": "cpp.pointers-refs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.pointers-refs.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "אילו מהשורות הבאות הן UB לפי C++20?\n\n```cpp\nfloat f = 1.0f;\nauto a = *reinterpret_cast<std::uint32_t*>(&f); // (1)\nstd::uint32_t b; std::memcpy(&b, &f, 4);       // (2)\nauto c = std::bit_cast<std::uint32_t>(f);       // (3)\nauto d = reinterpret_cast<unsigned char*>(&f)[0]; // (4)\n```",
+      "choices": [
+        "(1) ו-(4)",
+        "רק (1)",
+        "(1), (2) ו-(4)",
+        "אף אחת, כי float ו-uint32_t באותו גודל"
+      ],
+      "answer": 1,
+      "explanation": "(1) ניגש לאובייקט float דרך glvalue מטיפוס uint32_t, וזו הפרה של strict aliasing ([basic.lval]), כלומר UB. בפועל זה עלול להישבר ב-O2. memcpy ו-std::bit_cast הם הדרכים המוגדרות לבצע type punning, והקומפיילר הופך אותם להוראת mov אחת. גישה דרך char, unsigned char או std::byte מותרת במפורש לכל אובייקט.",
+      "lesson": "cpp.pointers-refs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.pointers-refs.q19",
+      "level": 5,
+      "type": "multi",
+      "prompt": "נתון `int a[3]; int other;`. אילו ביטויים הם undefined behavior? (כל אחד בנפרד)",
+      "choices": [
+        "`int* e = a + 3;`",
+        "`int v = *(a + 3);`",
+        "`int* f = a + 4;`",
+        "`int* g = a - 1;`",
+        "`bool eq = (a + 3 == &other);`"
+      ],
+      "answer": [1, 2, 3],
+      "explanation": "מותר ליצור pointer ל-one-past-the-end (a+3), אבל dereference שלו הוא UB. כבר יצירה של pointer מחוץ לטווח [a, a+3], כמו a+4 או a-1, היא UB גם בלי dereference ([expr.add]). השוואת == בין one-past-the-end של מערך לכתובת של אובייקט אחר היא לא UB. התוצאה שלה unspecified, ובפועל עשויה לצאת true אם other צמוד למערך.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q20",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "למה ל-class עם member מסוג reference (`struct W { int& r; };`) אין copy assignment operator שמיש, ומה הפתרון המקובל אם רוצים לשים אותו ב-std::vector ולבצע עליו sort?",
+      "choices": [
+        "ה-copy assignment מוגדר כ-deleted כי אי אפשר לקשור reference מחדש; מחליפים את ה-member ב-std::reference_wrapper<int> או ב-int*",
+        "ה-copy assignment קיים אבל מעתיק את הערך שה-reference מצביע עליו; זה בסדר עבור sort",
+        "גם ה-copy constructor מוגדר כ-deleted, ולכן אי אפשר לשים את W ב-vector בכלל",
+        "צריך להכריז על r כ-mutable כדי לאפשר השמה"
+      ],
+      "answer": 0,
+      "explanation": "ה-copy assignment שנוצר אוטומטית מוגדר כ-deleted כשיש member מסוג reference (וכך גם עם member const), כי אי אפשר לקשור reference מחדש. ה-copy constructor כן קיים, כי הוא מאתחל reference חדש, ולכן push_back עובד. sort לעומת זאת דורש move assignment. std::reference_wrapper מחזיק pointer בפנים, ולכן הוא assignable ומתנהג כמו reference.",
+      "lesson": "cpp.pointers-refs"
+    }
+  ]
+}

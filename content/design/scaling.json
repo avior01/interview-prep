@@ -1,0 +1,294 @@
+{
+  "domain": "design",
+  "subtopic": "scaling",
+  "lessons": [
+    {
+      "id": "design.scaling",
+      "title": "Scaling",
+      "what": "scaling הוא היכולת לשרת יותר עומס (בקשות, נתונים, משתמשים) בהוספת משאבים. vertical = מכונה חזקה יותר; horizontal = יותר מכונות. horizontal דורש לפצל עבודה ונתונים, וזה מה שמכניס את רוב הסיבוכיות.",
+      "when": [
+        "כל שאלת system design בסגנון 'תכנן את X למיליון משתמשים'",
+        "שאלות על sharding, replication, caching, load balancing ו-consistency",
+        "כשצריך להעריך כמה שרתים, כמה זיכרון או כמה אחסון"
+      ],
+      "how": [
+        "back-of-the-envelope: משתמשים × פעולות ליום / 86,400 = QPS ממוצע; peak בדרך כלל פי 2 עד 10",
+        "שכבת ה-compute stateless מאחורי load balancer: כל שרת יכול לטפל בכל בקשה, ו-state יושב ב-DB, cache או session store",
+        "cache (cache-aside: קוראים מה-cache, ב-miss קוראים מה-DB וממלאים) מוריד עומס קריאה; צריך לטפל ב-invalidation וב-stampede",
+        "replication: leader אחד לכתיבות ו-replicas לקריאות; replication אסינכרוני יוצר lag",
+        "sharding (partitioning) מחלק את הנתונים לפי key: hash (פיזור אחיד), range (שאילתות טווח), או consistent hashing (מעט תזוזה כשמוסיפים node)",
+        "quorums: עם N replicas, כתיבה ל-W וקריאה מ-R, אם R + W > N כל קריאה חופפת לכתיבה האחרונה"
+      ],
+      "complexity": "86,400 שניות ביום (בערך 10^5). מיליון בקשות ביום הן כ-12 לשנייה. hash mod N מזיז כמעט את כל ה-keys כש-N משתנה; consistent hashing מזיז כ-1/N מהם.",
+      "pitfalls": [
+        "state מקומי בשרת (sessions בזיכרון) שמונע הוספת שרתים",
+        "hot key: shard אחד מקבל את כל העומס של key פופולרי",
+        "cache stampede: key חם פג תוקף ואלפי בקשות פונות ל-DB בבת אחת",
+        "קריאה מ-replica מיד אחרי כתיבה ל-leader: המשתמש לא רואה את מה שכתב",
+        "sharding מוקדם מדי: מוסיף סיבוכיות כשמכונה אחת עם replicas הייתה מספיקה"
+      ],
+      "senior": [
+        "להתחיל מדרישות ומספרים, ולהגדיל רק את מה שהחשבון מראה שצריך",
+        "להסביר trade-offs של consistency (CAP, ובעיקר PACELC: גם בלי partition יש trade-off בין latency ל-consistency)",
+        "לזהות hot spots ולהציע פתרונות (salting, caching, request coalescing)",
+        "לתכנן גם resharding, failover ו-multi-region, לא רק את מצב ההתחלה"
+      ],
+      "diagram": "clients -> LB -> [app][app][app]  (stateless)\n                    |   cache\n           shard0 shard1 shard2  (+replicas)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "design.scaling.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין vertical scaling ל-horizontal scaling?",
+      "choices": [
+        "vertical = הוספת מכונות; horizontal = מכונה חזקה יותר",
+        "vertical = מכונה חזקה יותר (CPU, RAM); horizontal = הוספת מכונות ופיזור העומס ביניהן",
+        "vertical מתייחס לבסיסי נתונים בלבד, horizontal לשרתי web בלבד",
+        "אין הבדל מהותי, רק בעלות"
+      ],
+      "answer": 1,
+      "explanation": "vertical פשוט (אין שינוי בקוד) אבל מוגבל בגודל המכונה הגדולה ביותר, ונשאר single point of failure. horizontal כמעט לא מוגבל אבל דורש חלוקת עבודה ונתונים. שניהם רלוונטיים גם ל-DB וגם ל-compute.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה קל יותר להגדיל horizontally שירות stateless?",
+      "choices": [
+        "כי הוא לא משתמש ב-CPU",
+        "כי כל instance יכול לטפל בכל בקשה, ולכן מוסיפים instances מאחורי load balancer בלי לתאם state ביניהם",
+        "כי הוא לא צריך load balancer",
+        "כי הוא לא יכול להיכשל"
+      ],
+      "answer": 1,
+      "explanation": "ב-stateless אין נתונים שמחייבים שבקשה תגיע לשרת מסוים, ולכן הוספה והסרה של instances פשוטות וגם failover טריוויאלי. ה-state עובר למקום ייעודי (DB, cache), ושם נמצאת עיקר בעיית ה-scaling.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה sharding?",
+      "choices": [
+        "שכפול כל הנתונים לכמה שרתים",
+        "חלוקת הנתונים לחלקים לפי key, כך שכל שרת מחזיק רק חלק מהם",
+        "דחיסת טבלאות גדולות",
+        "גיבוי יומי של בסיס הנתונים"
+      ],
+      "answer": 1,
+      "explanation": "sharding (horizontal partitioning) מחלק את הנתונים, כך שגם הכתיבות וגם האחסון מתחלקים. שכפול הוא replication, שמגדיל קיבולת קריאה וזמינות אבל לא קיבולת כתיבה. בפועל משלבים: כל shard משוכפל.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-cache-aside, מה קורה בקריאה של key שלא נמצא ב-cache?",
+      "choices": [
+        "ה-cache עצמו קורא מה-DB ומחזיר (read-through)",
+        "האפליקציה קוראת מה-DB, כותבת את התוצאה ל-cache עם TTL, ומחזירה ללקוח",
+        "הבקשה נכשלת עד שה-cache מתמלא ברקע",
+        "האפליקציה כותבת ערך ריק ל-cache"
+      ],
+      "answer": 1,
+      "explanation": "ב-cache-aside האפליקציה אחראית: קוראת מה-cache, וב-miss פונה ל-DB וממלאת את ה-cache. read-through דומה אבל ה-cache עושה זאת בעצמו. ב-cache-aside בכתיבה בדרך כלל מעדכנים את ה-DB ומוחקים (invalidate) את ה-key מה-cache.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q05",
+      "level": 2,
+      "type": "short",
+      "prompt": "שירות מקבל 8.64 מיליון בקשות ביום, בפיזור אחיד. כמה בקשות לשנייה זה בממוצע?",
+      "accept": ["100"],
+      "explanation": "8,640,000 / 86,400 = 100 בקשות לשנייה. כדאי לזכור ש-86,400 הוא בערך 10^5, ולכן 'מיליון ביום' הוא כ-12 לשנייה. בתכנון מוסיפים מקדם peak, כי התעבורה לא באמת אחידה.",
+      "lesson": "design.scaling",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.scaling.q06",
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו טענות על load balancing נכונות?",
+      "choices": [
+        "round robin מתאים כשהבקשות דומות בעלותן והשרתים זהים",
+        "least connections מתאים יותר כשיש בקשות ארוכות ושונות",
+        "load balancer מבטל את הצורך ב-health checks",
+        "sticky sessions מקלות על state מקומי אבל פוגעות בפיזור העומס וב-failover",
+        "L4 load balancer יכול לנתב לפי URL path"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "round robin טוב לבקשות אחידות; least connections מתחשב בעומס הנוכחי. health checks הם חלק מה-LB ולא מיותרים. sticky sessions הן פלסטר ל-state מקומי. ניתוב לפי URL הוא יכולת L7 (HTTP); L4 רואה רק IP ו-port.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "נתונים מחולקים בין 10 שרתים לפי hash(key) % 10. מוסיפים שרת אחד (11). איזה חלק מה-keys יעבור לשרת אחר?",
+      "choices": [
+        "בערך 1/11",
+        "בערך 10/11, כמעט הכל",
+        "בדיוק 1/10",
+        "אף key לא זז"
+      ],
+      "answer": 1,
+      "explanation": "key נשאר במקומו רק אם hash % 10 == hash % 11, מה שקורה בערך ל-1/11 מה-keys. כל השאר זזים, וזה מחייב העברה מסיבית ומרוקן caches. consistent hashing מקטין את התזוזה לכ-1/11, כי רק הטווח שהשרת החדש לוקח עובר.",
+      "lesson": "design.scaling",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.scaling.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "משתמש מעדכן את הפרופיל שלו (כתיבה ל-leader), והדף שנטען מיד אחרי מציג את הערך הישן (קריאה מ-replica). מה הפתרון המקובל?",
+      "choices": [
+        "לבטל את כל ה-replicas",
+        "read-your-writes: לנתב קריאות של אותו משתמש ל-leader לזמן קצר אחרי כתיבה, או לקרוא מ-replica רק אם היא הגיעה ל-LSN/version של הכתיבה",
+        "להוסיף עוד replicas",
+        "להגדיל את ה-TTL של ה-cache"
+      ],
+      "answer": 1,
+      "explanation": "replication אסינכרוני יוצר lag, ובלי טיפול המשתמש רואה את המצב לפני הכתיבה שלו. read-your-writes consistency פותר את זה למשתמש הכותב בלי לוותר על replicas לכלל התעבורה. עוד replicas לא מקטינות lag, ו-TTL ארוך יותר מחמיר.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "key פופולרי מאוד ב-cache פג תוקף, ו-5,000 בקשות במקביל מקבלות miss ופונות ל-DB, שקורס. איך מונעים את זה?",
+      "choices": [
+        "להוריד את ה-TTL",
+        "request coalescing (single-flight): רק בקשה אחת ממלאת את ה-key והשאר מחכות לה; בנוסף רענון מוקדם הסתברותי או TTL עם jitter",
+        "להגדיל את ה-cache",
+        "לבטל את ה-cache ל-key הזה"
+      ],
+      "answer": 1,
+      "explanation": "זה cache stampede (thundering herd). single-flight או lock על ה-key מבטיחים שרק אחד פונה ל-DB. רענון מוקדם (לפני שה-TTL פג, בהסתברות שעולה ככל שמתקרבים) ו-jitter על TTLs מונעים פקיעה סינכרונית. TTL קצר יותר רק מגדיל את תדירות הבעיה.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q10",
+      "level": 3,
+      "type": "short",
+      "prompt": "ה-peak הצפוי הוא 30,000 בקשות לשנייה. שרת אחד מטפל לכל היותר ב-2,500 בקשות לשנייה, ורוצים שכל שרת יעבוד לכל היותר ב-60% מהקיבולת שלו ב-peak. כמה שרתים צריך לפחות (לפני מרווח לכשלים)?",
+      "accept": ["20"],
+      "explanation": "קיבולת אפקטיבית לשרת: 2,500 × 0.6 = 1,500 בקשות לשנייה. 30,000 / 1,500 = 20. מעל זה מוסיפים מרווח ל-failover (N+1 או N+2, או אובדן של availability zone שלם).",
+      "lesson": "design.scaling",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.scaling.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מערכת עם N=3 replicas לכל key, כתיבה מוצלחת כשמגיעים W=2 אישורים, וקריאה מ-R=2 replicas. מה מובטח (בלי sloppy quorum)?",
+      "choices": [
+        "כל קריאה פוגשת לפחות replica אחד שיש בו את הכתיבה האחרונה שאושרה, כי R + W > N",
+        "קריאה תמיד מחזירה את הערך האחרון גם אם שני replicas נפלו",
+        "linearizability מלא בכל מצב, כולל כתיבות מקבילות",
+        "שום דבר; צריך R = W = N"
+      ],
+      "answer": 0,
+      "explanation": "R + W = 4 > 3, ולכן קבוצת הקריאה וקבוצת הכתיבה חופפות ב-replica אחד לפחות, והקורא יכול לבחור את הגרסה החדשה לפי version. אם שני replicas נפלו, אין quorum בכלל. quorum לבד לא מספיק ל-linearizability (צריך גם read repair סינכרוני וטיפול בכתיבות מקבילות). R = W = N מחזק אבל פוגע בזמינות.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-social network מחולק לפי user_id, פוסט של סלבריטי עם 50 מיליון עוקבים מייצר עומס עצום על shard אחד. מה הגישה הנכונה?",
+      "choices": [
+        "להעביר את הסלבריטי לשרת חזק יותר",
+        "לטפל ב-hot keys במיוחד: לשכפל את ה-key לכמה shards (salting / key splitting) או להגיש אותו מ-cache מבוזר; ובפיד, pull עבור סלבריטאים במקום fan-out on write",
+        "להחליף ל-range sharding",
+        "להגביל את מספר העוקבים"
+      ],
+      "answer": 1,
+      "explanation": "hash sharding מפזר keys, לא עומס על key אחד. hot keys מקבלים טיפול מיוחד: קריאות מ-replicas או cache שמשוכפל ב-N עותקים (key#1..key#N), וכתיבות כמו counters מפוצלות ומצטברות. במערכות פיד (Twitter) משתמשים במודל היברידי: fan-out on write למשתמשים רגילים ו-pull בזמן קריאה לחשבונות ענק. range sharding לא עוזר ל-key בודד.",
+      "lesson": "design.scaling",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.scaling.q13",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על CAP ו-PACELC נכונות?",
+      "choices": [
+        "CAP עוסק במה קורה בזמן network partition: לבחור בין consistency (לסרב) לבין availability (לענות עם נתון שאולי ישן)",
+        "PACELC מוסיף שגם בלי partition יש trade-off בין latency ל-consistency",
+        "מערכת יכולה להיות CA ולהתעלם מ-partitions ברשת אמיתית",
+        "Cassandra עם consistency level ONE היא דוגמה לבחירה ב-availability ו-latency",
+        "מערכת שבחרה CP לא זמינה גם כשאין שום תקלה"
+      ],
+      "answer": [0, 1, 3],
+      "explanation": "ברשת מבוזרת partitions קורים, ולכן הבחירה האמיתית היא C או A בזמן partition. PACELC מזכיר שגם ברוב הזמן, consistency חזק עולה ב-latency (סיבובי תיאום). מערכת CP זמינה כרגיל כשאין partition; היא רק מסרבת לחלק מהבקשות בזמן partition.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן שירות URL shortener: 100 מיליון קישורים חדשים בחודש, יחס קריאה לכתיבה של 100:1, ו-latency נמוך ל-redirect.",
+      "modelAnswer": "מספרים: 100M בחודש הם כ-40 כתיבות לשנייה בממוצע, וכ-4,000 קריאות לשנייה (peak אולי 20k). לאורך 5 שנים: 6 מיליארד קישורים; ב-500 bytes לרשומה זה כ-3 TB. אורך הקוד: base62 עם 7 תווים נותן 62^7 ≈ 3.5 × 10^12, מספיק עם מרווח. יצירת קוד: מונה מבוזר (ranges שכל שרת מקבל מראש, כמו ticket server) והמרה ל-base62, שמונע התנגשויות; חלופה היא hash של ה-URL עם בדיקת התנגשות, שנותנת dedup אבל דורשת retry. אם לא רוצים קודים צפויים, מערבבים את המונה בפרמוטציה הפיכה. API: POST יוצר, GET /code מחזיר 301 או 302 (302 אם רוצים analytics, כי 301 נשמר בדפדפן). אחסון: key-value store (DynamoDB / Cosmos DB / Cassandra) עם code כ-partition key, כי הגישה היא תמיד lookup לפי key. קריאות: cache (Redis) לפני ה-DB, כי ההתפלגות מאוד skewed, ו-CDN ל-redirects הפופולריים. שירות האפליקציה stateless מאחורי LB. analytics (קליקים) לא בנתיב ה-redirect: event לתור ועיבוד אסינכרוני. אמינות: replication של ה-KV, ו-rate limiting על יצירה כדי למנוע abuse. הרחבות: תפוגת קישורים, custom aliases (בדיקת ייחודיות), חסימת URLs זדוניים.",
+      "rubric": [
+        "הערכת QPS ואחסון, ובחירת אורך קוד עם חישוב מרחב",
+        "אסטרטגיית יצירת קוד ייחודי והשוואה (counter מול hash)",
+        "בחירת אחסון KV לפי דפוס הגישה, cache ו-CDN לקריאות",
+        "analytics אסינכרוני ו-301 מול 302",
+        "אמינות, rate limiting והרחבות"
+      ],
+      "explanation": "שאלת system design קלאסית ב-Microsoft. מחפשים חשבון מספרי, בחירות מנומקות ואבחנה בין נתיב קריטי לעבודה אסינכרונית.",
+      "lesson": "design.scaling",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.scaling.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-consistent hashing, למה כל שרת פיזי מקבל מאות virtual nodes על הטבעת ולא נקודה אחת?",
+      "choices": [
+        "כדי שה-hash יהיה מהיר יותר",
+        "עם נקודה אחת לכל שרת הטווחים לא אחידים (חלק מהשרתים מקבלים פי כמה); vnodes מאזנים את העומס, וכששרת נופל העומס שלו מתפזר בין הרבה שרתים במקום לעבור כולו לשכן אחד",
+        "כדי לאפשר יותר מ-N replicas",
+        "כדי שהוספת שרת תזיז את כל ה-keys"
+      ],
+      "answer": 1,
+      "explanation": "עם נקודה אחת לשרת, גודל הטווח הוא משתנה אקראי עם שונות גבוהה, וההפרש בין השרת העמוס לפחות עמוס יכול להיות גדול. מאות vnodes ממצעים את זה. בנוסף, כששרת נופל, ה-vnodes שלו שייכים לטווחים שהשכנים שלהם שונים, ולכן ה-recovery וה-load מתפזרים. vnodes גם מאפשרים לתת לשרת חזק יותר יותר vnodes.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "צריך מונה צפיות גלובלי לסרטון ויראלי שמקבל מיליון increments לשנייה. שורה אחת ב-DB עם UPDATE count = count + 1 לא עומדת בזה. מה הפתרון הנכון, ומה המחיר?",
+      "choices": [
+        "להשתמש ב-SERIALIZABLE isolation",
+        "sharded counter: K תתי-מונים (למשל 100), כל increment הולך לאחד אקראי, והקריאה סוכמת את כולם; ובנוסף צבירה מקומית בשרתים (batching) ו-flush כל שנייה. המחיר: קריאה יקרה יותר והמונה eventually consistent",
+        "לנעול את השורה עם SELECT FOR UPDATE",
+        "להעביר את המונה ל-cache בלי persistence"
+      ],
+      "answer": 1,
+      "explanation": "הבעיה היא contention על שורה אחת: כל עדכון מחכה ל-lock. פיצול ל-K מונים מחלק את ה-contention, וצבירה מקומית מקטינה את מספר הכתיבות לסדר גודל של מספר השרתים לשנייה. הקריאה סוכמת K ערכים (אפשר לשמור ב-cache), והערך המוצג מפגר בכמה שניות, מה שמקובל לספירת צפיות. SERIALIZABLE או נעילה מחמירים את ה-contention.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "שירות מבוסס PostgreSQL יחיד מגיע היום ל-2,000 בקשות לשנייה, והצפי הוא 100,000 בשנה הבאה. ה-DB כבר ב-80% CPU. תאר את הצעדים לפי סדר, ומה תמדוד לפני כל צעד.",
+      "modelAnswer": "קודם מבינים איפה העומס: pg_stat_statements לשאילתות הכבדות, יחס קריאה לכתיבה, ו-hot rows. צעד 1, זול ומהיר: אינדקסים חסרים, שאילתות N+1, connection pooling (PgBouncer), כי הרבה פעמים 80% CPU נובע מכמה שאילתות גרועות. צעד 2: cache לקריאות חוזרות (Redis, cache-aside עם invalidation בכתיבה), שיכול להוריד את רוב עומס הקריאה. צעד 3: read replicas לקריאות שסובלות lag, עם read-your-writes למשתמש הכותב. צעד 4: vertical scaling של ה-leader כגשר זמני. צעד 5: כשהכתיבות עצמן חורגות ממה ש-leader אחד יכול (פי 50 מההיום), sharding לפי key טבעי (tenant_id או user_id) כך שרוב השאילתות פוגעות ב-shard אחד; בחירה בין sharding באפליקציה, Citus, או מעבר ל-DB מבוזר (Cosmos DB / Spanner / CockroachDB). הגירה: dual writes או CDC, backfill, השוואת קריאות (shadow reads), ומעבר הדרגתי עם אפשרות rollback. במקביל: להוציא עבודה אסינכרונית לתורים (מיילים, analytics), ולהגדיר SLOs ומבחני עומס לכל שלב. העיקרון: לא מקפצים ל-sharding לפני שמיצינו את הצעדים הזולים, כי הוא מוסיף סיבוכיות קבועה (cross-shard queries, טרנזקציות מבוזרות, resharding).",
+      "rubric": [
+        "מדידה ואבחון לפני שינוי (שאילתות כבדות, read/write ratio)",
+        "סדר הגיוני מזול ליקר: אופטימיזציה, pooling, cache, replicas, vertical, sharding",
+        "בחירת shard key ומודעות ל-cross-shard queries",
+        "תוכנית הגירה בטוחה (CDC, backfill, shadow reads, rollback)",
+        "הוצאת עבודה לתורים ו-SLOs"
+      ],
+      "explanation": "מראיין סניור מחפש הדרגתיות ושיקול דעת: מה הצעד הזול הבא, ואיך עוברים בלי downtime. קפיצה ישירה ל-'נעשה microservices ו-sharding' היא דגל אדום.",
+      "lesson": "design.scaling",
+      "tags": ["microsoft"]
+    }
+  ]
+}

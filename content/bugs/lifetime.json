@@ -1,0 +1,357 @@
+{
+  "domain": "bugs",
+  "subtopic": "lifetime",
+  "lessons": [
+    {
+      "id": "bugs.lifetime",
+      "title": "Lifetime ו-dangling",
+      "what": "באג lifetime קורה כשמשתמשים במצביע, reference, iterator או view לאובייקט שזמן החיים שלו כבר נגמר. הזיכרון עדיין שם וכנראה מכיל את הערך הישן, ולכן הקוד 'עובד' עד שמשהו אחר משתמש באותו זיכרון. זה UB, וזו אחת הסיבות העיקריות לחולשות אבטחה ב-C++.",
+      "when": [
+        "פונקציה שמחזירה reference, מצביע או `string_view` לאובייקט מקומי או זמני",
+        "שמירת reference, iterator או מצביע לאיבר בתוך container ואז שינוי ה-container (push_back, erase, rehash)",
+        "lambda שלוכדת `[&]` או `this` ונשמרת ב-std::function, נשלחת ל-thread או נרשמת כ-callback",
+        "מחלקה שמחזיקה reference או raw pointer כ-member לאובייקט שאינה הבעלים שלו",
+        "קוד אסינכרוני: threads עם detach, coroutines, callbacks שרצים אחרי שהיוזם כבר חזר"
+      ],
+      "how": [
+        "לכל מצביע או reference שאל: מי הבעלים של האובייקט, ומתי הוא נהרס ביחס לשימוש האחרון",
+        "זמניים (temporaries) נהרסים בסוף ה-full-expression. קשירה ישירה של `const T&` לזמני מאריכה את חייו, אבל רק בקשירה ישירה, לא דרך פונקציה שמחזירה reference",
+        "פעולות שמשנות container עלולות לבטל (invalidate) iterators ו-references: vector בהקצאה מחדש, erase, ו-unordered_map ב-rehash (iterators בלבד)",
+        "views (string_view, span) לא מחזיקים בעלות. הם תקינים רק כל עוד הבעלים חי",
+        "כלים: AddressSanitizer מדווח heap-use-after-free, stack-use-after-scope ו-stack-use-after-return; GCC 13 מוסיף `-Wdangling-reference`, ו-Clang יש לו `-Wdangling` ו-`-Wreturn-stack-address`",
+        "תכנון: להחזיר by value (RVO הופך את זה לזול), shared_ptr/weak_ptr לבעלות משותפת, ו-unsubscribe ב-destructor של מי שנרשם ל-callback"
+      ],
+      "complexity": "אין עלות סיבוכיות. העלות היא בזמן debug: באג lifetime לרוב מתגלה רחוק מהמקום שבו נוצר, ולכן חשוב לתפוס אותו עם sanitizer ב-CI.",
+      "pitfalls": [
+        "`std::string_view sv = makeString();` מצביע לזמני שנהרס מיד",
+        "`const int& r = std::max(a, 1);` כשאחד הארגומנטים זמני",
+        "range-for על `f().member()` שמחזיר reference: לפני C++23 הזמני מ-`f()` נהרס לפני הלולאה",
+        "coroutine שמקבל `const T&`: ה-reference נשמר ב-frame, האובייקט לא",
+        "`weak_from_this()` בתוך constructor מחזיר weak_ptr ריק"
+      ],
+      "senior": [
+        "לנסח כללי בעלות ברורים ב-API: מי מחזיק, מי מקבל view, ומה ה-lifetime המובטח",
+        "להכיר את חוקי lifetime extension והחריגים שלהם, ואת השינוי ב-C++23 ל-range-for",
+        "להציע אסטרטגיה ל-use-after-free שקורה רק ב-production: ASan ב-staging, GWP-ASan, core dumps, rr record/replay",
+        "להבין שהקוד 'עובד' כי ה-allocator לא החזיר את הזיכרון עדיין, ולכן בדיקה ידנית לא מוכיחה כלום"
+      ],
+      "diagram": "owner:  [ obj ]---destroyed\nview:     |------------> use\n                      ^ dangling"
+    }
+  ],
+  "questions": [
+    {
+      "id": "bugs.lifetime.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה dangling pointer?",
+      "choices": [
+        "מצביע שלא אותחל",
+        "מצביע שערכו nullptr",
+        "מצביע לאובייקט שזמן החיים שלו כבר נגמר",
+        "מצביע שעבר arithmetic מעבר לסוף מערך"
+      ],
+      "answer": 2,
+      "explanation": "dangling הוא מצביע (או reference) שהיה תקין, אבל האובייקט שהוא מצביע עליו נהרס: delete, יציאה מ-scope או הקצאה מחדש. מצביע לא מאותחל הוא wild pointer, nullptr הוא ערך תקין שאפשר לבדוק, ומצביע מעבר לסוף מערך הוא באג של bounds.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "קוד ניגש לאובייקט אחרי `delete`. איזה דיווח צפוי מ-AddressSanitizer?",
+      "choices": [
+        "heap-buffer-overflow",
+        "heap-use-after-free",
+        "stack-use-after-return",
+        "memory leak"
+      ],
+      "answer": 1,
+      "explanation": "ASan שם זיכרון משוחרר ב-quarantine ומסמן אותו כאסור, ולכן גישה אליו מדווחת כ-heap-use-after-free, עם stack trace של ההקצאה, השחרור והגישה. heap-buffer-overflow הוא גישה מחוץ לגבולות בלוק חי, ו-stack-use-after-return נוגע למשתנים מקומיים.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "פונקציה בונה מחרוזת חדשה ומחזירה אותה. איזו חתימה בטוחה?",
+      "choices": [
+        "`const std::string& build()`",
+        "`std::string_view build()`",
+        "`std::string& build()`",
+        "`std::string build()`"
+      ],
+      "answer": 3,
+      "explanation": "החזרה by value בטוחה ולא יקרה: RVO או move. שלוש האחרות מחזירות reference או view לאובייקט מקומי שנהרס ביציאה מהפונקציה. string_view מפתה במיוחד כי הוא נראה 'קל', אבל הוא לא מחזיק את הנתונים.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q04",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "const std::string& greet(const std::string& name) {\n    std::string s = \"hi \" + name;\n    return s;\n}",
+      "bugLine": 3,
+      "choices": [
+        "צריך `std::move(s)` כדי למנוע העתקה",
+        "החזרת reference למשתנה מקומי: `s` נהרס ביציאה והקורא מקבל dangling reference",
+        "שרשור `\"hi \" + name` לא מתקמפל כי השמאלי הוא `const char*`",
+        "הפרמטר צריך להיות by value"
+      ],
+      "answer": 1,
+      "explanation": "`s` חי רק עד סוף הפונקציה. ה-`const` בטיפוס ההחזרה לא מאריך שום דבר. התיקון: להחזיר `std::string` by value. `\"hi \" + name` מתקמפל כי יש `operator+(const char*, const std::string&)`. הקומפיילר מזהיר כאן (`-Wreturn-local-addr` ב-GCC).",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "באיזו שורה מתרחש ה-undefined behavior?",
+      "code": "std::vector<int> v{1, 2, 3};\nint& first = v[0];\nv.push_back(4);\nstd::cout << first;",
+      "bugLine": 4,
+      "choices": [
+        "קריאה דרך `first` אחרי ש-push_back הקצה מחדש את ה-buffer: ה-reference מצביע לזיכרון ששוחרר",
+        "`push_back` על vector שנבנה עם initializer list אסור",
+        "`int&` לא יכול להיקשר ל-`v[0]` כי זה rvalue",
+        "`std::cout` של reference מדפיס את הכתובת"
+      ],
+      "answer": 0,
+      "explanation": "vector שנבנה מ-3 איברים כנראה עם capacity 3, ו-push_back רביעי מקצה buffer חדש ומעביר אליו את האיברים. כל reference, pointer ו-iterator לאיברים הישנים מתבטלים, ולכן הקריאה בשורה 4 היא use-after-free. גם אם במקרה הייתה capacity פנויה, הקוד שביר. `v[0]` מחזיר `int&`, lvalue.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "הקובץ קיים ומכיל כמה שורות. מה קורה?",
+      "code": "with open('data.txt') as f:\n    lines = (l.strip() for l in f)\n\nprint(next(lines))",
+      "choices": [
+        "מודפסת השורה הראשונה",
+        "StopIteration",
+        "ValueError: I/O operation on closed file",
+        "מודפס None"
+      ],
+      "answer": 2,
+      "explanation": "generator expression הוא lazy: שום שורה לא נקראה בתוך ה-with. ביציאה מה-with הקובץ נסגר, וכש-`next` מתחיל לרוץ הוא מנסה לקרוא מקובץ סגור. זה באג lifetime גם ב-Python: ה-resource נסגר לפני שה-consumer סיים. תיקון: לצרוך בתוך ה-with או להשתמש ב-list comprehension.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q07",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מדפיס לפעמים זבל, ותלוי ב-build. מה הבאג?",
+      "code": "std::string makeName() {\n    return \"radio-\" + std::to_string(7);\n}\n\nint main() {\n    std::string_view sv = makeName();\n    std::cout << sv;\n}",
+      "bugLine": 6,
+      "choices": [
+        "`std::to_string` מחזיר מחרוזת בלי null terminator",
+        "`string_view` לא תומך ב-`operator<<`",
+        "החזרת std::string by value יוצרת העתקה מיותרת",
+        "`sv` מצביע לזמני שמוחזר מ-`makeName()`, שנהרס בסוף השורה, ולכן ההדפסה קוראת זיכרון משוחרר"
+      ],
+      "answer": 3,
+      "explanation": "string_view הוא רק מצביע ואורך, ואין לו lifetime extension: הזמני נהרס בסוף ה-full-expression. ב-SSO (מחרוזת קצרה כמו כאן) הנתונים נמצאים על ה-stack של הזמני, ולכן לפעמים 'עובד' ולפעמים זבל. ASan יתפוס (stack-use-after-scope עם SSO, heap-use-after-free למחרוזת ארוכה), וגם Clang מזהיר כאן עם `-Wdangling-gsl`. תיקון: `std::string s = makeName();`.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "std::function<int()> makeCounter() {\n    int count = 0;\n    return [&count] { return ++count; };\n}\n\nauto c = makeCounter();\nint a = c();",
+      "bugLine": 3,
+      "choices": [
+        "ה-lambda לוכד את `count` by reference, ו-`count` נהרס כש-makeCounter חוזר; כל קריאה ל-`c()` ניגשת ל-stack frame מת",
+        "lambda לא יכול להיות מומר ל-std::function",
+        "חסר `mutable` ב-lambda",
+        "`++count` לא atomic"
+      ],
+      "answer": 0,
+      "explanation": "לכידה by reference היא מצביע ל-`count` המקומי. התיקון: `[count]() mutable { return ++count; }`, כך שהמונה נשמר בתוך ה-closure. `mutable` נחוץ רק כשלוכדים by value, ולכן הוא חלק מהתיקון ולא הבאג המקורי.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q09",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד אמור להסיר מהווקטור את כל הערכים השליליים. מה הבאג?",
+      "code": "void removeNeg(std::vector<int>& v) {\n    for (auto it = v.begin(); it != v.end(); ++it)\n        if (*it < 0) v.erase(it);\n}",
+      "bugLine": 3,
+      "choices": [
+        "צריך `v.remove(it)` במקום erase",
+        "`erase` מבטל את `it`, ואז `++it` פועל על iterator לא תקין; גם אם 'עובד', מדלגים על האיבר שאחרי כל מחיקה ועלולים לעבור את `end()`",
+        "`*it < 0` צריך להיות `*it <= 0`",
+        "אי אפשר לשנות vector שהתקבל by reference"
+      ],
+      "answer": 1,
+      "explanation": "erase מבטל iterators מהמיקום שנמחק והלאה. השימוש ב-`it` אחרי זה הוא UB; בפועל האיבר הבא זז למקום של `it` ו-`++it` מדלג עליו, ואם נמחק האיבר האחרון `it` עובר את `end()`. תיקון: `it = v.erase(it)` בלי `++it` באותה איטרציה, או `std::erase_if(v, [](int x){ return x < 0; })` (C++20), שהוא גם O(n) במקום O(n^2).",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q10",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "ב-CPython, מה מודפס?",
+      "code": "import weakref\n\nclass Buf:\n    pass\n\nb = Buf()\nr = weakref.ref(b)\nprint(r() is b, end=' ')\ndel b\nprint(r())",
+      "choices": [
+        "True <__main__.Buf object at ...>",
+        "True None",
+        "False None",
+        "TypeError: cannot create weak reference"
+      ],
+      "answer": 1,
+      "explanation": "weakref לא מעלה את ה-refcount. כל עוד `b` קיים, `r()` מחזיר את האובייקט. אחרי `del b` ה-refcount יורד ל-0 וב-CPython האובייקט משוחרר מיד, אז `r()` מחזיר None. ב-PyPy, עם GC אחר, השחרור לא מיידי, ולכן השאלה מוגבלת ל-CPython. מחלקה רגילה תומכת ב-weakref; `int` או `list` לא.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q11",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד קורס מדי פעם, רק תחת עומס. מה הבאג?",
+      "code": "void process(const std::vector<float>& s);\n\nvoid startWorker() {\n    std::vector<float> samples(4096);\n    fill(samples);\n    std::thread t([&] { process(samples); });\n    t.detach();\n}",
+      "bugLine": 6,
+      "choices": [
+        "detach אסור על thread שנוצר מ-lambda",
+        "חסר mutex סביב `samples`",
+        "ה-lambda לוכד את `samples` by reference, ואחרי detach הפונקציה חוזרת והווקטור נהרס בזמן שה-thread עדיין קורא ממנו",
+        "צריך `t.join()` לפני `fill`"
+      ],
+      "answer": 2,
+      "explanation": "אחרי detach אין שום סנכרון בין סיום startWorker לבין ה-thread. ה-vector נהרס ביציאה, וה-thread קורא heap משוחרר. תחת עומס ה-thread מתחיל מאוחר יותר ולכן הקריסה מופיעה דווקא שם. תיקון: להעביר בעלות, `[s = std::move(samples)] { process(s); }`, או להחזיק את ה-thread ולעשות join. mutex לא יעזור, הבעיה היא lifetime ולא race על ערכים.",
+      "lesson": "bugs.lifetime",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.lifetime.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "class Sensor {\n    Logger& log_;\npublic:\n    explicit Sensor(Logger& l) : log_(l) {}\n    void read() { log_.write(\"read\"); }\n};\n\nSensor makeSensor() {\n    Logger l(\"sensor.log\");\n    return Sensor(l);\n}",
+      "bugLine": 10,
+      "choices": [
+        "member מסוג reference מונע copy assignment, ולכן ההחזרה by value לא מתקמפלת",
+        "ה-Sensor המוחזר מחזיק reference ל-`l` המקומי, שנהרס ביציאה מ-makeSensor; כל `read()` אחר כך ניגש ל-Logger מת",
+        "צריך `std::move(Sensor(l))`",
+        "Logger צריך להיות static בתוך read"
+      ],
+      "answer": 1,
+      "explanation": "member reference לא מחזיק בעלות, ולכן ה-Sensor שורד את ה-Logger. ההחזרה מתקמפלת: copy construction של reference member מותר (רק assignment נמחק), ו-C++17 מבטיח copy elision ל-prvalue. תיקון: Logger כ-member by value, shared_ptr<Logger>, או לקבל את ה-Logger מבחוץ ולתעד שהוא חייב לחיות יותר.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q13",
+      "level": 4,
+      "type": "multi",
+      "prompt": "באילו מהשורות הבאות `r` (או `sv`) הוא dangling בשורה שאחריה? (בחר את כל הנכונים)",
+      "choices": [
+        "`const int& r = std::max(x, 1);`",
+        "`const std::string& r = std::string(\"abc\");`",
+        "`int& r = std::vector<int>{1, 2}[0];`",
+        "`std::string_view sv = std::string(\"abc\");`",
+        "`const auto& r = makeVector();  // returns by value`"
+      ],
+      "answer": [0, 2, 3],
+      "explanation": "lifetime extension קורה רק כש-reference נקשר ישירות לזמני (ב'), ה'). ב-א', `std::max` מחזיר `const int&` לאחד הארגומנטים, והזמני `1` מת בסוף השורה; ההרחבה לא עוברת דרך קריאה לפונקציה. ב-ג', `operator[]` מחזיר reference לאיבר בתוך vector זמני שנהרס. ב-ד', string_view אינו reference ולכן אין הרחבה.",
+      "lesson": "bugs.lifetime",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.lifetime.q14",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מקלט נרשם ל-Bus שמפזר frames. אחרי שמוחקים Rx אחד המערכת קורסת בנקודה אקראית. מה הבאג?",
+      "code": "class Rx {\npublic:\n    explicit Rx(Bus& bus) {\n        bus.subscribe([this](Frame f) { onFrame(f); });\n    }\n    void onFrame(Frame f);\n};",
+      "bugLine": 4,
+      "choices": [
+        "אסור לקרוא ל-member function מתוך lambda",
+        "Frame מועבר by value ולכן מועתק",
+        "קריאה ל-subscribe מתוך constructor היא UB",
+        "ה-callback לוכד `this` ואין unsubscribe ב-destructor; אחרי ש-Rx נהרס, ה-Bus ממשיך לקרוא ל-`onFrame` על אובייקט מת"
+      ],
+      "answer": 3,
+      "explanation": "לכידת `this` היא raw pointer בלי בעלות. ה-Bus חי יותר מה-Rx ולא יודע שהוא נהרס. תיקונים: subscribe שמחזיר token/handle (RAII) שה-destructor של Rx משחרר, או weak_ptr ב-callback. גם עם unsubscribe צריך לוודא שאין callback שרץ במקביל ב-thread אחר בזמן ההריסה. קריאה ל-subscribe ב-constructor חוקית, אבל ה-callback עלול לרוץ לפני שה-constructor סיים (במחלקה נגזרת זה עוד יותר מסוכן).",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "ב-production יש crash פעם ביום בממוצע, stack trace שונה כל פעם, תמיד בתוך ה-allocator או בקוד שלא נגעו בו. החשד הוא use-after-free. איך היית ניגש?",
+      "modelAnswer": "stack trace משתנה בתוך malloc/free הוא סימן קלאסי ל-heap corruption: הקוד שקורס הוא הקורבן, לא הגורם. קודם כל לשחזר ב-staging עם AddressSanitizer: הוא שם זיכרון משוחרר ב-quarantine ומדווח את ה-stack של הקצאה, שחרור וגישה. אם ASan כבד מדי (פי 2 בערך ב-CPU, יותר בזיכרון), להריץ אותו על חלק מהמכונות או על replay של traffic. ב-production עצמו אפשר GWP-ASan, שדוגם הקצאות מעטות עם guard pages ועלות זניחה. בנוסף: לאסוף core dumps ולבדוק את האובייקט ששובש (לפעמים ה-vtable pointer או ה-header מראים מאיזה טיפוס הוא), להריץ עם MALLOC_PERTURB_ או allocator עם debug כדי שהזיכרון המשוחרר יתמלא בתבנית מזוהה, ולהשתמש ב-rr כדי להקליט ריצה ולחזור אחורה מהקריסה לכתיבה הרעה. במקביל, code review ממוקד: callbacks שלוכדים this, threads ב-detach, containers שמשתנים בזמן iteration, ו-views/references שנשמרים כ-members. אחרי התיקון: להוסיף טסט שמשחזר, ולהשאיר ASan ב-CI.",
+      "rubric": [
+        "מזהה ש-crash בתוך allocator עם trace משתנה מעיד על heap corruption שקרה קודם",
+        "AddressSanitizer לשחזור, ומבין את העלות שלו",
+        "כלי production: GWP-ASan או sampling, core dumps",
+        "כלים נוספים: rr/record-replay, MALLOC_PERTURB_, Valgrind",
+        "דפוסים חשודים ב-review ומניעה: ASan ב-CI, טסט רגרסיה"
+      ],
+      "explanation": "מראיין סניור מחפש הבנה שהסימפטום רחוק מהגורם, ושיטה מסודרת משחזור, דרך כלים, ועד מניעה.",
+      "lesson": "bugs.lifetime",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.lifetime.q16",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מתקמפל ב-C++20 ונותן תוצאות שגויות. מה הבאג? (`recv()` מחזיר Packet by value.)",
+      "code": "struct Packet {\n    std::vector<int> data;\n    const std::vector<int>& items() const { return data; }\n};\nPacket recv();\n\nint sum() {\n    int s = 0;\n    for (int x : recv().items()) s += x;\n    return s;\n}",
+      "bugLine": 9,
+      "choices": [
+        "range-for על `const&` מעתיק את הווקטור",
+        "`items()` צריך להיות `&&`-qualified",
+        "לפני C++23, ה-range-for קושר `auto&& __range = recv().items();`. ה-Packet הזמני נהרס בסוף ההצהרה הזו, ו-`__range` מצביע לווקטור מת",
+        "`recv()` נקרא בכל איטרציה מחדש"
+      ],
+      "answer": 2,
+      "explanation": "range-for מתורגם ל-`auto&& __range = <expr>;` ולולאה עליו. lifetime extension חל רק על הזמני שהוא התוצאה הסופית של הביטוי, כאן reference שמוחזר מפונקציה, ולא על ה-Packet שממנו הוא בא. מעניין: `for (int x : recv().data)` היה תקין, כי גישה ל-member של prvalue קושרת ישירות ל-subobject של הזמני ומאריכה את חיי כולו. C++23 (P2718) מאריך את חיי כל הזמניים ב-range initializer. `&&`-qualifier היה מונע קריאה על זמני, לא מתקן. `recv()` נקרא פעם אחת.",
+      "lesson": "bugs.lifetime",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.lifetime.q17",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "Task הוא coroutine type שמתחיל לרוץ מיד (eager) וממשיך לבד ברקע אחרי ה-co_await. ההודעה שמודפסת היא לפעמים זבל. מה הבאג?",
+      "code": "Task logLater(const std::string& msg) {\n    co_await sleepFor(std::chrono::seconds(1));\n    std::cout << msg;\n}\n\nvoid onError() {\n    logLater(\"rx overflow\");\n}",
+      "bugLine": 1,
+      "choices": [
+        "הפרמטר הוא reference. ה-coroutine frame מעתיק את ה-reference ולא את המחרוזת, וה-std::string הזמני שנבנה מ-\"rx overflow\" נהרס כש-`logLater` חוזר לקורא בהשעיה הראשונה",
+        "ה-coroutine frame מעתיק את כל הפרמטרים, לכן אין באג; הבעיה היא ש-Task לא נשמר",
+        "`std::cout` מתוך coroutine אינו thread-safe",
+        "co_await על sleep חוסם את ה-thread של onError"
+      ],
+      "answer": 0,
+      "explanation": "הפרמטרים אכן מועתקים ל-frame, אבל העתקה של `const std::string&` היא העתקה של ה-reference. הזמני חי עד סוף ה-full-expression בקורא, כלומר עד ש-`logLater` מחזיר את ה-Task בהשעיה הראשונה; כשה-coroutine ממשיך שנייה אחר כך, `msg` dangling. תיקון: לקבל `std::string msg` by value. זה כלל אצבע ידוע ל-coroutines: לא לקבל references או views אם ה-coroutine חי יותר מהקריאה.",
+      "lesson": "bugs.lifetime",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.lifetime.q18",
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "תקן את Rx מהשאלה הקודמת כך שה-callback שנרשם ל-Bus לעולם לא יקרא ל-Rx שנהרס, גם אם ה-Bus חי לנצח ולא תומך ב-unsubscribe. הנח ש-Rx תמיד נוצר דרך `std::make_shared`. `bus.subscribe` מקבל `std::function<void(Frame)>`.",
+      "starter": "class Rx /* ... */ {\npublic:\n    void attach(Bus& bus);\n    void onFrame(Frame f);\n};",
+      "modelAnswer": "class Rx : public std::enable_shared_from_this<Rx> {\npublic:\n    // must be called after construction (not from the ctor):\n    // weak_from_this() is empty inside the constructor\n    void attach(Bus& bus) {\n        std::weak_ptr<Rx> w = weak_from_this();\n        bus.subscribe([w](Frame f) {\n            if (auto self = w.lock())   // keeps Rx alive for the call\n                self->onFrame(f);\n        });\n    }\n    void onFrame(Frame f);\n};\n\n// usage:\nauto rx = std::make_shared<Rx>();\nrx->attach(bus);",
+      "rubric": [
+        "לוכד weak_ptr ולא this או shared_ptr (shared_ptr היה מחזיק את Rx לנצח: leak)",
+        "`lock()` בכל קריאה, והחזקת ה-shared_ptr הזמני לאורך הקריאה כדי שהאובייקט לא ייהרס באמצע",
+        "attach נפרד מה-constructor, כי weak_from_this ריק שם",
+        "מזכיר שה-callback עצמו נשאר רשום (עלות קטנה) ושעדיף API של unsubscribe/token אם אפשר"
+      ],
+      "explanation": "weak_ptr הוא הדרך הסטנדרטית להחזיק 'הפניה שיודעת אם האובייקט מת'. `lock()` מחזיר shared_ptr ריק אחרי ההריסה, ואם הוא לא ריק הוא מחזיק את האובייקט חי עד סוף הקריאה, גם אם thread אחר משחרר את ה-shared_ptr האחרון באמצע.",
+      "lesson": "bugs.lifetime",
+      "tags": ["nvidia"]
+    }
+  ]
+}

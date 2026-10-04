@@ -1,0 +1,292 @@
+{
+  "domain": "design",
+  "subtopic": "latency-budget",
+  "lessons": [
+    {
+      "id": "design.latency-budget",
+      "title": "תקציב latency ו-throughput",
+      "what": "latency הוא כמה זמן לוקח לפריט אחד לעבור את המערכת; throughput הוא כמה פריטים עוברים ביחידת זמן. תקציב latency מחלק את הזמן המותר מקצה לקצה בין השלבים, ומודדים אותו באחוזונים (p50, p99, p99.9) ולא בממוצע.",
+      "when": [
+        "דרישה כמו 'תגובה תוך 50 מיקרו-שניות' או 'p99 מתחת ל-100 ms'",
+        "שאלות back-of-the-envelope: כמה שרתים, כמה threads, כמה זמן לוקח למלא buffer",
+        "מערכות fan-out שבהן בקשה אחת פונה להרבה backends"
+      ],
+      "how": [
+        "מגדירים את היעד: איזה אחוזון, מאיזו נקודה לאיזו נקודה, ובאיזה עומס",
+        "מפרקים את המסלול לשלבים: רכישה (מילוי buffer = N / fs), תעבורה, תורים, עיבוד, החלטה, תגובה",
+        "לכל שלב נותנים תקציב ומשאירים מרווח; ההמתנה בתורים היא בדרך כלל הרכיב הגדול והתנודתי",
+        "throughput של pipeline נקבע על ידי השלב האיטי ביותר; ה-latency הוא סכום השלבים כולל ההמתנה ביניהם",
+        "במערכות fan-out: ההסתברות שבקשה תפגוש לפחות backend איטי אחד היא 1 − (1 − p)^N, ולכן ה-tail של רכיב בודד הופך לחוויה הרגילה",
+        "מודדים מקצה לקצה עם histogram (HDR) ולא עם ממוצעים"
+      ],
+      "complexity": "מספרים שכדאי לזכור: L1 בערך 1 ns, RAM בערך 100 ns, קריאה אקראית מ-SSD עשרות עד מאות מיקרו-שניות, round trip בתוך datacenter כ-0.5 ms, seek בדיסק מכני כ-10 ms, round trip בין יבשות כ-150 ms.",
+      "pitfalls": [
+        "למדוד ממוצע: הוא מסתיר את ה-tail שהמשתמשים מרגישים",
+        "לחשוב ש-pipelining מקצר את ה-latency של פריט בודד; הוא מעלה throughput",
+        "לשכוח את זמן מילוי ה-buffer: בלוק של N samples מוסיף N/fs לפני שמתחילים לעבד",
+        "load test שמודד רק כשהבקשה הקודמת חזרה (coordinated omission) ולכן מפספס את ה-tail",
+        "להניח שסכום ה-p99 של השלבים הוא חסם עליון ל-p99 מקצה לקצה"
+      ],
+      "senior": [
+        "לחשב back-of-the-envelope בקול ובמהירות, עם יחידות",
+        "להכיר טכניקות להקטנת tail: hedged requests, הקטנת fan-out, מניעת הקצאות ו-GC בנתיב החם, isolation של cores",
+        "להסביר את Amdahl: החלק הסדרתי חוסם את ה-speedup",
+        "לדעת שבמערכת זמן-אמת המדד הוא worst case מובטח, לא אחוזון"
+      ],
+      "diagram": "end-to-end budget = 100 us\n|fill|xfer|queue|proc|tx |\n| 20 | 15 | 10  | 30 | 15|\n      + margin 10"
+    }
+  ],
+  "questions": [
+    {
+      "id": "design.latency-budget.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של 'p99 latency = 20 ms'?",
+      "choices": [
+        "99 מתוך 100 בקשות לוקחות בדיוק 20 ms",
+        "99% מהבקשות מסתיימות תוך 20 ms לכל היותר, ו-1% לוקחות יותר",
+        "הבקשה האיטית ביותר לקחה 20 ms",
+        "ה-latency הממוצע הוא 20 ms עם סטייה של 1%"
+      ],
+      "answer": 1,
+      "explanation": "אחוזון 99 הוא הערך שמתחתיו נמצאות 99% מהמדידות. הוא לא המקסימום (ה-1% העליון יכול להיות גרוע בהרבה) ואין לו קשר ישיר לממוצע.",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין latency ל-throughput?",
+      "choices": [
+        "אין הבדל, אלה שני שמות לאותו מדד",
+        "latency הוא הזמן שלוקח לפריט אחד לעבור; throughput הוא מספר הפריטים שעוברים ביחידת זמן",
+        "throughput הוא ההופכי של latency תמיד",
+        "latency נמדד ב-bytes ו-throughput בשניות"
+      ],
+      "answer": 1,
+      "explanation": "אלה מדדים שונים. throughput = 1/latency נכון רק כשמעבדים פריט אחד בכל פעם. עם pipelining או מקביליות אפשר throughput גבוה עם latency ארוך (למשל צינור מים ארוך ורחב).",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q03",
+      "level": 1,
+      "type": "order",
+      "prompt": "סדר מהמהיר לאיטי (סדרי גודל טיפוסיים):",
+      "items": [
+        "גישה ל-L1 cache",
+        "גישה ל-RAM",
+        "קריאה אקראית של 4 KB מ-SSD",
+        "round trip בתוך אותו datacenter",
+        "seek בדיסק מכני",
+        "round trip בין אירופה לארה״ב"
+      ],
+      "explanation": "בערך: 1 ns, 100 ns, 20 עד 150 מיקרו-שניות, 0.5 ms, 10 ms, 80 עד 150 ms. כל קפיצה היא לפחות סדר גודל, וזה מה שמאפשר הערכות מהירות בראיון.",
+      "lesson": "design.latency-budget",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.latency-budget.q04",
+      "level": 2,
+      "type": "short",
+      "prompt": "מקבלים בלוקים של 4096 samples בקצב דגימה של 2.048 Msps. כמה זמן (ב-ms) לוקח למלא בלוק אחד, לפני שאפשר בכלל להתחיל לעבד אותו?",
+      "accept": ["2", "2ms", "2 ms", "2.0"],
+      "explanation": "N / fs = 4096 / 2,048,000 = 0.002 s = 2 ms. זה latency מינימלי שנוסף לכל בלוק, בלי קשר למהירות העיבוד. בלוקים קטנים יותר מקצרים אותו במחיר של תקורה גבוהה יותר לכל בלוק.",
+      "lesson": "design.latency-budget",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.latency-budget.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ה-latency הממוצע של שירות הוא 15 ms, אבל משתמשים מתלוננים על איטיות. מה הצעד הראשון הנכון?",
+      "choices": [
+        "להוסיף שרתים, כי 15 ms זה הרבה",
+        "להסתכל על התפלגות ה-latency (p50, p99, p99.9, max); ממוצע מסתיר tail ארוך",
+        "להאריך את ה-timeout של ה-clients",
+        "להוסיף cache לפני השירות"
+      ],
+      "answer": 1,
+      "explanation": "ממוצע של 15 ms יכול להסתיר 2% מהבקשות שלוקחות שנייה. בלי ההתפלגות אי אפשר לדעת אם הבעיה היא כל הבקשות או רק ה-tail, ולכל אחד מהם פתרון אחר. הוספת שרתים או cache לפני אבחון היא ניחוש.",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "pipeline של 3 שלבים, כל אחד לוקח 1 ms ורץ ב-thread נפרד, עם תורים ביניהם. בלי המתנה בתורים, מה ה-latency של פריט וה-throughput המקסימלי?",
+      "choices": [
+        "latency 1 ms, throughput 3000 פריטים לשנייה",
+        "latency 3 ms, throughput 1000 פריטים לשנייה",
+        "latency 3 ms, throughput 333 פריטים לשנייה",
+        "latency 1 ms, throughput 1000 פריטים לשנייה"
+      ],
+      "answer": 1,
+      "explanation": "כל פריט עובר את שלושת השלבים ברצף: 3 ms. אבל השלבים עובדים במקביל על פריטים שונים, ולכן יוצא פריט כל 1 ms: 1000 לשנייה. 333 לשנייה הוא מה שהיה קורה בלי pipelining (thread אחד שעושה הכל).",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q07",
+      "level": 3,
+      "type": "short",
+      "prompt": "בקשה פונה במקביל ל-100 backends ומחכה לכולם. כל backend איטי (מעל 1 s) ב-1% מהמקרים, באופן בלתי תלוי. בכמה אחוזים מהבקשות לפחות backend אחד יהיה איטי? (מספר שלם מעוגל)",
+      "accept": ["63", "63%", "0.63"],
+      "explanation": "1 − 0.99^100 ≈ 1 − 0.366 = 0.634, כלומר כ-63%. ה-p99 של רכיב בודד הופך לחוויה של רוב הבקשות. זו הסיבה ש-fan-out דורש tail latency נמוך מאוד ברמת הרכיב, או טכניקות כמו hedged requests.",
+      "lesson": "design.latency-budget",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.latency-budget.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "90% מזמן הריצה של תוכנית ניתן למקבול מושלם. מה ה-speedup המקסימלי על 8 cores לפי Amdahl?",
+      "choices": [
+        "8",
+        "7.2",
+        "בערך 4.7",
+        "בערך 5.9"
+      ],
+      "answer": 2,
+      "explanation": "speedup = 1 / ((1 − p) + p/n) = 1 / (0.1 + 0.9/8) = 1 / 0.2125 ≈ 4.7. 7.2 הוא 0.9 × 8, טעות של מי שמכפיל את החלק המקבילי. גם עם אינסוף cores החסם הוא 1/0.1 = 10.",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q09",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טכניקות מקטינות tail latency (p99.9) של שירות?",
+      "choices": [
+        "להימנע מהקצאות זיכרון ומ-GC בנתיב החם",
+        "hedged requests: לשלוח בקשה שנייה לרפליקה אחרת אם הראשונה לא חזרה אחרי זמן ה-p95",
+        "להגדיל את ה-batch size כדי להעלות throughput",
+        "להפריד עבודת רקע (compaction, logging כבד) ל-cores או מכונות אחרות",
+        "להקטין fan-out או לאפשר תשובה חלקית"
+      ],
+      "answer": [0, 1, 3, 4],
+      "explanation": "GC ו-allocations, הפרעות מעבודת רקע ו-fan-out גדול הם מקורות עיקריים ל-tail. hedged requests מנצלים את חוסר התלות בין רפליקות. הגדלת batch משפרת throughput אבל בדרך כלל מגדילה latency, כולל tail.",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מערכת צריכה להגיב לאירוע RF תוך 200 מיקרו-שניות. העיבוד עצמו (FFT + החלטה) לוקח 30 מיקרו-שניות. איזה מהבאים הוא החשש העיקרי בבחירת בלוק של 65,536 samples ב-100 Msps?",
+      "choices": [
+        "ה-FFT יהיה לא מדויק",
+        "מילוי הבלוק לבד לוקח כ-655 מיקרו-שניות, יותר מכל התקציב",
+        "65,536 אינו חזקה של 2",
+        "צריכת הזיכרון תהיה גבוהה מדי"
+      ],
+      "answer": 1,
+      "explanation": "65,536 / 100e6 ≈ 655 מיקרו-שניות רק כדי שה-sample האחרון יגיע. התקציב נשבר עוד לפני העיבוד. 65,536 הוא 2^16, ו-256 KB של complex int16 זה לא בעיה של זיכרון. צריך בלוקים קטנים בהרבה (למשל 1024, כ-10 מיקרו-שניות) או detection בתוך ה-FPGA.",
+      "lesson": "design.latency-budget",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.latency-budget.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מיישמים hedged requests: אם תשובה לא חזרה תוך זמן ה-p95, שולחים את אותה בקשה לרפליקה נוספת ולוקחים את הראשונה שחוזרת. מה ההשפעה הצפויה?",
+      "choices": [
+        "העומס מוכפל, כי כל בקשה נשלחת פעמיים",
+        "העומס עולה בכ-5% בלבד, וה-p99.9 יורד משמעותית כל עוד האיטיות לא מתואמת בין הרפליקות",
+        "ה-p50 יורד בחצי",
+        "אין השפעה על ה-tail, רק על הממוצע"
+      ],
+      "answer": 1,
+      "explanation": "רק כ-5% מהבקשות עוברות את ה-p95 ולכן נשלחות שוב. אם האיטיות נובעת מבעיה מקומית (GC, תור רגעי) ההסתברות ששתי רפליקות איטיות יחד קטנה מאוד, וה-tail קורס. אם האיטיות מתואמת (הבקשה עצמה כבדה), hedging לא יעזור ורק יוסיף עומס. ה-p50 לא מושפע כי הבקשות האלה לא מגיעות לסף.",
+      "lesson": "design.latency-budget",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.latency-budget.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "load tester שולח בקשה, מחכה לתשובה, ורק אז שולח את הבאה (closed loop), ומדווח p99 של 5 ms. בזמן הבדיקה היה stall של 2 שניות בשרת. מה הבעיה במדידה?",
+      "choices": [
+        "אין בעיה, ה-stall נכלל כבקשה אחת של 2 s",
+        "coordinated omission: בזמן ה-stall הכלי לא שלח את מאות הבקשות שהיו אמורות להישלח, ולכן ה-p99 האמיתי גרוע בהרבה",
+        "הכלי צריך להשתמש בממוצע במקום p99",
+        "הבעיה היא שהבדיקה רצה על אותה מכונה"
+      ],
+      "answer": 1,
+      "explanation": "משתמשים אמיתיים לא מחכים אחד לשני. אם הקצב המתוכנן היה 1000 לשנייה, בזמן ה-stall היו נשלחות 2000 בקשות שכל אחת מחכה עד 2 s. הכלי רושם רק בקשה איטית אחת מתוך הרבה מהירות. פתרון: open-loop load generator (כמו wrk2) או תיקון לפי זמן השליחה המתוכנן.",
+      "lesson": "design.latency-budget"
+    },
+    {
+      "id": "design.latency-budget.q13",
+      "level": 4,
+      "type": "short",
+      "prompt": "jammer ריאקטיבי מבצע FFT של 2048 נקודות על samples ב-200 Msps. מה זמן מילוי חלון ה-FFT, במיקרו-שניות?",
+      "accept": ["10.24", "10.24us", "10.24 us"],
+      "explanation": "2048 / 200e6 = 10.24 מיקרו-שניות. זה גם קצב החלונות (בלי overlap): כ-97,656 FFTs בשנייה. עם 50% overlap הקצב מוכפל, אבל ה-latency של מילוי חלון לא משתנה.",
+      "lesson": "design.latency-budget",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "design.latency-budget.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "API של שירות צריך p99 מתחת ל-200 ms. הבקשה עוברת authentication, פונה במקביל ל-3 שירותים פנימיים, ואחר כך כותבת לבסיס נתונים. איך תבנה תקציב latency ומה תעשה אם אחד השירותים הפנימיים איטי?",
+      "modelAnswer": "קודם מגדירים מאיפה מודדים (מה-load balancer או מה-client, כולל רשת?) ובאיזה עומס. מחלקים: רשת ו-TLS בערך 20 ms, auth 10 ms (עם cache של tokens כדי שזה לא יהיה RPC בכל בקשה), fan-out מקבילי 80 ms, כתיבה ל-DB 40 ms, ומרווח של 50 ms. בשלב המקבילי ה-latency הוא המקסימום של שלושה, ולכן ה-p99 של השלב גרוע מה-p99 של כל אחד; כל שירות צריך להיות בערך ב-p99.7 שלו מתחת ל-80 ms. מעבירים deadline לכל קריאה (deadline propagation) כדי שאף שירות לא יעבוד על בקשה שכבר נכשלה. אם אחד השירותים איטי: timeout לפי התקציב, retry רק אם נשאר תקציב ורק פעם אחת, hedged request אם הוא idempotent, ואם התוכן שלו לא קריטי, מחזירים תשובה חלקית (graceful degradation). circuit breaker כדי לא להמשיך להעמיס עליו. אם הכתיבה ל-DB לא חייבת להיות סינכרונית, אפשר להעביר אותה לתור ולהחזיר 202. בסוף מאמתים במדידה: tracing מבוזר (OpenTelemetry) עם breakdown פר span ב-p99, לא רק ממוצעים.",
+      "rubric": [
+        "הגדרת נקודות המדידה ופירוק לשלבים עם מספרים ומרווח",
+        "הבנה שבשלב מקבילי ה-latency הוא max ולכן ה-tail מחמיר",
+        "timeouts מבוססי deadline, retries מוגבלים, hedging, circuit breaker",
+        "degradation: תשובה חלקית או כתיבה אסינכרונית",
+        "אימות עם distributed tracing ואחוזונים"
+      ],
+      "explanation": "שאלה בסגנון Microsoft: מחפשים פירוק כמותי, הבנה של fan-out, ומנגנונים קונקרטיים להתמודדות עם תלות איטית.",
+      "lesson": "design.latency-budget",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.latency-budget.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "שני שלבים סדרתיים ובלתי תלויים. כל אחד לוקח 1 ms ב-99.2% מהמקרים ו-100 ms ב-0.8%. ה-p99 של כל שלב הוא 1 ms. מה ה-p99 מקצה לקצה?",
+      "choices": [
+        "2 ms, סכום ה-p99",
+        "בערך 101 ms, כי ההסתברות שלפחות שלב אחד איטי היא כ-1.6%, יותר מ-1%",
+        "1 ms, כי השלבים בלתי תלויים",
+        "200 ms"
+      ],
+      "answer": 1,
+      "explanation": "P(שניהם מהירים) = 0.992^2 ≈ 0.984, כלומר כ-1.6% מהבקשות לוקחות לפחות 101 ms, ולכן ה-p99 מקצה לקצה הוא 101 ms. אחוזונים לא מתחברים: סכום ה-p99 אינו חסם עליון. לכן מודדים end-to-end ולא מחברים אחוזונים. 200 ms קורה רק ב-0.0064% מהמקרים.",
+      "lesson": "design.latency-budget",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "design.latency-budget.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ה-CPU utilization של שירות הוא 45% בממוצע לדקה, אבל ה-p99 latency גבוה ואין שום hotspot בפרופיילר. מה ההסבר הסביר ביותר ואיך מאמתים?",
+      "choices": [
+        "הפרופיילר שבור; צריך להחליף כלי",
+        "micro-bursts: הבקשות מגיעות בפרצים של מילישניות, שבהם ה-utilization הרגעי קרוב ל-100% ונוצר תור; מאמתים במדידה ברזולוציה של ms (עומק תור, run queue, הגעות לכל ms)",
+        "45% זה גבוה מדי; צריך להוריד ל-20%",
+        "בעיית רשת, כי CPU לא יכול להיות הגורם ב-45%"
+      ],
+      "answer": 1,
+      "explanation": "ממוצע של דקה מחליק פרצים קצרים. אם הבקשות מגיעות בקבוצות (batching ב-client, timers מסונכרנים, NIC interrupt coalescing), במשך כמה מילישניות העומס הוא מעל הקיבולת והבקשות ממתינות, אף שהפרופיילר מראה שכל בקשה בודדת זולה. מודדים ברזולוציה גבוהה ומחפשים תורים, לא hotspots. הורדת utilization תעזור אולי, אבל בלי אבחון זה בזבוז משאבים.",
+      "lesson": "design.latency-budget",
+      "tags": ["nvidia", "microsoft"]
+    },
+    {
+      "id": "design.latency-budget.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "צריך להתחיל לשדר תגובה תוך 50 מיקרו-שניות מתחילת אות RF שנקלט, עם USRP X310 שמחובר ב-10GbE למחשב host. פרק את התקציב ואמור אם זה אפשרי עם עיבוד ב-host.",
+      "modelAnswer": "מפרקים את המסלול: ADC ושרשרת ה-DDC ב-FPGA (מיקרו-שניות בודדות), אריזה ל-packets ושליחה ב-10GbE (packet של כמה מאות samples, כמה מיקרו-שניות), ה-NIC וה-driver ב-host (interrupt coalescing יכול להוסיף עשרות מיקרו-שניות אם לא מכבים אותו), UHD ו-buffering בצד המקבל, מילוי בלוק לעיבוד (N/fs; ב-100 Msps בלוק של 1024 הוא כ-10 מיקרו-שניות), FFT והחלטה (מיקרו-שניות בודדות על CPU מודרני), ואז הנתיב ההפוך: יצירת TX samples, packet חזרה, buffering בצד ה-TX ב-FPGA, DUC ו-DAC. כל רכיב בודד נראה קטן, אבל ה-round trip דרך host עם UHD בפועל הוא לרוב עשרות עד מאות מיקרו-שניות ויש לו jitter של מערכת הפעלה, ולכן 50 מיקרו-שניות ב-worst case לא ריאלי דרך ה-host. הפתרון הוא לפצל: detection פשוט (energy detector או matched filter) ב-FPGA, שמפעיל TX של waveform שכבר נמצא ב-buffer ב-FPGA, וה-host מטפל רק בהחלטות איטיות (בחירת waveform, פרמטרים). אם חייבים host: לבטל interrupt coalescing, busy-poll, isolcpus ו-SCHED_FIFO, בלוקים קטנים, TX stream שכבר רץ ברקע עם timestamps, ולמדוד round trip בפועל (loopback עם timestamps) ולהסתכל על max ולא על ממוצע. התשובה הנכונה היא קודם למדוד ואז להחליט.",
+      "rubric": [
+        "פירוק מלא של המסלול כולל הדרך חזרה ל-TX",
+        "חישוב זמן מילוי בלוק N/fs ושימוש בו בבחירת גודל בלוק",
+        "הכרה ב-jitter של OS, NIC ו-buffering שהופכים worst case ל-בעייתי",
+        "הצעת פיצול: detection וטריגר ב-FPGA, host להחלטות איטיות",
+        "מדידה בפועל של round trip ו-max, ושיטות להקטין latency ב-host"
+      ],
+      "explanation": "ההבדל בין סניור לג'וניור כאן הוא ההבנה שתקציב worst case בעשרות מיקרו-שניות מחייב להוציא את הלולאה המהירה מה-OS, ולא לנסות להאיץ את הקוד.",
+      "lesson": "design.latency-budget",
+      "tags": ["nvidia"]
+    }
+  ]
+}

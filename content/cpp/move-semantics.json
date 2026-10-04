@@ -1,0 +1,333 @@
+{
+  "domain": "cpp",
+  "subtopic": "move-semantics",
+  "lessons": [
+    {
+      "id": "cpp.move-semantics",
+      "title": "Move semantics ו-rule of 5",
+      "what": "move semantics מאפשר להעביר משאבים (buffer ב-heap, handle) מאובייקט שלא צריך אותם יותר במקום להעתיק אותם. move constructor ו-move assignment מקבלים T&& ו'גונבים' את המשאב, והמקור נשאר במצב תקין אבל לא מוגדר (valid but unspecified). std::move לא מזיז כלום: הוא רק cast ל-rvalue reference שמאפשר לבחור את ה-overload של move.",
+      "when": [
+        "מחלקה שמנהלת משאב בעצמה: צריך להחליט על rule of 5 (או rule of 0 אם כל ה-members כבר RAII)",
+        "העברת אובייקטים גדולים: החזרה מפונקציה, הכנסה ל-container, sink parameters",
+        "טיפוסים move-only: unique_ptr, thread, file handle",
+        "שאלות על ספירת copy ו-move: copy elision, NRVO, noexcept ו-vector reallocation"
+      ],
+      "how": [
+        "value categories: lvalue (יש לו זהות, כמו משתנה עם שם), prvalue (ערך זמני טהור, כמו 42 או f() שמחזירה by value), xvalue (יש לו זהות ומותר לגנוב ממנו, כמו std::move(x)). rvalue הוא prvalue או xvalue.",
+        "rvalue reference (T&&) נקשר רק ל-rvalue. משתנה עם שם מטיפוס T&& הוא בעצמו lvalue.",
+        "rule of 5: אם הגדרת ידנית אחד מ-destructor, copy ctor, copy assignment, move ctor או move assignment, כנראה שצריך לטפל בכולם. rule of 0: עדיף לבנות את המחלקה מ-members מסוג RAII ולא להגדיר אף אחד.",
+        "הכללים של מה שהקומפיילר מייצר: move operations נוצרות אוטומטית רק אם אין destructor, copy או move שהמשתמש הצהיר עליהם. הצהרה על move מוחקת את ה-copy המרומז. destructor שהוצהר (גם = default) מבטל את ה-move המרומז, ואז העתקה תופסת את מקומו בשקט.",
+        "noexcept על move חיוני: vector::push_back משתמש ב-move_if_noexcept בזמן reallocation כדי לשמור על strong guarantee. move שאינו noexcept גורם להעתקה של כל האיברים.",
+        "copy elision: מ-C++17, אתחול מ-prvalue מאותו טיפוס בונה ישירות במקום (guaranteed). NRVO (החזרת משתנה מקומי עם שם) הוא אופציונלי, ואם הוא לא מתבצע נעשה implicit move.",
+        "forwarding reference (T&& כש-T מוסק, או auto&&) נקשר לכל דבר, ו-std::forward<T> משמר את ה-value category המקורית."
+      ],
+      "complexity": "move של std::vector או std::string הוא O(1): העתקה של שלושה pointers ואיפוס המקור. copy הוא O(n) והקצאה חדשה. שימו לב ל-SSO: מחרוזת קצרה (עד 15 תווים ב-libstdc++) נשמרת בתוך האובייקט, ולכן move שלה הוא העתקה של הבתים.",
+      "pitfalls": [
+        "return std::move(local); חוסם NRVO ולכן מאט",
+        "שימוש באובייקט אחרי move בלי להשים לו ערך חדש (מותר רק פעולות בלי preconditions)",
+        "move constructor בלי noexcept: ה-vector מעתיק בכל reallocation",
+        "הצהרה על ~T() = default רק כדי לתעד, ומבטלים בכך את ה-move המרומז",
+        "std::move על const object: התוצאה היא const T&&, והיא נקשרת ל-copy constructor"
+      ],
+      "senior": [
+        "sink parameters: by value עם move לעומת overloads של const& ו-&&. ב-setter, by value מונע שימוש חוזר ב-capacity הקיים",
+        "C++20 (P1825) הרחיב את ה-implicit move ב-return גם ל-rvalue reference parameters",
+        "class invariants מול moved-from state: מחלקה עם invariant של non-null צריכה להחליט אם לאפשר מצב ריק",
+        "copy-and-swap נותן strong guarantee בקלות, במחיר של הקצאה גם כשאפשר היה לעשות שימוש חוזר ב-buffer"
+      ],
+      "diagram": "before move:   a [ptr]--->[ heap data ]\n               b [null]\nb = std::move(a):\n               a [null]\n               b [ptr]--->[ heap data ]"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.move-semantics.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה std::move(x) עושה בפועל?",
+      "choices": [
+        "מעביר את התוכן של x למקום אחר בזיכרון",
+        "משחרר את הזיכרון של x",
+        "מבצע static_cast ל-rvalue reference. התזוזה עצמה, אם קורית, נעשית ב-move constructor או ב-move assignment שנבחרים בגלל זה",
+        "מעתיק את x ומסמן את המקור כ-deleted"
+      ],
+      "answer": 2,
+      "explanation": "std::move הוא רק cast שמשנה את ה-value category ל-xvalue. אם לא קיים move constructor, או שהאובייקט const, ייבחר copy. שורה std::move(x); לבד לא עושה כלום.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "אילו חמש פונקציות כלולות ב-rule of five?",
+      "choices": [
+        "constructor, destructor, copy constructor, copy assignment, swap",
+        "destructor, copy constructor, copy assignment, move constructor, move assignment",
+        "default constructor, copy constructor, move constructor, destructor, operator==",
+        "copy constructor, move constructor, operator new, operator delete, destructor"
+      ],
+      "answer": 1,
+      "explanation": "אם מחלקה מנהלת משאב ידנית וצריכה destructor משלה, כנראה שגם copy ו-move צריכים טיפול. swap הוא עזר נפוץ אבל לא חלק מהכלל. rule of zero ממליץ לא לכתוב אף אחד מהם, ולבנות את המחלקה מ-members מסוג RAII.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "באיזה מצב התקן מבטיח שאובייקט מהספרייה הסטנדרטית (למשל std::string) נמצא אחרי שעשו ממנו move (אלא אם צוין אחרת)? (2–3 מילים באנגלית)",
+      "accept": ["valid but unspecified", "valid unspecified", "valid but unspecified state"],
+      "explanation": "האובייקט תקין: אפשר להרוס אותו, להשים לו ערך ולקרוא לפעולות בלי preconditions, כמו size() או clear(). הערך שלו לא מוגדר. יש טיפוסים שמבטיחים יותר, למשל unique_ptr שמבטיח שהוא ריק אחרי move.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "void take(const std::string&) { std::cout << \"copy \"; }\nvoid take(std::string&&)      { std::cout << \"move \"; }\n\nint main() {\n  std::string s = \"x\";\n  take(s);\n  take(std::move(s));\n  take(s + \"y\");\n  take(\"lit\");\n}",
+      "choices": [
+        "copy move move copy",
+        "copy move copy copy",
+        "copy move move move",
+        "copy copy move move"
+      ],
+      "answer": 2,
+      "explanation": "s הוא lvalue, ולכן נבחר const&. std::move(s) הוא xvalue, ולכן &&. s + \"y\" מחזיר prvalue מסוג std::string, ולכן &&. \"lit\" ממיר ל-std::string זמני, וזה rvalue. קשירה של rvalue ל-&& עדיפה על קשירה ל-const&, ולכן גם כאן נבחר move.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה יקרה ב-f()?",
+      "code": "class Buf {\n  float* d_;\n  std::size_t n_;\npublic:\n  explicit Buf(std::size_t n) : d_(new float[n]), n_(n) {}\n  ~Buf() { delete[] d_; }\n};\nvoid f() { Buf a(16); Buf b = a; }",
+      "bugLine": 8,
+      "choices": [
+        "שגיאת קומפילציה: אין copy constructor",
+        "ה-copy constructor המרומז מעתיק את ה-pointer (shallow copy). a ו-b ימחקו את אותו buffer: double delete, UB. חסרים copy ו-move (rule of 3/5), או פשוט std::vector<float>",
+        "b מקבל העתק עמוק של ה-buffer, ולכן אין בעיה",
+        "Buf b = a מבצע move, ולכן a נשאר עם nullptr"
+      ],
+      "answer": 1,
+      "explanation": "הקומפיילר מייצר copy constructor שמעתיק member אחרי member. כשה-member הוא pointer, שני האובייקטים מחזיקים אותו buffer. a הוא lvalue ולכן אין כאן move. הפתרון הנכון ביותר הוא rule of 0: להחליף את d_ ו-n_ ב-std::vector<float>.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "אחרי `std::vector<int> b = std::move(a);`, מה מותר לעשות עם a לפי התקן בלי להסתמך על מימוש?",
+      "choices": [
+        "שום דבר, אפילו לא להרוס אותו",
+        "רק לקרוא ל-a.size() ולהסתמך על כך שהוא 0",
+        "להשים לו ערך חדש, להרוס אותו, או לקרוא לפעולות בלי preconditions (כמו clear() ואז שימוש רגיל)",
+        "להמשיך להשתמש בו כרגיל, כי ה-move העתיק את התוכן"
+      ],
+      "answer": 2,
+      "explanation": "valid but unspecified: האובייקט תקין, אבל אסור להניח מה הערך שלו. a[0] או a.front() דורשים precondition (שהוא לא ריק), ולכן לא בטוחים. a.clear() או a = {...} מחזירים אותו למצב ידוע. בפועל vector שעשו ממנו move הוא ריק, אבל זה לא מה שנשאלת עליו.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q07",
+      "level": 2,
+      "type": "multi",
+      "prompt": "נתון `int x = 0;`. אילו ביטויים הם rvalues (prvalue או xvalue)?",
+      "choices": [
+        "`42`",
+        "`x`",
+        "`std::move(x)`",
+        "`x + 1`",
+        "`\"abc\"` (string literal)",
+        "`++x`"
+      ],
+      "answer": [0, 2, 3],
+      "explanation": "42 ו-x + 1 הם prvalues. std::move(x) הוא xvalue. x הוא lvalue. string literal הוא lvalue מסוג const char[4], כי יש לו כתובת קבועה. ++x מחזיר lvalue ב-C++, ו-x++ מחזיר prvalue.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מחלקה מכילה std::vector<double> גדול, ומישהו הוסיף לה `~Data() = default;` לתיעוד. אין לה copy או move מוצהרים. מה קורה כשמחזירים Data מפונקציה בדרך שלא עוברת elision, או כשעושים std::move(d)?",
+      "choices": [
+        "move רגיל, כי = default לא נחשב user-declared",
+        "שגיאת קומפילציה, כי ה-move נמחק",
+        "move רגיל, כי vector תומך ב-move",
+        "העתקה מלאה של ה-vector: destructor מוצהר מבטל את ההצהרה המרומזת על move constructor ו-move assignment, וה-rvalue נקשר ל-copy constructor"
+      ],
+      "answer": 3,
+      "explanation": "= default עדיין נחשב user-declared. כשיש destructor מוצהר, move operations לא מוצהרות כלל (לא deleted). לכן overload resolution מוצא רק את ה-copy, שמקבל const& ונקשר גם ל-rvalue. התוצאה היא ירידת ביצועים שקטה. הפתרון: למחוק את ה-destructor, או להוסיף במפורש את כל החמישה כ-= default.",
+      "lesson": "cpp.move-semantics",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.move-semantics.q09",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct S {\n  S() = default;\n  S(const S&) { std::cout << 'C'; }\n  S(S&&)      { std::cout << 'M'; }  // not noexcept\n};\n\nint main() {\n  std::vector<S> v;\n  v.reserve(1);\n  v.emplace_back();\n  v.emplace_back();  // reallocation\n}",
+      "choices": ["M", "C", "(כלום)", "CM"],
+      "answer": 1,
+      "explanation": "ה-emplace_back השני חורג מה-capacity. האיבר החדש נבנה ב-default ctor (לא מודפס), והאיבר הישן מועבר עם std::move_if_noexcept. ה-move constructor לא noexcept ויש copy constructor, ולכן נבחרת העתקה כדי לשמור על strong guarantee. עם noexcept הפלט היה M.",
+      "lesson": "cpp.move-semantics",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.move-semantics.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה הבעיה ב-`std::vector<int> build() { std::vector<int> v(1000); /*...*/ return std::move(v); }`?",
+      "choices": [
+        "שגיאת קומפילציה: אי אפשר להחזיר rvalue reference",
+        "UB: v נהרס לפני שה-move מתבצע",
+        "std::move חוסם NRVO, כי הביטוי כבר לא שם של משתנה. יוצא move במקום אפס פעולות. return v; עדיף: NRVO, ואם הוא לא מתבצע, implicit move",
+        "אין בעיה, זו הדרך הנכונה להבטיח move"
+      ],
+      "answer": 2,
+      "explanation": "NRVO מותר רק כשה-return מקבל id-expression של משתנה מקומי. std::move(v) הוא קריאה לפונקציה, ולכן הקומפיילר לא יכול לבנות את v ישירות במקום ערך ההחזרה. GCC מזהיר על זה ב--Wpessimizing-move. move של vector זול, אבל זו עדיין עבודה מיותרת.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q11",
+      "level": 3,
+      "type": "short",
+      "prompt": "איזו פונקציה סטנדרטית (מ-<utility>, C++14) מחזירה את הערך הישן של משתנה ומציבה בו ערך חדש, ונפוצה במימוש move constructor (למשל `p_(???(o.p_, nullptr))`)?",
+      "accept": ["std::exchange", "exchange"],
+      "explanation": "std::exchange(obj, new_val) מחזיר את הערך הישן ומשים את החדש בשורה אחת. זה מתאים בדיוק ל'לקחת את ה-pointer ולהשאיר nullptr'.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q12",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-C++17? (c=ctor, C=copy, M=move, d=dtor)",
+      "code": "struct R {\n  R()           { std::cout << 'c'; }\n  R(const R&)   { std::cout << 'C'; }\n  R(R&&) noexcept { std::cout << 'M'; }\n  ~R()          { std::cout << 'd'; }\n};\nR make()        { return R{}; }\nR make2(bool b) { R x, y; return b ? x : y; }\n\nint main() {\n  R a = make();        std::cout << '|';\n  R b = make2(true);   std::cout << '|';\n}",
+      "choices": [
+        "c|ccMdd|dd",
+        "cMd|ccCdd|dd",
+        "c|ccCdd|dd",
+        "c|ccdd|dd"
+      ],
+      "answer": 2,
+      "explanation": "make מחזירה prvalue, ולכן C++17 מבטיח elision: c אחד בלבד. ב-make2 הביטוי b ? x : y הוא lvalue ולא שם של משתנה. לכן אין NRVO ואין implicit move (שחלים רק על id-expression), ונבחר copy (C). אחר כך y ו-x נהרסים. בסוף main נהרסים b ו-a. הפתרון: if (b) return x; return y;.",
+      "lesson": "cpp.move-semantics",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.move-semantics.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נתון `template <class T> void f(T&& x);` ו-`int i = 0;`. מה מוסק בקריאה `f(i)`, ומה בקריאה `f(0)`?",
+      "choices": [
+        "f(i): T = int&, הטיפוס של x הוא int& (reference collapsing). f(0): T = int, הטיפוס של x הוא int&&",
+        "f(i): שגיאת קומפילציה, כי && לא נקשר ל-lvalue",
+        "בשתיהן T = int",
+        "f(i): T = int, x מסוג int&. f(0): T = int&&, x מסוג int&&"
+      ],
+      "answer": 0,
+      "explanation": "זה forwarding reference: עם lvalue מסוג int, T מוסק כ-int&, ו-int& && מתקפל ל-int&. עם rvalue, T מוסק כ-int. לכן std::forward<T>(x) יודע להחזיר lvalue או rvalue בהתאם למה שהועבר.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q14",
+      "level": 4,
+      "type": "multi",
+      "prompt": "ל-Widget יש move constructor שלא מסומן noexcept. אילו טענות נכונות?",
+      "choices": [
+        "std::vector<Widget> יעתיק איברים ב-reallocation אם Widget copyable",
+        "אם Widget הוא move-only, vector ישתמש ב-move למרות זאת, ויוותר על strong guarantee של push_back",
+        "std::is_nothrow_move_constructible_v<Widget> הוא false",
+        "אי אפשר לשים Widget ב-std::vector",
+        "move constructor שהוגדר = default הוא noexcept אוטומטית אם ה-move של כל ה-members וה-bases הוא noexcept"
+      ],
+      "answer": [0, 1, 2, 4],
+      "explanation": "move_if_noexcept מעדיף copy כש-move עלול לזרוק ויש copy. כשאין copy, הוא עושה move בכל זאת, ואז אם exception נזרק באמצע ה-vector נשאר במצב basic בלבד. מימוש עם = default מקבל noexcept לפי ה-members, ולכן rule of 0 לרוב נותן את זה בחינם.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש מחלקה `Buffer` שמחזיקה `float*` ו-size, עם rule of 5: copy עמוק, move שהוא noexcept ומשאיר את המקור ריק, ו-assignment שנותן strong exception guarantee. (בלי std::vector.)",
+      "starter": "class Buffer {\n  float* d_ = nullptr;\n  std::size_t n_ = 0;\npublic:\n  explicit Buffer(std::size_t n);\n  // ...\n};",
+      "modelAnswer": "#include <algorithm>\n#include <cstddef>\n#include <utility>\n\nclass Buffer {\n  float* d_ = nullptr;\n  std::size_t n_ = 0;\npublic:\n  Buffer() noexcept = default;\n  explicit Buffer(std::size_t n) : d_(n ? new float[n]() : nullptr), n_(n) {}\n  ~Buffer() { delete[] d_; }\n\n  Buffer(const Buffer& o) : d_(o.n_ ? new float[o.n_] : nullptr), n_(o.n_) {\n    std::copy(o.d_, o.d_ + o.n_, d_);\n  }\n  Buffer(Buffer&& o) noexcept\n      : d_(std::exchange(o.d_, nullptr)), n_(std::exchange(o.n_, 0)) {}\n\n  // copy-and-swap: by-value param serves both copy and move assignment.\n  // Strong guarantee: if the copy throws, *this is untouched.\n  Buffer& operator=(Buffer o) noexcept {\n    swap(o);\n    return *this;\n  }\n  void swap(Buffer& o) noexcept {\n    std::swap(d_, o.d_);\n    std::swap(n_, o.n_);\n  }\n  friend void swap(Buffer& a, Buffer& b) noexcept { a.swap(b); }\n\n  std::size_t size() const noexcept { return n_; }\n  float* data() noexcept { return d_; }\n  const float* data() const noexcept { return d_; }\n};",
+      "rubric": [
+        "copy constructor מקצה buffer חדש ומעתיק (deep copy)",
+        "move constructor הוא noexcept ומאפס את המקור (exchange)",
+        "assignment שנותן strong guarantee (copy-and-swap או allocate-then-commit) ובטוח ב-self-assignment",
+        "מזכיר trade-off: copy-and-swap תמיד מקצה גם כשה-capacity הקיים מספיק",
+        "swap שהוא noexcept, ו-destructor שמשחרר עם delete[]"
+      ],
+      "explanation": "copy-and-swap פותר בבת אחת self-assignment, exception safety ושכפול קוד. החיסרון שמראיין סניור ישאל עליו: הוא תמיד מקצה buffer חדש, גם כשהישן בגודל מתאים ואפשר היה לעשות בו שימוש חוזר.",
+      "lesson": "cpp.move-semantics",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.move-semantics.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה מתבצע ב-return בפונקציה `std::string f(std::string&& s) { return s; }`?",
+      "choices": [
+        "תמיד move, כי s הוא rvalue reference",
+        "תמיד copy, כי s הוא lvalue",
+        "C++17: copy, כי implicit move חל רק על משתנים מקומיים ופרמטרים by value. C++20 (P1825): move, כי implicit move הורחב גם ל-rvalue reference",
+        "copy elision מובטח, ולכן לא copy ולא move"
+      ],
+      "answer": 2,
+      "explanation": "ל-s יש שם, ולכן הביטוי s הוא lvalue. עד C++17, ה-return ניסה קודם overload resolution כאילו הביטוי הוא rvalue, וזה חל רק על אובייקטים אוטומטיים מקומיים או פרמטרים by value. P1825 ב-C++20 הוסיף rvalue reference למשתנה אוטומטי. elision לא אפשרי, כי s לא אובייקט מקומי של f. בקוד שצריך לעבוד גם בתקנים ישנים כותבים return std::move(s);.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "setter של member מסוג std::string נקרא בלולאה חמה עם lvalues באורך דומה (מעל SSO). איזה מימוש יעיל יותר, ולמה?\n\n(A) `void set(std::string s) { name_ = std::move(s); }`\n(B) `void set(const std::string& s) { name_ = s; }` + `void set(std::string&& s) { name_ = std::move(s); }`",
+      "choices": [
+        "A, כי יש בו move אחד ואפס העתקות",
+        "שקולים לחלוטין",
+        "A, כי הוא מונע aliasing",
+        "B: עם lvalue, copy assignment לתוך name_ יכול להשתמש ב-capacity הקיים בלי הקצאה. A תמיד בונה string חדש לפרמטר (הקצאה) ואז מבצע move ומשחרר את ה-buffer הישן"
+      ],
+      "answer": 3,
+      "explanation": "by-value sink מצוין ל-constructors, כי שם אין buffer קיים לנצל. ב-setter שנקרא שוב ושוב, copy assignment לתוך string עם capacity מספיק הוא memcpy בלבד. ב-A כל קריאה עם lvalue היא malloc ו-free. זו הנקודה שהציג Herb Sutter ב-CppCon 2014. עם rvalues שתי הגרסאות דומות (A עושה move נוסף).",
+      "lesson": "cpp.move-semantics",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cpp.move-semantics.q18",
+      "level": 5,
+      "type": "multi",
+      "prompt": "באילו מהמקרים x (או a) הוא forwarding reference?",
+      "choices": [
+        "`template <class T> void f(T&& x);`",
+        "`template <class T> void f(const T&& x);`",
+        "`template <class T> struct Box { void put(T&& x); };`",
+        "`auto&& x = expr;`",
+        "`template <class T> void h(std::vector<T>&& x);`",
+        "`[](auto&& a) { /*...*/ }`"
+      ],
+      "answer": [0, 3, 5],
+      "explanation": "forwarding reference דורש בדיוק את הצורה T&&, בלי cv, כש-T הוא template parameter שמוסק באותה קריאה (או auto&&). const T&& הוא rvalue reference רגיל. ב-Box<T>::put, T כבר נקבע ב-instantiation של המחלקה ולא מוסק. vector<T>&& הוא rvalue reference ל-vector. generic lambda עם auto&& היא template מוסתר.",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "id": "cpp.move-semantics.q19",
+      "level": 5,
+      "type": "oral",
+      "prompt": "יש לך מחלקה `Channel` עם invariant ש-handle_ תמיד תקין (לא null) וכל המתודות מניחות זאת. ביקשו ממך להוסיף move. מה הבעיה ואילו אפשרויות תכנון יש, עם trade-offs?",
+      "modelAnswer": "move משאיר את המקור במצב moved-from, ואם ה-handle עבר לאובייקט אחר המקור שובר את ה-invariant. האובייקט הזה עדיין ייהרס, ואולי יקבל השמה, ולכן ה-destructor והשמה חייבים לעבוד גם במצב הזה. האפשרויות: (1) להרחיב את ה-invariant למצב ריק מוצהר: המתודות בודקות או מתעדות precondition, ומוסיפים is_valid(). זה מה ש-unique_ptr ו-std::thread עושים. המחיר: כל משתמש צריך לחשוב על המצב הריק, ויש בדיקות נוספות. (2) לא לאפשר move: המחלקה non-movable, והעברת בעלות נעשית דרך unique_ptr<Channel>. ה-invariant נשמר, במחיר הקצאה ו-indirection. (3) move שמשאיר במקור handle חדש תקין (הקצאה ב-move): ה-invariant נשמר, אבל move כבר לא זול ולא noexcept, ולכן vector יעתיק. (4) move שמחליף (swap) עם handle של היעד: עובד רק ב-assignment ולא ב-construction. מזכירים את ה-noexcept: אם move יכול לזרוק, containers יבחרו copy (אם קיים) ויאבדו ביצועים. ההמלצה תלויה בשימוש: לטיפוס שמחזיק משאב מערכת, (1) הוא הסטנדרט בפועל.",
+      "rubric": [
+        "מזהה שה-moved-from object עדיין קיים ונהרס, וחייב להיות destructible ו-assignable",
+        "מציג לפחות שתיים מהאפשרויות: מצב ריק מתועד, non-movable עם unique_ptr, או move שמקצה",
+        "מזכיר noexcept והשפעתו על containers",
+        "דן ב-trade-off בין בטיחות ה-invariant לעלות הביצועים"
+      ],
+      "explanation": "זו שאלת עיצוב קלאסית לסניור: move הוא לא רק אופטימיזציה, יש לו השפעה על החוזה של המחלקה.",
+      "lesson": "cpp.move-semantics"
+    }
+  ]
+}
