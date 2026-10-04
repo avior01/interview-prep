@@ -225,7 +225,9 @@
       "answer": 2,
       "explanation": "אחרי detach אין שום סנכרון בין סיום startWorker לבין ה-thread. ה-vector נהרס ביציאה, וה-thread קורא heap משוחרר. תחת עומס ה-thread מתחיל מאוחר יותר ולכן הקריסה מופיעה דווקא שם. תיקון: להעביר בעלות, `[s = std::move(samples)] { process(s); }`, או להחזיק את ה-thread ולעשות join. mutex לא יעזור, הבעיה היא lifetime ולא race על ערכים.",
       "lesson": "bugs.lifetime",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.lifetime.q12",
@@ -257,10 +259,16 @@
         "`std::string_view sv = std::string(\"abc\");`",
         "`const auto& r = makeVector();  // returns by value`"
       ],
-      "answer": [0, 2, 3],
+      "answer": [
+        0,
+        2,
+        3
+      ],
       "explanation": "lifetime extension קורה רק כש-reference נקשר ישירות לזמני (ב'), ה'). ב-א', `std::max` מחזיר `const int&` לאחד הארגומנטים, והזמני `1` מת בסוף השורה; ההרחבה לא עוברת דרך קריאה לפונקציה. ב-ג', `operator[]` מחזיר reference לאיבר בתוך vector זמני שנהרס. ב-ד', string_view אינו reference ולכן אין הרחבה.",
       "lesson": "bugs.lifetime",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.lifetime.q14",
@@ -295,7 +303,9 @@
       ],
       "explanation": "מראיין סניור מחפש הבנה שהסימפטום רחוק מהגורם, ושיטה מסודרת משחזור, דרך כלים, ועד מניעה.",
       "lesson": "bugs.lifetime",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "bugs.lifetime.q16",
@@ -314,7 +324,9 @@
       "answer": 2,
       "explanation": "range-for מתורגם ל-`auto&& __range = <expr>;` ולולאה עליו. lifetime extension חל רק על הזמני שהוא התוצאה הסופית של הביטוי, כאן reference שמוחזר מפונקציה, ולא על ה-Packet שממנו הוא בא. מעניין: `for (int x : recv().data)` היה תקין, כי גישה ל-member של prvalue קושרת ישירות ל-subobject של הזמני ומאריכה את חיי כולו. C++23 (P2718) מאריך את חיי כל הזמניים ב-range initializer. `&&`-qualifier היה מונע קריאה על זמני, לא מתקן. `recv()` נקרא פעם אחת.",
       "lesson": "bugs.lifetime",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.lifetime.q17",
@@ -333,14 +345,16 @@
       "answer": 0,
       "explanation": "הפרמטרים אכן מועתקים ל-frame, אבל העתקה של `const std::string&` היא העתקה של ה-reference. הזמני חי עד סוף ה-full-expression בקורא, כלומר עד ש-`logLater` מחזיר את ה-Task בהשעיה הראשונה; כשה-coroutine ממשיך שנייה אחר כך, `msg` dangling. תיקון: לקבל `std::string msg` by value. זה כלל אצבע ידוע ל-coroutines: לא לקבל references או views אם ה-coroutine חי יותר מהקריאה.",
       "lesson": "bugs.lifetime",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.lifetime.q18",
       "level": 5,
       "type": "code",
       "lang": "cpp",
-      "prompt": "תקן את Rx מהשאלה הקודמת כך שה-callback שנרשם ל-Bus לעולם לא יקרא ל-Rx שנהרס, גם אם ה-Bus חי לנצח ולא תומך ב-unsubscribe. הנח ש-Rx תמיד נוצר דרך `std::make_shared`. `bus.subscribe` מקבל `std::function<void(Frame)>`.",
+      "prompt": "המחלקה Rx רושמת ב-constructor שלה callback ל-Bus שלוכד `this`:\n```cpp\nclass Rx {\npublic:\n    explicit Rx(Bus& bus) {\n        bus.subscribe([this](Frame f) { onFrame(f); });\n    }\n    void onFrame(Frame f);\n};\n```\nאם Rx נהרס לפני ה-Bus, ה-callback קורא לאובייקט הרוס. תקן את Rx כך שה-callback לעולם לא יקרא ל-Rx שנהרס, גם אם ה-Bus חי לנצח ולא תומך ב-unsubscribe. הנח ש-Rx תמיד נוצר דרך `std::make_shared`. `bus.subscribe` מקבל `std::function<void(Frame)>`.",
       "starter": "class Rx /* ... */ {\npublic:\n    void attach(Bus& bus);\n    void onFrame(Frame f);\n};",
       "modelAnswer": "class Rx : public std::enable_shared_from_this<Rx> {\npublic:\n    // must be called after construction (not from the ctor):\n    // weak_from_this() is empty inside the constructor\n    void attach(Bus& bus) {\n        std::weak_ptr<Rx> w = weak_from_this();\n        bus.subscribe([w](Frame f) {\n            if (auto self = w.lock())   // keeps Rx alive for the call\n                self->onFrame(f);\n        });\n    }\n    void onFrame(Frame f);\n};\n\n// usage:\nauto rx = std::make_shared<Rx>();\nrx->attach(bus);",
       "rubric": [
@@ -351,7 +365,9 @@
       ],
       "explanation": "weak_ptr הוא הדרך הסטנדרטית להחזיק 'הפניה שיודעת אם האובייקט מת'. `lock()` מחזיר shared_ptr ריק אחרי ההריסה, ואם הוא לא ריק הוא מחזיק את האובייקט חי עד סוף הקריאה, גם אם thread אחר משחרר את ה-shared_ptr האחרון באמצע.",
       "lesson": "bugs.lifetime",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }
