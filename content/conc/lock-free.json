@@ -1,0 +1,342 @@
+{
+  "domain": "conc",
+  "subtopic": "lock-free",
+  "lessons": [
+    {
+      "id": "conc.lock-free",
+      "title": "Lock-free ו-SPSC queue",
+      "what": "אלגוריתם lock-free מבטיח שהמערכת כולה מתקדמת: גם אם thread כלשהו נעצר (preemption, page fault) באמצע פעולה, threads אחרים ממשיכים. wait-free חזק יותר: כל thread מסיים בכמות צעדים חסומה. ה-SPSC ring buffer (יצרן יחיד, צרכן יחיד) הוא המבנה ה-lock-free הנפוץ ביותר במערכות זמן-אמת, והוא אפילו wait-free.",
+      "when": [
+        "העברת בלוקים בין thread זמן-אמת (RX, DSP) לבין thread אחר, כשאסור שה-RT thread ייחסם",
+        "כשיש בדיוק יצרן אחד וצרכן אחד: SPSC פשוט, מהיר ובלי CAS",
+        "MPMC, stack או רשימות lock-free: רק כשיש צורך מוכח, כי הם קשים מאוד לנכונות"
+      ],
+      "how": [
+        "SPSC: מערך בגודל N (חזקה של 2), head נכתב רק ע״י היצרן ו-tail רק ע״י הצרכן. אין צורך ב-CAS, רק load ו-store",
+        "push: קורא tail עם acquire לבדיקת מלא, כותב את האיבר ל-slot, ורק אז head.store עם release",
+        "pop: קורא head עם acquire לבדיקת ריק, קורא את ה-slot, ואז tail.store עם release כדי שהיצרן לא ידרוס slot שעוד נקרא",
+        "מלא מול ריק: או להשאיר slot אחד ריק (מלא כש-(head+1) mod N == tail), או מונים רצים (free-running) שבהם מלא כש-head - tail == N",
+        "ביצועים: head ו-tail ב-cache lines נפרדים (alignas(64)), וכל צד שומר עותק cached של האינדקס של הצד השני וקורא אותו מחדש רק כשנראה מלא או ריק",
+        "ABA: ב-CAS על pointers, הערך יכול להשתנות מ-A ל-B ובחזרה ל-A, וה-CAS מצליח למרות שהמבנה השתנה. פתרונות: tagged pointer עם מונה גרסה, hazard pointers, epoch-based reclamation",
+        "memory reclamation: ב-lock-free אי אפשר לשחרר node מיד, כי thread אחר אולי עוד מחזיק pointer אליו"
+      ],
+      "complexity": "SPSC push/pop: O(1), wait-free, בדרך כלל 5–20 ns כשה-cache lines חמים. מבנים מבוססי CAS: O(1) amortized, lock-free אבל לא wait-free, וה-throughput תחת תחרות לא בהכרח טוב יותר מ-mutex.",
+      "pitfalls": [
+        "עדכון head לפני כתיבת האיבר: הצרכן קורא slot לא מאותחל",
+        "head ו-tail באותה cache line: false sharing בכל פעולה",
+        "קיבולת שאינה חזקה של 2 עם מונים רצים: קפיצה באינדקס בגלישה",
+        "Treiber stack עם pop שקורא old->next אחרי שמישהו אחר שחרר את old",
+        "הקצאת זיכרון (malloc) בתוך push של מבנה lock-free מחזירה lock דרך הדלת האחורית"
+      ],
+      "senior": [
+        "להסביר את ה-memory orders של כל אחת מארבע הגישות ב-SPSC ולמה",
+        "ABA ופתרונות reclamation: tagged pointers, hazard pointers (כולל ה-fence ה-seq_cst), epochs, RCU",
+        "lock-free לא אומר מהיר: היתרון הוא progress guarantee והיעדר priority inversion",
+        "pool של באפרים עם שני SPSC queues (free ו-full) למסלול zero-allocation"
+      ],
+      "diagram": "  tail (consumer)    head (producer)\n     v                  v\n[ . | x | x | x | x | . | . | . ]\n      <--- readable --->  free\npush: write buf[head], then head++\npop:  read buf[tail],  then tail++"
+    }
+  ],
+  "questions": [
+    {
+      "id": "conc.lock-free.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההגדרה של אלגוריתם lock-free?",
+      "choices": [
+        "אלגוריתם שבו בכל רגע, לפחות thread אחד מתקדם תוך מספר צעדים סופי, גם אם threads אחרים נעצרו",
+        "אלגוריתם שלא משתמש ב-std::mutex",
+        "אלגוריתם שמשתמש רק בפעולות atomic",
+        "אלגוריתם שבו כל thread מסיים כל פעולה במספר צעדים חסום"
+      ],
+      "answer": 0,
+      "explanation": "lock-free מוגדר לפי progress guarantee, לא לפי ה-API. spinlock שבנוי מ-atomics אינו lock-free: אם המחזיק נעצר, אף אחד לא מתקדם. ההגדרה של כל thread בצעדים חסומים היא wait-free, שהיא חזקה יותר.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין lock-free לבין wait-free?",
+      "choices": [
+        "wait-free אומר שה-thread לא נרדם אף פעם",
+        "lock-free מהיר יותר תמיד",
+        "אין הבדל, אלה שמות שונים לאותו דבר",
+        "wait-free מבטיח שכל thread מסיים בכמות צעדים חסומה, ו-lock-free מבטיח רק שמישהו מתקדם (thread ספציפי יכול להיכשל ב-CAS שוב ושוב)"
+      ],
+      "answer": 3,
+      "explanation": "ב-CAS loop, thread אחד יכול להפסיד שוב ושוב לאחרים: המערכת מתקדמת אבל הוא לא, וזה lock-free בלבד. ב-wait-free אין starvation. wait-free לא בהכרח מהיר יותר בממוצע, היתרון שלו הוא worst-case חסום.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקראת הבעיה שבה CAS מצליח כי הערך חזר לערך המקורי (A ל-B ובחזרה ל-A), למרות שהמבנה השתנה?",
+      "accept": [
+        "ABA",
+        "ABA problem",
+        "בעיית ABA"
+      ],
+      "explanation": "CAS משווה רק את הערך הנוכחי, לא את ההיסטוריה. ב-stack, node שנשלף ושוחרר יכול לחזור עם אותה כתובת, וה-CAS יצליח עם next לא נכון.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה SPSC ring buffer לא צריך compare_exchange?",
+      "choices": [
+        "כי הוא מוגן ב-mutex פנימי",
+        "כי כל אינדקס נכתב ע״י thread אחד בלבד (head רק ע״י היצרן, tail רק ע״י הצרכן), ולכן אין כותבים מתחרים על אותו משתנה",
+        "כי פעולות על size_t תמיד אטומיות בחומרה",
+        "כי הוא משתמש ב-seq_cst לכל הפעולות"
+      ],
+      "answer": 1,
+      "explanation": "CAS נדרש כשכמה threads מנסים לעדכן את אותו משתנה. ב-SPSC יש כותב יחיד לכל אינדקס, ולכן load ו-store אטומיים עם הסדר הנכון מספיקים. האינדקסים עדיין חייבים להיות std::atomic, כי הצד השני קורא אותם במקביל.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q05",
+      "level": 2,
+      "type": "short",
+      "prompt": "ring buffer במערך של 8 תאים משתמש בכלל: ריק כש-head == tail, ומלא כש-(head + 1) % 8 == tail. כמה איברים לכל היותר הוא יכול להחזיק?",
+      "accept": [
+        "7",
+        "שבעה"
+      ],
+      "explanation": "תא אחד תמיד נשאר ריק כדי להבחין בין מלא לריק, ששניהם היו נראים head == tail. החלופה: מונים רצים (free-running) ו-head - tail == N כתנאי מלא, ואז כל 8 התאים בשימוש.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה קיבולת של ring buffer נבחרת בדרך כלל כחזקה של 2?",
+      "choices": [
+        "כי std::atomic דורש את זה",
+        "כי זה מונע false sharing",
+        "כי אז `i % N` הופך ל-`i & (N - 1)`, פעולה זולה בהרבה מחילוק, וגם גלישה של מונה unsigned שומרת על רציפות האינדקס",
+        "כי ה-cache עובד רק עם גדלים כאלה"
+      ],
+      "answer": 2,
+      "explanation": "חילוק שלם עולה עשרות מחזורים, ו-AND עולה מחזור אחד. בנוסף, עם מונים רצים, 2 בחזקת 32 או 64 מתחלק ב-N רק כש-N חזקה של 2, כך שהאינדקס לא קופץ כשהמונה גולש. אין לזה קשר ל-false sharing.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q07",
+      "level": 3,
+      "type": "bug",
+      "prompt": "push של SPSC queue. הצרכן מקבל לפעמים ערכים ישנים או זבל. איפה הבאג?",
+      "lang": "cpp",
+      "code": "bool push(const T& v) {\n  size_t h = head_.load(std::memory_order_relaxed);\n  size_t next = (h + 1) & mask_;\n  if (next == tail_.load(std::memory_order_acquire)) return false;\n  head_.store(next, std::memory_order_release);\n  buf_[h] = v;\n  return true;\n}",
+      "bugLine": 5,
+      "choices": [
+        "head מתפרסם לפני שהאיבר נכתב: הצרכן יכול לראות את ה-head החדש ולקרוא את buf_[h] לפני הכתיבה. צריך להחליף את סדר שתי השורות",
+        "tail צריך relaxed",
+        "ה-load של head צריך להיות acquire",
+        "ה-mask שגוי, צריך % ולא &"
+      ],
+      "answer": 0,
+      "explanation": "ה-release על head מפרסם רק את מה שנכתב **לפניו**. כאן הכתיבה ל-buf_ אחריו, ולכן הצרכן יכול לקרוא slot שעוד לא נכתב, וזה גם data race. הקריאה של head עצמו ב-relaxed נכונה, כי רק היצרן כותב אותו.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "ב-SPSC queue קלאסי, אילו מה-memory orders הבאים **הכרחיים** לנכונות?",
+      "choices": [
+        "היצרן: `head_.store(..., release)` אחרי כתיבת האיבר",
+        "הצרכן: `tail_.store(..., release)` אחרי קריאת האיבר",
+        "הצרכן: `head_.load(acquire)` לפני קריאת האיבר",
+        "היצרן: הקריאה של head_ שלו עצמו חייבת להיות acquire",
+        "כל הפעולות חייבות להיות seq_cst"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "זוג אחד מפרסם את האיבר מהיצרן לצרכן. הזוג השני (tail release בצרכן, tail acquire ביצרן) מבטיח שהצרכן סיים לקרוא את ה-slot לפני שהיצרן דורס אותו, ובלעדיו יש race על ה-slot. קריאה של משתנה שרק אתה כותב יכולה להיות relaxed. seq_cst לא נדרש, כי אין כאן תבנית StoreLoad.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q09",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש SPSC queue בגודל קבוע N (חזקה של 2) עם `bool push(const T&)` ו-`bool pop(T&)` שלא חוסמות. השתמש בכל N התאים, ב-memory orders מינימליים, והימנע מ-false sharing.",
+      "lang": "cpp",
+      "starter": "template <class T, size_t N>\nclass Spsc {\npublic:\n  bool push(const T& v);\n  bool pop(T& out);\n};",
+      "modelAnswer": "template <class T, size_t N>  // N must be a power of two\nclass Spsc {\n  static_assert(N && (N & (N - 1)) == 0);\n  alignas(64) std::atomic<size_t> head_{0};  // written by producer only\n  alignas(64) std::atomic<size_t> tail_{0};  // written by consumer only\n  alignas(64) T buf_[N];\npublic:\n  bool push(const T& v) {\n    size_t h = head_.load(std::memory_order_relaxed);\n    if (h - tail_.load(std::memory_order_acquire) == N) return false;  // full\n    buf_[h & (N - 1)] = v;\n    head_.store(h + 1, std::memory_order_release);  // publish the slot\n    return true;\n  }\n  bool pop(T& out) {\n    size_t t = tail_.load(std::memory_order_relaxed);\n    if (head_.load(std::memory_order_acquire) == t) return false;  // empty\n    out = buf_[t & (N - 1)];\n    tail_.store(t + 1, std::memory_order_release);  // free the slot\n    return true;\n  }\n};",
+      "rubric": [
+        "מונים רצים (head - tail == N כתנאי מלא) או slot ריק, עם הסבר",
+        "סדר נכון: כתיבה ל-slot ואז release על head; קריאה מ-slot ואז release על tail",
+        "acquire על האינדקס של הצד השני, relaxed על האינדקס שלך",
+        "alignas(64) להפרדת head, tail והבאפר",
+        "בונוס: cached copy של האינדקס של הצד השני כדי לחסוך cache misses"
+      ],
+      "explanation": "החיסור head - tail על size_t נכון גם אחרי גלישה, כי החשבון הוא modulo 2 בחזקת 64 וההפרש תמיד קטן או שווה ל-N. התנאי שהקיבולת היא חזקה של 2 מבטיח שהמיפוי & (N-1) רציף גם בגלישה.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה הסיבה העיקרית להעדיף SPSC lock-free על פני תור מוגן ב-mutex בין ה-RX thread (SCHED_FIFO) לבין thread שכותב לדיסק?",
+      "choices": [
+        "lock-free תמיד מהיר יותר בממוצע",
+        "mutex לא עובד בין threads בעדיפויות שונות",
+        "lock-free חוסך זיכרון",
+        "ה-RX thread לא יכול להיחסם לעולם בגלל שה-thread השני נעצר (preemption, page fault, I/O) כשהוא מחזיק lock, ולכן אין priority inversion וזמן הפעולה חסום"
+      ],
+      "answer": 3,
+      "explanation": "היתרון המרכזי הוא progress guarantee: הכותב לדיסק יכול להיתקע על I/O או להיות מוחלף, וה-RX thread עדיין משלים push בזמן קבוע (או מקבל false כשהתור מלא ומחליט מה לעשות). ייתכן שהוא גם מהיר יותר, אבל זה לא העיקר. mutex עובד בין עדיפויות, רק עם סיכון ל-inversion.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "perf מראה שב-SPSC queue כמעט כל push ו-pop גורמים ל-cache miss, גם כשהתור חצי מלא. head ו-tail כבר בשורות נפרדות. מה האופטימיזציה הבאה?",
+      "choices": [
+        "להחליף את כל ה-orders ל-seq_cst",
+        "להגדיל את ה-cache line ל-128 בתים",
+        "כל צד שומר עותק מקומי (cached) של האינדקס של הצד השני, וקורא את האטומי האמיתי רק כשלפי העותק התור נראה מלא (ליצרן) או ריק (לצרכן)",
+        "לעבור ל-MPMC queue"
+      ],
+      "answer": 2,
+      "explanation": "בכל push היצרן קורא את tail, שהצרכן כותב כל הזמן, ולכן ה-line שלו עובר בין ה-cores כל פעם. עם cached tail, היצרן קורא את tail האמיתי רק פעם בהרבה פעולות. זו הטכניקה של מימושים כמו rigtorp SPSCQueue ו-folly ProducerConsumerQueue. batching (push של כמה איברים ועדכון head פעם אחת) עוזר מאותה סיבה.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q12",
+      "level": 4,
+      "type": "bug",
+      "prompt": "pop של Treiber stack lock-free, כשנודים משוחררים ב-delete אחרי pop. מה הבעיה?",
+      "lang": "cpp",
+      "code": "Node* pop() {\n  Node* old = head.load(std::memory_order_acquire);\n  while (old &&\n         !head.compare_exchange_weak(old, old->next,\n                                     std::memory_order_acquire))\n    ;\n  return old;\n}",
+      "bugLine": 4,
+      "choices": [
+        "compare_exchange_weak עלול להיכשל ספורדית ולכן צריך strong",
+        "בין ה-load ל-CAS thread אחר יכול לשלוף את old ולמחוק אותו (קריאה של old->next היא use-after-free), או לשלוף ולהחזיר node עם אותה כתובת, וה-CAS יצליח עם next שגוי (ABA)",
+        "ה-memory order צריך להיות seq_cst",
+        "הלולאה לא מתעדכנת כי old לא נטען מחדש"
+      ],
+      "answer": 1,
+      "explanation": "שתי בעיות קשורות: גישה ל-old->next לנוד שאולי כבר שוחרר, ו-ABA כשהכתובת ממוחזרת. weak בלולאה תקין, וה-CAS מעדכן את old בכישלון, כך שהלולאה נכונה. התיקונים: hazard pointers או epoch-based reclamation לשחרור בטוח, ו-tagged pointer (מונה גרסה עם CAS כפול רוחב) נגד ABA.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "איזו מהגישות הבאות **לא** פותרת את בעיית ה-ABA במבנה lock-free מבוסס CAS?",
+      "choices": [
+        "tagged pointer: מונה גרסה שמתקדם בכל שינוי, ו-CAS על pointer ומונה יחד (cmpxchg16b)",
+        "epoch-based reclamation: שחרור רק אחרי שכל ה-threads עברו epoch",
+        "שימוש ב-memory_order_seq_cst בכל פעולות ה-CAS",
+        "hazard pointers: node לא משוחרר ולא ממוחזר כל עוד thread כלשהו הכריז שהוא ניגש אליו"
+      ],
+      "answer": 2,
+      "explanation": "ABA היא בעיה של זהות ערכים, לא של סדר זיכרון: ה-CAS מצליח כי הערך באמת שווה. seq_cst לא משנה את זה. מונה גרסה הופך את הערך לייחודי. hazard pointers ו-epochs מונעים מחזור של כתובת כל עוד מישהו עלול להחזיק אותה, וכך גם את ה-ABA וגם את ה-use-after-free.",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "id": "conc.lock-free.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן העברה של בלוקים של 64K דגימות complex<float> מ-RX thread (SCHED_FIFO, core מבודד) ל-FFT thread, בלי שום הקצאת זיכרון במסלול החם. מה המבנה, ומה קורה כשה-FFT thread מפגר?",
+      "modelAnswer": "מקצים מראש pool של K באפרים (mlock, prefault, מיושרים ל-64 בתים או לדף, ובאותו NUMA node). משתמשים בשני SPSC queues של pointers או אינדקסים: free queue מה-FFT ל-RX, ו-full queue מה-RX ל-FFT. ה-RX לוקח באפר פנוי, ממלא, ודוחף ל-full. ה-FFT שולף, מעבד, ומחזיר ל-free. אין העתקות ואין malloc, כל פעולה wait-free. כשה-FFT מפגר, ה-free queue מתרוקן. ה-RX לא יכול לחכות, ולכן צריך מדיניות מפורשת: drop של הבלוק החדש (או דריסת הישן) עם מונה overflow אטומי וחותמת זמן, כדי שה-downstream ידע שיש פער. בוחרים את K לפי latency budget: הרבה באפרים סופגים jitter אבל מוסיפים latency כשהתור מלא. שיטת ההמתנה של ה-FFT: busy-poll אם יש לו core, או spin ואז blocking דרך futex או eventfd אם לא. מנטרים את מילוי התור כ-metric.",
+      "rubric": [
+        "pool מוקצה מראש עם free/full queues, העברת pointers ולא העתקה",
+        "הכנת זיכרון: mlock, prefault, alignment, NUMA",
+        "מדיניות overflow מפורשת שלא חוסמת את ה-RX, עם מונה ודיווח",
+        "trade-off בגודל ה-pool בין ספיגת jitter לבין latency",
+        "אסטרטגיית המתנה בצרכן (poll מול block)"
+      ],
+      "explanation": "זה בדיוק הפתרון שמשתמשים בו ב-SDR ובמערכות audio: מחזור באפרים בין שני תורים. מועמד חזק מתייחס במפורש למקרה של צרכן איטי.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ring buffer עם מונים רצים מסוג `uint32_t`, קיבולת N = 1000, ואינדקס `counter % 1000`. התנאים: מלא כש-`head - tail == N`, ריק כש-`head == tail`. הכול עובד שעות ואז הנתונים משתבשים. למה?",
+      "choices": [
+        "% איטי מדי ולכן נוצר overflow",
+        "כשהמונה גולש מ-2^32 - 1 ל-0, האינדקס קופץ מ-295 ל-0 במקום להמשיך ל-296, כי 2^32 לא מתחלק ב-1000. היצרן והצרכן ממפים את אותו מונה לוגי ל-slots שונים סביב הגלישה",
+        "החיסור head - tail שגוי אחרי גלישה של uint32_t",
+        "uint32_t לא יכול להיות atomic"
+      ],
+      "answer": 1,
+      "explanation": "החיסור ב-unsigned דווקא נכון אחרי גלישה, כי הוא modulo 2^32. הבעיה היא במיפוי ל-slot: הרציפות של counter % N לאורך הגלישה דורשת ש-N יחלק את 2^32, כלומר חזקה של 2. 2^32 mod 1000 = 296, ולכן אחרי הגלישה האינדקס מתחיל מ-0 במקום מ-296. עם uint32_t בקצב של מיליוני פריטים בשנייה הגלישה קורית אחרי דקות עד שעות, וזה מסביר את העיתוי.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-hazard pointers הקורא מבצע: `p = head.load()`, כותב את p ל-slot ה-hazard שלו, ואז קורא שוב את head ומוודא שהוא עדיין p. ה-reclaimer מוציא node מהמבנה ואז סורק את כל ה-slots. למה בין הכתיבה ל-slot לקריאה החוזרת של head נדרש seq_cst (או fence מלא), ו-release/acquire לא מספיקים?",
+      "choices": [
+        "זו תבנית Store Buffering: הקורא עושה store ל-slot ואז load של head, וה-reclaimer עושה store ל-head ואז load של ה-slots. בלי סדר כולל, שניהם יכולים לפספס זה את זה: הקורא רואה את head הישן, ה-reclaimer רואה slot ריק ומשחרר node שהקורא עומד להשתמש בו",
+        "כי acquire לא עובד על pointers",
+        "כדי למנוע ABA על head",
+        "כדי שה-slot ייכתב לזיכרון הראשי ולא יישאר ב-cache"
+      ],
+      "answer": 0,
+      "explanation": "release/acquire לא אוסרים להעביר store ואחריו load לכתובת אחרת, ושני הצדדים עושים בדיוק את זה. הדרישה היא שלפחות אחד יראה את הכתיבה של השני, וזה מה ש-seq_cst נותן. מימושים מודרניים מעבירים את רוב המחיר לצד ה-reclaimer עם asymmetric fences (membarrier ב-Linux), כדי שהקורא, שהוא המסלול החם, לא ישלם mfence.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.lock-free.q17",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי progress guarantees?",
+      "choices": [
+        "תור lock-free שקורא ל-malloc ב-push לא באמת מתאים ל-RT thread, כי ה-allocator עלול לקחת lock או לבצע syscall",
+        "Treiber stack עם CAS loop הוא lock-free אבל לא wait-free",
+        "אלגוריתם lock-free מבטיח שאף thread לא יורעב (starvation)",
+        "spinlock עם critical section קצר מאוד נחשב lock-free",
+        "SPSC ring buffer קלאסי עם try_push ו-try_pop שמחזירות false כשמלא או ריק הוא wait-free"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "ב-SPSC אין לולאות ניסיון חוזר: כל פעולה מסתיימת במספר צעדים קבוע. ב-Treiber thread יכול להפסיד ב-CAS שוב ושוב, ולכן הוא רק lock-free ו-starvation אפשרי. spinlock לא lock-free בלי קשר לאורך ה-critical section: אם המחזיק נעצר, כולם תקועים. malloc יכול לחסום ולגרום ל-page fault, ולכן מבנים ל-RT מקצים מראש.",
+      "lesson": "conc.lock-free",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

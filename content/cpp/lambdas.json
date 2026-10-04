@@ -1,0 +1,368 @@
+{
+  "domain": "cpp",
+  "subtopic": "lambdas",
+  "lessons": [
+    {
+      "id": "cpp.lambdas",
+      "title": "Lambdas",
+      "what": "lambda היא דרך מקוצרת להגדיר function object. הקומפיילר יוצר class אנונימי (closure type) עם operator() ועם member לכל משתנה ש-captured by value. לכל ביטוי lambda יש טיפוס ייחודי משלו.",
+      "when": [
+        "predicates ו-comparators לאלגוריתמים (sort, find_if, count_if), שבדרך כלל עוברים inlining מלא",
+        "callbacks, משימות ל-thread pool, ו-continuations",
+        "אתחול מורכב של const (lambda שנקראת מיד, IIFE)",
+        "פונקציות עזר מקומיות ו-closures עם state (מונים, פילטרים)"
+      ],
+      "how": [
+        "[x] מעתיק את x ברגע יצירת ה-lambda. [&x] שומר reference, ומה שנקרא הוא הערך העדכני בזמן הקריאה. [=] ו-[&] לוכדים אוטומטית את מה שבשימוש.",
+        "רק משתנים עם automatic storage נלכדים. משתנים גלובליים ו-static נגישים ישירות ולא מועתקים.",
+        "operator() הוא const כברירת מחדל, ולכן אי אפשר לשנות עותקים שנלכדו. mutable מסיר את ה-const.",
+        "init capture (C++14): [p = std::move(ptr)] מאפשר להעביר משאב move-only לתוך ה-closure או לתת לו שם חדש.",
+        "this: [this] לוכד pointer (סכנת dangling). [*this] (C++17) מעתיק את האובייקט. לכידה מרומזת של this דרך [=] הוצאה משימוש ב-C++20.",
+        "lambda בלי captures ממירה ל-function pointer. generic lambda ([](auto x)) היא closure עם template operator(). מ-C++20 אפשר גם []<class T>(T x).",
+        "std::function מחזיק כל callable עם type erasure: קריאה עקיפה, לרוב בלי inlining, ועלולה להיות הקצאה כשה-closure גדול מה-small buffer. הוא דורש callable שאפשר להעתיק."
+      ],
+      "complexity": "lambda שמועברת ל-template (כמו std::sort) עוברת inlining ולא עולה כלום. sizeof של closure הוא סכום ה-captures (closure ריק: 1 בית). std::function: 32 בתים ב-libstdc++, קריאה עקיפה, ואולי malloc.",
+      "pitfalls": [
+        "לכידה by reference של local שה-lambda חיה אחריו (callback, thread, החזרה מפונקציה)",
+        "[=] בתוך member function לוכד את this ולא עותק של ה-members",
+        "לכידת משתנה לולאה by reference ב-threads",
+        "כל עותק של lambda עם mutable מחזיק state נפרד",
+        "lambda רקורסיבית עם auto לא יכולה להתייחס לעצמה"
+      ],
+      "senior": [
+        "std::function מול template parameter מול function_ref: עלות, הקצאה ו-inlining",
+        "callbacks אסינכרוניים: לכידת weak_ptr (או shared_from_this) כדי לא לגשת לאובייקט מת",
+        "בזמן-אמת: closures עם הקצאה ב-std::function הם בעיה. משתמשים ב-inplace_function עם קיבולת קבועה או ב-templates",
+        "C++23 deducing this: lambda רקורסיבית בלי std::function, ו-std::move_only_function לcallables שהם move-only"
+      ],
+      "diagram": "[x, &y](int a){...}\n   ==>\nstruct __lambda {\n  int x;  int& y;\n  auto operator()(int a) const;\n};"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.lambdas.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה lambda ב-C++?",
+      "choices": [
+        "pointer לפונקציה גלובלית",
+        "פונקציה שתמיד רצה בזמן קומפילציה",
+        "macro שמוחלף בזמן preprocessing",
+        "ביטוי שיוצר אובייקט מטיפוס closure אנונימי עם operator(), שיכול להחזיק משתנים שנלכדו"
+      ],
+      "answer": 3,
+      "explanation": "הקומפיילר יוצר class ייחודי עם operator(), וה-captures הם ה-members שלו. רק lambda בלי captures ממירה ל-function pointer. lambda יכולה להיות constexpr, אבל ברוב השימושים היא רצה בזמן ריצה.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין `[=]` ל-`[&]`?",
+      "choices": [
+        "[&] מעתיק ו-[=] משתמש ב-reference",
+        "[=] לוכד רק משתנים const",
+        "[=] לוכד את כל המשתנים שבשימוש by value (עותק), ו-[&] by reference",
+        "אין הבדל, שניהם לוכדים את כל ה-scope"
+      ],
+      "answer": 2,
+      "explanation": "שניהם לוכדים רק את המשתנים שה-lambda משתמשת בהם בפועל. ב-[=] נוצר עותק כשה-lambda נוצרת. ב-[&] כל גישה הולכת למשתנה המקורי, ולכן ה-lambda לא יכולה לחיות יותר זמן ממנו.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו מילת מפתח מאפשרת לשנות בתוך ה-lambda משתנה שנלכד by value?",
+      "accept": [
+        "mutable"
+      ],
+      "explanation": "operator() של closure הוא const כברירת מחדל. mutable מסיר את ה-const, והשינויים חלים על העותק שבתוך ה-closure ולא על המשתנה המקורי.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int x = 1;\nauto byVal = [x]  { return x; };\nauto byRef = [&x] { return x; };\nx = 5;\nstd::cout << byVal() << byRef();",
+      "choices": [
+        "11",
+        "15",
+        "55",
+        "51"
+      ],
+      "answer": 1,
+      "explanation": "byVal העתיקה את x כשהוא היה 1. byRef קוראת את x בזמן הקריאה, ואז הוא כבר 5.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int n = 0;\nauto inc = [n]() mutable { return ++n; };\ninc();\ninc();\nstd::cout << inc() << n;",
+      "choices": [
+        "30",
+        "33",
+        "10",
+        "שגיאת קומפילציה"
+      ],
+      "answer": 0,
+      "explanation": "ה-closure מחזיק עותק פרטי של n שנשמר בין הקריאות, ולכן הקריאה השלישית מחזירה 3. ה-n החיצוני לא השתנה ונשאר 0. בלי mutable, ++n לא היה מתקמפל.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q06",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "std::function<int()> make_counter() {\n  int count = 0;\n  return [&count] { return ++count; };\n}\n\nint main() {\n  auto c = make_counter();\n  std::cout << c();\n}",
+      "bugLine": 3,
+      "choices": [
+        "std::function לא יכול להחזיק lambda",
+        "חסר mutable",
+        "count צריך להיות static",
+        "ה-lambda לוכדת reference ל-count, שנהרס כשהפונקציה מסתיימת. הקריאה c() ניגשת לזיכרון מת (UB). הפתרון: [count]() mutable { return ++count; }"
+      ],
+      "answer": 3,
+      "explanation": "closure שיוצא מה-scope חייב להחזיק את ה-state שלו by value. mutable לא נחוץ ב-capture by reference, כי ה-reference עצמו לא משתנה. static count היה עובד, אבל כל המונים היו חולקים state אחד.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q07",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::vector<int> v{1, 5, 7, 3};\nint t = 4;\nauto n = std::count_if(v.begin(), v.end(),\n                       [t](int x) { return x > t; });\nstd::cout << n;",
+      "choices": [
+        "1",
+        "3",
+        "2",
+        "4"
+      ],
+      "answer": 2,
+      "explanation": "ה-predicate בודק x > 4. רק 5 ו-7 עומדים בתנאי, ולכן התוצאה 2. t נלכד by value.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "member function של Sensor רושמת callback: `bus.subscribe([=] { handle(value_); });`. ה-Sensor נהרס לפני ה-bus. מה הבעיה?",
+      "choices": [
+        "אין בעיה, כי [=] העתיק את value_",
+        "[=] בתוך member function לוכד את this (pointer), ולא עותק של value_. אחרי הריסת Sensor ה-callback ניגש דרך pointer מת. הפתרונות: unsubscribe ב-destructor, לכידת weak_ptr, או [*this] (C++17) כשמתאים להעתיק",
+        "[=] לא מתקמפל בתוך member function",
+        "הבעיה היא רק ב-C++20, שבו [=] הוצא משימוש"
+      ],
+      "answer": 1,
+      "explanation": "value_ הוא בעצם this->value_, ולכן נלכד this. זו בדיוק הסיבה ש-C++20 הוציא משימוש את הלכידה המרומזת של this ב-[=] ודורש לכתוב [=, this]. [*this] מעתיק את כל האובייקט, וזה לא תמיד רצוי (אובייקט גדול או לא copyable).",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q09",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "auto p = std::make_unique<int>(42);\nauto f = [q = std::move(p)] { return *q; };\nstd::cout << (p == nullptr) << f();",
+      "choices": [
+        "142",
+        "042",
+        "שגיאת קומפילציה: unique_ptr לא copyable",
+        "1 ואז UB"
+      ],
+      "answer": 0,
+      "explanation": "init capture מאתחל member חדש בשם q מתוך std::move(p), ולכן ה-ownership עבר ל-closure ו-p ריק. בגלל זה f עצמה move-only, ואי אפשר לשמור אותה ב-std::function (שדורש copy). אפשר להשתמש ב-std::move_only_function ב-C++23.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות?",
+      "choices": [
+        "lambda בלי captures ממירה במרומז ל-function pointer",
+        "שתי lambdas עם קוד זהה הן מאותו טיפוס",
+        "generic lambda, [](auto x) {...}, היא closure עם operator() שהוא template",
+        "lambda עם captures יכולה להמיר ל-function pointer אם כל ה-captures הם const",
+        "ב-capture by value, ההעתקה מתבצעת כשה-lambda נוצרת, ולא בכל קריאה"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "לכל ביטוי lambda יש closure type ייחודי, גם עם קוד זהה. function pointer לא יכול לשאת state, ולכן רק lambda בלי captures ממירה אליו (שימושי ל-C APIs כמו qsort או pthread). ההעתקה של captures קורית פעם אחת, ביצירת ה-closure.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q11",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "std::vector<std::thread> ts;\nfor (int i = 0; i < 4; ++i)\n  ts.emplace_back([&] { work(i); });\nfor (auto& t : ts)\n  t.join();",
+      "bugLine": 3,
+      "choices": [
+        "emplace_back לא יכול לבנות thread מ-lambda",
+        "work צריך להיות static",
+        "חסר detach",
+        "[&] לוכד את i by reference: ה-threads קוראים אותו בזמן שהלולאה משנה אותו (data race), ואחרי סוף הלולאה i כבר לא קיים (dangling). הפתרון: [i]"
+      ],
+      "answer": 3,
+      "explanation": "thread יכול להתחיל לרוץ אחרי ש-i כבר התקדם, או אחרי שהלולאה נגמרה ו-i יצא מה-scope. גם כשהוא רץ מיד, ++i במקביל לקריאה הוא data race. לכידה by value נותנת לכל thread עותק משלו.",
+      "lesson": "cpp.lambdas",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.lambdas.q12",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על std::function נכונות?",
+      "choices": [
+        "std::function דורש שה-callable יהיה CopyConstructible",
+        "קריאה דרך std::function היא בדרך כלל קריאה עקיפה שהקומפיילר לא מצליח לעשות לה inlining",
+        "std::function אף פעם לא מקצה זיכרון",
+        "העברת lambda לפונקציה template<class F> void apply(F f) מאפשרת inlining מלא",
+        "אפשר לשמור ב-std::function<int()> lambda שלוכדת unique_ptr"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "std::function עושה type erasure: הוא שומר את ה-callable מאחורי מצביע לפונקציות manager ו-invoker. closure שגדול מה-small buffer (16 בתים ב-libstdc++) מוקצה ב-heap. בגלל דרישת ה-copy, closure עם unique_ptr לא מתקמפל. ב-template, הטיפוס המדויק ידוע ולכן הקריאה עוברת inlining.",
+      "lesson": "cpp.lambdas",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.lambdas.q13",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int g = 1;\n\nint main() {\n  static int s = 1;\n  auto f = [=] { return g + s; };\n  g = 10;\n  s = 10;\n  std::cout << f();\n}",
+      "choices": [
+        "2",
+        "11",
+        "20",
+        "שגיאת קומפילציה: אי אפשר ללכוד static"
+      ],
+      "answer": 2,
+      "explanation": "רק משתנים עם automatic storage duration נלכדים. g הוא גלובלי ו-s הוא static, ולכן ה-lambda ניגשת אליהם ישירות ולא מעתיקה אותם, גם עם [=]. בזמן הקריאה שניהם 10. בפועל ה-closure ריק (sizeof 1). אם כותבים [s] במפורש, זו שגיאה.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בתוך member function של class גדול, רוצים lambda שתישלח ל-thread אחר ותעבוד על snapshot עצמאי של האובייקט כפי שהוא עכשיו. איזו לכידה מתאימה ב-C++17/20?",
+      "choices": [
+        "[=]",
+        "[*this]",
+        "[this]",
+        "[&]"
+      ],
+      "answer": 1,
+      "explanation": "[*this] (C++17) מעתיק את כל האובייקט לתוך ה-closure, וה-lambda לא תלויה ב-lifetime של המקור. [=] ו-[this] לוכדים pointer בלבד. [&] לוכד גם את this וגם locals by reference. המחיר של [*this] הוא העתקה מלאה, ולפעמים עדיף ללכוד רק את ה-members שצריך: [v = value_].",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `make_moving_average(std::size_t window)` שמחזירה callable: כל קריאה עם sample מסוג double מחזירה את הממוצע של עד window ה-samples האחרונים. O(1) לקריאה, בלי הקצאות אחרי היצירה, ובלי state גלובלי.",
+      "starter": "auto make_moving_average(std::size_t window);",
+      "modelAnswer": "#include <cassert>\n#include <cstddef>\n#include <vector>\n\nauto make_moving_average(std::size_t window) {\n  assert(window > 0);\n  return [buf = std::vector<double>(window, 0.0),\n          idx = std::size_t{0},\n          count = std::size_t{0},\n          sum = 0.0](double x) mutable {\n    sum += x - buf[idx];          // drop oldest, add newest\n    buf[idx] = x;\n    if (++idx == buf.size()) idx = 0;   // avoid % in hot path\n    if (count < buf.size()) ++count;\n    return sum / static_cast<double>(count);\n  };\n}\n// Note: a running sum accumulates rounding error over long runs;\n// recompute sum from buf periodically or use Kahan summation.",
+      "rubric": [
+        "init captures עם mutable שמחזיקים buffer מעגלי, אינדקס, מונה וסכום",
+        "O(1) לקריאה עם running sum (מחסירים את הישן ומוסיפים את החדש)",
+        "טיפול נכון בתחילת הריצה (פחות מ-window samples) ובחלון 0",
+        "הקצאה אחת ביצירה בלבד",
+        "מזכיר צבירה של שגיאת floating point ופתרון (חישוב מחדש או Kahan)"
+      ],
+      "explanation": "closure עם state כחלופה ל-class קטן. הנקודה העדינה שמראיין עם רקע DSP יחפש: running sum ב-floating point מצטבר עם drift לאורך זמן.",
+      "lesson": "cpp.lambdas",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.lambdas.q16",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int n = 0;\nauto f = [n]() mutable { return ++n; };\nauto g = f;\nf();\nf();\nstd::cout << f() << g() << n;",
+      "choices": [
+        "310",
+        "341",
+        "333",
+        "311"
+      ],
+      "answer": 0,
+      "explanation": "g = f מעתיק את ה-closure כולל ה-state שבו, שהוא עדיין 0. f ו-g מחזיקים מעכשיו מונים נפרדים: f מגיע ל-3 ו-g() מחזיר 1. n החיצוני לא השתנה. זה חשוב כשמעבירים lambda עם mutable by value לאלגוריתמים: ייתכן שהם עובדים על עותק, ו-std::for_each מחזיר את העותק בסוף.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "רוצים lambda רקורסיבית לחישוב fib. מה נכון?\n\n```cpp\nauto fib1 = [&](int n) { return n < 2 ? n : fib1(n-1) + fib1(n-2); };\nstd::function<int(int)> fib2 = [&](int n) { return n < 2 ? n : fib2(n-1) + fib2(n-2); };\nauto fib3 = [](this auto self, int n) -> int { return n < 2 ? n : self(n-1) + self(n-2); };\n```",
+      "choices": [
+        "כולן מתקמפלות ב-C++17",
+        "fib3 מתקמפלת ב-C++20",
+        "fib2 היא UB, כי היא לוכדת reference לעצמה לפני שהיא מאותחלת",
+        "fib1 לא מתקמפלת (שימוש במשתנה עם auto בתוך ה-initializer שלו). fib2 עובדת עם קריאה עקיפה דרך std::function. fib3 משתמשת ב-deducing this ודורשת C++23, בלי overhead של type erasure"
+      ],
+      "answer": 3,
+      "explanation": "הטיפוס של fib1 עוד לא הוסק כשה-initializer מתייחס אליו, וזו שגיאה. ב-fib2 ה-lambda רק שומרת reference ל-fib2, והקריאה מתבצעת אחרי שהוא אותחל, ולכן זה תקין. המחיר הוא קריאה עקיפה ואולי הקצאה. explicit object parameter (P0847) קיים רק ב-C++23. ב-C++14/17 אפשר להעביר את ה-lambda לעצמה כפרמטר auto&.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון `auto [lo, hi] = std::pair{1, 9};` ואחריו `auto f = [lo] { return lo; };`. מה נכון?",
+      "choices": [
+        "תקין בכל תקן מ-C++17",
+        "תקין רק עם [&lo]",
+        "C++17: ill-formed, כי אי אפשר ללכוד structured binding. C++20 מתיר את זה (P1091/P1381)",
+        "שגיאה בכל תקן, כי structured bindings הם references"
+      ],
+      "answer": 2,
+      "explanation": "ב-C++17, structured binding הוא שם ל-subobject של משתנה נסתר ולא משתנה בפני עצמו, והתקן אסר במפורש ללכוד אותו. C++20 הסיר את האיסור. ב-C++17 עוקפים את זה עם init capture: [lo = lo].",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q19",
+      "level": 5,
+      "type": "oral",
+      "prompt": "ב-framework של SDR, ה-thread הקריטי מריץ רשימת callbacks לכל בלוק. כרגע הם `std::vector<std::function<void(Block&)>>`, והרישום וההסרה נעשים מ-thread של UI. מה הבעיות, ואיך היית מתכנן מחדש?",
+      "modelAnswer": "הבעיות: (1) std::function עלול להקצות זיכרון כשה-closure גדול מה-SBO, למשל ברישום או בהעתקה של הרשימה. אם הרשימה מועתקת או משתנה על ה-thread הקריטי, נכנס malloc לנתיב החם. (2) קריאה עקיפה לכל callback בלי inlining. זה בדרך כלל זניח לעומת עיבוד הבלוק, אבל כדאי לדעת. (3) הבעיה העיקרית היא lifetime: callbacks שלוכדים this או references עלולים לרוץ אחרי שהאובייקט נהרס. כשמסירים callback מה-UI בזמן שה-thread הקריטי מריץ אותו, זה race. (4) שינוי של vector בזמן איטרציה מ-thread אחר הוא data race ו-iterator invalidation. התכנון מחדש: הרשימה immutable, וה-UI בונה רשימה חדשה ומפרסם אותה עם atomic pointer swap (RCU או double buffer). ה-thread הקריטי קורא snapshot בתחילת הבלוק, והרשימה הישנה משתחררת ב-thread אחר אחרי grace period (או עם hazard pointer). ה-callbacks: inplace_function עם קיבולת קבועה שנבדקת בקומפילציה, או function_ref מעל אובייקטים שה-registry מחזיק, כך שאין הקצאה. lifetime: registration handle (RAII) שה-destructor שלו מסיר את ה-callback ומחכה לסוף הבלוק הנוכחי לפני שהוא חוזר, או לכידת weak_ptr עם lock() בתחילת הקריאה, אבל lock הוא atomic ולכן עדיף handle. אם קבוצת השלבים סגורה, אפשר להחליף ב-std::variant עם visit או ב-templates.",
+      "rubric": [
+        "מזהה הקצאה אפשרית של std::function ב-hot path",
+        "מזהה race ו-lifetime בין רישום או הסרה לבין ריצה",
+        "מציע פרסום immutable עם atomic swap (RCU או double buffer) ושחרור נדחה",
+        "מציע callable בלי הקצאה (inplace_function או function_ref)",
+        "handle מסוג RAII להסרה בטוחה, או weak_ptr, עם הבנת המחיר"
+      ],
+      "explanation": "שאלה שמחברת lambdas, lifetime ומקביליות. התשובה החזקה מטפלת קודם ב-correctness (race ו-lifetime) ורק אחר כך בביצועים.",
+      "lesson": "cpp.lambdas",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

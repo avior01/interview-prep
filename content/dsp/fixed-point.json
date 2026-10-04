@@ -1,0 +1,282 @@
+{
+  "domain": "dsp",
+  "subtopic": "fixed-point",
+  "lessons": [
+    {
+      "id": "dsp.fixed-point",
+      "title": "Fixed-point",
+      "what": "ייצוג של מספרים שבריים כשלמים עם נקודה עשרונית מדומה. Qm.n אומר m ביטים שלמים (לא כולל סימן) ו-n ביטים שבריים; Q15 ב-int16 מייצג [-1, 1). זה מה שרץ ב-FPGA, ב-DSP chips, ובנתונים שמגיעים מה-ADC (sc16). בתוכנה צריך לשלוט ב-overflow, ב-rounding וב-scaling ידנית, כי אין exponent שיעשה את זה בשבילך.",
+      "when": [
+        "קוד שמדבר עם חומרה: דגימות sc16 מה-ADC, מקדמים שנטענים ל-FPGA",
+        "מעבדים בלי FPU מהיר, או SIMD של int16 שנותן פי 2 lanes מ-float",
+        "מודל bit-exact בתוכנה של מה שה-FPGA עושה, לבדיקות",
+        "שאלות על SQNR, guard bits, ו-scaling של FFT"
+      ],
+      "how": [
+        "Q15: ערך = int / 2^15. טווח [-1, 1-2^-15], LSB = 2^-15 ≈ 3.05e-5",
+        "כפל: Q15 × Q15 = Q30 ב-32 ביט. חזרה ל-Q15: הזזה ימינה ב-15, עם rounding (הוספת 2^14 לפני ההזזה) ועם saturation למקרה 1- כפול 1-",
+        "חיבור: אותו פורמט משני הצדדים. סכום של K איברים צריך עד log2(K) ביטים נוספים (guard bits), ולכן accumulators הם 32/40/64 ביט",
+        "rounding: הזזה ימינה רגילה היא floor, עם הטיה ממוצעת של חצי LSB כלפי מטה (DC). round-half-up כמעט מבטל אותה; convergent (half-to-even) מבטל אותה לגמרי",
+        "saturation במקום wrap במקומות שבהם overflow אפשרי, אבל לא בכל מקום: ב-CIC ה-wrap הוא חלק מהאלגוריתם",
+        "FFT: כל שלב radix-2 יכול להגדיל ביט אחד. אפשרויות: scaling ב-1/2 בכל שלב, block floating point (exponent משותף שמשתנה רק כשצריך), או מילה רחבה מספיק",
+        "SQNR של קוונטיזציה אידיאלית לסינוס full-scale: 6.02·B + 1.76 dB (16 ביט: כ-98 dB)"
+      ],
+      "complexity": "כפל int16 ב-SIMD: 16 lanes ב-AVX2 לעומת 8 ב-float. פקודות כמו `_mm256_mulhrs_epi16` עושות כפל Q15 עם rounding בפקודה אחת. ב-FPGA כפל 18x27 ב-DSP slice אחד.",
+      "pitfalls": [
+        "לחשב סכום או מכפלה ב-int16 ואחר כך לבדוק overflow: כבר מאוחר",
+        "הזזה ימינה בלי rounding: DC offset מצטבר",
+        "1.0 לא ייצוגי ב-Q15",
+        "signed overflow ב-C++ הוא UB, ולכן wrap מכוון (CIC) צריך unsigned",
+        "NumPy שומר על dtype: int16*2 עוטף בשקט"
+      ],
+      "senior": [
+        "לנתח bit growth לאורך pipeline ולבחור רוחב לכל שלב",
+        "להסביר את ה-trade-off בין scaling קבוע, block floating point ו-float",
+        "לבנות מודל bit-exact בתוכנה ולהשוות מול ה-FPGA",
+        "לדעת מתי saturation נכון ומתי הוא שובר את האלגוריתם"
+      ],
+      "diagram": "Q15 in int16:\n bit 15 | 14 ............ 0\n  sign  | 2^-1 ...... 2^-15\nQ15*Q15 -> Q30 (int32) -> >>15 -> Q15"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.fixed-point.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הטווח של ערך בפורמט Q15 שמאוחסן ב-int16?",
+      "choices": ["[-1, 1]", "[-1, 1-2^-15]", "[0, 1)", "[-32768, 32767]"],
+      "answer": 1,
+      "explanation": "Q15 מחלק את ה-int ב-2^15: 32768- הופך ל-1- ו-32767 ל-0.99997. 1+ לא ייצוגי, וזה המקור לבאג הקלאסי של 1- כפול 1-. [-32768, 32767] הוא הטווח של ה-int עצמו, לא של הערך המיוצג.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q02",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה ה-LSB (הרזולוציה) של Q15?",
+      "accept": ["2^-15", "3.05e-5", "0.0000305", "1/32768", "3.0518e-5"],
+      "explanation": "ה-LSB הוא 2^-15 = 1/32768 ≈ 3.05e-5. כל ערך ב-Q15 הוא כפולה שלמה שלו.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ה-SQNR התיאורטי של קוונטיזציה אחידה ל-16 ביט עבור סינוס ב-full scale?",
+      "choices": ["כ-96 dB", "כ-48 dB", "כ-98 dB", "כ-120 dB"],
+      "answer": 2,
+      "explanation": "SQNR = 6.02·B + 1.76 = 6.02·16 + 1.76 ≈ 98.1 dB. 96 dB הוא רק החלק 6.02·B, בלי התיקון של יחס ההספק בין סינוס לרעש הקוונטיזציה. 48 dB מתאים ל-8 ביט בערך.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מכפילים שני ערכי Q15 כ-int32. באיזה פורמט התוצאה, ומה עושים כדי לחזור ל-Q15?",
+      "choices": [
+        "Q15; לא צריך כלום",
+        "Q30; הזזה שמאלה ב-15",
+        "Q30; הזזה ימינה ב-15 (רצוי עם rounding ו-saturation)",
+        "Q31; הזזה ימינה ב-16"
+      ],
+      "answer": 2,
+      "explanation": "בכפל הביטים השבריים מתחברים: 15+15 = 30, ולכן התוצאה Q30 (במכפלה של 32 ביט). כדי לחזור ל-Q15 מזיזים ימינה ב-15. הזזה ב-16 נותנת Q14 ומאבדת ביט, וזה מה שעושה `_mm_mulhi_epi16`.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס?",
+      "code": "int16_t a = 16384;   // 0.5 in Q15\nint16_t b = 24576;   // 0.75 in Q15\nint16_t c = (int32_t(a) * b) >> 15;\nstd::cout << c;",
+      "choices": ["20480", "6144", "402653184", "12288"],
+      "answer": 3,
+      "explanation": "16384 × 24576 = 402,653,184 (Q30), וחלוקה ב-2^15 נותנת 12288, שהוא 0.375 ב-Q15 = 0.5 × 0.75. 6144 הוא תוצאה של הזזה ב-16 (Q14), ו-402653184 הוא המכפלה בלי הזזה (שגם לא נכנסת ב-int16).",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מיקסר בנקודה קבועה עושה `(a * b) >> 15` בלי rounding. מה ההשפעה על האות?",
+      "choices": [
+        "הטיה שיטתית: הזזה ימינה של מספר שלילי או חיובי היא floor, ולכן בממוצע התוצאה נמוכה בחצי LSB, שמופיע כ-DC offset",
+        "אין השפעה ממוצעת, השגיאה מתקזזת",
+        "התוצאה עלולה לגלוש",
+        "התוצאה מעוגלת לאפס, ולכן אין DC"
+      ],
+      "answer": 0,
+      "explanation": "הזזה אריתמטית ימינה היא floor (כלפי מינוס אינסוף), כך שהשגיאה תמיד בין 0 ל-LSB-1 כלפי מטה, בממוצע כחצי LSB. זה DC קטן, אבל אחרי integrator, accumulator או הרבה שלבים הוא מצטבר. truncation לכיוון אפס (כמו חלוקה ב-C++) הוא דבר אחר, ומייצר עיוות סימטרי במקום DC. הוספת 2^14 לפני ההזזה נותנת round-half-up.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "FIR באורך 256 taps, נתונים ומקדמים ב-Q15, מכפלות Q30 נסכמות ב-accumulator. כמה guard bits צריך מעבר למכפלה הבודדת כדי שהסכום במקרה הגרוע לא יגלוש?",
+      "choices": ["4", "8", "16", "0, כי המקדמים קטנים מ-1"],
+      "answer": 1,
+      "explanation": "סכום של 256 = 2^8 איברים יכול להיות גדול עד פי 256 מאיבר בודד, ולכן צריך log2(256) = 8 ביטים נוספים. לכן ל-DSP chips יש accumulators של 40 ביט (32+8), וב-C++ משתמשים ב-int64. בפועל אפשר לחשב חסם הדוק יותר עם sum(|h|), שיכול להיות קטן בהרבה מ-L, אבל 'המקדמים קטנים מ-1' לא מספיק.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "חיבור עם saturation ל-int16. ב-overflow הוא עדיין עוטף. מה הבאג?",
+      "code": "int16_t sat_add(int16_t a, int16_t b) {\n    int16_t s = a + b;\n    if (s > 32767) return 32767;\n    if (s < -32768) return -32768;\n    return s;\n}",
+      "bugLine": 2,
+      "choices": [
+        "הקבועים צריכים להיות INT16_MAX ו-INT16_MIN",
+        "`a + b` גולש ב-int16 וזה UB",
+        "צריך לבדוק את הסימנים של a ו-b לפני החיבור",
+        "הסכום נשמר ב-int16, כך שהוא כבר עטוף לפני הבדיקה, ושני התנאים לעולם לא נכונים. צריך `int32_t s`"
+      ],
+      "answer": 3,
+      "explanation": "החיבור עצמו מתבצע ב-int (promotion) ולכן לא גולש, אבל ההשמה ל-int16_t ממירה מודולו 2^16, וערך int16 אף פעם לא גדול מ-32767. עם `int32_t s` הבדיקות עובדות. קבועים מספריים או INT16_MAX זה עניין של סגנון. בדיקת סימנים היא דרך חלופית, לא הכרחית.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מקדמי FIR נעים בין 0.4- ל-1.7. רוצים לשמור אותם ב-int16 עם מקסימום דיוק. איזה פורמט?",
+      "choices": [
+        "Q15, עם saturation של המקדם 1.7",
+        "Q14 (ביט שלם אחד): טווח [-2, 2), LSB של 2^-14",
+        "Q13, ליתר ביטחון",
+        "Q15 אחרי חלוקת כל המקדמים ב-1.7, בלי לתקן את ה-gain"
+      ],
+      "answer": 1,
+      "explanation": "צריך לייצג עד 1.7, ולכן צריך ביט שלם אחד: Q1.14, טווח [-2, 2). כל ביט שלם נוסף הוא ביט רזולוציה פחות. saturation של 1.7 ל-1 משנה את המסנן. חלוקה ב-1.7 ושמירה ב-Q15 היא שיטה לגיטימית (normalized coefficients) רק אם מתקנים את ה-gain אחרי, למשל בהזזה או בכפל.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q10",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\na = np.array([20000], dtype=np.int16)\nprint((a * 2)[0], (a.astype(np.int32) * 2)[0])",
+      "choices": ["40000 40000", "-25536 40000", "32767 40000", "-25536 -25536"],
+      "answer": 1,
+      "explanation": "כפל מערך int16 בסקלר Python נשאר int16, ו-40000 עוטף ל-40000-65536 = 25536-, בלי שום אזהרה במערכים. אחרי astype(int32) החישוב נכון. NumPy לא עושה saturation (32767), וזה בדיוק מה שצריך לזכור כשבונים מודל bit-exact של FPGA ב-Python.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q11",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `q15_mul(a, b)` שמחזירה את מכפלת שני ערכי Q15 כ-Q15, עם rounding לקרוב (חצי כלפי מעלה) ו-saturation. הנח C++20.",
+      "starter": "int16_t q15_mul(int16_t a, int16_t b);",
+      "modelAnswer": "int16_t q15_mul(int16_t a, int16_t b) {\n    int32_t p = int32_t(a) * int32_t(b);   // Q30, |p| <= 2^30\n    p += 1 << 14;                          // round half up\n    p >>= 15;                              // arithmetic shift (defined in C++20)\n    if (p > INT16_MAX) p = INT16_MAX;      // only (-1)*(-1)\n    return static_cast<int16_t>(p);\n}\n// (-32768)*(-32768): p = 2^30 + 2^14 -> >>15 = 32768 -> saturate to 32767",
+      "rubric": [
+        "מכפלה ב-int32 (אין overflow: |p| <= 2^30)",
+        "rounding עם הוספת 2^14 לפני ההזזה",
+        "saturation של המקרה היחיד שגולש (1- כפול 1-), ומבין שהצד השלילי לא גולש",
+        "מבין שהזזה ימינה של שלילי היא arithmetic (מוגדר מ-C++20, implementation-defined לפני)"
+      ],
+      "explanation": "המכפלה המינימלית היא 32768- × 32767, ואחרי rounding והזזה היא 32767- בערך, בתוך הטווח. לכן רק הצד החיובי צריך saturation. זה בדיוק מה שעושה `SQRDMULH` ב-ARM.",
+      "lesson": "dsp.fixed-point",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.fixed-point.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "FFT בנקודה קבועה של 16 ביט. למה block floating point (BFP) עדיף על scaling קבוע של 1/2 בכל שלב?",
+      "choices": [
+        "BFP אף פעם לא מאבד ביטים",
+        "BFP מאפשר לוותר על הסימן",
+        "scaling קבוע מאבד ביט בכל שלב גם כשהאות קטן ואין סכנת overflow, ולכן אותות חלשים טובעים ברעש הקוונטיזציה. ב-BFP בודקים את המקסימום בבלוק ומזיזים רק כשצריך, ושומרים exponent משותף",
+        "BFP מהיר יותר כי אין צורך בבדיקות"
+      ],
+      "answer": 2,
+      "explanation": "עם scaling קבוע, אות של 40 dBFS- יוצא מוקטן פי N ומאבד bits ללא סיבה. BFP מתנהג כמו float עם exponent אחד לבלוק כולו: הוא מזיז רק כשיש bit growth בפועל. זה עולה בדיקת max לכל שלב (ולכן לא 'מהיר יותר'), והוא עדיין מאבד דיוק לערכים קטנים בבלוק שיש בו גם ערכים גדולים. FPGA FFT IP cores מציעים את שתי האפשרויות.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מווקטרים כפל Q15 ב-SSE/AVX2 על int16. איזו פקודה נותנת Q15×Q15→Q15 עם rounding בפקודה אחת?",
+      "choices": [
+        "`_mm256_mulhrs_epi16`: מחשבת (a·b + 2^14) >> 15",
+        "`_mm256_mulhi_epi16`: החצי העליון של המכפלה",
+        "`_mm256_mullo_epi16`: החצי התחתון של המכפלה",
+        "`_mm256_madd_epi16`: מכפלה וסכום זוגות ל-int32"
+      ],
+      "answer": 0,
+      "explanation": "mulhrs (multiply high with round and scale) נותנת בדיוק כפל Q15 עם rounding. mulhi מחזירה (a·b)>>16, כלומר Q14 בלי rounding. mullo מחזירה את 16 הביטים התחתונים, שאין להם משמעות ב-Q15. madd שימושית ל-dot products (FIR) כי היא מצטברת ל-int32 בלי לאבד דיוק. שים לב: mulhrs על 32768- × 32768- מחזירה 32768- ולא saturation.",
+      "lesson": "dsp.fixed-point",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.fixed-point.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "צריך להעביר שרשרת עיבוד (mixer, FIR, decimation) מ-float בתוכנה ל-fixed point ב-FPGA. איך היית ניגש לבחירת רוחבי הביטים ולבדיקה?",
+      "modelAnswer": "מתחילים ממודל float שהוא הייחוס, ומגדירים דרישה: SNR או EVM ביציאה ודינמיקה נדרשת. לכל שלב מנתחים טווח ו-bit growth: mixer עם NCO של B ביטים מכפיל ומגדיל ב-B ביטים לפני חיתוך; FIR מוסיף לכל היותר log2(sum|h|) ביטים, ו-decimation או CIC מוסיפים לפי הנוסחה שלהם. בוחרים לכל שלב רוחב ביניים, היכן לחתוך, ואיך: rounding (convergent אם יש סכנת הטיה) ו-saturation רק במקומות שבהם overflow אפשרי ואינו חלק מהאלגוריתם. אחר כך כותבים מודל bit-exact בתוכנה (C++ עם int64 או Python עם int ו-masking, או fixed-point library), ומריצים עליו אותות בדיקה: טונים ב-full scale ובעוצמות נמוכות, רעש, ומקרי קצה כמו 1- כפול 1- ו-DC. משווים SNR/EVM מול float ומחפשים את השלב שתורם הכי הרבה רעש, ומשם מאזנים ביטים. בסוף, test vectors מהמודל מוזנים לסימולציית ה-HDL ומשווים ביט-לביט, ואחר כך גם על החומרה דרך loopback. חשוב: המודל חייב להתנהג כמו החומרה בדיוק, כולל wrap מול saturation ו-rounding, אחרת ההשוואה חסרת ערך.",
+      "rubric": [
+        "מגדיר דרישת איכות ומודל float כייחוס",
+        "ניתוח bit growth לכל שלב ובחירת נקודות חיתוך",
+        "מדיניות rounding ו-saturation מנומקת",
+        "מודל bit-exact ובדיקות עם אותות קצה",
+        "השוואה ביט-לביט מול סימולציית HDL"
+      ],
+      "explanation": "מראיין מחפש תהליך הנדסי מסודר שמחבר בין דרישות, ניתוח ובדיקות, ולא ניחוש של רוחבים.",
+      "lesson": "dsp.fixed-point"
+    },
+    {
+      "id": "dsp.fixed-point.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "כדי להיפטר מהטיית ה-truncation, מישהו מחליף בכל מקום `x >> k` ב-`(x + (1 << (k-1))) >> k` (round-half-up). בשלב אחד k=1 (חלוקה ב-2 של ערכים שלמים), ושם עדיין יש DC. למה, ומה התיקון?",
+      "choices": [
+        "ב-k=1 יש tie (שארית בדיוק חצי) בכל ערך אי-זוגי, כלומר בחצי מהמקרים. round-half-up מעגל את כולם כלפי מעלה: הטיה של רבע LSB בממוצע. convergent rounding (half-to-even) מעגל ties לסירוגין ומבטל את ההטיה",
+        "ב-k=1 ה-rounding מבוטל כי 1<<0 = 1",
+        "צריך round-half-down",
+        "הטיה ב-k=1 זניחה כי היא פחות מ-LSB"
+      ],
+      "answer": 0,
+      "explanation": "ב-round-half-up, הטיה קיימת רק ב-ties. כש-k=15 על נתונים אקראיים, ties נדירים (בהסתברות 2^-15) וההטיה זניחה. כש-k=1, חצי מהערכים הם ties, וכל אחד מוסיף +0.5 LSB, כלומר +0.25 LSB בממוצע. אחרי accumulator זה הופך ל-drift. round-half-down רק הופך את הסימן. convergent rounding הוא ברירת המחדל בהרבה IP cores מהסיבה הזו.",
+      "lesson": "dsp.fixed-point",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.fixed-point.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "CIC decimator: R=64, M=1, N=4 שלבים, קלט של 16 ביט. מממשים אותו ב-C++ כמודל bit-exact. מה נכון?",
+      "choices": [
+        "צריך 40 ביט, ולכן int64_t מספיק ושום דבר לא גולש",
+        "צריך 22 ביט (16 + log2(64))",
+        "צריך integrators עם saturation כדי למנוע overflow",
+        "צריך 16 + 4·log2(64) = 40 ביט. ה-integrators גולשים בכוונה (למשל עם DC בקלט הם גדלים בלי גבול), וזה בסדר באריתמטיקה מודולרית, אבל ב-C++ חייבים uint64_t או masking ל-40 ביט, כי signed overflow הוא UB"
+      ],
+      "answer": 3,
+      "explanation": "לפי Hogenauer, רוחב הרגיסטרים הוא Bin + N·log2(R·M) = 16 + 24 = 40. ה-integrators הם צוברים טהורים, ועם קלט DC הם גדלים כמו n^4 ויגלשו כל רוחב סופי; הקומבים שאחריהם מבטלים את ה-wrap, בתנאי שהאריתמטיקה מודולרית. saturation הורס את התכונה הזו ומייצר שגיאות גדולות. ב-C++, int64_t שגולש הוא UB, ולכן uint64_t (ו-cast ל-signed רק ביציאה).",
+      "lesson": "dsp.fixed-point",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.fixed-point.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "FFT radix-2 בנקודה קבועה עם אחסון של 16 ביט בין השלבים. אפשרות א': להקטין את הקלט ב-1/N מראש. אפשרות ב': scaling של 1/2 בכל שלב. מה נכון לגבי יחס הרעש לאות (NSR) ביציאה, לסינוס ב-full scale?",
+      "choices": [
+        "שתיהן שקולות, כי הסקאלה הכוללת זהה (1/N)",
+        "ב' גרועה יותר, כי יש עיגול בכל שלב",
+        "ב-א' ה-NSR גדל בערך כמו N^2 (כ-6 dB לכל הכפלה של N), וב-ב' בערך כמו N (כ-3 dB לכל הכפלה), ולכן ב' עדיפה בהרבה ב-N גדול",
+        "בשתיהן ה-NSR לא תלוי ב-N"
+      ],
+      "answer": 2,
+      "explanation": "כשמקטינים מראש, האות קטן כבר בשלב הראשון והרעש של כל שלב מתווסף לאות זעיר: NSR ∝ N^2. עם 1/2 בכל שלב, האות נשאר גדול לאורך השלבים, והרעש של השלבים הראשונים מוקטן על ידי ה-scaling שאחריו: NSR ∝ N (תוצאה קלאסית מ-Oppenheim-Schafer). ב-N=4096 ההבדל הוא כ-36 dB. block floating point משפר עוד יותר, ובאחסון של 32 ביט אפשר לוותר על scaling לגמרי.",
+      "lesson": "dsp.fixed-point",
+      "tags": ["nvidia"]
+    }
+  ]
+}

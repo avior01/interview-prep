@@ -1,0 +1,310 @@
+{
+  "domain": "cv",
+  "subtopic": "fft-rates",
+  "lessons": [
+    {
+      "id": "cv.fft-rates",
+      "title": "קצבי FFT: מה חושב, מה נמדד ואיך משפרים",
+      "what": "ה-RX קורא buffers של 8192 דגימות ב-50 MS/s, וכל buffer מצומצם פי 4 (averaging) ל-FFT יחיד של 2048 נקודות. לכן קצב ה-FFT הוא קצב ה-buffers: 50e6 / 8192 ≈ 6,103.5 FFT/s, כלומר בערך 6,100. זה מספר מחושב: לא היה timing instrumentation ולא נמדד דבר. החישוב הנאיבי 50e6 / 2048 ≈ 24,414 שגוי, כי הוא מניח 2048 דגימות חדשות לכל FFT.",
+      "when": [
+        "כשהמראיין שואל 'כמה FFT בשנייה' או מצטט את המספר מקורות החיים.",
+        "כששואלים על throughput מול latency, על תקציב זמן לכל buffer, או איך היית מודד ביצועים.",
+        "כששואלים איך היית מאיץ: FFTW, batching, threads, SIMD, GPU, overlap."
+      ],
+      "how": [
+        "קצב buffers: 50e6 / 8192 = 6,103.5 buffers/s, ו-FFT אחד לכל buffer, ולכן 6,103.5 FFT/s. זמן buffer הוא 163.84 µs.",
+        "למה לא 24,414: כל FFT צורך 8192 דגימות קלט ולא 2048. כדי לקבל 24,414 FFT/s היה צריך FFT על כל 2048 דגימות חדשות, וזה לא מה שהקוד עושה.",
+        "מה פירוש 'צמצום פי 4' צריך לדעת בדיוק מהקוד: ממוצע של כל 4 דגימות סמוכות (boxcar decimation: קצב אפקטיבי 12.5 MS/s, span של 12.5 MHz, bin של כ-6.1 kHz), או סכימה של 4 בלוקים של 2048 (folding: שווה לכל bin רביעי של FFT ב-8192 נקודות). power averaging של 4 FFTs (Welch) היה אומר 4 FFT לכל buffer, לא אחד.",
+        "Observation time: כשה-TX פעיל ה-RX לא צופה, ולכן המספר בפועל נמוך מ-6,103.5.",
+        "קצב 50 MS/s מתמשך לא אומת: sc16 על החוט הוא 1.6 Gb/s, יותר מ-1 GbE, ויש underruns מתועדים במעבדה.",
+        "מדידה: timestamps לכל buffer, histogram של זמן עיבוד מול 163.84 µs (p50, p99, p99.9, max), counters של overflow מ-UHD ורציפות ב-time_spec.",
+        "שיפור: FFTW plan פעם אחת עם FFTW_MEASURE ו-wisdom, buffers מיושרים, batching (plan_many), pipeline על כמה threads, SIMD לצמצום ול-magnitude, GPU/cuFFT batched, ו-overlap אם רוצים רזולוציית זמן טובה יותר."
+      ],
+      "complexity": "FFT של 2048: בקירוב 5·N·log2(N) = 5 × 2048 × 11 = 112,640 flops. ב-6,103.5 FFT/s זה 687.5 MFLOP/s, כלומר כ-0.69 GFLOP/s, הרבה פחות מהיכולת של ליבה מודרנית. הצוואר הוא I/O, זיכרון ו-jitter ולא חישוב. רזולוציית זמן: ספקטרום חדש כל 163.84 µs.",
+      "pitfalls": [
+        "להציג 24,414 FFT/s, או להציג 6,100 כאילו נמדד.",
+        "לא לדעת להסביר מה בדיוק עושה ה-averaging ומה ההשלכה שלו על הספקטרום (רוחב span, רזולוציה, aliasing או nulls).",
+        "למדוד רק ממוצע של זמן עיבוד: ה-overflows נובעים מה-tail.",
+        "להניח שמספר ה-buffers שהתקבלו מוכיח שאין אובדן: overflow זורק דגימות במכשיר, וה-buffers הבאים עדיין מגיעים. רואים את זה רק בקפיצה ב-time_spec או ב-error code.",
+        "להציע GPU בלי לחשב: ב-0.69 GFLOP/s ה-CPU מספיק, והעתקה ל-GPU מוסיפה latency."
+      ],
+      "senior": [
+        "לגזור את המספר בקול, לסייג אותו (מחושב, חסם עליון, observation time קטן מ-100%) ולהציע תוכנית מדידה, בלי שהמראיין צריך לבקש.",
+        "להבחין בין שלושה מושגים: FFT מחושבים לשנייה, ספקטרומים שמתקבלים לשנייה, ודגימות קלט לכל ספקטרום.",
+        "לדעת את ההשלכה הספקטרלית של כל פירוש של ה-averaging, כולל nulls ב-folding בלי חלון, והתיקון עם WOLA או polyphase.",
+        "להציע אופטימיזציה לפי צוואר בקבוק מוכח (מדידה קודם) ולא לפי טרנד."
+      ],
+      "diagram": "8192 samples (163.84 us)\n[....|....|....|....]\n      reduce x4\n        v\n   [ 2048 pts ] -> FFT\n=> 50e6/8192 = 6,103.5 FFT/s\n   (not 50e6/2048 = 24,414)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cv.fft-rates.q01",
+      "level": 1,
+      "type": "short",
+      "prompt": "ב-50 MS/s, עם FFT אחד לכל buffer של 8192 דגימות, כמה FFT בשנייה (מעוגל לשלם)?",
+      "accept": ["6103", "6104", "6103.5", "6100", "6,103", "6,104"],
+      "explanation": "50e6 / 8192 = 6,103.515625, כלומר בערך 6,100 FFT/s. זה קצב מחושב, לא נמדד. בראיון אומרים 'בערך 6,100 בשנייה, מחושב מקצב ה-buffers'.",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "המספר 'כ-6,100 FFT/s' בקורות החיים: מה מעמדו?",
+      "choices": [
+        "נמדד עם profiler על ה-X310 בריצה של שעה",
+        "חושב מקצב הדגימה וגודל ה-buffer; לא היה timing instrumentation, כך שלא נמדד",
+        "נלקח מה-benchmark הרשמי של FFTW ל-2048 נקודות",
+        "נמדד מספירת overflows של UHD"
+      ],
+      "answer": 1,
+      "explanation": "6,100 ≈ 50e6 / 8192 הוא חישוב. בפרויקט לא היו timestamps ולא histograms. benchmark של FFTW מודד FFT בבידוד ולא את ה-pipeline, ו-counters של overflow מעידים על אובדן, לא על קצב. אמירה מדויקת של המעמד הזה היא חלק מהתשובה.",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "כמה דגימות קלט נצרכות לכל FFT אחד ב-pipeline, ומה גודל ה-FFT?",
+      "choices": [
+        "2048 דגימות קלט, FFT של 2048",
+        "8192 דגימות קלט, FFT של 8192",
+        "8192 דגימות קלט מצומצמות פי 4, FFT של 2048",
+        "2048 דגימות קלט מרופדות באפסים, FFT של 8192"
+      ],
+      "answer": 2,
+      "explanation": "כל buffer של 8192 דגימות מצומצם פי 4 ל-2048 נקודות, ומבוצע עליו FFT אחד. זה ההבדל בין FFT בגודל 2048 לבין צריכה של 2048 דגימות, והבלבול בין השניים הוא בדיוק מקור המספר השגוי 24,414.",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מישהו אומר: '50 MS/s חלקי 2048 נקודות = 24,414 FFT בשנייה'. מה השגיאה?",
+      "choices": [
+        "צריך לחלק ב-2 כי הדגימות complex, כך שיוצא 12,207",
+        "החישוב נכון, וההבדל מ-6,100 נובע מ-overhead",
+        "צריך להכפיל ב-log2(2048) = 11",
+        "הוא מניח 2048 דגימות חדשות לכל FFT, אבל כל FFT צורך 8192 דגימות קלט (buffer מצומצם פי 4), ולכן הקצב הוא 50e6 / 8192"
+      ],
+      "answer": 3,
+      "explanation": "קצב FFT = קצב קלט חלקי דגימות קלט נצרכות לכל FFT. 50 MS/s complex כבר סופר דגימות complex, ולכן אין חלוקה ב-2. overhead לא מסביר פער של פי 4 בדיוק. log2(N) שייך לעלות של FFT, לא לקצב.",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q05",
+      "level": 2,
+      "type": "short",
+      "prompt": "לפי הקירוב 5·N·log2(N), כמה flops עולה FFT complex של N = 2048?",
+      "accept": ["112640", "112,640", "113k", "1.13e5", "~113k"],
+      "explanation": "log2(2048) = 11, ולכן 5 × 2048 × 11 = 112,640. זו מוסכמה מקובלת (גם FFTW משתמשת בה לדיווח MFLOPS) ולא ספירה מדויקת, שתלויה באלגוריתם (radix, split-radix).",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מרווח ה-bins של FFT בן 2048 נקודות על דגימות ב-50 MS/s, בלי שום צמצום?",
+      "choices": [
+        "24.414 kHz",
+        "6.104 kHz",
+        "48.828 kHz",
+        "12.207 kHz"
+      ],
+      "answer": 0,
+      "explanation": "Δf = fs / N = 50e6 / 2048 ≈ 24,414 Hz. 6.104 kHz הוא fs / 8192, או 12.5 MS/s חלקי 2048, כלומר מה שמתקבל אחרי boxcar decimation פי 4. 48.828 kHz הוא N = 1024, ו-12.207 kHz הוא N = 4096. כדאי לשים לב ש-24,414 מופיע כאן כמרווח bins בהרץ, ולא כקצב FFT.",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q07",
+      "level": 3,
+      "type": "multi",
+      "prompt": "'צמצום פי 4' של 8192 דגימות ל-2048 לפני FFT אחד יכול להיות ממומש בכמה דרכים. אילו טענות נכונות?",
+      "choices": [
+        "ממוצע של כל 4 דגימות סמוכות הוא decimation עם פילטר boxcar: קצב אפקטיבי 12.5 MS/s, span של 12.5 MHz ומרווח bins של כ-6.1 kHz",
+        "סכימה של 4 בלוקים עוקבים של 2048 דגימות ואחריה FFT של 2048 נותנת בדיוק את ה-bins 0, 4, 8, … של FFT ב-8192 נקודות",
+        "ממוצע של ספקטרומי הספק של 4 FFTs (Welch) גם הוא FFT אחד לכל buffer",
+        "boxcar של 4 דגימות הוא anti-alias filter טוב, עם הנחתה גבוהה מחוץ ל-±6.25 MHz",
+        "בשלוש הדרכים ה-span הספקטרלי נשאר 50 MHz"
+      ],
+      "answer": [0, 1],
+      "explanation": "Boxcar decimation מוריד את הקצב ל-12.5 MS/s, כך שה-span מצטמצם ל-12.5 MHz וה-bin ל-12.5e6/2048 ≈ 6.1 kHz. אבל זה פילטר גרוע: בקצה ה-span (f/fs = 1/8) התגובה היא 1/(4·sin(π/8)) ≈ 0.65, כלומר −3.7 dB, והסיידלובים הם רק כ-−13 dB, כך שיש aliasing משמעותי. folding שווה לכל bin רביעי של FFT ב-8192 נקודות, כי e^{−j2πjn/2048} = e^{−j2π(4j)n/8192}, ושם ה-span נשאר 50 MHz. Welch דורש 4 FFTs. בראיון חייבים לדעת איזו מהדרכים בקוד שלך.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "נניח שנמדד (בעתיד) שעיבוד buffer (צמצום, FFT, זיהוי והחלטה) לוקח 40 µs בממוצע על thread אחד. מה ה-utilization הממוצע של אותה ליבה?",
+      "choices": [
+        "כ-6.5%",
+        "כ-24%",
+        "כ-98%",
+        "כ-41%"
+      ],
+      "answer": 1,
+      "explanation": "40 / 163.84 ≈ 0.244. 98% מתקבל מ-40 µs × 24,414 (המספר הנאיבי). 6.5% ו-41% הם טעויות חשבון. utilization ממוצע נמוך הוא תנאי הכרחי אבל לא מספיק: צריך גם שה-p99.9 וה-max, יחד עם עומק התור, יספגו ספייקים.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q09",
+      "level": 3,
+      "type": "oral",
+      "prompt": "המראיין: 'לא מדדת. אז איך היית מודד את קצב ה-FFT ואת עמידת ה-pipeline בזמן אמת?'",
+      "modelAnswer": "שלוש שכבות. (1) Instrumentation ב-host: timestamp מ-std::chrono::steady_clock בכניסה וביציאה של כל שלב לכל buffer, נכתב ל-ring buffer מוקצה מראש בלי I/O ב-hot path. thread אחר מסכם פעם בשנייה: FFT/s בפועל, histogram של זמני עיבוד ו-percentiles (p50, p99, p99.9, max) מול התקציב של 163.84 µs, ועומק מקסימלי של התור. (2) אותות מ-UHD: counter של overflow מה-rx_metadata, ובדיקת רציפות: ה-time_spec של buffer צריך להיות שווה לקודם ועוד 8192/fs. כל קפיצה היא אובדן, גם אם לא ראית 'O'. ב-TX: counters של underflow מההודעות האסינכרוניות. (3) ריצה ארוכה, למשל שעה, בתנאים אמיתיים: 10 GbE, ה-thread priority וה-pinning הסופיים, ועם TX פעיל כדי למדוד גם observation time. בנוסף micro-benchmark מבודד ל-FFT עם google-benchmark, כדי להפריד בין עלות חישוב לבין jitter של המערכת. התוצאה: מספר נמדד שאפשר לכתוב בקורות החיים במקום המספר המחושב.",
+      "rubric": [
+        "timestamps לכל שלב בלי I/O ב-hot path, סיכום ב-thread אחר",
+        "percentiles או histogram מול 163.84 µs, לא רק ממוצע",
+        "overflow counters ובדיקת רציפות time_spec",
+        "ריצה ארוכה בתנאים אמיתיים, כולל observation time",
+        "הפרדה בין micro-benchmark של FFT לבין מדידת המערכת"
+      ],
+      "explanation": "השאלה בודקת אם אתה יודע להפוך טענה מחושבת לטענה נמדדת. הנקודות שמבדילות סניור: tail ולא ממוצע, רציפות timestamps (לא רק counters), ומדידה שלא משנה את מה שהיא מודדת.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "לפי 5·N·log2(N) flops ל-FFT בגודל 2048, בקצב של 6,103.5 FFT/s, מה עומס החישוב של ה-FFT בלבד?",
+      "choices": [
+        "כ-2.75 GFLOP/s",
+        "כ-69 MFLOP/s",
+        "כ-0.69 GFLOP/s",
+        "כ-6.9 GFLOP/s"
+      ],
+      "answer": 2,
+      "explanation": "112,640 × 6,103.5 ≈ 687.5e6 flop/s. 2.75 GFLOP/s הוא אותו חשבון עם הקצב הנאיבי 24,414, ו-69 MFLOP/s ו-6.9 GFLOP/s הם טעויות של פי 10. המסקנה: זה עומס קטן לליבה מודרנית, ולכן החישוב כנראה לא צוואר הבקבוק, אלא I/O, העתקות ו-jitter. אבל זו השערה שצריך לאמת במדידה.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "איזה קריטריון מראה באמת שה-pipeline עומד ב-50 MS/s לאורך זמן?",
+      "choices": [
+        "זמן העיבוד הממוצע לכל buffer קטן מ-163.84 µs",
+        "מספר ה-buffers שהתקבלו בשנייה שווה ל-6,103.5",
+        "ה-CPU utilization של התהליך מתחת ל-100%",
+        "בריצה ארוכה: אפס overflows, time_spec רציף בין כל ה-buffers, ו-tail (p99.9 ו-max) של זמן העיבוד שנספג בעומק התור"
+      ],
+      "answer": 3,
+      "explanation": "ממוצע מסתיר ספייקים, ו-CPU מתחת ל-100% לא מבטיח שאין חסימות. ספירת buffers מטעה: אחרי overflow המכשיר זורק דגימות אבל ממשיך לשלוח, כך שהספירה יכולה להיראות תקינה בזמן שחסרים קטעים. רק רציפות timestamps ויחד איתה counters של overflow מוכיחות שאין אובדן.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q12",
+      "level": 4,
+      "type": "oral",
+      "prompt": "המראיין (NVIDIA): 'איך היית מאיץ את שלב ה-FFT? ומתי GPU באמת שווה את זה כאן?'",
+      "modelAnswer": "קודם מודדים, כי לפי החשבון ה-FFT לבדו הוא כ-0.69 GFLOP/s וכנראה לא הצוואר. אם הוא כן: (1) FFTW נכון: plan פעם אחת באתחול ולא לכל buffer, עם FFTW_MEASURE או PATIENT, שמירת wisdom לקובץ כדי לא לשלם planning בכל הפעלה, buffers מיושרים (fftwf_malloc) כדי לאפשר SIMD, float ולא double, ו-in-place אם אפשר. רק fftw_execute הוא thread-safe, ה-planner לא. (2) צמצום ו-magnitude ב-SIMD: הם memory-bound, וכדאי לאחד אותם ב-pass אחד על הנתונים כדי לחסוך מעברים על ה-cache. (3) Batching: plan_many שמעבד כמה buffers יחד משפר throughput, במחיר latency של המתנה ל-batch. (4) Threads: pipeline parallelism (RX, עיבוד, החלטה על ליבות נפרדות) או worker pool שמעבד buffers במקביל ושומר על הסדר לפי sequence number. (5) GPU עם cuFFT batched: משתלם כשהעומס גדל מאוד, למשל FFT גדולים יותר, overlap, הרבה ערוצים או קצב גבוה, וכש-latency של מילישניות מקובל. המחיר: העתקה ב-PCIe (צריך pinned memory ו-streams כדי לחפוף העתקה וחישוב), launch overhead, ו-batching שמוסיף latency. ב-6,100 FFT/s של 2048 נקודות, buffer של 16 KiB אחרי צמצום, ה-overhead של kernel launch והעתקה לכל buffer בודד כנראה גדול מהחישוב עצמו, אז GPU כאן רק עם batching גדול. (6) Overlap של 50% משפר את רזולוציית הזמן ומכפיל את העומס, וזו החלטה מוצרית ולא אופטימיזציה.",
+      "rubric": [
+        "מתחיל במדידה ובחשבון (0.69 GFLOP/s, כנראה לא הצוואר)",
+        "FFTW נכון: plan פעם אחת, wisdom, alignment, float, ה-planner לא thread-safe",
+        "batching ו-threads עם trade-off של throughput מול latency",
+        "ניתוח GPU: PCIe, pinned memory, streams, launch overhead, ומתי זה משתלם",
+        "מבין ש-overlap מגדיל עומס ומשפר רזולוציית זמן"
+      ],
+      "explanation": "מראייני NVIDIA לא מחפשים 'פשוט GPU'. הם מחפשים מי שיודע מתי GPU מפסיד: עבודה קטנה לכל קריאה, latency קשיח ו-overhead של העתקות. מועמד ששם GPU בהקשר של batch ושל רוחב פס נשמע כמו מי שעבד עם GPU באמת.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "אם במקום הצמצום מבצעים FFT של 2048 נקודות על הדגימות הגולמיות ב-50 MS/s עם overlap של 50%, כמה FFT בשנייה?",
+      "choices": [
+        "6,103.5",
+        "24,414",
+        "48,828",
+        "12,207"
+      ],
+      "answer": 2,
+      "explanation": "עם overlap של 50% ה-hop הוא 1024 דגימות, ולכן 50e6 / 1024 ≈ 48,828 FFT/s, פי 8 מהמצב הנוכחי. 24,414 הוא בלי overlap, ו-12,207 מתקבל כשמבלבלים ומכפילים את ה-hop במקום לחלק אותו. overlap עם חלון כמו Hann מפצה על הנחתת הקצוות של החלון, ומשפר זיהוי של אירועים קצרים.",
+      "lesson": "cv.fft-rates"
+    },
+    {
+      "id": "cv.fft-rates.q14",
+      "level": 4,
+      "type": "short",
+      "prompt": "מה קצב ה-sc16 על החוט (Gb/s) ב-50 MS/s?",
+      "accept": ["1.6", "1.6gb/s", "1.6gbps"],
+      "explanation": "4 bytes לדגימה × 50e6 = 200 MB/s = 1.6 Gb/s, יותר מ-1 GbE, וזה מתיישב עם ה-underruns שתועדו במעבדה. לכן קצב FFT מחושב של 6,103.5 לא שווה הרבה אם ה-transport לא מספק את הדגימות.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q15",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה הקצב המקסימלי, באופן תיאורטי, של sc16 על 1 GbE, ומה המשמעות?",
+      "choices": [
+        "62.5 MS/s, ולכן 50 MS/s נכנס בנוחות",
+        "31.25 MS/s, ובפועל פחות בגלל overhead של headers; 50 MS/s ב-sc16 לא נכנס, וצריך 10 GbE, sc8 או קצב נמוך יותר",
+        "125 MS/s, כי 1 Gb/s הם 125 MB/s",
+        "15.6 MS/s, כי I ו-Q נשלחים בנפרד"
+      ],
+      "answer": 1,
+      "explanation": "1e9 bit/s חלקי 32 bit לדגימה = 31.25 MS/s, ובפועל פחות בגלל headers של Ethernet, IP, UDP ו-VITA. 62.5 MS/s מתקבל מ-16 bit לדגימה (sc8). 125 MS/s מתעלם מכך שכל דגימה היא 4 bytes. I ו-Q כבר כלולים ב-32 bit. sc8 ב-50 MS/s הוא 800 Mb/s, נכנס על הנייר אבל צמוד, ועם כמחצית מה-dynamic range ב-dB (8 bit מול 16 bit).",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q16",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'כתבת כ-6,100 FFT בשנייה. 50 מגה חלקי 2048 זה 24 אלף. מה נכון? תגן על המספר.'",
+      "modelAnswer": "6,100 הוא הנכון לארכיטקטורה שלי, ואסביר. קצב FFT הוא קצב הקלט חלקי מספר דגימות הקלט שכל FFT צורך. ה-RX קורא buffers של 8192 דגימות, וכל buffer מצומצם פי 4 ל-FFT יחיד של 2048 נקודות. לכן FFT אחד לכל 8192 דגימות: 50e6 / 8192 ≈ 6,103.5 בשנייה. 24,414 נכון רק אם מבצעים FFT על כל 2048 דגימות חדשות בלי צמצום, וזה לא מה שהקוד עושה. שלושה סייגים שאני אומר מיוזמתי: (1) המספר מחושב ולא נמדד, כי לא היה timing instrumentation. (2) זה חסם עליון: כשה-TX פעיל ה-RX לא צופה, ולכן בפועל יש פחות FFTs, וה-observation time קטן מ-100%. (3) 50 MS/s מתמשך לא אומת על החומרה. ב-sc16 זה 1.6 Gb/s, ועל 1 GbE היו underruns במעבדה. ההשלכה של הבחירה: כל ספקטרום מייצג 163.84 µs. זו רזולוציית הזמן וחלק מה-latency, וה-averaging משפיע על הספקטרום, ואני יכול לפרט איך. כדי להפוך את זה למספר נמדד: timestamps לכל buffer, histogram מול 163.84 µs, counters של overflow ורציפות time_spec בריצה ארוכה על 10 GbE.",
+      "rubric": [
+        "גוזר נכון: קצב קלט חלקי דגימות לכל FFT = 50e6/8192 ≈ 6,103.5",
+        "מסביר בדיוק למה 24,414 מניח משהו שלא קורה",
+        "מסייג: מחושב ולא נמדד, חסם עליון בגלל observation time, 50 MS/s לא אומת (1 GbE)",
+        "מקשר להשלכות: 163.84 µs לכל ספקטרום, השפעת ה-averaging",
+        "מציע תוכנית מדידה קונקרטית"
+      ],
+      "explanation": "זו השאלה שכמעט בטוח תגיע. תשובה מושלמת היא קצרה, מתמטית ומסויגת מיוזמתך. אם המראיין צריך לחלץ ממך שהמספר לא נמדד, איבדת אמינות; אם אמרת את זה בעצמך, הרווחת אותה.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia", "microsoft"]
+    },
+    {
+      "id": "cv.fft-rates.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'נניח שה-averaging שלך הוא סכימה של 4 בלוקים של 2048 דגימות ואז FFT, בלי חלון. יש טון שלא תראה בכלל? תוכיח ותציע תיקון.'",
+      "modelAnswer": "כן. נסמן z[k] = Σ_{m=0..3} x[k + 2048m]. עבור טון x[n] = e^{j2πfn/fs} מתקבל z[k] = e^{j2πfk/fs} · Σ_m e^{jθm} עם θ = 2π·f·2048/fs. הסכום הוא טור הנדסי: |Σ| = |sin(2θ)/sin(θ/2)|, והוא מתאפס כש-4θ כפולה של 2π אבל θ לא כפולה של 2π. כלומר כשה-offset של f מ-bin center של ה-2048 הוא רבע, חצי או שלושה רבעים bin. ב-50 MS/s ה-bin הוא 24.414 kHz, אז טונים ב-offset של כ-6.1, 12.2 ו-18.3 kHz מ-bin center מתבטלים לגמרי: ארבעת הבלוקים מסתכמים לאפס. במונחי FFT ב-8192 נקודות, folding לוקח רק כל bin רביעי, וטון שיושב בדיוק על אחד מה-bins שנזרקו נופל ב-null של כל ה-bins שנשארו. ב-offsets אחרים יש scalloping חזק. תיקון: להחיל חלון באורך 8192 לפני ה-folding. זה WOLA, שהוא בעצם polyphase filterbank: הסכימה עם חלון מתוכנן (למשל sinc כפול חלון, באורך 4 פעמים ה-FFT) נותנת לכל bin תגובה רחבה ושטוחה בערך ברוחב bin, בלי nulls ועם הנחתה טובה של שכנים, באותה עלות FFT ועוד 8192 כפלים. חלופות: FFT ב-8192 נקודות וסכימה של 4 bins שכנים, יקר יותר, או power averaging של 4 FFTs (Welch), שעולה פי 4 FFTs. ובכנות: צריך לבדוק בקוד איזה פירוש של averaging ממומש, ולכתוב בדיקה עם טון ב-offset של חצי bin.",
+      "rubric": [
+        "גוזר את הסכום ההנדסי ואת תנאי ה-null (offset של 1/4, 1/2, 3/4 bin)",
+        "נותן מספרים: bin של 24.414 kHz ו-nulls ב-6.1, 12.2 ו-18.3 kHz",
+        "מקשר ל-decimation בתדר: כל bin רביעי של FFT ב-8192",
+        "מציע WOLA או polyphase filterbank כתיקון ומסביר את העלות",
+        "מזכיר חלופות (8192-FFT ו-bin sum, Welch) ובדיקה שתתפוס את זה"
+      ],
+      "explanation": "שאלת DSP עמוקה שבודקת אם אתה מבין את המתמטיקה של מה שבנית ולא רק את הקצב. folding בלי חלון הוא באג ספקטרלי שקט, ו-WOLA/PFB הוא הפתרון הסטנדרטי. אם ה-averaging בקוד שלך הוא boxcar decimation, התשובה המקבילה היא aliasing מחוץ ל-±6.25 MHz.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.fft-rates.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "אירוע מתחיל בזמן אקראי (מפולג אחיד) ביחס לגבולות ה-buffers. אם מתעלמים מ-transport ומעיבוד, כמה זמן עובר מתחילת האירוע ועד שה-buffer שמכיל אותו מוכן לעיבוד?",
+      "choices": [
+        "תמיד 163.84 µs",
+        "ממוצע כ-20.48 µs ומקסימום 40.96 µs, כי ה-FFT הוא 2048 נקודות",
+        "תמיד 0, כי ה-RX thread קורא ברציפות",
+        "ממוצע כ-81.92 µs ומקסימום 163.84 µs"
+      ],
+      "answer": 3,
+      "explanation": "ה-buffer מוכן רק כשכל 8192 הדגימות הגיעו. אירוע שמתחיל בתחילת buffer מחכה 163.84 µs, ואירוע שמתחיל בסופו כמעט 0. בממוצע זה חצי, 81.92 µs. ה-2048 נקודות הן אחרי הצמצום ולא קובעות את זמן המילוי (40.96 µs הם 2048 דגימות ב-50 MS/s). קריאה רציפה לא מבטלת את המתנת המילוי. וזה עוד לפני ש-UHD מצרף דגימות ל-packets ולפני תור ועיבוד: buffer קטן יותר מקטין את הרכיב הזה במחיר overhead גבוה יותר לכל buffer.",
+      "lesson": "cv.fft-rates",
+      "tags": ["nvidia"]
+    }
+  ]
+}

@@ -1,0 +1,351 @@
+{
+  "domain": "dsp",
+  "subtopic": "fft",
+  "lessons": [
+    {
+      "id": "dsp.fft",
+      "title": "FFT ו-throughput",
+      "what": "FFT מחשב DFT ב-O(N log N) במקום O(N^2). בצד התוכנה השאלות הן: כמה FLOPs בשנייה צריך, האם זה compute-bound או memory-bound, איך משתמשים נכון בספריה (FFTW, cuFFT), ואיך מתרגמים bins ל-Hz ול-dB בלי שגיאות נרמול.",
+      "when": [
+        "ניתוח ספקטרלי רציף (STFT, spectrum monitor) בקצב דגימה גבוה",
+        "קונבולוציה מהירה (overlap-save) ו-channelizers",
+        "שאלות 'כמה ליבות/GPU צריך' או 'למה זה איטי כש-N גדל'",
+        "המרה בין אינדקס bin, תדר, ו-fftshift"
+      ],
+      "how": [
+        "רזולוציית bin: fs/N. bin k מייצג k·fs/N עבור k < N/2, ו-(k-N)·fs/N עבור החצי העליון (תדרים שליליים)",
+        "הערכת עבודה: כ-5·N·log2(N) FLOPs ל-FFT מרוכב, כלומר 5·log2(N) FLOPs לכל דגימה. ב-N=4096 זה 60 FLOPs לדגימה",
+        "קצב frames: fs/hop, כש-hop = N עבור frames לא חופפים ו-N/2 עבור 50% overlap",
+        "FFT על קלט ממשי (rfft, r2c) מחזיר N/2+1 bins ועולה בערך חצי",
+        "ספריות: יוצרים plan פעם אחת מחוץ ללולאה החמה, עם buffers מיושרים, ומבצעים אותו שוב ושוב. מאגדים (batch) הרבה FFTs קטנים לקריאה אחת",
+        "נרמול: FFTW ו-NumPy לא מנרמלים את ה-forward. DC של N אחדות הוא N. ל-dB משתמשים ב-10·log10(|X|^2) עם `std::norm` כדי לחסוך sqrt",
+        "N גדול: כשהנתונים לא נכנסים ב-cache, כל שלב radix עובר על הזיכרון מחדש, וה-FFT הופך ל-memory-bound. אלגוריתמי four-step מפרקים FFT גדול ל-FFTs קטנים שנכנסים ב-cache"
+      ],
+      "complexity": "זמן O(N log N) ל-FFT, כלומר O(log N) לדגימה בעיבוד רציף. זיכרון O(N). latency מינימלי של frame: N/fs, בלי קשר ל-overlap.",
+      "pitfalls": [
+        "ליצור plan בתוך הלולאה (FFTW_MEASURE יכול לקחת שניות)",
+        "לשכוח שה-forward לא מנורמל ולקבל dB שגוי ב-20·log10(N)",
+        "zero padding מוסיף אינטרפולציה בין bins אבל לא רזולוציה אמיתית",
+        "stride של חזקת 2 גדולה (FFT על עמודות) גורם ל-cache conflicts",
+        "FFT קטן אחד לכל kernel launch ב-GPU: ה-overhead גדול מהחישוב"
+      ],
+      "senior": [
+        "לעשות חשבון FLOPs ו-bandwidth בעל-פה ולהגיד אם זה compute-bound או memory-bound",
+        "להחליט על N, hop וחלון לפי דרישות רזולוציה, latency וקצב עדכון",
+        "להכיר את ה-API ואת מגבלות ה-threading של FFTW (execute thread-safe, planner לא)",
+        "לתכנן batching ו-pipelining עם GPU (streams, pinned memory)"
+      ],
+      "diagram": "bins (N=8, after fft):\nk:  0  1  2  3  4  5  6  7\nf:  0  1  2  3 -4 -3 -2 -1  (x fs/N)\nfftshift -> -4 -3 -2 -1 0 1 2 3"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.fft.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הסיבוכיות של FFT באורך N?",
+      "choices": [
+        "O(N log N)",
+        "O(N)",
+        "O(N^2)",
+        "O(N^2 log N)"
+      ],
+      "answer": 0,
+      "explanation": "FFT (למשל Cooley-Tukey) מפרק DFT באורך N ל-log2(N) שלבים, כל אחד עם O(N) עבודה. DFT ישיר הוא O(N^2). O(N) אפשרי רק עבור מקרים מיוחדים כמו Goertzel ל-bin בודד (O(N) לכל bin).",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q02",
+      "level": 1,
+      "type": "short",
+      "prompt": "fs = 1 MS/s ו-N = 1024. מה המרווח בין bins ב-Hz?",
+      "accept": [
+        "976.5625",
+        "976.56",
+        "976.6",
+        "977",
+        "976.5625Hz"
+      ],
+      "explanation": "המרווח הוא fs/N = 1e6/1024 = 976.5625 Hz. זה גם התדר של bin 1. רזולוציה אמיתית (היכולת להפריד שני טונים) תלויה גם בחלון, בערך פי 1.5-2 מזה עבור Hann.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "כמה ערכים מרוכבים מחזיר FFT ממשי (`np.fft.rfft` או r2c ב-FFTW) על N=1024 דגימות ממשיות?",
+      "choices": [
+        "512",
+        "1024",
+        "2048",
+        "513"
+      ],
+      "answer": 3,
+      "explanation": "לספקטרום של אות ממשי יש סימטריה הרמיטית, X[N-k] = conj(X[k]), ולכן מספיק לשמור את k = 0..N/2: זה N/2+1 = 513 ערכים. bin 0 (DC) ו-bin N/2 (Nyquist) ממשיים. 512 הוא הטעות הנפוצה, ששוכחת את Nyquist.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q04",
+      "level": 2,
+      "type": "short",
+      "prompt": "fs = 25.6 MS/s, FFT באורך 1024 עם 50% overlap. כמה frames בשנייה צריך לחשב?",
+      "accept": [
+        "50000",
+        "50,000",
+        "50k",
+        "5e4"
+      ],
+      "explanation": "hop = N/2 = 512, ולכן frames/s = fs/hop = 25.6e6/512 = 50,000. בלי overlap זה היה 25,000. overlap של 50% מכפיל את העבודה.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nx = np.ones(8)\nX = np.fft.fft(x)\nprint(X[0].real, abs(X[1]) < 1e-9)",
+      "choices": [
+        "1.0 True",
+        "8.0 True",
+        "8.0 False",
+        "0.125 True"
+      ],
+      "answer": 1,
+      "explanation": "ה-forward FFT ב-NumPy (וב-FFTW) לא מנורמל: X[0] הוא סכום הדגימות, 8. אות קבוע מכיל רק DC, ולכן שאר ה-bins אפס (עד שגיאת עיגול). 1.0 הוא מה שהיה יוצא עם `norm='forward'`, ו-0.125 הוא נרמול כפול.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "לוקחים 1024 דגימות ומרפדים באפסים ל-8192 לפני FFT. מה משתנה?",
+      "choices": [
+        "הרזולוציה התדרית משתפרת פי 8: אפשר להפריד טונים קרובים פי 8",
+        "רעש הרצפה יורד ב-9 dB",
+        "מקבלים דגימה צפופה יותר של אותו ספקטרום (אינטרפולציה), בלי שיפור ביכולת ההפרדה",
+        "שום דבר, ה-bins הנוספים הם אפסים"
+      ],
+      "answer": 2,
+      "explanation": "היכולת להפריד טונים נקבעת לפי אורך הנתונים האמיתי (1024 דגימות) והחלון. zero padding מחשב את אותו DTFT בנקודות צפופות יותר, וזה שימושי להערכת תדר peak, אבל עולה פי 8 ויותר בחישוב. רעש הרצפה ל-bin לא משתנה ביחס לאות, כי לא נוספה אנרגיה או נתונים.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "FFT מרוכב רציף באורך 4096 בלי overlap על stream של 100 MS/s. לפי ההערכה המקובלת של 5·N·log2(N) FLOPs ל-FFT, כמה כוח חישוב צריך?",
+      "choices": [
+        "כ-6 GFLOP/s",
+        "כ-0.6 GFLOP/s",
+        "כ-60 GFLOP/s",
+        "כ-600 GFLOP/s"
+      ],
+      "answer": 0,
+      "explanation": "לכל דגימה: 5·log2(4096) = 5·12 = 60 FLOPs. כפול 100e6 דגימות לשנייה = 6e9 = 6 GFLOP/s. ליבת x86 עם AVX2 מגיעה לעשרות GFLOP/s בשיא, אבל FFT מגיע בפועל לחלק מזה, ולכן זה ריאלי על ליבה אחת או שתיים, ו-50% overlap מכפיל. היכולת לעשות את החשבון הזה בראש היא מה שנבדק.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהבאים הם שימוש נכון ב-FFTW בלולאה real-time? (בחר את כל הנכונים)",
+      "choices": [
+        "ליצור את ה-plan פעם אחת באתחול (למשל FFTW_MEASURE) ולהריץ `fftw_execute` בכל frame",
+        "להקצות buffers עם `fftw_malloc` כדי לקבל alignment ל-SIMD",
+        "ליצור plan חדש עם FFTW_ESTIMATE בכל frame, כי זה מהיר",
+        "לקרוא ל-planner מכמה threads במקביל, כי FFTW thread-safe",
+        "להשתמש ב-`fftw_plan_many_dft` כדי לבצע הרבה FFTs קטנים בקריאה אחת"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "planning יקר (MEASURE יכול לקחת שניות) ושייך לאתחול; execute זול. fftw_malloc מבטיח alignment שמאפשר ל-FFTW להשתמש ב-SIMD. גם ESTIMATE מקצה זיכרון ועושה עבודה מיותרת בלולאה החמה. רק `fftw_execute` thread-safe; ה-planner לא, וצריך לסנכרן קריאות אליו. plan_many חוסך overhead ומאפשר אופטימיזציה על פני ה-batch.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q09",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nprint(np.fft.fftfreq(8, d=1/8))",
+      "choices": [
+        "[0. 1. 2. 3. 4. 5. 6. 7.]",
+        "[-4. -3. -2. -1.  0.  1.  2.  3.]",
+        "[ 0.  1.  2.  3. -4. -3. -2. -1.]",
+        "[ 0.  1.  2.  3.  4. -3. -2. -1.]"
+      ],
+      "answer": 2,
+      "explanation": "fftfreq מחזיר את התדרים בסדר הטבעי של פלט ה-FFT: קודם 0 עד N/2-1, ואז התדרים השליליים מ-N/2- עד 1-. עם d=1/8 (fs=8) המרווח הוא 1 Hz. bin N/2 מוצג כ-4- (ולא 4+) לפי ה-convention של NumPy. הסדר הממוין הוא מה שמתקבל אחרי fftshift.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך להציג power spectrum ב-dB מפלט FFT של `std::complex<float>`, בקצב גבוה. מה הדרך היעילה והנכונה?",
+      "choices": [
+        "`20*log10(std::abs(X[k]))`",
+        "`10*log10(std::abs(X[k]))`",
+        "`20*log10(std::norm(X[k]))`",
+        "`10*log10(std::norm(X[k]))`"
+      ],
+      "answer": 3,
+      "explanation": "`std::norm` מחזיר |X|^2 = re^2 + im^2 בלי sqrt, ו-10·log10 של הספק שווה ל-20·log10 של amplitude. `20*log10(std::abs(...))` נכון מתמטית אבל עולה sqrt (ו-std::abs גם נזהר מ-overflow, כמו hypot) לכל bin. שתי האפשרויות האחרות מערבבות סקאלות ונותנות חצי או כפול ב-dB. מוסיפים epsilon קטן לפני log כדי לא לקבל inf-.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q11",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `fftshift` ו-`ifftshift` in-place על `std::vector<std::complex<float>>`, שעובדות נכון גם ל-N אי-זוגי (כמו ב-NumPy).",
+      "starter": "void fftshift(std::vector<std::complex<float>>& x);\nvoid ifftshift(std::vector<std::complex<float>>& x);",
+      "modelAnswer": "void fftshift(std::vector<std::complex<float>>& x) {\n    // element at index ceil(N/2) (first negative freq) moves to front\n    std::rotate(x.begin(), x.begin() + (x.size() + 1) / 2, x.end());\n}\n\nvoid ifftshift(std::vector<std::complex<float>>& x) {\n    std::rotate(x.begin(), x.begin() + x.size() / 2, x.end());\n}\n// N=5: [0,1,2,-2,-1] -> fftshift -> [-2,-1,0,1,2]\n// N even: both rotate by N/2 and are identical",
+      "rubric": [
+        "משתמש ב-rotate (או swap בלולאה) in-place, O(N), בלי הקצאה",
+        "fftshift מסובב ב-ceil(N/2), ifftshift ב-floor(N/2)",
+        "מבין שב-N זוגי שתיהן זהות ובאי-זוגי הן הפכיות ולא זהות",
+        "מטפל בווקטור ריק (rotate על טווח ריק תקין)"
+      ],
+      "explanation": "ב-N אי-זוגי יש יותר תדרים חיוביים מאשר שליליים (בלי Nyquist), ולכן ההזזה לא סימטרית. שימוש באותה פונקציה לשני הכיוונים הוא באג נפוץ שמופיע רק ב-N אי-זוגי.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "benchmark של FFT מרוכב ב-float: מ-N=4096 עד N=2^22. זמן לדגימה עולה בערך כמו log N עד N≈2^16, ואז קופץ פי 2-3. מה ההסבר והפתרון המקובל?",
+      "choices": [
+        "denormals מופיעים ב-N גדול; פתרון: flush-to-zero",
+        "twiddle factors לא מדויקים ב-N גדול; פתרון: double",
+        "ה-working set (N×8 bytes, ועוד twiddles) יוצא מ-L2/L3. כל שלב radix עובר שוב על DRAM והקוד הופך ל-memory-bound. פתרון: אלגוריתם four-step/six-step שמפרק ל-FFTs קטנים שנכנסים ב-cache",
+        "ה-branch predictor נכשל ב-N גדול; פתרון: radix-4"
+      ],
+      "answer": 2,
+      "explanation": "N=2^16 complex float הם 512 KB, בערך גודל L2; מעל זה כל אחד מ-log2(N) המעברים קורא וכותב את כל המערך מ-L3 או DRAM. four-step (Bailey) מסתכל על N כמטריצה N1×N2, מבצע FFTs באורך N1 ו-N2 שנכנסים ב-cache, עם twiddle וטרנספוזיציה, וכך מקטין את מספר המעברים על DRAM לכמה בודדים. FFTW ו-MKL עושים את זה פנימית. denormals ודיוק twiddles אינם תלויי-גודל באופן הזה.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "גלאי אירועים: FFT באורך 65536 על stream של 10 MS/s עם 50% overlap. ההחלטה מתקבלת על frame שלם. מה הזמן המינימלי מרגע הגעת הדגימה הראשונה של frame ועד שאפשר לחשב אותו (בלי זמן חישוב)?",
+      "choices": [
+        "כ-6.55 ms",
+        "כ-3.28 ms",
+        "כ-0.66 ms",
+        "כ-13.1 ms"
+      ],
+      "answer": 0,
+      "explanation": "צריך לאסוף N דגימות לפני שה-FFT אפשרי: 65536/10e6 = 6.5536 ms. ה-overlap מקטין את מרווח העדכון ל-3.28 ms (hop), אבל לא את ה-latency של frame בודד. אם צריך latency נמוך יותר, מקצרים N (על חשבון רזולוציה של 152.6 Hz) או משתמשים במסנן/channelizer במקום FFT גדול.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q14",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "קיבלת `mag`: |X[k]| עבור k=0..N/2 מ-FFT של אות ממשי באורך N (עם חלון). כתוב `peakFreq` שמוצאת את ה-bin המקסימלי (לא DC ולא Nyquist) ומשפרת את ההערכה עם אינטרפולציה פרבולית על הלוגריתם של שלושת ה-bins. החזר תדר ב-Hz.",
+      "starter": "double peakFreq(const std::vector<float>& mag, size_t N, double fs);",
+      "modelAnswer": "double peakFreq(const std::vector<float>& mag, size_t N, double fs) {\n    if (mag.size() < 3) return 0.0;\n    size_t k = 1;\n    for (size_t i = 2; i + 1 < mag.size(); ++i)\n        if (mag[i] > mag[k]) k = i;\n    const double eps = 1e-30;\n    double a = std::log(mag[k - 1] + eps);\n    double b = std::log(mag[k] + eps);\n    double c = std::log(mag[k + 1] + eps);\n    double den = a - 2.0 * b + c;\n    double p = (den != 0.0) ? 0.5 * (a - c) / den : 0.0;  // in [-0.5, 0.5]\n    return (k + p) * fs / N;\n}",
+      "rubric": [
+        "חיפוש max רק בטווח 1..N/2-1 כדי שיהיו שכנים משני הצדדים",
+        "נוסחת אינטרפולציה נכונה p = 0.5(a-c)/(a-2b+c), עם log (הערכה טובה יותר לחלונות כמו Hann)",
+        "הגנה מ-log(0) ומחלוקה באפס",
+        "המרה ל-Hz עם (k+p)·fs/N",
+        "O(N) למעבר אחד"
+      ],
+      "explanation": "פרבולה דרך שלוש נקודות בנקודות 1-, 0, 1+ נותנת קודקוד ב-p = (a-c)/(2(a-2b+c)). על log magnitude, לחלון גאוסי זה מדויק, ול-Hann זו הערכה טובה מאוד. זה זול בהרבה מ-zero padding לאותה מטרה.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן spectrum monitor real-time: 100 MS/s מרוכב, FFT באורך 4096 עם חלון Hann ו-50% overlap, ממוצע של frames, ותצוגה ב-30 fps. מה החשבון, ומה הארכיטקטורה?",
+      "modelAnswer": "חשבון: hop = 2048, ולכן 100e6/2048 ≈ 48,828 FFTs בשנייה. כל FFT כ-5·4096·12 ≈ 246K FLOPs, סך הכל כ-12 GFLOP/s, ועוד חלון (4096 כפלים מרוכבים-ממשיים) ו-|X|^2 וצבירה לכל bin. כדי להציג 30 fps צוברים בערך 48,828/30 ≈ 1,628 frames לכל תמונה, כלומר הממוצע 'בחינם' מכסה הרבה frames. ארכיטקטורה: thread RX עם עדיפות RT שקורא ל-ring buffer גדול (עשרות ms, כלומר כמה MB); thread או pool של workers שלוקחים בלוקים של הרבה frames, מבצעים window, batch FFT (FFTW plan_many עם SIMD, או cuFFT עם batch גדול ו-pinned memory אם CPU לא מספיק), וצוברים |X|^2 ב-float לכל bin. בגלל overlap, בלוק של worker צריך N-hop דגימות מהבלוק הקודם, וזה קובע איך מחלקים עבודה בין threads. thread התצוגה לוקח פעם ב-33 ms את המצבר (double buffer או swap של מצביע אטומי), מנרמל (כולל תיקון לעוצמת החלון ול-N), ממיר ל-dB ומצייר; הוא לא חייב לעמוד בקצב, ואם הוא מאחר מדלגים על תמונה. מדדים: מילוי ה-ring buffer, overflow counters וזמן עיבוד לבלוק. אם צריך רק תצוגה, אפשר גם לדלג על frames (decimation בזמן) במקום לחשב את כולם.",
+      "rubric": [
+        "חשבון קצב FFTs ו-FLOPs נכון (בסביבות 49K FFT/s ו-12 GFLOP/s)",
+        "הפרדה בין RX, עיבוד ותצוגה, עם ring buffer וגודל מנומק",
+        "batching ושימוש נכון בספרייה (plan אחד, SIMD או GPU)",
+        "צבירה ונרמול נכונים (|X|^2, תיקון חלון, dB בסוף)",
+        "התצוגה לא חוסמת את העיבוד; מדדי overflow"
+      ],
+      "explanation": "מראיין מחפש מספרים נכונים, הפרדה בין מסלול hard real-time לבין מסלול soft (תצוגה), ושימוש מושכל ב-batching.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "2D FFT על מטריצה 4096×4096 של complex<float> בסידור row-major. FFTs על השורות מהירות, אבל FFTs על העמודות איטיות פי 5-10 גם עם אותו קוד FFT. מה הסיבה העיקרית ומה הפתרון?",
+      "choices": [
+        "ה-FFT על עמודות דורש יותר FLOPs",
+        "ה-prefetcher לא עובד על strides קבועים",
+        "עמודות לא מיושרות ל-64 bytes",
+        "stride של 4096×8 = 32 KiB בין איברי עמודה: כל האיברים ממופים לאותו cache set (conflict misses) וכל איבר בדף אחר (TLB misses). פתרון: טרנספוזיציה ב-blocks ואז FFT על שורות, או padding של שורה (למשל 4096+8 איברים)"
+      ],
+      "answer": 3,
+      "explanation": "ב-L1 של 32 KiB ו-8-way, כתובות שההפרש ביניהן הוא כפולה של 4 KiB נופלות לאותו set, ולכן רק 8 איברים מהעמודה יכולים לשבת ב-cache בבת אחת. בנוסף כל גישה היא בדף חדש. FLOPs זהים, וה-prefetcher דווקא מזהה strides קבועים אבל לא מתגבר על conflicts. padding שובר את יישור החזקה של 2 ומפזר את האיברים על sets שונים, וטרנספוזיציה ב-blocks הופכת את הגישה לרציפה.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "צוות כותב FFT בעצמו ב-float32 ל-N=2^20 על נתוני ADC של 16 ביט. מישהו טוען שחייבים double. מה נכון?",
+      "choices": [
+        "float32 לא מספיק לייצג 16 ביט ולכן חייבים double",
+        "שגיאת העיגול של FFT גדלה כמו O(N), ולכן ב-2^20 השגיאה היחסית בסביבות 10%",
+        "השגיאה של FFT מסודר גדלה רק כמו O(log N) (ו-RMS בערך כמו sqrt(log N)), כך ש-float32 נותן רצפת שגיאה הרבה מתחת לרעש הקוונטיזציה של 16 ביט. הסכנה האמיתית היא twiddles שמחושבים ברקורסיה (כפל חוזר ב-exp(jθ)), שמצטברת בה שגיאה גדולה",
+        "צריך double רק לשלב האחרון של ה-butterflies"
+      ],
+      "answer": 2,
+      "explanation": "epsilon של float הוא כ-6e-8 (בערך 144 dB-), ו-Cooley-Tukey עם twiddles מדויקים מוסיף שגיאה יחסית מסדר ε·log2(N) במקרה הגרוע, כ-120 dB- ב-N=2^20, הרבה מתחת ל-SNR של 16 ביט (כ-98 dB). float32 מייצג 16 ביט בדיוק (24 ביט mantissa). twiddles שמחושבים ב-w *= w1 צוברים שגיאה שגדלה עם מספר הכפלים, ולכן FFTW מחשב אותם באופן מדויק או בטבלאות. זה ההבדל בין מימוש ביתי לספרייה.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מעבירים stream של 100 MS/s ל-GPU ומריצים cuFFT באורך 1024 לכל frame בנפרד: copy, launch, copy חזרה וסנכרון, בערך 10 µs למחזור. ה-GPU מנוצל ב-5% והמערכת לא עומדת בקצב. למה, ומה התיקון?",
+      "choices": [
+        "יש כ-97,656 frames בשנייה, ו-10 µs לכל אחד הם כ-0.98 שניות לשנייה של overhead. הפתרון: batch גדול (cufftPlanMany עם אלפי frames), pinned memory, ו-pipelining של copy וחישוב עם CUDA streams",
+        "PCIe לא מספיק ל-800 MB/s; צריך PCIe Gen4",
+        "cuFFT לא יעיל לחזקות של 2",
+        "צריך להריץ על ה-GPU גם את ה-RX"
+      ],
+      "answer": 0,
+      "explanation": "100e6/1024 ≈ 97,656 FFTs בשנייה; עם 10 µs של latency קבוע לכל אחד, ה-overhead לבד ממלא את כל הזמן, בזמן שהחישוב עצמו זעיר. batch של 4096 frames הופך את זה לפחות מ-30 קריאות בשנייה. 800 MB/s (fc32) רחוק מגבול PCIe Gen3 x16 (כ-12 GB/s בפועל). pinned memory מאפשר DMA אסינכרוני, ו-streams מאפשרים חפיפה בין העברה לחישוב. ה-trade-off: batch גדול מוסיף latency (4096 frames הם כ-42 ms).",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

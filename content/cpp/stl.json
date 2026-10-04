@@ -1,0 +1,372 @@
+{
+  "domain": "cpp",
+  "subtopic": "stl",
+  "lessons": [
+    {
+      "id": "cpp.stl",
+      "title": "STL containers ואלגוריתמים",
+      "what": "ה-STL מספקת containers עם חוזה סיבוכיות מוגדר ואלגוריתמים גנריים שעובדים על טווחי iterators. בחירה נכונה של container תלויה ב-Big-O, וגם ב-cache locality, במספר ההקצאות ובכללי ה-iterator invalidation.",
+      "when": [
+        "ברירת מחדל: std::vector. רציף בזיכרון, ידידותי ל-cache, push_back ב-O(1) amortized",
+        "חיפוש לפי מפתח בלי סדר: std::unordered_map (O(1) בממוצע). עם סדר או range queries: std::map (O(log n), עץ red-black)",
+        "הכנסה והוצאה משני הקצוות: std::deque. הוצאה מהאמצע עם iterators יציבים: std::list (נדיר שזה באמת עדיף)",
+        "אלגוריתמים: sort, nth_element ל-k-th, partial_sort ל-top-k ממוין, lower_bound על טווח ממוין, ו-remove/erase לסינון"
+      ],
+      "how": [
+        "vector: כשה-capacity מתמלא, מקצים buffer גדול יותר (פי 1.5 או פי 2) ומעבירים אליו את האיברים. כל iterator, pointer ו-reference לאיברים נהיה invalid. reserve מונע את זה כשהגודל ידוע.",
+        "map ו-set: עץ מאוזן, כל איבר הוא node נפרד. הכנסה לא פוגעת ב-iterators אחרים. operator[] מכניס איבר עם ערך default אם המפתח חסר.",
+        "unordered_map: מערך של buckets עם שרשראות של nodes (separate chaining). rehash פוגע ב-iterators, אבל references ו-pointers לאיברים נשארים תקינים.",
+        "remove ו-remove_if לא מוחקים: הם מזיזים את האיברים שנשארים לתחילת הטווח ומחזירים את הסוף החדש. erase מקצר בפועל. ב-C++20 יש std::erase ו-std::erase_if.",
+        "comparator חייב להיות strict weak ordering: a<a תמיד false, ואם a<b אז לא b<a, ו-transitive. <= שובר את החוזה ונותן UB ב-sort.",
+        "lower_bound מחזיר את האיבר הראשון שאינו קטן מ-x, ו-upper_bound את הראשון שגדול מ-x. על map עדיף להשתמש ב-m.lower_bound, כי std::lower_bound על iterators של עץ הוא O(n)."
+      ],
+      "complexity": "vector: גישה O(1), push_back O(1) amortized, insert באמצע O(n). map: O(log n). unordered_map: O(1) בממוצע ו-O(n) במקרה הגרוע. sort: O(n log n) במקרה הגרוע (מ-C++11). nth_element: O(n) בממוצע. partial_sort: בערך n log k. stable_sort: O(n log n) עם זיכרון נוסף.",
+      "pitfalls": [
+        "erase בתוך לולאה בלי להשתמש בערך ש-erase מחזיר",
+        "m[key] לבדיקת קיום: מכניס איבר. משתמשים ב-find, count או contains (C++20)",
+        "std::vector<bool> הוא לא container אמיתי של bool: proxy references, וכתיבה מקבילה לאיברים שונים היא data race",
+        "emplace_back(new T) ל-vector של unique_ptr עלול לדלוף אם ה-reallocation זורק",
+        "std::list נשמע מתאים להכנסות, אבל בגלל cache misses הוא כמעט תמיד איטי יותר מ-vector עד גדלים גדולים"
+      ],
+      "senior": [
+        "התקן מחייב ב-unordered_map יציבות של references ו-bucket API, ולכן המימוש חייב להיות node-based. מבנים עם open addressing (absl::flat_hash_map) מהירים פי כמה",
+        "sorted vector או flat_map (C++23) מול map: חיפוש בינארי על זיכרון רציף מנצח עץ כשהקריאות רבות",
+        "heterogeneous lookup עם std::less<> (ו-is_transparent ב-hash ב-C++20) חוסך יצירת std::string זמני",
+        "custom allocators ו-pmr (monotonic_buffer_resource) לביטול הקצאות בזמן-אמת"
+      ],
+      "diagram": "vector:  [a][b][c][d][ ][ ]  contiguous\nlist:    [a]<->[b]<->[c]      nodes\nmap:         [c]\n           [a]   [d]         RB-tree\numap:  b0->[x]->[y]\n       b1->[z]               buckets"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.stl.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הסיבוכיות של find ב-std::map עם n איברים?",
+      "choices": [
+        "O(log n)",
+        "O(n)",
+        "O(1)",
+        "O(1) בממוצע, O(n) במקרה הגרוע"
+      ],
+      "answer": 0,
+      "explanation": "std::map ממומש כעץ חיפוש מאוזן (red-black tree), ולכן חיפוש, הכנסה ומחיקה הם O(log n) במקרה הגרוע. O(1) בממוצע ו-O(n) במקרה הגרוע זה std::unordered_map.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "באיזה container האיברים מאוחסנים ברצף אחד בזיכרון, כך שאפשר להעביר data() לפונקציית C?",
+      "choices": [
+        "std::list",
+        "std::deque",
+        "std::map",
+        "std::vector"
+      ],
+      "answer": 3,
+      "explanation": "vector (וגם array ו-string) מבטיחים זיכרון רציף, ולכן data() מחזיר pointer ל-buffer שאפשר להעביר ל-API של C או ל-DMA. deque בנוי מבלוקים נפרדים. list ו-map בנויים מ-nodes מפוזרים.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה הסיבוכיות ה-amortized של std::vector::push_back? (כתוב ב-Big-O)",
+      "accept": [
+        "O(1)",
+        "o(1)",
+        "1"
+      ],
+      "explanation": "רוב הקריאות כותבות למקום פנוי. כש-capacity מתמלא, הגדילה היא פי קבוע (geometric growth), ולכן סך העבודה על n הכנסות הוא O(n). קריאה בודדת שגורמת ל-reallocation היא O(n), וזה חשוב בזמן-אמת.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::map<std::string, int> m;\nif (m[\"a\"] == 0)\n  std::cout << m.size();\nstd::cout << m.count(\"b\") << m.size();",
+      "choices": [
+        "001",
+        "000",
+        "101",
+        "111"
+      ],
+      "answer": 2,
+      "explanation": "operator[] על מפתח שלא קיים מכניס אותו עם value-initialized int, כלומר 0. לכן התנאי מתקיים והגודל 1. count לא מכניס, ולכן מחזיר 0 והגודל נשאר 1. לבדיקת קיום משתמשים ב-find, count או contains.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד אמור למחוק את כל הזוגיים. מה הבאג?",
+      "code": "std::vector<int> v{1, 2, 4, 5, 6};\nfor (auto it = v.begin(); it != v.end(); ++it)\n  if (*it % 2 == 0)\n    v.erase(it);",
+      "bugLine": 4,
+      "choices": [
+        "erase מקבל אינדקס ולא iterator",
+        "erase הופך את it ל-invalid (וגם את כל מה שאחריו). ה-++it שאחריו הוא UB. צריך it = v.erase(it) ולקדם רק כשלא מוחקים, או std::erase_if(v, pred)",
+        "צריך להשתמש ב-const_iterator",
+        "% על מספרים שליליים לא מוגדר"
+      ],
+      "answer": 1,
+      "explanation": "erase ב-vector מזיז את האיברים שאחריו ומבטל את ה-iterators מנקודת המחיקה והלאה. erase מחזיר iterator תקין לאיבר הבא. הפתרון הכי טוב הוא erase-remove (או std::erase_if ב-C++20), כי הוא O(n) כולל, ולא O(n^2) כמו מחיקות חוזרות.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::vector<int> v{1, 2, 3, 2, 5};\nauto it = std::remove(v.begin(), v.end(), 2);\nstd::cout << v.size() << ' ' << (it - v.begin());",
+      "choices": [
+        "5 3",
+        "3 3",
+        "5 5",
+        "3 5"
+      ],
+      "answer": 0,
+      "explanation": "std::remove לא משנה את הגודל, כי הוא עובד על iterators ולא מכיר את ה-container. הוא מזיז את 1, 3, 5 לתחילת הטווח ומחזיר iterator לסוף הלוגי החדש (אינדקס 3). האיברים שאחריו במצב valid but unspecified. כדי למחוק בפועל קוראים ל-v.erase(it, v.end()).",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה הסיבוכיות של find ב-std::unordered_map?",
+      "choices": [
+        "O(1) תמיד",
+        "O(log n) תמיד",
+        "O(n) תמיד, כי צריך לסרוק את כל ה-buckets",
+        "O(1) בממוצע, O(n) במקרה הגרוע (הרבה מפתחות באותו bucket)"
+      ],
+      "answer": 3,
+      "explanation": "עם hash טוב ו-load factor חסום, השרשרת בכל bucket קצרה. hash גרוע, או קלט שתוכנן לייצר התנגשויות (hash flooding), מכניס הכל לאותו bucket והחיפוש נהיה ליניארי.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך למצוא פעם אחת את החציון של 10^7 ערכי float לא ממוינים ב-vector (מותר לשנות את הסדר). מה הבחירה הטובה ביותר?",
+      "choices": [
+        "std::sort ואז v[n/2]",
+        "להכניס הכל ל-std::multiset ולהתקדם n/2 צעדים",
+        "std::nth_element(v.begin(), v.begin() + n/2, v.end()) ואז v[n/2]",
+        "std::partial_sort עד האמצע"
+      ],
+      "answer": 2,
+      "explanation": "nth_element (introselect) הוא O(n) בממוצע ומבטיח שהאיבר במקום n/2 הוא זה שהיה שם אחרי מיון. sort הוא O(n log n). multiset מוסיף הקצאה לכל איבר ו-O(n log n). partial_sort של חצי מהמערך הוא בערך n log(n/2).",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q09",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו פעולות עלולות להפוך iterators לאיברים קיימים אחרים (לא לאיבר שנמחק) ל-invalid?",
+      "choices": [
+        "vector::push_back כש-size() == capacity()",
+        "vector::push_back כש-size() < capacity() (לאיברים שכבר קיימים)",
+        "list::erase(it)",
+        "unordered_map::insert שגורם ל-rehash",
+        "map::insert",
+        "deque::push_back"
+      ],
+      "answer": [
+        0,
+        3,
+        5
+      ],
+      "explanation": "reallocation של vector מבטל הכל. בלי reallocation נפגע רק end(). ב-list וב-map, nodes לא זזים. rehash מבטל iterators של unordered_map, אבל references ו-pointers לאיברים נשארים תקינים. deque::push_back מבטל את כל ה-iterators (מערך הבלוקים הפנימי יכול להשתנות), אבל references לאיברים נשארים תקינים.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q10",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד לפעמים קורס על קלט גדול עם הרבה ערכים זהים. למה?",
+      "code": "std::vector<int> v = load();\nstd::sort(v.begin(), v.end(),\n          [](int a, int b) { return a <= b; });",
+      "bugLine": 3,
+      "choices": [
+        "lambda לא יכולה לשמש comparator",
+        "<= הוא לא strict weak ordering (comp(a,a) מחזיר true), וזה UB. ב-libstdc++ הלולאה הפנימית של quicksort, שמסתמכת על sentinel, עלולה לרוץ מחוץ לגבולות",
+        "std::sort לא יציב, ולכן ערכים זהים מתבלבלים",
+        "צריך להעביר את ה-comparator by reference"
+      ],
+      "answer": 1,
+      "explanation": "החוזה דורש ש-comp(a, a) יהיה false. unguarded partition ב-introsort מניח שבסוף יימצא איבר שעוצר את הסריקה. עם <= איברים שווים לא עוצרים אותה, והקוד יוצא מגבולות המערך. ל-sort בסדר עולה משתמשים ב-<, ולסדר יורד ב->. אי-יציבות היא תכונה של sort, לא באג.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q11",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::vector<int> v{1, 3, 3, 3, 7, 9};\nauto lo = std::lower_bound(v.begin(), v.end(), 3);\nauto hi = std::upper_bound(v.begin(), v.end(), 3);\nauto x  = std::lower_bound(v.begin(), v.end(), 4);\nstd::cout << (lo - v.begin()) << (hi - v.begin())\n          << (x - v.begin());",
+      "choices": [
+        "144",
+        "143",
+        "133",
+        "034"
+      ],
+      "answer": 0,
+      "explanation": "lower_bound(3) הוא האיבר הראשון שאינו קטן מ-3 (אינדקס 1). upper_bound(3) הוא הראשון שגדול מ-3 (אינדקס 4, הערך 7). lower_bound(4) הוא גם 7, ולכן 4. מספר המופעים של 3 הוא hi - lo = 3, וזה מה ש-equal_range מחזיר.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שני threads כותבים במקביל לאיברים שונים של אותו container: thread A ל-c[0] ו-thread B ל-c[1]. בלי סנכרון, ובלי שינוי בגודל. באיזה מקרה יש data race לפי התקן?",
+      "choices": [
+        "std::vector<int>",
+        "std::array<char, 2>",
+        "std::deque<int>",
+        "std::vector<bool>"
+      ],
+      "answer": 3,
+      "explanation": "התקן ([container.requirements.dataraces]) מבטיח שאין data race בשינוי מקבילי של איברים שונים באותו container, ומחריג במפורש את vector<bool>. ב-vector<bool> כל איבר הוא bit, ושני איברים חולקים byte, ולכן כל כתיבה היא read-modify-write על אותה מילה. ב-array<char,2> כל char הוא memory location נפרד, ולכן אין race (אבל יש false sharing, וזו בעיית ביצועים בלבד).",
+      "lesson": "cpp.stl",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.stl.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "למה std::unordered_map בדרך כלל איטי משמעותית מ-hash tables עם open addressing (כמו absl::flat_hash_map), גם עם hash טוב?",
+      "choices": [
+        "כי std::hash איטי במיוחד",
+        "כי התקן דורש שהטבלה תהיה ממוינת",
+        "כי התקן מחייב יציבות של pointers ו-references לאיברים גם אחרי rehash, וגם bucket interface (bucket(), begin(n)). זה מחייב מימוש node-based עם separate chaining: הקצאה לכל איבר ו-pointer chasing עם cache misses",
+        "כי unordered_map נועל mutex בכל פעולה"
+      ],
+      "answer": 2,
+      "explanation": "בגלל החוזה של ה-API, כל איבר הוא node שמוקצה בנפרד, וחיפוש עובר bucket array ואז node, כלומר לפחות שני cache misses. ב-open addressing האיברים שמורים במערך אחד, ובעזרת metadata ו-SIMD (Swiss tables) אפשר לבדוק 16 slots בבת אחת. המחיר: אין יציבות של pointers ב-rehash. אפשר לשפר את std::unordered_map עם reserve ו-pmr allocator, אבל לא את ה-pointer chasing.",
+      "lesson": "cpp.stl",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.stl.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נתון `std::vector<std::unique_ptr<Job>> v;`. מה ההבדל בין `v.emplace_back(new Job)` ל-`v.push_back(std::make_unique<Job>())`?",
+      "choices": [
+        "אין הבדל, ו-emplace_back תמיד עדיף",
+        "emplace_back(new Job) עלול לדלוף: אם ה-vector צריך reallocation וההקצאה זורקת bad_alloc, ה-Job כבר הוקצה וה-unique_ptr עוד לא נבנה. עם make_unique הבעלות נוצרת לפני הקריאה",
+        "push_back לא מתקמפל עם unique_ptr",
+        "emplace_back(new Job) לא מתקמפל, כי ה-constructor של unique_ptr מ-pointer הוא explicit"
+      ],
+      "answer": 1,
+      "explanation": "emplace משתמש ב-direct-initialization, ולכן explicit constructor עובר (וזה גם מסוכן, כי ההמרה לא נראית). ה-raw pointer מועבר ל-emplace_back, ואם הקצאת buffer חדש נכשלת לפני בניית האיבר, אין מי שימחק אותו. push_back עם temporary של unique_ptr זה אותו מספר moves, והוא בטוח. זה Item 42 ב-Effective Modern C++.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש LRU cache עם קיבולת קבועה: `std::optional<int> get(int key)` ו-`void put(int key, int value)`, שתיהן O(1) בממוצע. כש-put חורג מהקיבולת, מוחקים את המפתח שלא נעשה בו שימוש הכי הרבה זמן. get מסמן את המפתח כ'בשימוש אחרון'.",
+      "starter": "class LRUCache {\npublic:\n  explicit LRUCache(int capacity);\n  std::optional<int> get(int key);\n  void put(int key, int value);\n};",
+      "modelAnswer": "#include <list>\n#include <optional>\n#include <unordered_map>\n#include <utility>\n\nclass LRUCache {\n  using Item = std::pair<int, int>;          // key, value\n  int cap_;\n  std::list<Item> items_;                    // front = most recent\n  std::unordered_map<int, std::list<Item>::iterator> idx_;\npublic:\n  explicit LRUCache(int cap) : cap_(cap) { idx_.reserve(cap > 0 ? cap : 0); }\n\n  std::optional<int> get(int key) {\n    auto it = idx_.find(key);\n    if (it == idx_.end()) return std::nullopt;\n    items_.splice(items_.begin(), items_, it->second);  // O(1), iterator stays valid\n    return it->second->second;\n  }\n\n  void put(int key, int value) {\n    if (cap_ <= 0) return;\n    if (auto it = idx_.find(key); it != idx_.end()) {\n      it->second->second = value;\n      items_.splice(items_.begin(), items_, it->second);\n      return;\n    }\n    if (static_cast<int>(items_.size()) == cap_) {\n      idx_.erase(items_.back().first);\n      items_.pop_back();\n    }\n    items_.emplace_front(key, value);\n    idx_[key] = items_.begin();\n  }\n};",
+      "rubric": [
+        "list (או רשימה דו-כיוונית) לסדר השימוש ו-hash map ממפתח ל-iterator",
+        "splice להזזת node לראש ב-O(1) בלי להפוך iterators ל-invalid",
+        "put על מפתח קיים מעדכן ערך ומזיז לראש, ולא יוצר כפילות",
+        "eviction מוחק גם מה-map וגם מה-list, ומטפל בקיבולת 0",
+        "מזכיר שהשימוש ב-list עולה הקצאה לכל איבר, ושאפשר פתרון עם pool או מערך עם אינדקסים"
+      ],
+      "explanation": "שאלה קלאסית שבודקת שילוב containers ושימוש ב-iterator stability של list. בסניור מצפים לדבר גם על thread safety (mutex או sharding) ועל עלות ההקצאות.",
+      "lesson": "cpp.stl",
+      "tags": [
+        "microsoft",
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.stl.q16",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו מהטענות על הבטחות הסיבוכיות בתקן נכונות?",
+      "choices": [
+        "std::sort: O(N log N) השוואות במקרה הגרוע (מ-C++11)",
+        "std::stable_sort: O(N log N) אם יש מספיק זיכרון נוסף, אחרת O(N log^2 N)",
+        "std::nth_element: O(N) מובטח במקרה הגרוע",
+        "std::list::sort יציב",
+        "std::partial_sort(first, middle, last): בערך N log K השוואות, כש-K = middle - first",
+        "unordered_map::find: O(1) במקרה הגרוע"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "explanation": "C++11 חיזק את דרישת ה-sort ל-O(N log N) במקרה הגרוע, וזה מה שמחייב introsort (מעבר ל-heapsort כשה-recursion עמוק מדי). nth_element מוגדר כ-linear on average. list::sort הוא merge sort יציב. partial_sort ממומש עם heap בגודל K.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q17",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (CaseLess משווה מחרוזות בלי תלות ב-case, ומקיים strict weak ordering)",
+      "code": "std::map<std::string, int, CaseLess> m;\nm[\"Key\"] = 1;\nm[\"KEY\"] = 2;\nm[\"key\"] += 10;\nstd::cout << m.size() << ' ' << m.begin()->first\n          << ' ' << m.begin()->second;",
+      "choices": [
+        "1 Key 12",
+        "1 key 12",
+        "3 KEY 2",
+        "1 Key 11"
+      ],
+      "answer": 0,
+      "explanation": "map משתמש ב-equivalence (!(a<b) && !(b<a)) ולא ב-==. שלושת המפתחות שקולים ולכן יש איבר אחד. operator[] על מפתח שקול לא מחליף את המפתח השמור, ולכן נשאר \"Key\" מההכנסה הראשונה. הערך: 1, אחר כך 2, ואז 12.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון `std::map<std::string, int> m;` ו-`std::string_view sv`. מה קורה עם `m.find(sv)`, ואיך משפרים?",
+      "choices": [
+        "מתקמפל, ונוצר std::string זמני בכל find",
+        "מתקמפל בלי הקצאה, כי string_view ממיר ל-string בלי copy",
+        "UB, כי string_view לא null-terminated",
+        "לא מתקמפל: ההמרה מ-string_view ל-std::string היא explicit, ו-find מקבל const key_type&. עם std::map<std::string, int, std::less<>> (comparator שקוף) ה-template overload של find מקבל string_view ומשווה בלי ליצור string"
+      ],
+      "answer": 3,
+      "explanation": "ה-constructor של std::string מ-string_view הוא explicit (כדי למנוע הקצאות נסתרות), ולכן find(sv) לא מוצא overload. std::less<> מגדיר is_transparent, ואז map מספק template<class K> find(const K&). ב-unordered_map זה קיים מ-C++20, ודורש is_transparent גם ב-hash וגם ב-key_equal.",
+      "lesson": "cpp.stl",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.stl.q19",
+      "level": 5,
+      "type": "oral",
+      "prompt": "מערכת זמן-אמת מחזיקה טבלה של כ-2000 אותות פעילים לפי תדר מרכזי. בכל בלוק (כל 100 מיקרו-שניות) מבצעים עשרות שאילתות טווח (כל האותות בין f1 ל-f2), ועדכונים (הוספה או הסרה) קורים רק כמה פעמים בשנייה. איזה container תבחר, ולמה לא את המובן מאליו?",
+      "modelAnswer": "המובן מאליו הוא std::map<double, Signal> עם lower_bound ו-upper_bound, שנותן O(log n) לשאילתה ולעדכון. אבל ההרכב הוא הרבה קריאות ומעט עדכונים, ו-n קטן. map הוא עץ של nodes מפוזרים: כל צעד בחיפוש הוא cache miss, והאיטרציה על התוצאות עוברת בין nodes. בנוסף כל הוספה היא malloc, וזה לא רצוי בזמן-אמת. הבחירה שלי: sorted std::vector של struct קומפקטי (או SoA: מערך תדרים נפרד מהנתונים) עם std::lower_bound ו-upper_bound. החיפוש הבינארי על 2000 איברים הוא 11 צעדים על זיכרון רציף, והתוצאה היא טווח רציף שאפשר לעבד עם SIMD. עדכון הוא O(n) insert, כלומר memmove של כמה עשרות KB, כמה פעמים בשנייה, זניח. reserve מראש מונע הקצאות. אם העדכונים מגיעים מ-thread אחר: double buffering או RCU. בונים עותק חדש ממוין בצד ומחליפים pointer אטומית, כך שה-thread הקריטי לא נחסם. אפשר גם std::flat_map (C++23) או boost::container::flat_map. מאמתים במדידה: benchmark עם הנתונים האמיתיים ובדיקת p99.",
+      "rubric": [
+        "מזהה את יחס הקריאות לעדכונים ואת גודל n כגורמים מכריעים, ולא רק Big-O",
+        "מסביר cache locality ואת ההקצאות של map",
+        "מציע sorted vector או flat_map (אולי SoA) עם lower_bound/upper_bound",
+        "מטפל בעדכונים מ-thread אחר בלי לחסום (double buffer או RCU)",
+        "מציין reserve, אפס הקצאות בנתיב הקריטי ומדידה"
+      ],
+      "explanation": "מראיינים סניורים בודקים אם אתה בוחר container לפי דפוס הגישה והחומרה, ולא רק לפי טבלת Big-O.",
+      "lesson": "cpp.stl",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

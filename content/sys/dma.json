@@ -1,0 +1,327 @@
+{
+  "domain": "sys",
+  "subtopic": "dma",
+  "lessons": [
+    {
+      "id": "sys.dma",
+      "title": "DMA",
+      "what": "Direct Memory Access מאפשר להתקן (NIC, ADC, GPU, דיסק) לקרוא ולכתוב לזיכרון הראשי בעצמו, בלי שה-CPU יעתיק כל byte. ה-CPU מכין תיאורי העברה (descriptors) עם כתובות וגדלים, וההתקן מבצע ומודיע בסיום, בדרך כלל ב-interrupt. האתגרים הם כתובות (ההתקן לא רואה את הכתובות הווירטואליות שלך), cache coherency וסדר בין CPU להתקן.",
+      "when": [
+        "כל העברה בקצב גבוה: NIC של 10GbE מה-USRP, ADC ב-embedded, GPU",
+        "כתיבת drivers או firmware ב-SoC (ARM עם DMA לא קוהרנטי)",
+        "zero-copy בין התקן לאפליקציה (DPDK, VFIO, RDMA)",
+        "שאלות על descriptor rings, ping-pong buffers ו-cache maintenance"
+      ],
+      "how": [
+        "ההתקן עובד עם bus addresses (IOVA): אם יש IOMMU, הוא מתרגם אותן לכתובות פיזיות. אם אין, הן בערך הכתובות הפיזיות. לכן אי אפשר לתת להתקן pointer רגיל מ-user space",
+        "הזיכרון חייב להיות pinned: הקרנל לא יכול להזיז או להוציא ל-swap דף שהתקן כותב אליו",
+        "descriptor ring: מערך מעגלי של descriptors עם כתובת, אורך ו-ownership bit. ה-driver ממלא, מעביר בעלות להתקן, ומעדכן doorbell register. ההתקן מחזיר בעלות כשסיים",
+        "סדר: לפני העברת הבעלות להתקן צריך barrier (ב-Linux dma_wmb), כדי שהשדות ייכתבו לפני ה-OWN bit",
+        "coherency: ב-x86 DMA של PCIe הוא snooped וקוהרנטי. בהרבה SoCs של ARM לא: לפני שההתקן קורא צריך clean (write-back) של ה-cache, ולפני שה-CPU קורא מה שההתקן כתב צריך invalidate",
+        "Linux DMA API: dma_alloc_coherent לזיכרון ארוך-טווח (descriptors) שלא דורש sync, ו-dma_map_single או dma_map_sg לבאפרים זמניים עם dma_sync_for_cpu ו-dma_sync_for_device",
+        "ping-pong או ring של באפרים: ההתקן ממלא אחד בזמן שה-CPU מעבד את השני"
+      ],
+      "complexity": "DMA חוסך את ה-CPU מההעתקה, אבל לכל העברה יש overhead קבוע (descriptor, doorbell, interrupt), ולכן באפרים קטנים מדי לא יעילים. ב-PCIe Gen3 x8 ה-throughput התיאורטי כ-7.9 GB/s. ב-x310: 200 MS/s ב-sc16 הם 800 MB/s, כלומר 6.4 Gb/s לערוץ.",
+      "pitfalls": [
+        "באפר DMA שחולק cache line עם משתנים אחרים על מערכת לא קוהרנטית",
+        "invalidate רק לפני ה-DMA ולא אחריו (speculative prefetch מחזיר נתונים ישנים)",
+        "קביעת OWN bit לפני ששאר שדות ה-descriptor נראים",
+        "dma_map_single על זיכרון מ-vmalloc או מה-stack",
+        "fork בזמן שבאפר של user space pinned ל-DMA"
+      ],
+      "senior": [
+        "לתכנן RX path מלא: ring sizes, overflow, zero-copy, NUMA, huge pages",
+        "IOMMU: בידוד, מחיר IOTLB, VFIO",
+        "DDIO ו-leaky DMA: NIC שכותב ל-LLC",
+        "כללי ה-ordering של PCIe וה-barriers הנדרשים ב-driver"
+      ],
+      "diagram": "CPU: fill desc -> dma_wmb -> OWN=HW\n      -> doorbell (MMIO write)\n             |\n device: read desc, DMA data <-> RAM\n         set OWN=SW, raise MSI\n             |\n CPU: ISR/poll, sync_for_cpu, process"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.dma.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה DMA?",
+      "choices": [
+        "סוג של cache מהיר",
+        "דרך לגשת לרגיסטרים של התקן",
+        "מנגנון שבו התקן קורא וכותב ישירות לזיכרון הראשי, בלי שה-CPU מעתיק את הנתונים",
+        "פרוטוקול רשת"
+      ],
+      "answer": 2,
+      "explanation": "ה-CPU רק מגדיר את ההעברה (כתובת, גודל, כיוון), וההתקן או בקר DMA מבצע אותה. גישה לרגיסטרים של התקן היא memory-mapped IO, דבר אחר שבדרך כלל משמש להפעלת ה-DMA.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה היתרון העיקרי של DMA על פני העתקה של ה-CPU מרגיסטר הנתונים של ההתקן (PIO)?",
+      "choices": [
+        "DMA מצפין את הנתונים",
+        "ה-CPU פנוי לעבודה אחרת בזמן ההעברה, וההתקן מעביר בלוקים גדולים ביעילות דרך הבאס, בלי גישה איטית לכל מילה",
+        "DMA לא דורש drivers",
+        "DMA מבטל את הצורך ב-interrupts"
+      ],
+      "answer": 1,
+      "explanation": "ב-PIO כל מילה היא קריאת MMIO איטית (מאות ns) שה-CPU מחכה לה. ב-DMA ההתקן מבצע burst writes לזיכרון, וה-CPU מקבל interrupt אחד לבלוק שלם. בקצבים של SDR או רשת, PIO פשוט לא מספיק.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקראת הטכניקה שבה יש שני באפרים: ההתקן ממלא אחד ב-DMA בזמן שה-CPU מעבד את השני, ואז מתחלפים?",
+      "accept": [
+        "ping-pong",
+        "ping pong",
+        "pingpong",
+        "double buffering",
+        "double buffer",
+        "ping-pong buffer"
+      ],
+      "explanation": "ping-pong (double buffering) מאפשר עבודה רציפה. ההכללה היא ring של N באפרים, שסופג jitter בזמן העיבוד. מגבלה: עיבוד של באפר חייב להסתיים לפני שה-DMA צריך אותו שוב.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה driver לא יכול פשוט לתת להתקן את ה-pointer שהאפליקציה העבירה ב-user space ולבקש DMA אליו?",
+      "choices": [
+        "כי DMA עובד רק עם זיכרון של הקרנל",
+        "כי ל-user space אסור לקרוא נתונים מהתקנים",
+        "כי pointers ב-user space ארוכים מדי",
+        "כי ההתקן לא משתמש ב-MMU של ה-CPU: הוא צריך bus address. בנוסף, הדפים של הבאפר לא רציפים פיזית, ועלולים לזוז או לצאת ל-swap. צריך לנעול (pin) את הדפים ולמפות אותם להתקן"
+      ],
+      "answer": 3,
+      "explanation": "כתובת וירטואלית היא משמעותית רק בתוך מרחב הכתובות של ה-process. ה-driver משתמש ב-get_user_pages או pin_user_pages כדי לנעול את הדפים, וב-dma_map_sg כדי לקבל כתובות שההתקן מבין (scatter-gather, או IOVA רציף דרך IOMMU). מסגרות כמו VFIO ו-DPDK עושות את זה מראש עם huge pages.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-descriptor ring, מה התפקיד של ה-ownership bit?",
+      "choices": [
+        "הוא מציין מי רשאי כרגע לגעת ב-descriptor ובבאפר שלו: ה-driver או ההתקן. כך שני הצדדים מתאמים בלי lock",
+        "הוא מציין אם הבאפר מוצפן",
+        "הוא מציין את גודל הבאפר",
+        "הוא קובע את עדיפות ה-DMA"
+      ],
+      "answer": 0,
+      "explanation": "ה-driver ממלא descriptor ומעביר אותו להתקן. ההתקן מבצע, כותב סטטוס ומחזיר בעלות. זה בעצם SPSC queue בין CPU להתקן, עם אותם כללי סדר: קודם הנתונים, אחר כך דגל הבעלות.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על SoC של ARM בלי DMA קוהרנטי, ההתקן כתב בלוק דגימות חדש ב-DMA, אבל ה-CPU קורא חלק מהבאפר עם ערכים ישנים. מה הסיבה?",
+      "choices": [
+        "ה-DMA איטי מדי",
+        "צריך volatile על הבאפר",
+        "ההתקן כתב לכתובת הלא נכונה",
+        "ה-CPU מחזיק ב-cache שלו lines ישנים של הבאפר. ה-DMA כתב ל-RAM ישירות וה-cache לא התעדכן. צריך invalidate של הטווח לפני שה-CPU קורא"
+      ],
+      "answer": 3,
+      "explanation": "בלי snooping, ה-cache של ה-CPU וה-RAM יכולים להיות לא מסונכרנים. ב-Linux, dma_sync_single_for_cpu (או dma_unmap) מבצע את ה-invalidate. volatile לא משפיע על ה-cache של החומרה.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q07",
+      "level": 3,
+      "type": "multi",
+      "prompt": "על מערכת עם DMA **לא קוהרנטי**, אילו פעולות cache maintenance נכונות?",
+      "choices": [
+        "לפני שההתקן קורא באפר שה-CPU כתב (TX): clean (write-back) של ה-cache לטווח",
+        "לפני שה-CPU קורא באפר שההתקן כתב (RX): invalidate של הטווח",
+        "באפרים של DMA צריכים להיות מיושרים ובגודל של כפולות cache line",
+        "לפני TX צריך invalidate, כדי שההתקן יראה נתונים חדשים",
+        "זיכרון מ-dma_alloc_coherent לא דורש sync ידני"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        4
+      ],
+      "explanation": "TX: הנתונים העדכניים נמצאים ב-cache של ה-CPU, ולכן צריך לכתוב אותם ל-RAM (clean). invalidate היה זורק אותם. RX: צריך לזרוק עותקים ישנים כדי לקרוא מ-RAM. dma_alloc_coherent נותן זיכרון שכבר מתואם (לרוב non-cacheable על מערכות כאלה). ב-x86 עם PCIe רגיל לא צריך כלום מזה, אבל ה-API של Linux עדיין נקרא כדי שהקוד יהיה נייד.",
+      "lesson": "sys.dma",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.dma.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "על מערכת לא קוהרנטית, באפר RX של 100 בתים יושב ב-struct צמוד למונה `rx_count` שה-CPU מעדכן, ושניהם באותו cache line. מה עלול לקרות?",
+      "choices": [
+        "רק בעיית ביצועים",
+        "ה-DMA ייכשל עם שגיאה",
+        "invalidate של ה-line לפני קריאת הבאפר זורק גם את העדכון האחרון של rx_count, או ש-write-back של ה-line (כשה-CPU כותב ל-rx_count) דורס את מה שה-DMA כתב לבאפר",
+        "שום דבר, כי הם משתנים שונים"
+      ],
+      "answer": 2,
+      "explanation": "cache maintenance עובד ברזולוציה של line שלם. אם line מכיל גם נתוני DMA וגם נתונים של ה-CPU, אין פעולה נכונה: invalidate מאבד כתיבות של ה-CPU, ו-clean דורס נתוני DMA. לכן באפרים מיושרים ל-cache line (ARCH_DMA_MINALIGN ב-Linux) ומרופדים לסוף ה-line.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-Linux driver, מתי משתמשים ב-`dma_alloc_coherent` ומתי ב-`dma_map_single`?",
+      "choices": [
+        "coherent רק ל-x86, map רק ל-ARM",
+        "coherent לזיכרון ארוך-טווח שגם ה-CPU וגם ההתקן ניגשים אליו כל הזמן, כמו descriptor rings (על מערכות לא קוהרנטיות הוא לרוב uncached, ולכן גישת CPU אליו איטית). map לבאפרי נתונים קיימים שעוברים בעלות בין CPU להתקן, עם sync מפורש בכל מעבר",
+        "אין הבדל",
+        "map מקצה זיכרון חדש, coherent לא"
+      ],
+      "answer": 1,
+      "explanation": "descriptors נקראים ונכתבים לסירוגין ע״י שני הצדדים, ו-sync בכל גישה לא מעשי. באפרי נתונים גדולים נהנים מה-cache כשה-CPU מעבד אותם, ולכן streaming mappings עם sync רק בגבולות הבעלות. dma_map_single לא מקצה, רק ממפה זיכרון קיים להתקן.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "USRP X310 מזרים 2 ערוצים, כל אחד 200 MS/s, בפורמט sc16 (I ו-Q של 16 ביט כל אחד). כמה קישורי 10GbE צריך לפחות?",
+      "choices": [
+        "2: כל ערוץ הוא 200M × 4 בתים = 800 MB/s = 6.4 Gb/s, ושניהם יחד 12.8 Gb/s, יותר מ-10GbE אחד",
+        "1, כי 10GbE מספיק לכל קצב",
+        "אי אפשר להעביר את זה ב-Ethernet",
+        "4, כי I ו-Q עוברים בנפרד"
+      ],
+      "answer": 0,
+      "explanation": "sc16 הוא 4 בתים לדגימה מרוכבת. ערוץ אחד ב-200 MS/s הוא 6.4 Gb/s של payload (ועוד כמה אחוזים headers), שנכנס ב-10GbE אחד. שני ערוצים דורשים שני קישורים, כל ערוץ על port משלו. חישוב כזה הוא הצעד הראשון בכל תכנון של RX path, יחד עם רוחב פס הזיכרון וה-PCIe.",
+      "lesson": "sys.dma",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.dma.q11",
+      "level": 4,
+      "type": "bug",
+      "prompt": "driver ל-ARM ממלא descriptor של RX ומעביר אותו לכרטיס, שסורק את הטבעת בעצמו (polling על descriptors). לפעמים הכרטיס כותב לכתובת 0. איפה הבאג?",
+      "lang": "cpp",
+      "code": "void post_rx(Desc* d, dma_addr_t buf, uint16_t len) {\n  d->addr = buf;\n  d->len = len;\n  d->flags = DESC_OWN_HW;\n  writel(next_idx, dev->rx_tail);\n}",
+      "bugLine": 4,
+      "choices": [
+        "אין barrier בין כתיבת addr ו-len לבין העברת הבעלות. ב-ARM הכתיבות יכולות להיראות להתקן בסדר אחר, והכרטיס יכול לראות OWN לפני ה-addr. צריך dma_wmb() לפני שורת ה-flags",
+        "צריך dma_alloc_coherent לבאפר הנתונים",
+        "len צריך להיות 32 ביט",
+        "writel צריך להיות לפני מילוי ה-descriptor"
+      ],
+      "answer": 0,
+      "explanation": "ה-descriptor נמצא בזיכרון coherent, אבל coherency לא אומר סדר. writel ב-Linux כולל barrier שמבטיח שכתיבות קודמות לזיכרון נראות לפני כתיבת ה-MMIO, אבל כאן הכרטיס קורא את ה-descriptor בלי לחכות ל-doorbell. dma_wmb הוא ה-barrier הקל שמסדר כתיבות לזיכרון DMA. ב-x86 זה עובד בלי barrier בגלל TSO, וזו בדיוק הסיבה שבאגים כאלה מתגלים רק ב-ARM.",
+      "lesson": "sys.dma",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.dma.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה מהבאים **אינו** יתרון של IOMMU?",
+      "choices": [
+        "מאפשר להציג להתקן באפר רציף (IOVA) שמורכב מדפים פיזיים מפוזרים",
+        "מאפשר להתקן עם כתובות של 32 ביט לגשת לזיכרון מעל 4GB",
+        "מקטין את ה-latency של כל גישת DMA, כי אין צורך בתרגום",
+        "בידוד: התקן יכול לבצע DMA רק לדפים שמופו לו במפורש, וכך התקן תקול או זדוני לא יכול לדרוס את הקרנל"
+      ],
+      "answer": 2,
+      "explanation": "IOMMU מוסיף תרגום, ולכן עלות: IOTLB misses ב-latency, ו-map/unmap של דפים עולים CPU (זו סיבה שבמצבי ביצועים משתמשים ב-mappings קבועים, או ב-iommu=pt). הבידוד הוא מה שמאפשר VFIO והעברת התקן ל-VM או ל-user space בבטחה.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בשרת Intel Xeon, NIC של 10GbE כותב חבילות ב-DMA. כשהאפליקציה מעבדת אותן מהר, ה-latency מצוין. כשהיא מפגרת, גם רוחב הפס לזיכרון קופץ וגם latency העיבוד גדל. מה המנגנון?",
+      "choices": [
+        "ה-IOMMU מתמלא",
+        "DDIO: ה-NIC כותב ישירות ל-LLC, לחלק מוגבל מה-ways. כשה-ring גדול או שהאפליקציה מפגרת, נתונים חדשים מפנים חבילות שעוד לא עובדו ל-DRAM (leaky DMA), ואז הקריאה שלהן היא cache miss ותעבורה כפולה לזיכרון",
+        "ה-PCIe עובר למהירות נמוכה",
+        "ה-NIC מאט כשהאפליקציה מפגרת"
+      ],
+      "answer": 1,
+      "explanation": "DDIO חוסך קריאה וכתיבה ל-DRAM כשהנתונים נצרכים מהר, אבל רק ב-ways שמוקצים לו. לכן ring גדול מדי יכול להזיק: ה-working set של ה-DMA גדול מהחלק של DDIO ב-LLC. מכאן ההמלצה לבחור ring sizes בתבונה ולעבד בקצב, ולהצמיד את ה-threads ל-socket של ה-NIC.",
+      "lesson": "sys.dma",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.dma.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן את מסלול ה-RX משתי יציאות 10GbE של X310 (2 ערוצים × 200 MS/s) עד לבלוקים שמוכנים ל-FFT ב-user space, עם יעד של אפס overflows. מה הבחירות המרכזיות?",
+      "modelAnswer": "קודם תקציב: 6.4 Gb/s לכל ערוץ, 1.6 GB/s בסך הכול, ויחד עם העיבוד כמה GB/s של תעבורת זיכרון. NUMA: לבדוק לאיזה socket ה-NIC מחובר, ושם להקצות את כל הבאפרים ולהריץ את ה-RX threads. מסלול: או sockets של הקרנל עם UHD (SO_RCVBUF גדול, recvmmsg, IRQ affinity ו-coalescing מכוונים) או DPDK, שבו ה-NIC כותב ב-DMA ישירות לבאפרים ב-huge pages ב-user space ו-thread אחד לכל port עושה poll על ה-ring, בלי interrupts ובלי העתקות. ring sizes: מספיק כדי לספוג jitter של כמה מאות µs (ב-800 MB/s, 1ms הוא 800KB), לא גדול מדי בגלל DDIO. מה-RX thread לבלוקים: ה-RX thread מפרק packets (header של CHDR/VITA) ומעתיק או מצביע לבלוקים ב-pool מוקצה מראש, ומעביר pointers ב-SPSC ל-thread ה-FFT. הכל mlocked ו-prefaulted. cores מבודדים ל-RX ול-FFT, nohz_full, C-states כבויים. ניטור: overflow counters (UHD מדווח O), מילוי תורים, ו-max latency. ולתכנן מה קורה ב-overflow: לזהות פער בזמן לפי timestamps של ה-packets ולסמן ל-downstream.",
+      "rubric": [
+        "חישוב רוחב פס ותקציב, ומודעות ל-NUMA של ה-NIC",
+        "בחירה מנומקת בין מסלול קרנל לבין DPDK, כולל huge pages ו-polling",
+        "גודל rings מנומק (jitter מול DDIO), ו-pool של באפרים עם SPSC ל-FFT",
+        "הכנה ל-RT: mlock, בידוד cores, C-states",
+        "זיהוי ודיווח overflow לפי timestamps"
+      ],
+      "explanation": "זו שאלת system design שמחוברת ישירות לפרויקט. מראיין יבדוק שהמספרים נכונים ושיש תוכנית למצב כשל.",
+      "lesson": "sys.dma",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.dma.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "driver ל-ARMv8 לא קוהרנטי מבצע invalidate לבאפר RX **לפני** שהוא מפעיל DMA, ולא נוגע ב-cache אחרי שה-DMA הסתיים. לפעמים ה-CPU קורא נתונים ישנים. למה, אם אף אחד לא נגע בבאפר בזמן ה-DMA?",
+      "choices": [
+        "צריך clean ולא invalidate",
+        "ה-DMA כותב רק ל-cache",
+        "ה-invalidate לא עובד על ARM",
+        "המעבד רשאי לבצע speculative prefetch ולהביא lines של הבאפר ל-cache בזמן שה-DMA עוד כותב (למשל בגלל קוד סמוך או prefetcher). לכן נדרש invalidate גם **אחרי** סיום ה-DMA ולפני הקריאה, וזה מה ש-dma_sync_single_for_cpu עושה"
+      ],
+      "answer": 3,
+      "explanation": "speculation לא מכבד את הכוונות של התוכנה: כל כתובת cacheable עלולה להיטען. invalidate לפני ה-DMA מונע מ-lines מלוכלכים להידרס ע״י eviction באמצע, ו-invalidate אחרי ה-DMA זורק את מה שנטען ספקולטיבית. לכן ה-API של Linux מגדיר שני צעדים נפרדים: sync_for_device לפני, ו-sync_for_cpu אחרי.",
+      "lesson": "sys.dma",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.dma.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "אפליקציה רושמת באפר ב-user space ל-DMA (הדפים pinned ע״י ה-driver), ואז קוראת ל-fork כדי להריץ סקריפט. מאז, הנתונים שהכרטיס כותב לא מגיעים לאפליקציה. מה קרה?",
+      "choices": [
+        "ה-IOMMU מבוטל אחרי fork",
+        "הילד לוקח את ה-interrupts",
+        "fork הפך את דפי הבאפר ל-copy-on-write. בכתיבה הבאה של האב (למשל אתחול חלק מהבאפר) הוא קיבל עותק חדש של הדף, וההתקן ממשיך לכתוב לדף הפיזי הישן, שעכשיו שייך רק לילד",
+        "fork משחרר את ה-pinning"
+      ],
+      "answer": 2,
+      "explanation": "זו בעיה ידועה של get_user_pages עם fork, שהייתה מקור לבאגים ב-RDMA ובמסגרות דומות. הפתרון הקלאסי: madvise(MADV_DONTFORK) על באפרי DMA, כך שהם לא מועברים לילד ואין COW. קרנלים חדשים (עם FOLL_PIN ו-FOLL_LONGTERM) מעתיקים דפים pinned כבר בזמן ה-fork כדי למנוע את המצב, אבל MADV_DONTFORK, או posix_spawn במקום fork, עדיין המדיניות הנכונה.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "driver ישן קורא ל-`dma_map_single` על באפר של 64 בתים שמוגדר כמשתנה מקומי על ה-kernel stack. הוא עבד שנים, ובקרנל חדש עם CONFIG_VMAP_STACK הוא קורס או משחית זיכרון. למה?",
+      "choices": [
+        "עם VMAP_STACK ה-stack מוקצה ב-vmalloc: הכתובת לא נמצאת ב-linear map, ולכן התרגום שלה לכתובת פיזית (virt_to_phys) שגוי, והבאפר גם לא בהכרח רציף פיזית. בנוסף, על ה-stack הבאפר חולק cache lines עם משתנים אחרים. באפרי DMA חייבים לבוא מ-kmalloc, מ-page allocator או מ-dma_alloc",
+        "dma_map_single הוסר",
+        "ה-stack בקרנל חדש קטן מדי",
+        "ה-stack לא pinned ולכן יוצא ל-swap"
+      ],
+      "answer": 0,
+      "explanation": "DMA API דורש כתובות מה-linear mapping (לא vmalloc, לא stack, לא כתובות של מודולים). זה תמיד היה אסור לפי התיעוד, אבל עבד בטעות כשה-stack היה ב-linear map. kernel stacks לא יוצאים ל-swap בכלל, כך שזה לא הסיבה. CONFIG_DMA_API_DEBUG מזהה הפרות כאלה.",
+      "lesson": "sys.dma"
+    }
+  ]
+}

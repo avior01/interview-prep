@@ -1,0 +1,335 @@
+{
+  "domain": "dsp",
+  "subtopic": "filters",
+  "lessons": [
+    {
+      "id": "dsp.filters",
+      "title": "FIR / IIR במימוש",
+      "what": "תכנון המסנן הוא החלק שאתה מכיר. כאן מדובר במימוש: כמה MACs בשנייה זה עולה, איך שומרים state בין blocks, מתי עוברים לקונבולוציה ב-FFT, למה IIR מסדר גבוה מתפוצץ ב-float, למה denormals מאטים פי 100, ואיך מקבלים SIMD מלולאה פשוטה.",
+      "when": [
+        "מסנן ערוץ, decimation filter או matched filter ב-stream רציף",
+        "עיבוד ב-blocks: קלט מגיע בחבילות, והפלט חייב להיות רציף כאילו עיבדת את הכל בבת אחת",
+        "מסנן ארוך (מאות או אלפי taps) בקצב גבוה",
+        "IIR צר מאוד, או IIR שמאט כשהקלט שקט",
+        "דרישת latency: linear phase מול minimum phase"
+      ],
+      "how": [
+        "עלות FIR ישיר: L MACs לכל דגימת פלט. קלט מרוכב עם taps ממשיים: 2 MACs ל-tap; מרוכב-מרוכב: 4 כפלים ו-4 חיבורים",
+        "FIR סימטרי (linear phase): מחברים זוגות דגימות לפני הכפל, וחוסכים כחצי מהכפלים",
+        "state: בין blocks שומרים את L-1 הדגימות האחרונות של הקלט (FIR), או את משתני ה-state של כל biquad (IIR). התוצאה חייבת להיות זהה לכל גודל block",
+        "delay line בלי modulo: buffer בגודל 2L שכל דגימה נכתבת אליו פעמיים (pos ו-pos+L), כך שתמיד יש חלון רציף של L דגימות, ידידותי ל-SIMD",
+        "מסנן ארוך: overlap-save עם FFT עולה O(log N) לדגימה במקום O(L). נקודת החיתוך בפועל: עשרות עד כ-100 taps, תלוי במימוש",
+        "IIR: לממש כ-cascade של biquads (SOS) ולא כ-b,a מסדר גבוה; רגישות המקדמים בסדר גבוה מזיזה קטבים מחוץ למעגל היחידה",
+        "denormals: כשה-state דועך לערכים זעירים (מתחת ל-1e-38 ב-float), כל פעולה יכולה לעלות מאות מחזורים. פתרון: FTZ/DAZ ב-MXCSR, ב-thread שמבצע את העיבוד"
+      ],
+      "complexity": "FIR ישיר: O(L) לדגימה. overlap-save: בערך (2·5·N·log2N + 6N)/(N-L+1) FLOPs לדגימה. IIR biquad: 5 כפלים ו-4 חיבורים לדגימה לכל biquad. group delay של FIR linear phase: (L-1)/2 דגימות.",
+      "pitfalls": [
+        "לאפס את ה-delay line בכל block: clicks בגבולות",
+        "IIR מסדר 8 כ-b,a ב-float: לא יציב",
+        "להגדיר FTZ ב-main אחרי שה-thread של ה-DSP כבר רץ",
+        "לצפות שהקומפיילר יווקטר `acc += h[k]*x[k]` בלי -ffast-math",
+        "לשכוח את ה-group delay כשמיישרים אות מסונן עם אות אחר"
+      ],
+      "senior": [
+        "לחשב MACs/s ולהחליט בין direct, polyphase ו-FFT לפי L, קצב ו-latency",
+        "להסביר למה IIR קשה לווקטור לאורך הזמן, ואיך מווקטרים לרוחב ערוצים",
+        "להכיר numerical issues: סדר הסכימה ב-float, רגישות מקדמים, denormals",
+        "לתכנן API של מסנן עם state שעובד על blocks באורך שרירותי"
+      ],
+      "diagram": "delay line 2L (L=3), newest at pos:\n idx: 0  1  2 | 3  4  5\n      x2 x1 x0 | x2 x1 x0\n window d[pos..pos+L-1] = x[n-k]"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.filters.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו תכונה יש ל-FIR ואין ל-IIR באופן כללי?",
+      "choices": [
+        "עלות חישוב נמוכה יותר לאותה חדות",
+        "latency נמוך יותר תמיד",
+        "אפשרות למימוש בנקודה קבועה",
+        "יציבות מובטחת ואפשרות ל-linear phase מדויק"
+      ],
+      "answer": 3,
+      "explanation": "ל-FIR אין משוב ולכן הוא תמיד יציב, ו-taps סימטריים נותנים פאזה ליניארית בדיוק. IIR בדרך כלל זול בהרבה לאותה חדות, ו-latency שלו לרוב נמוך יותר מ-FIR linear phase. שניהם ניתנים למימוש ב-fixed point.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q02",
+      "level": 1,
+      "type": "short",
+      "prompt": "FIR ממשי באורך 64 taps על אות ממשי של 10 MS/s, מימוש ישיר. כמה MACs בשנייה?",
+      "accept": [
+        "640M",
+        "640e6",
+        "6.4e8",
+        "640000000",
+        "640 million",
+        "640MMAC/s"
+      ],
+      "explanation": "MAC אחד לכל tap לכל דגימת פלט: 64 × 10e6 = 640e6 MAC/s. אם האות מרוכב וה-taps ממשיים, זה כפול: 1.28e9. ניצול סימטריה חוסך כחצי מהכפלים.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "FIR linear phase באורך 101 taps. מה ה-group delay?",
+      "choices": [
+        "101 דגימות",
+        "50.5 דגימות",
+        "50 דגימות",
+        "תלוי בתדר"
+      ],
+      "answer": 2,
+      "explanation": "ב-FIR סימטרי ה-group delay קבוע ושווה ל-(L-1)/2 = 50 דגימות, בכל התדרים. ב-L זוגי מתקבלת השהיה של חצי דגימה (למשל 49.5 ל-100 taps), שקשה ליישר מולה. תלות בתדר יש ב-IIR או ב-FIR שאינו linear phase.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q04",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה נקראת על כל block של stream רציף. בפלט יש clicks בגבולות של כל block. מה הבאג?",
+      "code": "void firBlock(const float* x, float* y, size_t n,\n              const float* h, size_t L) {\n    for (size_t i = 0; i < n; ++i) {\n        float acc = 0.0f;\n        for (size_t k = 0; k < L && k <= i; ++k)\n            acc += h[k] * x[i - k];\n        y[i] = acc;\n    }\n}",
+      "bugLine": 5,
+      "choices": [
+        "`acc` צריך להיות double",
+        "ה-taps צריכים להיות הפוכים",
+        "הלולאה מתייחסת לדגימות שלפני תחילת ה-block כאפסים: אין state בין blocks. צריך לשמור את L-1 הדגימות האחרונות של ה-block הקודם",
+        "`k <= i` גורם לקריאה מחוץ למערך"
+      ],
+      "answer": 2,
+      "explanation": "`k <= i` מונע קריאה מחוץ ל-x, אבל בכך מניח שלפני ה-block היו אפסים. בתחילת כל block ה-L-1 דגימות הראשונות של הפלט שגויות (transient), וזה נשמע כ-click. תיקון: delay line ששורד בין קריאות, או buffer עם L-1 דגימות היסטוריה לפני x. בדיקה טובה: התוצאה חייבת להיות זהה לכל חלוקה ל-blocks. ההגדרה עם h[k]·x[i-k] היא קונבולוציה תקינה.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ל-FIR סימטרי (h[k] = h[L-1-k]) באורך L. מה אפשר לחסוך במימוש?",
+      "choices": [
+        "כחצי מהכפלים: מחברים קודם x[n-k] + x[n-L+1+k] ומכפילים פעם אחת ב-h[k]",
+        "חצי מהחיבורים",
+        "את כל ה-delay line",
+        "אי אפשר לחסוך כלום, הסימטריה רק משפיעה על הפאזה"
+      ],
+      "answer": 0,
+      "explanation": "זוגות דגימות שמוכפלים באותו מקדם אפשר לחבר לפני הכפל: L/2 כפלים (בערך) במקום L, ומספר החיבורים לא יורד. ב-FPGA זה חוסך DSP slices; ב-CPU עם FMA החיסכון קטן יותר, כי הכפל והחיבור ממילא בפקודה אחת, וה-pre-add דורש גישה לשני כיווני ה-delay line.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nx = np.arange(10)\nh = np.ones(4)\nprint(len(np.convolve(x, h)),\n      len(np.convolve(x, h, 'valid')),\n      len(np.convolve(x, h, 'same')))",
+      "choices": [
+        "13 7 10",
+        "10 7 10",
+        "13 10 10",
+        "13 7 13"
+      ],
+      "answer": 0,
+      "explanation": "קונבולוציה מלאה של N ו-L נותנת N+L-1 = 13. 'valid' רק היכן שהמסנן חופף לגמרי: N-L+1 = 7. 'same' חותך לאורך הקלט: 10. ה-7 הוא בדיוק מספר הדגימות התקינות שמתקבלות ב-overlap-save מבלוק.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "FIR מרוכב (taps מרוכבים) באורך 1024 על stream מרוכב של 50 MS/s. כמה פחות FLOPs ידרוש overlap-save עם FFT באורך 4096, לעומת מימוש ישיר? (הערכה: 5·N·log2N ל-FFT, 8 FLOPs למכפלה מרוכבת עם צבירה, 6 לכפל מרוכב)",
+      "choices": [
+        "בערך אותו דבר",
+        "בערך פי 5",
+        "בערך פי 50",
+        "בערך פי 500"
+      ],
+      "answer": 2,
+      "explanation": "ישיר: 1024 × 8 = 8192 FLOPs לדגימה, כ-410 GFLOP/s. overlap-save: FFT ו-IFFT באורך 4096 הם 2 × 5 × 4096 × 12 ≈ 491K FLOPs, ועוד 4096 כפלים מרוכבים (כ-25K), כ-516K לבלוק שנותן 4096-1024+1 = 3073 דגימות: כ-168 FLOPs לדגימה, כ-8.4 GFLOP/s. היחס כ-49. המחיר: latency של בלוק וקוד מורכב יותר.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.filters.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-jammer ריאקטיבי ה-latency הכולל קריטי. יש FIR linear phase באורך 255 taps ב-25 MS/s. מה הדרך לקצר את ה-latency שהמסנן מוסיף, בלי לשנות את תגובת ה-magnitude?",
+      "choices": [
+        "לעבור ל-overlap-save",
+        "להכפיל את המקדמים כדי להגדיל את ה-gain",
+        "להחליף ל-FIR minimum phase עם אותה תגובת magnitude: הוא מרכז את האנרגיה בתחילת ה-impulse response ולכן ה-delay קטן בהרבה, במחיר פאזה לא ליניארית",
+        "להוריד את קצב הדגימה"
+      ],
+      "answer": 2,
+      "explanation": "ה-linear phase עולה (L-1)/2 = 127 דגימות, כ-5.1 µs ב-25 MS/s. minimum phase עם אותו |H| מקטין את ה-group delay מאוד (בעיקר בפס המעבר), אבל מעוות את הפאזה, ולרוב זה מקובל ב-detection. overlap-save דווקא מוסיף latency של בלוק. הורדת קצב משנה את המערכת כולה, וה-delay בזמן יכול אפילו לגדול.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מסנן IIR ב-float רץ מהר, אבל כמה שניות אחרי שהקלט נהיה שקט (אפסים) ה-CPU של ה-thread קופץ פי 20-50. מה הסיבה הסבירה?",
+      "choices": [
+        "ה-branch predictor נכשל כשהקלט אפס",
+        "ה-state של המסנן דועך לערכים denormal (מתחת לכ-1.2e-38), ופעולות על denormals ב-x86 עולות מאות מחזורים. תיקון: FTZ/DAZ, או הוספת offset זעיר",
+        "ה-cache מתפנה כשאין קלט",
+        "ה-OS מוריד את תדר ה-CPU כשהעומס נמוך"
+      ],
+      "answer": 1,
+      "explanation": "תגובת ההלם של IIR דועכת אקספוננציאלית ולא מגיעה לאפס, ולכן ה-state עובר לטווח ה-subnormal, שבו חלק מהמעבדים מטפלים בכל פעולה ב-microcode. FTZ (flush to zero) ו-DAZ (denormals are zero) ב-MXCSR מבטלים את זה, ו-SSE/AVX עם `-ffast-math` מפעילים אותם בתחילת התוכנית. הורדת תדר הייתה מאטה, אבל לא מעלה את ה-CPU% של אותה עבודה פי 20.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "מעבדים stream ב-blocks באורכים משתנים עם FIR ועם IIR. מה נדרש כדי שהתוצאה תהיה זהה לעיבוד של כל ה-stream בבת אחת? (בחר את כל הנכונים)",
+      "choices": [
+        "לשמור את L-1 דגימות הקלט האחרונות של ה-FIR בין blocks",
+        "לאפס את ה-delay line בתחילת כל block כדי למנוע זליגה בין blocks",
+        "לשמור את משתני ה-state של כל biquad ב-IIR בין blocks",
+        "לדאוג שגודל ה-block יהיה כפולה של L",
+        "לא לשנות מקדמים באמצע בלי לטפל ב-transient (למשל crossfade)"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "המסנן הוא מערכת עם זיכרון, והזיכרון חייב לשרוד בין blocks. איפוס יוצר transient בכל block. גודל block שרירותי עובד כל עוד ה-state נשמר. החלפת מקדמים באמצע stream היא שינוי אמיתי במערכת; ב-IIR היא יכולה ליצור קפיצות גדולות או אפילו אי-יציבות רגעית, ולכן מבצעים crossfade או מחליפים בזהירות.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q11",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב מחלקת `Fir` ל-stream של float, שמעבדת blocks באורך שרירותי עם state בין קריאות. הלולאה הפנימית צריכה לרוץ על זיכרון רציף, בלי modulo, כדי שאפשר יהיה לווקטר אותה.",
+      "starter": "class Fir {\npublic:\n    explicit Fir(std::vector<float> h);\n    void process(const float* x, float* y, size_t n);\n};",
+      "modelAnswer": "class Fir {\n    std::vector<float> h_, d_;   // d_ has 2L entries\n    size_t L_, pos_ = 0;\npublic:\n    explicit Fir(std::vector<float> h)\n        : h_(std::move(h)), d_(2 * h_.size(), 0.0f), L_(h_.size()) {}\n\n    void process(const float* x, float* y, size_t n) {\n        for (size_t i = 0; i < n; ++i) {\n            pos_ = (pos_ == 0) ? L_ - 1 : pos_ - 1;\n            d_[pos_] = d_[pos_ + L_] = x[i];   // mirrored write\n            const float* w = &d_[pos_];        // w[k] == x[n-k]\n            float acc = 0.0f;\n            for (size_t k = 0; k < L_; ++k) acc += h_[k] * w[k];\n            y[i] = acc;\n        }\n    }\n};\n// requires L >= 1",
+      "rubric": [
+        "state נשמר בין קריאות; התוצאה לא תלויה בחלוקה ל-blocks",
+        "delay line בגודל 2L עם כתיבה כפולה, כך שהחלון d[pos..pos+L-1] רציף",
+        "סדר נכון: w[k] = x[n-k] ומכפלה ב-h[k]",
+        "O(L) לדגימה, בלי modulo בלולאה הפנימית",
+        "מזכיר ווקטוריזציה של הלולאה הפנימית (כמה accumulators או reduction מפורש)"
+      ],
+      "explanation": "הכתיבה הכפולה עולה store אחד נוסף לדגימה, ובתמורה הלולאה הפנימית היא dot product פשוט על שני מערכים רציפים. pos יורד, ולכן הדגימה החדשה בתחילת החלון והישנות אחריה. חלופה: buffer לינארי גדול עם memmove מדי פעם.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.filters.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך לסנן 16 ערוצים בלתי תלויים, כל אחד עם אותו biquad IIR. איך מקבלים ניצול טוב של AVX-512 (16 floats)?",
+      "choices": [
+        "לשים ערוץ בכל lane: state של 16 ערוצים ברגיסטר אחד, ובכל צעד זמן לעבד את 16 הערוצים בבת אחת. דורש סידור הנתונים כ-interleaved לפי ערוץ",
+        "לווקטר את הלולאה לאורך הזמן בכל ערוץ, 16 דגימות בכל פעם",
+        "IIR לא ניתן לווקטור, צריך להחליף ל-FIR",
+        "להריץ 16 threads, אחד לכל ערוץ"
+      ],
+      "answer": 0,
+      "explanation": "IIR רקורסיבי: y[n] תלוי ב-y[n-1], ולכן אי אפשר פשוט לחשב 16 דגימות עוקבות במקביל. לרוחב ערוצים אין תלות, וכל lane הוא ערוץ: אותן פעולות בדיוק, עם תלות רק בתוך ה-lane. קיימות גם טכניקות לאורך הזמן (look-ahead, state-space בבלוקים), אבל הן מוסיפות חישוב. 16 threads על 16 biquads זה overhead סינכרון ענק לעבודה זעירה.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.filters.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Butterworth lowpass מסדר 8 עם fc = 0.001·fs תוכנן ב-SciPy כ-`b, a` ומומש ב-float32 ב-direct form. הפלט מתבדר. מה הסיבה והתיקון?",
+      "choices": [
+        "denormals; צריך FTZ",
+        "Butterworth לא יציב מעל סדר 4",
+        "צריך לנרמל את b כך שהסכום יהיה 1",
+        "ב-direct form מסדר גבוה, הקטבים (כולם קרובים ל-z=1) רגישים מאוד לשגיאה במקדמי המכנה, ועיגול ל-float32 מזיז חלק מהם מחוץ למעגל היחידה. תיקון: לתכנן כ-SOS (`output='sos'`) ולממש cascade של biquads"
+      ],
+      "answer": 3,
+      "explanation": "המקדמים של פולינום מסדר 8 עם שורשים צפופים ליד 1 הם בסדרי גודל שונים מאוד, ושגיאה יחסית קטנה בהם מזיזה שורשים הרבה. גם ב-double, סדר גבוה ו-fc נמוך כזה בעייתי. cascade של biquads שם כל זוג קטבים ב-biquad משלו, וכל אחד מהם יציב ומדויק. Butterworth אנלוגי יציב בכל סדר. נרמול של b משנה רק gain.",
+      "lesson": "dsp.filters"
+    },
+    {
+      "id": "dsp.filters.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "צריך מסנן ערוץ ב-host עבור stream מרוכב של 100 MS/s: פס מעבר של 10 MHz, דחייה של 60 dB, ו-latency מקסימלי של 20 µs. איך תבחר מימוש, ומה החשבון?",
+      "modelAnswer": "קודם להעריך אורך FIR: עם transition band של נניח 2 MHz ב-100 MS/s (0.02·fs) ו-60 dB, לפי נוסחת Kaiser/harris בערך L ≈ A/(22·Δf/fs) ≈ 60/(22·0.02) ≈ 136 taps. ישיר עם taps ממשיים ונתונים מרוכבים: 136·2 MACs × 100e6 ≈ 27 GMAC/s, שזה הרבה לליבה אחת אבל אפשרי עם AVX2/AVX-512 על כמה ליבות, או ב-GPU. latency של linear phase: 68 דגימות = 0.68 µs, רחוק מ-20 µs. overlap-save עם N=1024 היה מוריד את החישוב פי כמה, ו-latency הבלוק (1024 דגימות, כ-10 µs, ועוד זמן חישוב) עדיין בתוך התקציב, אבל צמוד. אם אחרי הסינון ממילא עושים decimation (10 MHz מתוך 100), הכי נכון polyphase decimator: מחשבים רק את דגימות הפלט שנשמרות, וזה מוריד את העלות פי M. IIR (למשל elliptic) זול מאוד אבל לא linear phase ולא מווקטר טוב בערוץ אחד. ההמלצה: אם יש decimation – polyphase FIR; אם לא – FIR ישיר ב-SIMD או overlap-save, לפי מה שעומד ב-CPU. בנוסף: מקדמים ב-float, delay line עם כתיבה כפולה, FTZ, ומדידה של זמן לבלוק מול זמן-אמת.",
+      "rubric": [
+        "הערכת אורך FIR מתוך transition band ודחייה, וחשבון MACs/s",
+        "חשבון latency לכל אפשרות (group delay, גודל בלוק FFT) מול התקציב",
+        "שוקל overlap-save ו-polyphase decimation, ומתי כל אחד עדיף",
+        "מתייחס ל-IIR ולמה הוא פחות מתאים כאן",
+        "פרטי מימוש: SIMD, state, denormals, מדידה"
+      ],
+      "explanation": "תשובה טובה עוברת מדרישות למספרים, ומהמספרים לבחירת אלגוריתם, ומציינת את ה-trade-offs במפורש.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.filters.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "הלולאה `for (k...) acc += h[k] * w[k];` על floats לא מווקטרת ב-GCC עם `-O3 -mavx2`, למרות שהנתונים רציפים ומיושרים. מה הסיבה ומה התיקון הנכון?",
+      "choices": [
+        "חסר `restrict` על המצביעים",
+        "חיבור floating-point אינו אסוציאטיבי, ו-vectorization של reduction משנה את סדר הסכימה ולכן את התוצאה. הקומפיילר לא יעשה את זה בלי היתר: `-ffast-math`/`-fassociative-math`, `#pragma omp simd reduction(+:acc)`, או מימוש ידני עם כמה accumulators",
+        "AVX2 לא תומך ב-FMA",
+        "L לא ידוע בזמן קומפילציה"
+      ],
+      "answer": 1,
+      "explanation": "וקטוריזציה של סכום מחשבת 8 סכומים חלקיים ומחברת בסוף, וזה סדר אחר ותוצאה שונה בביטים האחרונים. בלי היתר מפורש הקומפיילר שומר על הסדר הסדרתי. `-ffast-math` כולל עוד שינויים מסוכנים (למשל הנחה שאין NaN), ולכן עדיף היתר ממוקד. ל-reduction אין aliasing שצריך restrict (רק קריאות). FMA קיים ב-Haswell ומעלה. L לא ידוע לא מונע וקטוריזציה. בונוס: כמה accumulators גם שוברים את שרשרת ה-latency של ה-FMA.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.filters.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "כדי לפתור בעיית denormals, הוסיפו ב-`main()` קריאה ל-`_mm_setcsr(_mm_getcsr() | 0x8040)` (FTZ+DAZ), אחרי אתחול ה-pipeline. ה-thread של ה-IIR עדיין איטי כשהקלט שקט. למה?",
+      "choices": [
+        "0x8040 הם לא הביטים הנכונים",
+        "FTZ/DAZ לא משפיעים על AVX",
+        "MXCSR הוא חלק מה-state של כל thread. ה-thread של ה-IIR נוצר לפני הקריאה ושמר את הערך הישן (thread חדש יורש את סביבת ה-FP של היוצר רק ברגע היצירה). צריך להגדיר בתוך ה-thread עצמו, בתחילת הפונקציה שלו",
+        "צריך גם להגדיר את ה-x87 control word"
+      ],
+      "answer": 2,
+      "explanation": "MXCSR נשמר ומשוחזר ב-context switch לכל thread בנפרד. POSIX קובע שה-floating-point environment עובר בירושה מה-thread היוצר ב-pthread_create, ולכן הגדרה ב-main משפיעה רק על threads שנוצרים אחריה. 0x8000 הוא FTZ ו-0x0040 הוא DAZ, והם חלים על SSE ו-AVX. x87 לא בשימוש בקוד float של x86-64. הפרקטיקה הנכונה: להגדיר ב-entry של כל thread של DSP, ולתעד.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.filters.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "overlap-save למסנן באורך L=1024. לפי ההערכה (2·5·N·log2N + 6N)/(N-L+1) FLOPs לדגימה, איזה גודל FFT ממזער את העבודה, ומה המחיר?",
+      "choices": [
+        "N = 2048 (2L): הכי קטן ולכן הכי מהיר",
+        "N = 4096 (4L): המינימום החד",
+        "N = 65536: ככל שגדול יותר, הקבוע ליחידה יורד",
+        "N בסביבות 8192-16384 (8L-16L): העקומה שטוחה שם (כ-155 FLOPs לדגימה, לעומת כ-168 ב-4096 וכ-232 ב-2048). המחיר: latency ובלוק שגדל, ו-working set שעלול לצאת מה-cache"
+      ],
+      "answer": 3,
+      "explanation": "ב-N קטן רוב הבלוק 'מבוזבז' על L-1 דגימות חפיפה; ב-N גדול ה-log2N גדל. החישוב: N=2048 נותן 237.6K/1025 ≈ 232; N=4096 ≈ 168; N=8192 נותן 1.114M/7169 ≈ 155; N=16384 ≈ 156; N=32768 ≈ 161. בפועל בוחרים לרוב 4L-8L: כמעט אותה עבודה, חצי latency, ובלוק של 64 KB (8192 complex float) שעדיין נכנס ב-L2. זה ה-trade-off שמראיין מצפה לשמוע.",
+      "lesson": "dsp.filters",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

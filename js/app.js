@@ -10,6 +10,14 @@ import { syncNow, canSync } from './sync.js';
 const app = document.getElementById('app');
 const st = () => store.get();
 
+// Android Chrome offers installation through this event.
+let installEvent = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEvent = e;
+  if (content.questions.length && (!location.hash || location.hash === '#/')) home();
+});
+
 // ---------- helpers ----------
 let toastTimer;
 function toast(msg) {
@@ -64,9 +72,12 @@ function home() {
       <a class="btn" href="#/practice?m=review">חזרות בלבד</a>
       <a class="btn" href="#/practice?m=interview">מראיין AI</a>
     </div>
+    ${installEvent ? '<button class="btn" id="install" style="margin-top:12px;width:100%">התקנת האפליקציה במכשיר (עובדת גם בלי אינטרנט)</button>' : ''}
     ${st().aiQueue.length ? `<p class="small muted" style="margin-top:12px">${st().aiQueue.length} תשובות מחכות לבדיקת המראיין (ייבדקו כשיהיה חיבור).</p>` : ''}
     ${!content.questions.length ? '<div class="feedback bad">לא נטען תוכן. בדוק חיבור בפעם הראשונה שפותחים את האפליקציה.</div>' : ''}`;
   document.getElementById('go').onclick = () => begin({ mode: 'continue' });
+  const inst = document.getElementById('install');
+  if (inst) inst.onclick = async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; home(); };
   const drop = document.getElementById('dropCur');
   if (drop) drop.onclick = () => { st().current = null; store.save(); home(); };
 }

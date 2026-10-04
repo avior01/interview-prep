@@ -1,0 +1,320 @@
+{
+  "domain": "py",
+  "subtopic": "asyncio",
+  "lessons": [
+    {
+      "id": "py.asyncio",
+      "title": "asyncio",
+      "what": "asyncio הוא מודל concurrency עם thread אחד ו-event loop: coroutines (async def) מוותרות על השליטה רק בנקודות await, וה-loop מריץ בינתיים coroutines אחרות שמוכנות. מתאים לאלפי פעולות I/O במקביל (רשת), לא לחישוב CPU-bound.",
+      "when": [
+        "הרבה חיבורי רשת בו-זמנית: clients של HTTP, websockets, שרתים",
+        "שאלות 'באיזה סדר יודפס' עם gather, create_task, sleep וביטול",
+        "באגים של קוד async שנתקע: קריאה חוסמת בתוך coroutine, task שנעלם, timeout שלא עובד"
+      ],
+      "how": [
+        "async def מגדירה coroutine function; קריאה אליה מחזירה אובייקט coroutine ולא מריצה כלום עד שעושים לו await או עוטפים ב-task",
+        "asyncio.run(main()) יוצר loop, מריץ את main עד הסוף, וסוגר את ה-loop",
+        "await coro מריץ אותה עד סופה בתוך ה-task הנוכחי (סדרתי). asyncio.create_task(coro) מתזמן אותה לרוץ במקביל, והיא מתחילה בפעם הבאה שה-task הנוכחי מוותר על השליטה",
+        "asyncio.gather ו-TaskGroup (3.11) מריצים כמה coroutines במקביל ומחכים לכולן",
+        "קריאה חוסמת (time.sleep, requests, חישוב כבד) עוצרת את כל ה-loop; מעבירים אותה ל-thread עם asyncio.to_thread או run_in_executor",
+        "הגבלת concurrency עם asyncio.Semaphore; תורים עם asyncio.Queue(maxsize) נותנים backpressure",
+        "ביטול: task.cancel() זורק CancelledError בנקודת ה-await; asyncio.timeout (3.11) משתמש בביטול. לא לבלוע CancelledError"
+      ],
+      "complexity": "החלפה בין coroutines עולה מיקרו-שניות בודדות, וזיכרון לכל task הוא KB בודדים, ולכן עשרות אלפי חיבורים על thread אחד אפשריים. הכל רץ על core אחד.",
+      "pitfalls": [
+        "לקרוא ל-coroutine בלי await: שום דבר לא רץ (ויש RuntimeWarning: never awaited)",
+        "קוד חוסם בתוך async def: כל השרת קופא",
+        "create_task בלי לשמור הפניה: ה-loop מחזיק רק weak reference, וה-task עלול להיאסף באמצע",
+        "לבלוע CancelledError ב-except רחב: timeouts וכיבוי מסודר מפסיקים לעבוד",
+        "gather בלי הגבלה על 100,000 בקשות: הצפה של השרת המרוחק ושל ה-file descriptors"
+      ],
+      "senior": [
+        "לבחור בין threads, asyncio ו-processes לפי סוג העבודה",
+        "structured concurrency עם TaskGroup: שגיאה אחת מבטלת את האחים, אין tasks יתומים",
+        "לתכנן timeouts, ביטול ו-graceful shutdown",
+        "לזהות חסימות של ה-loop (debug mode, slow_callback_duration) ולהעביר עבודה ל-executors"
+      ],
+      "diagram": "loop: [A runs]--await-->[B runs]--await-->[A resumes]\n       one thread, switch only at await"
+    }
+  ],
+  "questions": [
+    {
+      "id": "py.asyncio.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה asyncio מתאים במיוחד?",
+      "choices": [
+        "חישובים מספריים כבדים שצריכים כמה cores",
+        "האצת לולאות Python",
+        "הרבה פעולות I/O בו-זמנית (למשל אלפי חיבורי רשת) על thread אחד",
+        "עקיפת ה-GIL"
+      ],
+      "answer": 2,
+      "explanation": "asyncio מאפשר ל-thread אחד לנהל הרבה פעולות שמחכות ל-I/O, כי בזמן ההמתנה ה-loop מריץ אחרות. הוא לא נותן מקביליות של CPU ולא עוקף את ה-GIL; חישוב כבד אפילו יעצור את כל ה-coroutines.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q02",
+      "level": 1,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס (מלבד אזהרה אפשרית)?",
+      "code": "async def f():\n    return 1\n\nprint(type(f()).__name__)",
+      "choices": [
+        "int",
+        "function",
+        "coroutine",
+        "Task"
+      ],
+      "answer": 2,
+      "explanation": "קריאה לפונקציית async לא מריצה את הגוף; היא יוצרת אובייקט coroutine. כדי לקבל 1 צריך await f() בתוך coroutine אחרת, או asyncio.run(f()). כאן גם תופיע RuntimeWarning: coroutine 'f' was never awaited.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "באיזה רגע coroutine יכולה לוותר על השליטה כדי שקוד אחר ב-event loop ירוץ?",
+      "choices": [
+        "בכל רגע, ה-loop מפקיע אותה כמו scheduler של מערכת הפעלה",
+        "רק בנקודות await (על משהו שבאמת מחכה), כך שקטע בלי await רץ ברצף בלי הפרעה מ-coroutines אחרות",
+        "כל 5 ms",
+        "רק כשהיא מסתיימת"
+      ],
+      "answer": 1,
+      "explanation": "asyncio הוא cooperative multitasking: אין preemption בין coroutines. זה גם יתרון (קטע בלי await הוא 'אטומי' ביחס ל-coroutines אחרות באותו loop) וגם חיסרון (לולאה ארוכה בלי await מקפיאה את הכל). 5 ms הוא ה-switch interval של ה-GIL בין threads, נושא אחר.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "באיזה סדר יודפסו השורות?",
+      "code": "import asyncio\n\nasync def w(name, d):\n    await asyncio.sleep(d)\n    print(name)\n\nasync def main():\n    await asyncio.gather(w(\"a\", 0.2), w(\"b\", 0.1))\n\nasyncio.run(main())",
+      "choices": [
+        "a, b",
+        "b, a",
+        "a בלבד",
+        "הסדר לא מוגדר"
+      ],
+      "answer": 1,
+      "explanation": "gather מריץ את שתי ה-coroutines במקביל. b ישנה 0.1 שניות ו-a ישנה 0.2, ולכן b מסיימת ומדפיסה קודם. הסדר שבו הועברו ל-gather משפיע רק על סדר התוצאות ברשימה שמוחזרת, לא על סדר הביצוע.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בשרת asyncio, handler אחד קורא ל-`time.sleep(2)` (ולא await asyncio.sleep). מה קורה?",
+      "choices": [
+        "רק ה-handler הזה מחכה 2 שניות",
+        "כל ה-event loop נעצר ל-2 שניות: אף בקשה אחרת לא מטופלת",
+        "Python ממיר את זה אוטומטית ל-asyncio.sleep",
+        "נזרק RuntimeError"
+      ],
+      "answer": 1,
+      "explanation": "time.sleep חוסם את ה-thread, וה-loop רץ באותו thread. אותו דבר קורה עם requests.get, קריאות DB סינכרוניות או חישוב ארוך. הפתרון: גרסאות async (aiohttp, asyncpg) או await asyncio.to_thread(func).",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "כמה זמן לוקח, בקירוב, כל אחד מהגופים הבאים בתוך coroutine?\n\nA: `await asyncio.sleep(1); await asyncio.sleep(1)`\n\nB: `await asyncio.gather(asyncio.sleep(1), asyncio.sleep(1))`",
+      "choices": [
+        "A: שתי שניות, B: שנייה",
+        "A: שנייה, B: שנייה",
+        "A: שנייה, B: שתי שניות",
+        "A: שתי שניות, B: שתי שניות"
+      ],
+      "answer": 0,
+      "explanation": "await ברצף הוא סדרתי: השני מתחיל רק כשהראשון גמר. gather מתזמן את שתיהן כ-tasks במקביל, ולכן מחכים לארוכה מביניהן. טעות נפוצה היא לכתוב לולאה עם await לכל בקשה ולתהות למה async לא מאיץ.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q07",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "באיזה סדר יודפסו השורות?",
+      "code": "import asyncio\n\nasync def child():\n    print(\"child\")\n\nasync def main():\n    t = asyncio.create_task(child())\n    print(\"parent\")\n    await t\n\nasyncio.run(main())",
+      "choices": [
+        "parent, child",
+        "child, parent",
+        "parent בלבד",
+        "הסדר אקראי"
+      ],
+      "answer": 0,
+      "explanation": "create_task מתזמן את child ל-loop אבל לא מריץ אותה מיד. main ממשיכה לרוץ עד ה-await הראשון שבו היא מוותרת על השליטה (await t), ורק אז ה-loop מריץ את child. הסדר דטרמיניסטי.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך לשלוח 10,000 בקשות HTTP עם aiohttp, אבל השרת מרשה לכל היותר 20 חיבורים במקביל. מה הדרך הנכונה?",
+      "choices": [
+        "gather על כל 10,000 בבת אחת",
+        "asyncio.Semaphore(20) שכל בקשה עושה איתו async with לפני השליחה (או worker pool של 20 tasks שקוראים מ-asyncio.Queue)",
+        "time.sleep בין בקשות",
+        "לפצל ל-20 threads"
+      ],
+      "answer": 1,
+      "explanation": "Semaphore מגביל כמה coroutines נמצאות בקטע הקריטי בו-זמנית, והשאר ממתינות בלי לחסום את ה-loop. דפוס ה-workers עם Queue חוסך גם את יצירת 10,000 coroutines מראש. gather בלי הגבלה יפתח 10,000 חיבורים (או יתקע ב-connection pool), ו-time.sleep חוסם את ה-loop.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q09",
+      "level": 3,
+      "type": "code",
+      "lang": "python",
+      "prompt": "נתונה `async def fetch(x)`. כתוב `fetch_all(items, limit, timeout)` שמריצה fetch על כל ה-items עם לכל היותר `limit` בקשות במקביל, timeout לכל בקשה בנפרד, ומחזירה רשימה באותו סדר שבה כל איבר הוא התוצאה או ה-exception (כולל TimeoutError). כשל של בקשה אחת לא עוצר את האחרות.",
+      "starter": "import asyncio\n\nasync def fetch_all(items, limit=10, timeout=1.0):\n    ...",
+      "modelAnswer": "import asyncio\n\nasync def fetch_all(items, limit=10, timeout=1.0):\n    sem = asyncio.Semaphore(limit)\n\n    async def one(x):\n        async with sem:                      # at most `limit` in flight\n            async with asyncio.timeout(timeout):  # per request, 3.11+\n                return await fetch(x)\n\n    return await asyncio.gather(\n        *(one(x) for x in items),\n        return_exceptions=True,              # keep going, keep order\n    )",
+      "rubric": [
+        "Semaphore להגבלת concurrency",
+        "timeout לכל בקשה (asyncio.timeout או wait_for) בתוך ה-semaphore, כך שהזמן בתור לא נספר",
+        "gather עם return_exceptions=True לשמירת סדר והמשך אחרי כשלים",
+        "בלי קריאות חוסמות ובלי לבלוע CancelledError",
+        "מודעות: עבור רשימה ענקית עדיף worker pool עם Queue במקום coroutine לכל item"
+      ],
+      "explanation": "מיקום ה-timeout חשוב: אם הוא מחוץ ל-semaphore, בקשות שמחכות בתור יגיעו ל-timeout בלי שנשלחו בכלל. return_exceptions=True מחזיר exceptions כערכים, אבל CancelledError של ה-gather עצמו עדיין מתפשט כרגיל.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות על asyncio נכונות?",
+      "choices": [
+        "כל ה-coroutines של loop אחד רצות על thread אחד",
+        "שתי coroutines באותו loop לא יכולות לבצע קוד Python באותו רגע ממש",
+        "asyncio.Lock מיותר תמיד, כי אין threads",
+        "עדיין יכולים להיות race conditions לוגיים, כשמצב משותף נבדק לפני await ומשתנה בזמן ההמתנה",
+        "חישוב CPU-bound ב-coroutine יעכב את כל שאר ה-coroutines"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "explanation": "אין מקביליות אמיתית בתוך loop, אבל יש interleaving בכל await. check-then-act שעובר דרך await (קורא cache, await fetch, כותב) עלול לרוץ פעמיים במקביל, ולכן asyncio.Lock שימושי. חישוב ארוך תופס את ה-thread ומעכב את כולם.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q11",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "באיזה סדר יודפסו השורות?",
+      "code": "import asyncio\n\nasync def worker():\n    try:\n        await asyncio.sleep(10)\n    except asyncio.CancelledError:\n        print(\"cancelled\")\n        raise\n    finally:\n        print(\"finally\")\n\nasync def main():\n    t = asyncio.create_task(worker())\n    await asyncio.sleep(0)\n    t.cancel()\n    try:\n        await t\n    except asyncio.CancelledError:\n        print(\"main saw cancel\")\n\nasyncio.run(main())",
+      "choices": [
+        "main saw cancel",
+        "finally, cancelled, main saw cancel",
+        "cancelled, finally, main saw cancel",
+        "cancelled, main saw cancel"
+      ],
+      "answer": 2,
+      "explanation": "sleep(0) נותן ל-worker להתחיל ולהגיע ל-sleep(10). cancel() מסמן ביטול, וכשה-loop מחדש את ה-worker נזרק CancelledError בנקודת ה-await: מודפס cancelled, ה-raise ממשיך את הביטול, finally רץ, ו-await t ב-main מקבל CancelledError. בלי ה-sleep(0), ה-task היה מבוטל לפני שהתחיל, ושום דבר מתוך worker לא היה מודפס.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "קוד עושה `asyncio.create_task(send_metrics())` בלי לשמור את התוצאה במשתנה (fire and forget). לפעמים ה-metrics לא נשלחים. למה?",
+      "choices": [
+        "create_task לא מריץ את ה-coroutine אם אין await",
+        "ה-event loop מחזיק רק weak reference ל-tasks; בלי הפניה חזקה, task באמצע הריצה יכול להיאסף על ידי ה-GC ולהיעלם. צריך לשמור אותו (למשל בסט ולהסיר ב-add_done_callback) או להשתמש ב-TaskGroup",
+        "ה-task רץ ב-thread אחר ולא מגיע לרשת",
+        "send_metrics זורק exception שנבלע תמיד"
+      ],
+      "answer": 1,
+      "explanation": "התיעוד של create_task מזהיר במפורש: שמרו הפניה ל-task. הדפוס המקובל: background_tasks.add(task); task.add_done_callback(background_tasks.discard). בנוסף, exception ב-task שאף אחד לא מחכה לו מדווח רק כ-'Task exception was never retrieved' כשה-task נאסף, ולכן קל לפספס כשלים.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה ההבדל בהתנהגות כשאחת משלוש coroutines נכשלת עם exception: `asyncio.gather(a(), b(), c())` (ברירת מחדל) מול `async with asyncio.TaskGroup() as tg` שיוצר את שלושתן?",
+      "choices": [
+        "gather מעביר את ה-exception הראשון ל-await אבל לא מבטל את האחרות, שממשיכות לרוץ; TaskGroup מבטל את האחרות, מחכה שיסתיימו, וזורק ExceptionGroup עם כל השגיאות",
+        "אין הבדל",
+        "TaskGroup מתעלם משגיאות",
+        "gather מבטל את כולן ו-TaskGroup לא"
+      ],
+      "answer": 0,
+      "explanation": "TaskGroup (3.11) מממש structured concurrency: אין tasks שממשיכים לרוץ אחרי שהבלוק יצא, ושגיאות לא הולכות לאיבוד (except* מטפל ב-ExceptionGroup). ב-gather, ה-tasks האחרים ממשיכים ברקע בלי שאף אחד מחכה להם. return_exceptions=True ב-gather הוא מודל שלישי: אוספים הכל כערכים.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בשירות asyncio יש פונקציה CPU-bound בקוד Python טהור שלוקחת 300 ms. מעבירים אותה ל-`await asyncio.to_thread(heavy)`. מה ההשפעה?",
+      "choices": [
+        "היא תרוץ פי כמה מהר יותר",
+        "ה-loop לא נחסם לגמרי ויכול לטפל בבקשות, אבל ה-thread עדיין מתחרה על ה-GIL, ולכן ה-loop מאט ומגיב ב-latency גבוה יותר; ל-CPU-bound אמיתי עדיף ProcessPoolExecutor דרך run_in_executor",
+        "אין השפעה, to_thread מריץ באותו thread",
+        "השירות יקרוס כי asyncio לא תומך ב-threads"
+      ],
+      "answer": 1,
+      "explanation": "to_thread מעביר את העבודה ל-default executor (thread pool), וזה מתאים לקריאות I/O חוסמות. לקוד Python CPU-bound, ה-GIL מחלק את הזמן בין ה-thread לבין ה-loop, כך שה-loop רץ אבל ה-latency שלו נפגע (convoy). אם heavy היא NumPy שמשחרר GIL, to_thread דווקא מתאים.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q15",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "באיזה סדר יודפסו השורות?",
+      "code": "import asyncio\n\nasync def main():\n    try:\n        async with asyncio.timeout(0.1):\n            try:\n                await asyncio.sleep(1)\n            except asyncio.CancelledError:\n                print(\"swallowed\")\n            print(\"still inside\")\n    except TimeoutError:\n        print(\"timeout\")\n    print(\"done\")\n\nasyncio.run(main())",
+      "choices": [
+        "timeout, done",
+        "swallowed, timeout, done",
+        "swallowed, still inside, done",
+        "swallowed, still inside, timeout, done"
+      ],
+      "answer": 2,
+      "explanation": "asyncio.timeout מממש timeout על ידי ביטול ה-task, ובסוף הבלוק הוא ממיר CancelledError ל-TimeoutError. כאן הקוד בלע את ה-CancelledError, ולכן הבלוק יצא כרגיל בלי exception, וה-timeout לא דיווח על כלום: הקוד חושב שהכל הצליח. זו הסיבה לא לבלוע CancelledError, או לבצע raise מחדש אחרי ניקוי.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "בשרת asyncio, p99 latency קופץ ל-400 ms מדי פעם, אבל כל handler מודד את עצמו כמהיר. מה הדרך היעילה ביותר לאבחן?",
+      "choices": [
+        "להוסיף עוד workers ל-thread pool",
+        "להגדיל את ה-timeout של ה-clients",
+        "להחליף את ה-loop ב-uvloop",
+        "להפעיל את asyncio debug mode (או מוניטור משלך שמודד lag של ה-loop: task שעושה sleep קצר ובודק כמה באמת עבר), שמדווח על callbacks שרצו יותר מ-slow_callback_duration; כך מוצאים קוד שחוסם את ה-loop בין awaits"
+      ],
+      "answer": 3,
+      "explanation": "handler שמודד את עצמו לא רואה את הזמן שבו חיכה ל-loop תפוס. אם קוד כלשהו (parsing של JSON ענק, קריאה סינכרונית, regex כבד) מחזיק את ה-loop 400 ms, כל הבקשות שמחכות סובלות. debug mode מתעד callbacks איטיים (ברירת מחדל 100 ms). uvloop מהיר יותר אבל לא יפתור קוד חוסם.",
+      "lesson": "py.asyncio"
+    },
+    {
+      "id": "py.asyncio.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן שירות asyncio שמחזיק 10,000 חיבורי websocket ממכשירים, מקבל מכל אחד הודעה בשנייה, כותב אותן ל-DB ושולח פקודות חזרה. דבר על backpressure, timeouts, כשלים ו-graceful shutdown.",
+      "modelAnswer": "חשבון: 10,000 הודעות לשנייה, תקורה של asyncio לכל הודעה היא עשרות מיקרו-שניות, אז loop אחד יכול להחזיק את זה, אבל עם מעט מרווח; parsing ו-validation צריכים להיות זולים, ואם לא, מריצים כמה processes (SO_REUSEPORT או load balancer) כל אחד עם loop משלו. לכל חיבור task קורא, שמכניס הודעות ל-asyncio.Queue(maxsize) משותף; workers (למשל 8 tasks) מושכים batches וכותבים ל-DB עם driver async (asyncpg) ו-pool מוגבל. backpressure: כשהתור מלא, ה-put חוסם את ה-task הקורא, הוא מפסיק לקרוא מה-socket, TCP window מתמלא והמכשיר מאט; לחלופין לזרוק הודעות לא קריטיות ולספור. שליחה חזרה: לכל חיבור תור יוצא קטן, כך ש-client איטי לא מעכב אחרים; אם התור שלו מלא, מנתקים אותו. timeouts: heartbeat/ping עם timeout לניתוק חיבורים מתים, asyncio.timeout על כל פעולת DB, ו-deadline לכל חיבור חדש (handshake). כשלים: exception ב-handler של חיבור אחד לא מפיל את השאר (try/except לוגי וסגירה של החיבור), DB לא זמין: retry עם backoff והתראה, והתור מתמלא ומפעיל backpressure. עבודה חוסמת (דחיסה, crypto כבד) ל-executor. shutdown: SIGTERM מפעיל event; מפסיקים לקבל חיבורים, שולחים close למכשירים, מחכים לרוקן את התור עם timeout, מבטלים את ה-tasks הנותרים (TaskGroup עוזר), וסוגרים את ה-pool. ניטור: lag של ה-loop, עומק תורים, חיבורים פעילים, latency של כתיבה.",
+      "rubric": [
+        "חשבון עומס והחלטה על loop אחד או כמה processes",
+        "תורים חסומים ו-backpressure שמגיע עד TCP, ותור יוצא לכל חיבור",
+        "timeouts: heartbeat, פעולות DB, handshake",
+        "בידוד כשלים ועבודה חוסמת ב-executor",
+        "graceful shutdown וניטור של loop lag"
+      ],
+      "explanation": "השאלה בודקת שילוב של asyncio עם עקרונות design: backpressure מקצה לקצה, בידוד בין clients, ומחזור חיים מסודר.",
+      "lesson": "py.asyncio",
+      "tags": [
+        "microsoft"
+      ]
+    }
+  ]
+}

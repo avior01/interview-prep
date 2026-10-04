@@ -1,0 +1,344 @@
+{
+  "domain": "py",
+  "subtopic": "data-model",
+  "lessons": [
+    {
+      "id": "py.data-model",
+      "title": "Python data model",
+      "what": "ה-data model הוא הפרוטוקול שדרכו אובייקטים משתלבים בשפה: מתודות dunder (כמו __eq__, __hash__, __len__, __add__) שהאינטרפרטר קורא להן כשכותבים ==, hash(), len(), +. כל ערך ב-Python הוא אובייקט עם identity, type ו-value, ומשתנים הם שמות שמצביעים לאובייקטים.",
+      "when": [
+        "שאלות 'מה מודפס' שכוללות mutability, aliasing או ערכי ברירת מחדל",
+        "מימוש מחלקה שצריכה להתנהג כמו טיפוס מובנה (השוואה, hashing, אופרטורים, iteration)",
+        "שאלות על attribute lookup, properties, descriptors ו-MRO"
+      ],
+      "how": [
+        "השמה לא מעתיקה: b = a נותן שם שני לאותו אובייקט. שינוי in-place (append) נראה דרך שני השמות",
+        "is בודק identity (אותו אובייקט), == קורא ל-__eq__ (אותו ערך)",
+        "ערכי ברירת מחדל של פונקציה מחושבים פעם אחת, בהגדרת הפונקציה; רשימה כברירת מחדל משותפת לכל הקריאות",
+        "hashing: אובייקטים ששווים חייבים hash שווה. הגדרת __eq__ בלי __hash__ הופכת את המחלקה ל-unhashable (__hash__ = None)",
+        "אופרטור בינארי: a + b מנסה a.__add__(b); אם הוא מחזיר NotImplemented, מנסים b.__radd__(a)",
+        "attribute lookup: data descriptors במחלקה (property) גוברים על ה-__dict__ של המופע, שגובר על non-data descriptors (מתודות) ומשתני מחלקה; __getattr__ נקרא רק כשהחיפוש נכשל",
+        "MRO (C3 linearization) קובע את סדר החיפוש בירושה מרובה, ו-super() הולך לבא בתור ב-MRO של המופע, לא בהכרח להורה הישיר"
+      ],
+      "complexity": "גישה ל-attribute היא חיפוש ב-dict (O(1) ממוצע), אבל עוברת דרך type, MRO ו-descriptors. __slots__ מחליף את ה-__dict__ במערך קבוע, וחוסך זיכרון לכל מופע.",
+      "pitfalls": [
+        "ברירת מחדל mutable (def f(x, acc=[]))",
+        "משתנה מחלקה mutable שמשותף בין כל המופעים",
+        "__hash__ שמבוסס על שדות שמשתנים אחרי שהאובייקט נכנס ל-set או dict",
+        "להחזיר False במקום NotImplemented מ-__eq__ או __add__ כשהטיפוס לא מוכר",
+        "להסתמך על is עבור מספרים או מחרוזות (caching של CPython הוא פרט מימוש)"
+      ],
+      "senior": [
+        "להסביר את סדר ה-attribute lookup כולל descriptors ו-__getattr__",
+        "להבין את חוזה ה-hash/eq ולמה dataclass לא frozen אינו hashable",
+        "לדעת את ההבדל בין __getattr__ ל-__getattribute__ ומתי כל אחד נקרא",
+        "לדבר על __slots__, dataclasses ו-NamedTuple כבחירות עיצוב (זיכרון, immutability)"
+      ],
+      "diagram": "a ──┐\n    ├──> [list obj: 1, 2]\nb ──┘\nnames -> objects (refs)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "py.data-model.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין __repr__ ל-__str__?",
+      "choices": [
+        "__str__ מיועד למפתחים ו-__repr__ למשתמשים",
+        "__repr__ הוא ייצוג חד-משמעי למפתחים (ומשמש ב-REPL ובתוך containers); __str__ הוא ייצוג קריא למשתמש, ומשמש ב-print ו-str()",
+        "אין הבדל, אחד הוא alias של השני",
+        "__repr__ חייב להחזיר bytes"
+      ],
+      "answer": 1,
+      "explanation": "print(obj) קורא ל-__str__, ואם הוא לא מוגדר נופל ל-__repr__. print([obj]) מציג את ה-__repr__ של האיברים. מקובל ש-__repr__ ייראה כמו ביטוי שיוצר את האובייקט מחדש, כמו Point(x=1, y=2).",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q02",
+      "level": 1,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "a = [1, 2]\nb = a\nb.append(3)\nprint(a)",
+      "choices": [
+        "[1, 2]",
+        "[1, 2, 3]",
+        "[3]",
+        "NameError"
+      ],
+      "answer": 1,
+      "explanation": "b = a לא מעתיק את הרשימה, אלא נותן לה שם נוסף. append משנה את האובייקט עצמו, ולכן השינוי נראה גם דרך a. להעתקה רדודה כותבים a.copy() או list(a).",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין `is` לבין `==`?",
+      "choices": [
+        "אין הבדל",
+        "is בודק אם שני השמות מצביעים לאותו אובייקט בדיוק (identity); == משווה ערכים דרך __eq__",
+        "is משווה ערכים ו-== משווה כתובות",
+        "is עובד רק על מספרים"
+      ],
+      "answer": 1,
+      "explanation": "[1] == [1] הוא True, אבל [1] is [1] הוא False כי אלה שתי רשימות שונות. השימוש המקובל ב-is הוא מול singletons כמו None. תוצאות של is על מספרים או מחרוזות שוות תלויות ב-caching של CPython ואין להסתמך עליהן.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "def f(x, acc=[]):\n    acc.append(x)\n    return acc\n\nf(1)\nprint(f(2))",
+      "choices": [
+        "[1, 2]",
+        "[2]",
+        "[1]",
+        "TypeError"
+      ],
+      "answer": 0,
+      "explanation": "ערך ברירת המחדל נוצר פעם אחת, כשהפונקציה מוגדרת, ונשמר ב-f.__defaults__. כל קריאה בלי acc משתמשת באותה רשימה. הדפוס הנכון: acc=None ובתוך הפונקציה if acc is None: acc = [].",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה קורה?",
+      "code": "class P:\n    def __init__(self, x):\n        self.x = x\n    def __eq__(self, o):\n        return self.x == o.x\n\nprint(len({P(1), P(1)}))",
+      "choices": [
+        "TypeError: unhashable type: 'P'",
+        "מודפס 1",
+        "מודפס 2",
+        "AttributeError"
+      ],
+      "answer": 0,
+      "explanation": "הגדרת __eq__ בלי __hash__ גורמת ל-Python לקבוע __hash__ = None במחלקה, כי ה-hash שעובר בירושה מ-object (לפי identity) היה סותר את ה-__eq__ החדש. לכן אי אפשר לשים מופעים ב-set. כדי לתקן מגדירים __hash__ שמבוסס על אותם שדות, למשל hash(self.x).",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class L:\n    def __len__(self):\n        return 0\n\nprint(\"yes\" if L() else \"no\")",
+      "choices": [
+        "no",
+        "yes",
+        "TypeError",
+        "None"
+      ],
+      "answer": 0,
+      "explanation": "truth testing קורא ל-__bool__, ואם הוא לא מוגדר, ל-__len__: אורך 0 נחשב False. רק אם שניהם לא מוגדרים, האובייקט תמיד True. לכן גם רשימה ריקה היא False.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q07",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class M:\n    def __init__(s, v):\n        s.v = v\n    def __add__(s, o):\n        if isinstance(o, M):\n            return M(s.v + o.v)\n        return NotImplemented\n    def __radd__(s, o):\n        return M(s.v + o)\n\nprint(sum([M(1), M(2)]).v)",
+      "choices": [
+        "TypeError, כי sum מתחיל מ-0",
+        "0",
+        "3",
+        "AttributeError"
+      ],
+      "answer": 2,
+      "explanation": "sum מתחיל מ-0, ולכן הפעולה הראשונה היא 0 + M(1). int.__add__ מחזיר NotImplemented, ולכן Python מנסה M(1).__radd__(0) שמחזיר M(1). אחר כך M(1) + M(2) הולך ל-__add__ ומחזיר M(3). בלי __radd__ היה TypeError.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "הקוד נכשל כבר בהגדרת המחלקה. איפה ולמה?",
+      "code": "from dataclasses import dataclass\n\n@dataclass\nclass Batch:\n    name: str\n    items: list = []\n\nb = Batch(\"rx\")",
+      "bugLine": 6,
+      "choices": [
+        "dataclass לא תומך בשדות מסוג list",
+        "dataclass זורק ValueError על ברירת מחדל mutable (list, dict, set), כי היא הייתה משותפת לכל המופעים; צריך field(default_factory=list)",
+        "חסר __init__ במחלקה",
+        "השדה name חייב ברירת מחדל כי הוא בא לפני items"
+      ],
+      "answer": 1,
+      "explanation": "זו אותה בעיה של ברירת מחדל mutable בפונקציות, ו-dataclasses חוסמות אותה במפורש עם ValueError: mutable default ... use default_factory. field(default_factory=list) יוצר רשימה חדשה לכל מופע. שדה בלי ברירת מחדל לפני שדה עם ברירת מחדל הוא בדיוק הסדר החוקי.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q09",
+      "level": 3,
+      "type": "multi",
+      "prompt": "מחלקה מגדירה `__slots__ = ('x', 'y')`. מה נכון?",
+      "choices": [
+        "למופעים אין __dict__ (אלא אם מחלקת בסיס מספקת אחד), ולכן כל מופע תופס פחות זיכרון",
+        "אי אפשר להוסיף למופע attribute שלא מופיע ב-slots, למשל obj.z = 1 זורק AttributeError",
+        "המחלקה הופכת ל-immutable",
+        "slots משפיעים גם על מחלקות שיורשות בלי להגדיר slots משלהן, כך שגם להן אין __dict__",
+        "הגישה ל-attributes נעשית דרך descriptors ברמת המחלקה"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "slots מחליפים את ה-dict של כל מופע במערך בגודל קבוע, ולכל slot יש member descriptor במחלקה. אפשר עדיין לשנות את x ו-y, ולכן זה לא immutable. מחלקה יורשת שלא מגדירה __slots__ מקבלת __dict__ מחדש.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q10",
+      "level": 3,
+      "type": "code",
+      "lang": "python",
+      "prompt": "ממש מחלקה Vec2 immutable עם x, y: שוויון והשוואת hash לפי ערכים (כך שתעבוד כ-key ב-dict), חיבור בין וקטורים, כפל בסקלר משני הצדדים (v * 2 וגם 2 * v), __repr__ קריא, ותמיכה ב-unpacking (x, y = v).",
+      "starter": "class Vec2:\n    def __init__(self, x: float, y: float): ...",
+      "modelAnswer": "class Vec2:\n    __slots__ = ('_x', '_y')\n\n    def __init__(self, x, y):\n        object.__setattr__(self, '_x', x)\n        object.__setattr__(self, '_y', y)\n\n    def __setattr__(self, name, value):\n        raise AttributeError('Vec2 is immutable')\n\n    @property\n    def x(self): return self._x\n    @property\n    def y(self): return self._y\n\n    def __repr__(self):\n        return f'Vec2({self._x!r}, {self._y!r})'\n\n    def __eq__(self, other):\n        if not isinstance(other, Vec2):\n            return NotImplemented\n        return (self._x, self._y) == (other._x, other._y)\n\n    def __hash__(self):\n        return hash((self._x, self._y))\n\n    def __add__(self, other):\n        if not isinstance(other, Vec2):\n            return NotImplemented\n        return Vec2(self._x + other._x, self._y + other._y)\n\n    def __mul__(self, k):\n        if not isinstance(k, (int, float)):\n            return NotImplemented\n        return Vec2(self._x * k, self._y * k)\n\n    __rmul__ = __mul__\n\n    def __iter__(self):\n        yield self._x\n        yield self._y",
+      "rubric": [
+        "__eq__ ו-__hash__ עקביים, מבוססים על אותם שדות",
+        "החזרת NotImplemented לטיפוסים לא מוכרים ולא False או exception",
+        "__rmul__ כדי ש-2 * v יעבוד",
+        "immutability אמיתית (או dataclass(frozen=True)) כי האובייקט hashable",
+        "__iter__ ל-unpacking ו-__repr__ חד-משמעי"
+      ],
+      "explanation": "חלופה מקובלת וקצרה: @dataclass(frozen=True, slots=True) שמייצר __eq__, __hash__ ו-__repr__, ומוסיפים __add__, __mul__, __rmul__ ו-__iter__. המראיין יבדוק בעיקר את חוזה ה-hash/eq ואת NotImplemented.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q11",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class A:\n    def f(self): return \"A\"\nclass B(A):\n    def f(self): return \"B\" + super().f()\nclass C(A):\n    def f(self): return \"C\" + super().f()\nclass D(B, C):\n    def f(self): return \"D\" + super().f()\n\nprint(D().f())",
+      "choices": [
+        "DBCA",
+        "DBA",
+        "DBACA",
+        "DCBA"
+      ],
+      "answer": 0,
+      "explanation": "ה-MRO של D הוא D, B, C, A, object. super() בתוך B לא הולך להורה של B (A), אלא לבא אחרי B ב-MRO של המופע, שהוא C. לכן B קורא ל-C, ו-C קורא ל-A. זה מה שמאפשר cooperative multiple inheritance, ו-A נקרא פעם אחת בלבד.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q12",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class C:\n    items = []\n    def add(self, x):\n        self.items.append(x)\n\na, b = C(), C()\na.add(1)\nb.add(2)\na.items = [9]\nprint(a.items, b.items, C.items)",
+      "choices": [
+        "[9] [2] []",
+        "[9] [9] [9]",
+        "[1, 9] [1, 2] [1, 2]",
+        "[9] [1, 2] [1, 2]"
+      ],
+      "answer": 3,
+      "explanation": "self.items.append קורא את items (לא נמצא במופע, ולכן נמצא במחלקה) ומשנה את הרשימה המשותפת: אחרי שתי הקריאות C.items הוא [1, 2]. a.items = [9] היא השמה, שיוצרת attribute חדש ב-__dict__ של a בלבד ומסתירה את משתנה המחלקה עבור a. b ו-C עדיין רואים את הרשימה המשותפת.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין __getattr__ ל-__getattribute__?",
+      "choices": [
+        "אין הבדל, אלה שני שמות לאותה מתודה",
+        "__getattr__ נקרא בכל גישה; __getattribute__ רק כשאין attribute",
+        "__getattribute__ עובד רק על מחלקות, __getattr__ רק על מופעים",
+        "__getattribute__ נקרא בכל גישה ל-attribute; __getattr__ נקרא רק אם החיפוש הרגיל נכשל (AttributeError). בתוך __getattribute__ צריך לקרוא ל-object.__getattribute__ כדי לא להיכנס לרקורסיה"
+      ],
+      "answer": 3,
+      "explanation": "__getattr__ הוא fallback, ומתאים ל-proxies ו-lazy attributes, והוא זול כי attributes קיימים לא עוברים דרכו. __getattribute__ עוטף כל גישה, כולל self.anything בתוכו, ולכן קל ליצור רקורסיה אינסופית ולהאט הכל. מתודות dunder שהאינטרפרטר קורא באופן מרומז (כמו __len__ דרך len()) מחופשות על הטיפוס ועוקפות את שניהם.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q14",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class C:\n    @property\n    def x(self):\n        return 1\n    def f(self):\n        return \"cls\"\n\nc = C()\nc.__dict__['x'] = 2\nc.__dict__['f'] = lambda: 'inst'\nprint(c.x, c.f())",
+      "choices": [
+        "2 inst",
+        "1 cls",
+        "2 cls",
+        "1 inst"
+      ],
+      "answer": 3,
+      "explanation": "property הוא data descriptor (מגדיר __get__ ו-__set__), ו-data descriptors במחלקה גוברים על ה-__dict__ של המופע, ולכן c.x מחזיר 1. פונקציה רגילה היא non-data descriptor (רק __get__), וה-__dict__ של המופע גובר עליה, ולכן c.f הוא ה-lambda. זה בדיוק סדר החיפוש של object.__getattribute__.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q15",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "x = float('nan')\nprint(x in [x], x == x)",
+      "choices": [
+        "False False",
+        "True True",
+        "False True",
+        "True False"
+      ],
+      "answer": 3,
+      "explanation": "NaN לא שווה לעצמו (IEEE 754), ולכן x == x הוא False. אבל בדיקות containment ב-containers של Python משתמשות ב-'is או ==': קודם בודקים identity, ורק אחר כך שוויון. מכיוון שזה אותו אובייקט, x in [x] הוא True. float('nan') in [float('nan')] היה False כי אלה שני אובייקטים.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q16",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "t = ([1],)\ntry:\n    t[0] += [2]\nexcept TypeError:\n    print(\"err\", t)",
+      "choices": [
+        "err ([1, 2],)",
+        "err ([1],)",
+        "לא מודפס כלום; t הוא ([1, 2],)",
+        "לא מודפס כלום; t הוא ([1],)"
+      ],
+      "answer": 0,
+      "explanation": "t[0] += [2] מתורגם ל: tmp = t[0]; tmp = tmp.__iadd__([2]); t[0] = tmp. list.__iadd__ משנה את הרשימה in-place ומצליח, ואז ההשמה בחזרה ל-tuple נכשלת עם TypeError. לכן גם יש exception וגם הרשימה השתנתה. דוגמה קלאסית לכך שאופרטור augmented הוא שתי פעולות נפרדות.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מחלקה Base לא מגדירה __eq__ או __hash__ (ולכן hashable לפי identity). Sub(Base) מגדירה רק __eq__. מה הערך של `Sub.__hash__`?",
+      "choices": [
+        "object.__hash__, בירושה מ-Base",
+        "פונקציה שנוצרת אוטומטית לפי השדות",
+        "None, ולכן מופעים של Sub אינם hashable",
+        "Base.__hash__ שמחושב לפי __eq__"
+      ],
+      "answer": 2,
+      "explanation": "כשגוף של מחלקה מגדיר __eq__ ולא __hash__, ה-type machinery קובע __hash__ = None במחלקה הזאת, גם אם ההורה hashable. הסיבה: ה-hash שבירושה כמעט בטוח לא עקבי עם ה-__eq__ החדש. אם באמת רוצים לשמור את ה-hash של ההורה, כותבים במפורש __hash__ = Base.__hash__.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q18",
+      "level": 5,
+      "type": "oral",
+      "prompt": "הסבר צעד אחר צעד מה קורה כש-Python מבצע `obj.name` על מופע של מחלקה רגילה, כולל descriptors ו-__getattr__.",
+      "modelAnswer": "הביטוי קורא ל-type(obj).__getattribute__(obj, 'name'), שבמחלקה רגילה הוא object.__getattribute__. (1) מחפשים את 'name' ב-MRO של type(obj), במחלקות לפי הסדר; נניח שנמצא attr. (2) אם attr הוא data descriptor (לטיפוס שלו יש __set__ או __delete__, כמו property או member של __slots__), מחזירים type(attr).__get__(attr, obj, type(obj)), והוא גובר על המופע. (3) אחרת, אם יש ל-obj __dict__ ו-'name' נמצא בו, מחזירים את הערך משם כמו שהוא (בלי descriptor protocol). (4) אחרת, אם attr הוא non-data descriptor (רק __get__, למשל פונקציה), קוראים ל-__get__ ומקבלים bound method; staticmethod ו-classmethod הם גם descriptors. (5) אחרת, אם attr נמצא במחלקה, מחזירים אותו כמו שהוא (משתנה מחלקה). (6) אם כלום לא נמצא, נזרק AttributeError, ואם המחלקה מגדירה __getattr__, היא נקראת כ-fallback. הערות: מתודות dunder שמופעלות על ידי syntax (len, +, ==) מחופשות ישירות על הטיפוס ועוקפות את __getattribute__ של המופע ואת ה-__dict__ שלו. CPython מאיץ את כל זה עם method cache לפי type version.",
+      "rubric": [
+        "חיפוש ב-MRO של הטיפוס קודם",
+        "סדר העדיפויות: data descriptor, instance __dict__, non-data descriptor, משתנה מחלקה",
+        "יצירת bound method דרך __get__ של פונקציה",
+        "__getattr__ כ-fallback רק אחרי AttributeError",
+        "special methods שמחופשות על הטיפוס ועוקפות את המופע"
+      ],
+      "explanation": "זו שאלת 'עומק' שמבדילה בין מי שמשתמש ב-Python למי שמבין אותה. property, methods, classmethod ו-__slots__ כולם נבנים על אותו מנגנון.",
+      "lesson": "py.data-model"
+    }
+  ]
+}

@@ -1,0 +1,295 @@
+{
+  "domain": "dsp",
+  "subtopic": "multirate",
+  "lessons": [
+    {
+      "id": "dsp.multirate",
+      "title": "Decimation, resampling ו-channelizer",
+      "what": "עיבוד multirate משנה קצב דגימה: decimation (הורדה), interpolation (העלאה) ו-resampling ביחס רציונלי. channelizer מפרק stream רחב להרבה ערוצים צרים בבת אחת. העיקרון התוכנתי המרכזי: לא לחשב דגימות שזורקים ולא להכפיל אפסים. polyphase הוא הכלי שעושה את זה.",
+      "when": [
+        "DDC: אחרי mixing לבסיס-פס, להוריד קצב לרוחב הסרט של האות",
+        "שינוי קצב בין שני מכשירים או סטנדרטים (למשל 100 MS/s ל-61.44 MS/s)",
+        "ניטור או עיבוד של הרבה ערוצים במקביל (channelizer)",
+        "שאלות על MACs/s, multistage, CIC ו-halfband"
+      ],
+      "how": [
+        "decimation ב-M: מסנן lowpass ואז לוקחים כל דגימה M-ית. polyphase מחשב רק את הפלטים שנשמרים: עלות L MACs לדגימת פלט, כלומר L/M לדגימת קלט",
+        "interpolation ב-L: הכנסת L-1 אפסים ואז מסנן. polyphase מדלג על המכפלות באפסים: מחלקים את המסנן ל-L תת-מסננים, וכל דגימת פלט משתמשת באחד מהם",
+        "resampling רציונלי L/M: מצמצמים את השבר, ו-polyphase עם L פאזות שמתקדם ב-M בכל פלט. ליחס שרירותי או משתנה: Farrow (אינטרפולציה פולינומית)",
+        "multistage: decimation גדול בכמה שלבים זול בהרבה משלב אחד, כי לשלבים המוקדמים יש transition רחב, והשלבים המאוחרים רצים בקצב נמוך. halfband (כמעט כל מקדם שני אפס) אידיאלי ל-÷2",
+        "CIC: integrators, decimation ו-combs, בלי כפלים. נפוץ ב-FPGA ל-decimation גדול, עם FIR מפצה על ה-droop בקצב הנמוך",
+        "PFB channelizer עם K ערוצים: מסנן prototype באורך K·T מפוצל ל-K ענפים של T taps, ואחריהם FFT באורך K. מרווח ערוצים fs/K, וכל ערוץ יוצא בקצב fs/K (critically sampled) או 2fs/K (oversampled)"
+      ],
+      "complexity": "polyphase decimator: L/M MACs לדגימת קלט. PFB: בערך T MACs ועוד 5·log2(K) FLOPs לדגימת קלט, לעומת K·T עבור K מסננים נפרדים.",
+      "pitfalls": [
+        "לסנן בקצב המלא ואז לזרוק: עבודה מבוזבזת פי M",
+        "decimation בלי מסנן: aliasing",
+        "decimation גדול בשלב אחד: מסנן ארוך מאוד",
+        "channelizer critically sampled: אותות על גבול ערוצים נפגעים",
+        "לשכוח לצמצם את L/M או להשתמש ביחס שגוי בגלל קצב שהוחלט על ידי החומרה"
+      ],
+      "senior": [
+        "לחשב MACs/s לכל אפשרות ולבחור ארכיטקטורה (single stage, multistage, CIC+FIR, PFB)",
+        "להסביר את שקילות ה-polyphase ואת זרימת הנתונים (commutator)",
+        "להכיר את ה-trade-off של critically sampled מול oversampled channelizer",
+        "לדעת מתי resampler רציונלי ומתי Farrow"
+      ],
+      "diagram": "decimate M=4, polyphase:\nx: 0 1 2 3 4 5 6 7 8 9\nE0: 0 . . . 4 . . . 8\nE1: . 1 . . . 5 . . . 9\nonly kept outputs are computed"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.multirate.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה קורה אם מורידים קצב ב-M (לוקחים כל דגימה M-ית) בלי מסנן לפני?",
+      "choices": [
+        "רכיבי תדר מעל fs/(2M) (או מחוץ ל-±fs/(2M) במרוכב) מתקפלים לתוך הפס החדש: aliasing",
+        "האות פשוט מאבד amplitude",
+        "שום דבר, כל עוד M חזקה של 2",
+        "נוצרים images בתדרים גבוהים"
+      ],
+      "answer": 0,
+      "explanation": "הקצב החדש הוא fs/M, וכל מה שמחוץ לטווח החדש מתקפל פנימה, כולל רעש. לכן מסננים קודם. images הם התופעה ההפוכה, ב-interpolation. ל-M חזקה של 2 אין שום משמעות כאן.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה היתרון של מימוש polyphase ל-decimator עם FIR?",
+      "choices": [
+        "מסנן חד יותר",
+        "latency אפס",
+        "מחשבים רק את דגימות הפלט שנשמרות, ולכן חוסכים פי M במכפלות",
+        "אין צורך במסנן anti-alias"
+      ],
+      "answer": 2,
+      "explanation": "בשיטה הנאיבית מסננים בקצב הקלט וזורקים M-1 מכל M פלטים. polyphase מחשב רק את הפלטים שנשארים, עם אותו מסנן בדיוק, ולכן התוצאה זהה והעלות קטנה פי M. החדות ותגובת התדר לא משתנות.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "stream של 100 MS/s עובר decimation ב-8. מה הקצב החדש ב-MS/s?",
+      "accept": ["12.5", "12.5MS/s", "12.5 MS/s", "12.5e6"],
+      "explanation": "100/8 = 12.5 MS/s. במרוכב זה רוחב סרט שימושי של עד 12.5 MHz (פחות בפועל, בגלל ה-transition של המסנן).",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "interpolation ב-L על ידי הכנסת L-1 אפסים בין דגימות ואז FIR. מה polyphase חוסך כאן?",
+      "choices": [
+        "את המסנן כולו",
+        "את המכפלות באפסים: כל דגימת פלט משתמשת רק בתת-מסנן אחד (1/L מה-taps), ולכן העלות לדגימת פלט היא L_taps/L",
+        "חצי מה-taps בגלל סימטריה",
+        "את ה-images, כך שלא צריך מסנן"
+      ],
+      "answer": 1,
+      "explanation": "אחרי הכנסת האפסים, בכל רגע רק אחד מכל L דגימות בחלון של המסנן שונה מאפס. מפצלים את המסנן ל-L פאזות, וכל פלט נבחר מפאזה אחרת. המסנן עדיין חייב להסיר את ה-images, ופשוט מחושב ביעילות.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nx = np.arange(10)\nprint(x[::4], x[1::4])",
+      "choices": [
+        "[0 4 8] [1 5 9]",
+        "[0 4 8] [1 5]",
+        "[0 1 2 3] [4 5 6 7]",
+        "[3 7] [4 8]"
+      ],
+      "answer": 0,
+      "explanation": "`x[p::M]` הוא רכיב ה-polyphase ה-p של x עם M=4: מתחילים ב-p וקופצים ב-4. 9 נכלל כי 1+4·2 = 9 < 10. מבנה כזה בדיוק משמש לפיצול הקלט בין ענפי decimator או channelizer.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "FIR באורך 128 taps ו-decimation ב-8, קלט ממשי ב-100 MS/s. כמה MACs בשנייה במימוש polyphase?",
+      "choices": ["12.8 GMAC/s", "1.6 GMAC/s", "0.2 GMAC/s", "16 GMAC/s"],
+      "answer": 1,
+      "explanation": "קצב הפלט 12.5 MS/s, ולכל פלט 128 MACs: 1.6e9. הדרך הנאיבית, לסנן בקצב המלא, הייתה 128 × 100e6 = 12.8 GMAC/s, פי 8 יותר. 0.2 הוא 16 taps (128/8) כפול 12.5 MS/s, טעות של חלוקה כפולה.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך decimation ב-64. למה כמה שלבים (למשל 4×4×4, או halfbands) זולים בהרבה משלב אחד?",
+      "choices": [
+        "כי אורך המסנן נקבע לפי רוחב ה-transition ביחס לקצב שבו הוא רץ. בשלב אחד ה-transition צר מאוד ביחס ל-fs המקורי ונדרש מסנן ארוך מאוד; בשלבים, המסננים הראשונים יכולים להיות רחבים וקצרים, והמסנן החד רץ בקצב הנמוך",
+        "כי כל שלב מבטל את ה-aliasing של הקודם",
+        "כי FFT עובד רק על חזקות של 2",
+        "כי שלבים קטנים מתאימים ל-cache"
+      ],
+      "answer": 0,
+      "explanation": "אורך FIR הוא בערך פרופורציונלי ל-fs/Δf. בשלב יחיד ב-100 MS/s עם transition של, נניח, 100 kHz, צריך אלפי taps. בשלב הראשון של multistage מותר ל-transition להיות רחב מאוד, כי רק אזורים מסוימים מתקפלים לפס הסופי, והמסנן החד האחרון רץ בקצב קטן פי 16. כל שלב לא 'מבטל' aliasing של הקודם, אלא מונע את שלו.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה מסנני halfband פופולריים לשלבי decimation ב-2?",
+      "choices": [
+        "יש להם passband שטוח לגמרי",
+        "הם IIR ולכן קצרים",
+        "כמעט כל מקדם שני הוא אפס (חוץ מהמרכזי, 0.5), ולכן עלות החישוב כמעט חצי, והם מתאימים בדיוק לחלוקה ב-2",
+        "הם לא דורשים state"
+      ],
+      "answer": 2,
+      "explanation": "halfband מוגדר כך שנקודת 6 dB- נמצאת ב-fs/4 והתגובה סימטרית סביבה, ומזה נובע שכל tap במיקום זוגי ממרכז (חוץ מהמרכז) הוא אפס. יחד עם polyphase וסימטריה, העלות נמוכה מאוד. הם FIR, יש להם ripple כרגיל, ויש להם state.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "PFB channelizer critically sampled עם K=1024 ערוצים על stream מרוכב של 100 MS/s. מה מרווח הערוצים ומה קצב הפלט של כל ערוץ?",
+      "choices": [
+        "97.66 kHz; 195.3 kS/s",
+        "48.83 kHz; 97.66 kS/s",
+        "97.66 kHz; 100 MS/s",
+        "97.66 kHz; 97.66 kS/s"
+      ],
+      "answer": 3,
+      "explanation": "מרווח = fs/K = 100e6/1024 ≈ 97.66 kHz. critically sampled פירושו decimation ב-K, ולכן כל ערוץ יוצא ב-fs/K ≈ 97.66 kS/s, והקצב הכולל שווה לקצב הקלט. 195.3 kS/s הוא ה-oversampled ב-2. 100 MS/s לכל ערוץ היה מחשב FFT על כל דגימה, פי K יותר עבודה.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q10",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את השלבים בעיבוד בלוק אחד של PFB channelizer critically sampled עם K ערוצים.",
+      "items": [
+        "לפזר K דגימות קלט חדשות בין K הענפים (commutator)",
+        "לסנן כל ענף בתת-המסנן שלו (T taps, מקדמי prototype בקפיצות של K)",
+        "לבצע FFT (או IFFT) באורך K על K יציאות הענפים",
+        "כל bin של ה-FFT הוא דגימה אחת של ערוץ אחד, בקצב fs/K"
+      ],
+      "explanation": "זה polyphase decimator ב-K שכל אחד מ-K הערוצים 'חולק' אותו, וה-FFT מבצע את ההזזה בתדר לכל הערוצים בבת אחת. ה-commutator מכניס את הדגימות בסדר הפוך בין הענפים, וזה פרט שמקורות שונים מנסחים קצת אחרת.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-channelizer critically sampled, אות צר שנופל בדיוק על הגבול בין שני ערוצים יוצא פגום. מה הסיבה ומה הפתרון המקובל?",
+      "choices": [
+        "ה-FFT קצר מדי; להגדיל K",
+        "המסנן prototype לא סימטרי",
+        "צריך חלון Hann לפני ה-FFT",
+        "כשקצב הפלט שווה למרווח הערוצים, אין מקום ל-transition band: הקצה של כל ערוץ מוחלש ומתקפל (aliasing) בתוך הערוץ. הפתרון: oversampled PFB (למשל פי 2, hop של K/2), שבו לכל ערוץ יש מרווח ל-transition, ואות על הגבול נמצא שלם לפחות באחד הערוצים"
+      ],
+      "answer": 3,
+      "explanation": "ב-critically sampled, המסנן של כל ערוץ חייב להגיע לדחייה מלאה בתוך ±fs/(2K), אחרת מה שמעבר לזה מתקפל; לכן הקצוות או מוחלשים או מקופלים. oversampling פי 2 מכפיל את קצב הפלט (וחלק מהחישוב) ומשאיר מקום ל-transition. הגדלת K רק מזיזה את הגבולות. חלון Hann מתאים לספקטרוגרמה, לא ל-PFB, שבו ה-prototype הוא המסנן.",
+      "lesson": "dsp.multirate",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.multirate.q12",
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "prompt": "כתוב ב-NumPy `decimate_fir(x, h, M)` שמחזירה בדיוק את `np.convolve(x, h)[:len(x)][::M]`, אבל מחשבת רק את הפלטים שנשמרים, ובלי לולאת Python על הדגימות.",
+      "starter": "def decimate_fir(x, h, M):\n    ...",
+      "modelAnswer": "import numpy as np\nfrom numpy.lib.stride_tricks import sliding_window_view\n\ndef decimate_fir(x, h, M):\n    L = len(h)\n    # history of L-1 zeros so that output n uses x[n*M-L+1 .. n*M]\n    xp = np.concatenate([np.zeros(L - 1, dtype=x.dtype), x])\n    win = sliding_window_view(xp, L)[::M]   # views only, no copy\n    return win @ h[::-1]                    # y[n] = sum_k h[k] x[nM-k]\n\n# check:\n# x = np.random.randn(1000); h = np.random.randn(31)\n# assert np.allclose(decimate_fir(x, h, 4),\n#                    np.convolve(x, h)[:len(x)][::4])",
+      "rubric": [
+        "נוסחה נכונה y[n] = sum h[k]·x[nM-k] עם היסטוריה של L-1 אפסים",
+        "מחשב רק ceil(len(x)/M) פלטים",
+        "וקטורי: sliding_window_view (או as_strided) ומכפלת מטריצה-וקטור, בלי לולאה על דגימות",
+        "בדיקה מול np.convolve, כולל len(x) שאינו כפולה של M",
+        "מזכיר שב-stream צריך לשמור state (L-1 דגימות ו-phase של ה-decimation) בין blocks"
+      ],
+      "explanation": "sliding_window_view מחזיר מטריצה של חלונות בלי להעתיק, ו-[::M] בוחר רק את החלונות של הפלטים שנשמרים. המכפלה ב-h ההפוך היא הקונבולוציה. העלות L לפלט, כלומר L/M לדגימת קלט.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "למה CIC נפוץ מאוד ב-DDC של FPGA, אבל נדיר בקוד DSP על CPU?",
+      "choices": [
+        "CIC לא עובד בנקודה צפה",
+        "ב-FPGA, CIC חוסך מכפלות (שהן משאב יקר: DSP slices) ועובד בקצב גבוה עם adders בלבד. ב-CPU כפל זול (FMA), CIC דורש integers רחבים ו-droop שצריך לפצות עליו, ו-polyphase FIR או halfbands נותנים תגובה טובה יותר באותה עלות",
+        "CIC לא מסוגל ל-decimation גדול מ-8",
+        "ל-CIC אין aliasing ולכן הוא לא נחוץ ב-CPU"
+      ],
+      "answer": 1,
+      "explanation": "החוזק של CIC הוא אפס מכפלות ותמיכה ב-decimation גדול ומשתנה, מושלם לחומרה. החסרונות: תגובת sinc^N עם droop בפס ו-aliasing לא אידיאלי, ו-bit growth של N·log2(RM) שמחייב רגיסטרים רחבים. ב-CPU, כש-FMA עולה כמו חיבור, היתרון נעלם. מימוש בנקודה צפה לא מתאים, כי CIC מסתמך על wrap מודולרי מדויק.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן channelizer שמפרק stream מרוכב של 100 MS/s ל-64 ערוצים, עם ניצול סביר של CPU, וערוצים שאפשר לעבד כל אחד לחוד. מה הארכיטקטורה והחשבון?",
+      "modelAnswer": "PFB channelizer עם K=64: מרווח ערוצים 100e6/64 = 1.5625 MHz. אם יש אותות שעלולים ליפול על גבולות, oversampled פי 2: כל ערוץ ב-3.125 MS/s, hop של 32 דגימות, ו-FFT באורך 64 על כל 32 דגימות קלט. prototype filter באורך K·T עם T בסביבות 8-16 taps לענף, מתוכנן ל-transition שמתאים למרווח ולדחייה הנדרשת. עלות (oversampled, T=12): לכל 32 דגימות קלט, 64 ענפים × 12 taps × 2 (מרוכב-ממשי) ≈ 1,536 MACs ו-FFT של 64 (כ-5·64·6 ≈ 1,920 FLOPs), כלומר בערך 48 MACs ו-60 FLOPs לדגימת קלט, כ-15-20 GFLOP/s סך הכל: ליבה אחת או שתיים עם SIMD. מימוש: הענפים מסודרים כך שהסינון הוא SIMD על פני ענפים (כל lane ענף), FFT מ-FFTW עם plan_many על batch של בלוקים, ותיקון הפאזה של oversampling (circular shift או כפל ב-1-±). הפלט: 64 streams, כל אחד ל-SPSC queue של ה-consumer שלו, או עיבוד ב-batch לפי ערוצים. אם ה-CPU לא מספיק, להעביר ל-GPU עם batch גדול. בדיקות: טון בכל מרכז ערוץ ועל גבולות, ובדיקת דחייה בין ערוצים.",
+      "rubric": [
+        "בחירת PFB ולא 64 מסננים נפרדים, עם נימוק עלות",
+        "החלטה על critically sampled מול oversampled ונימוק",
+        "חשבון עלות לדגימת קלט ו-GFLOP/s כולל",
+        "פרטי מימוש: SIMD על ענפים, FFT ב-batch, תיקון פאזה",
+        "פלט ובדיקות: הפצה לערוצים, טונים על גבולות"
+      ],
+      "explanation": "מראיין מצפה לראות את הקפיצה מ'64 מסננים' ל-PFB, עם מספרים שמראים למה.",
+      "lesson": "dsp.multirate",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.multirate.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "השוואת עלות לדגימת קלט: PFB critically sampled עם K ערוצים ו-T taps לענף (prototype באורך K·T), לעומת K ערוצים נפרדים, שכל אחד עושה mixing ואז polyphase decimator ב-K עם אותו מסנן באורך K·T.",
+      "choices": [
+        "שתיהן O(K·T), PFB רק מסודר יותר",
+        "PFB: O(T + log K); נפרדים: O(K·T) (כל ערוץ עולה T לדגימת קלט, ועוד mixing). PFB זול בערך פי K",
+        "PFB: O(K log K); נפרדים: O(K)",
+        "נפרדים זולים יותר כי אין FFT"
+      ],
+      "answer": 1,
+      "explanation": "polyphase decimator ב-K עם מסנן K·T עולה K·T לכל פלט, כלומר T לכל דגימת קלט, לכל ערוץ: K·T לכל הערוצים, ועוד K mixings לדגימה. ב-PFB הסינון נעשה פעם אחת (T לדגימה), וה-FFT מחליף את כל ה-mixings: 5·K·log2K FLOPs לכל K דגימות, כלומר O(log K) לדגימה. ב-K=1024 ו-T=8 זה בערך 8 MACs ועוד 50 FLOPs, לעומת כ-8,000 MACs.",
+      "lesson": "dsp.multirate",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "dsp.multirate.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "צריך להמיר stream מ-100 MS/s ל-61.44 MS/s עם resampler רציונלי polyphase. מה היחס L/M המצומצם, ומה המשמעות לגבי מספר הפאזות?",
+      "choices": [
+        "384/625: 384 פאזות; כל פלט מחושב מפאזה אחת, והמצביע לקלט מתקדם ב-625/384 בממוצע",
+        "768/1250: אין צורך לצמצם",
+        "6144/10000: 6144 פאזות",
+        "96/156: 96 פאזות"
+      ],
+      "answer": 0,
+      "explanation": "61.44/100 = 6144/10000, ו-gcd = 16 (6144 = 2^11·3, ו-10000 = 2^4·5^4), כלומר 384/625. מספר הפאזות L=384, ובמסנן עם, נניח, 24 taps לפאזה, ה-prototype באורך 9,216, ועדיין העלות לכל פלט היא רק 24 MACs. 96/156 לא שווה ל-0.6144 (שווה ל-0.6154), ושבר לא מצומצם רק מגדיל את הטבלה. אם היחס היה לא רציונלי או משתנה (תיקון drift), Farrow עדיף.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "PFB oversampled פי 2: K ענפים, אבל כל בלוק מקדם רק K/2 דגימות קלט. בלי תיקון, הערוצים האי-זוגיים יוצאים עם בעיה. מה הבעיה והתיקון?",
+      "choices": [
+        "הערוצים האי-זוגיים מוחלשים ב-6 dB; מכפילים ב-2",
+        "הערוצים האי-זוגיים יוצאים הפוכים בתדר; משתמשים ב-conj",
+        "הזזת K/2 בין בלוקים מוסיפה לערוץ k פאזה של e^(jπkm) = (1-)^(km) בבלוק m, כלומר היפוך סימן לסירוגין בערוצים האי-זוגיים. תיקון: circular shift של K/2 בכניסה ל-FFT בבלוקים האי-זוגיים, או כפל של הפלט ב-(1-)^(km)",
+        "אין בעיה, oversampling לא דורש שינוי"
+      ],
+      "answer": 2,
+      "explanation": "ה-FFT מניח שהבלוק מתחיל באינדקס זמן שהוא כפולה של K. עם hop של K/2, כל בלוק שני מוזז ב-K/2, ולפי תכונת ההזזה של DFT זה כפל ב-e^(j2πk(K/2)/K) = (1-)^k. מצטבר על פני בלוקים: (1-)^(km). זה נראה כמו modulation של fs_out/2 בערוצים האי-זוגיים. התיקון הזול: circular shift של הקלט ל-FFT (בלי כפלים בכלל). אין כאן שינוי amplitude או היפוך ספקטרלי.",
+      "lesson": "dsp.multirate",
+      "tags": ["nvidia"]
+    }
+  ]
+}

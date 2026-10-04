@@ -1,0 +1,321 @@
+{
+  "domain": "sys",
+  "subtopic": "volatile-mmio",
+  "lessons": [
+    {
+      "id": "sys.volatile-mmio",
+      "title": "volatile ו-memory-mapped IO",
+      "what": "ב-memory-mapped IO, רגיסטרים של התקן מופיעים בכתובות במרחב הזיכרון, וגישה אליהם היא פקודה להתקן: כתיבה מפעילה משהו, קריאה יכולה להחזיר ערך שמשתנה או אפילו לנקות דגלים. volatile אומר לקומפיילר שכל גישה כזו היא התנהגות נצפית: אסור לבטל, לאחד או להמציא גישות, ואסור לסדר מחדש גישות volatile זו ביחס לזו.",
+      "when": [
+        "firmware ו-drivers: גישה לרגיסטרים של UART, GPIO, ADC, DMA controller",
+        "משתנים שמשתנים מחוץ לזרימת התוכנית: ISR על microcontroller, longjmp, signal handlers (volatile sig_atomic_t)",
+        "ב-user space: גישה ל-BAR של PCI דרך UIO או VFIO, או ל-FPGA registers",
+        "שאלת ראיון קלאסית: מה volatile עושה ומה הוא לא עושה"
+      ],
+      "how": [
+        "ניגשים דרך pointer ל-volatile ברוחב הנכון: volatile uint32_t* reg. כל קריאה וכתיבה מתבצעות בדיוק כפי שנכתבו",
+        "volatile **לא** נותן: אטומיות (++ הוא קריאה ואז כתיבה), סנכרון בין threads, או סדר ביחס לגישות לא-volatile ולסדר שהחומרה מבצעת",
+        "האזור חייב להיות ממופה כ-uncached או device memory, אחרת ה-cache יחזיר ערכים ישנים או יאחד כתיבות",
+        "סמנטיקה של רגיסטרים: read-to-clear (קריאה מנקה), write-1-to-clear (כתיבת 1 מנקה ביט), FIFO data register (כל כתיבה דוחפת ערך)",
+        "read-modify-write כמו reg |= bit הוא שלוש פעולות, ומסוכן ב-W1C ובמקביל ל-ISR",
+        "סדר מול החומרה: ב-ARM צריך barriers (dmb, dsb, ו-wmb או writel ב-Linux) בין כתיבות לזיכרון רגיל לבין doorbell. barrier של קומפיילר בלבד לא מספיק",
+        "ב-Linux: readl ו-writel כוללים את ה-barriers הנדרשים, והגרסאות relaxed לא מסדרות מול זיכרון DMA"
+      ],
+      "complexity": "קריאת MMIO מ-PCIe היא non-posted: ה-CPU מחכה לתשובה, כ-0.5–1µs. כתיבה היא posted ומהירה יחסית. ב-microcontroller, גישה לרגיסטר היא כמה מחזורים, תלוי בבאס ובשעון הפריפריה.",
+      "pitfalls": [
+        "polling על רגיסטר בלי volatile: הקומפיילר מוציא את הקריאה מהלולאה",
+        "reg |= BIT על רגיסטר W1C מנקה את כל הדגלים שהיו פעילים",
+        "bitfields על רגיסטרים: רוחב גישה לא מובטח",
+        "שימוש ב-volatile לסנכרון בין threads",
+        "קריאה מיותרת של רגיסטר read-to-clear, למשל בדיבאגר"
+      ],
+      "senior": [
+        "להבחין בבירור בין volatile, std::atomic, barrier של קומפיילר ו-barrier של חומרה",
+        "סדר בין זיכרון DMA לבין MMIO, וה-relaxed accessors ב-Linux",
+        "Device memory ב-ARM (nGnRE) ומה הוא כן מבטיח",
+        "המצב של volatile ב-C++20 ו-C++23 (deprecation של compound assignment)"
+      ],
+      "diagram": "addr 0x4000_1000  UART->DR   (data)\naddr 0x4000_1004  UART->SR   (status)\n   CPU load/store --bus--> device regs\n   (uncached, side effects)\nvolatile: compiler emits every access\nbarrier: hardware keeps the order"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.volatile-mmio.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה memory-mapped IO?",
+      "choices": [
+        "מיפוי קובץ לזיכרון עם mmap",
+        "זיכרון cache של ההתקן",
+        "רגיסטרים של התקן חומרה שנגישים דרך כתובות במרחב הזיכרון, כך ש-load ו-store רגילים קוראים וכותבים להתקן",
+        "העברת נתונים ב-DMA"
+      ],
+      "answer": 2,
+      "explanation": "במקום הוראות IO מיוחדות (כמו in ו-out ב-x86 הישן), הרגיסטרים יושבים בטווח כתובות שהבאס מנתב להתקן. ב-microcontrollers כל הפריפריות עובדות כך. mmap של קובץ הוא מנגנון אחר, למרות השם הדומה.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה `volatile` מבטיח ב-C++?",
+      "choices": [
+        "שהמשתנה לא יישמר ב-cache של המעבד",
+        "שכל קריאה וכתיבה של האובייקט יתבצעו בפועל כפי שנכתבו בקוד, בלי שהקומפיילר יבטל, יאחד או ימציא גישות",
+        "שהמשתנה בטוח לשימוש מכמה threads",
+        "שהפעולות על המשתנה אטומיות"
+      ],
+      "answer": 1,
+      "explanation": "volatile הוא הוראה לקומפיילר בלבד. הוא לא נותן אטומיות, לא סנכרון בין threads, ולא משפיע על ה-cache של החומרה. את ה-cache קובעים מאפייני המיפוי (uncached, device memory).",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו מילת מפתח ב-C וב-C++ אומרת לקומפיילר שכל גישה למשתנה היא התנהגות נצפית שאסור לבטל?",
+      "accept": [
+        "volatile"
+      ],
+      "explanation": "volatile הוא בדיוק הכלי ל-MMIO. לתקשורת בין threads הכלי הוא std::atomic.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "קוד שולח שלושה bytes ל-TX FIFO של UART כך: `uint32_t* dr = (uint32_t*)0x40011004; *dr = 'a'; *dr = 'b'; *dr = 'c';` (בלי volatile). עם -O2 רק c נשלח. למה?",
+      "choices": [
+        "בלי volatile, הקומפיילר רואה שלוש כתיבות לאותה כתובת בלי קריאה ביניהן, ומבטל את השתיים הראשונות כ-dead stores",
+        "צריך לכתוב bytes ולא uint32_t",
+        "ה-FIFO מלא",
+        "UART לא תומך בכתיבות רצופות"
+      ],
+      "answer": 0,
+      "explanation": "לפי הכללים של זיכרון רגיל, רק הכתיבה האחרונה משנה. ברגיסטר FIFO כל כתיבה היא פעולה. עם `volatile uint32_t*` כל שלוש הכתיבות יתבצעו. (בפועל צריך גם לבדוק שיש מקום ב-FIFO לפני כל כתיבה.)",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "הרגיסטר STATUS של התקן הוא read-to-clear: קריאה מחזירה את הדגלים ומנקה אותם. מתכנת הוסיף קריאה נוספת שלו לצורך לוג לפני הטיפול. מה הבעיה?",
+      "choices": [
+        "הקריאה הנוספת מאטה את ההתקן",
+        "אין בעיה, קריאה לא משנה כלום",
+        "צריך לכתוב לרגיסטר לפני כל קריאה",
+        "הקריאה הראשונה מנקה את הדגלים, והקריאה של הטיפול רואה 0 ומפספסת את האירועים. כל קריאה היא פעולה, ולכן קוראים פעם אחת לתוך משתנה מקומי ועובדים איתו"
+      ],
+      "answer": 3,
+      "explanation": "ב-MMIO גם קריאה יכולה להיות פעולה עם תופעות לוואי (read-to-clear, שליפה מ-RX FIFO). מאותה סיבה קריאה מהדיבאגר (memory view) יכולה לשנות את התנהגות ההתקן. התבנית הנכונה: `uint32_t s = dev->STATUS;` פעם אחת.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על Linux עם כמה cores, thread אחד כותב `volatile bool stop = true;` ו-thread אחר מסתובב על `while (!stop)`. מה נכון?",
+      "choices": [
+        "זה נכון ומומלץ, volatile מיועד בדיוק לזה",
+        "זה לא יתקמפל",
+        "זה עובד רק עם SCHED_FIFO",
+        "בפועל זה כנראה יעבוד על x86, אבל לפי התקן זה data race ו-UB, ו-volatile לא נותן סדר מול נתונים אחרים. הכלי הנכון הוא std::atomic<bool>"
+      ],
+      "answer": 3,
+      "explanation": "volatile מבטיח שהקריאה תתבצע, וב-x86 זה בדרך כלל מספיק לדגל פשוט. אבל לפי מודל הזיכרון של C++ גישה לא-atomic מקבילית היא data race, ואם ה-thread מסתמך על נתונים שנכתבו לפני הדגל, אין הבטחת סדר בכלל. std::atomic עם relaxed עולה בדיוק אותו דבר ב-x86 ונכון.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q07",
+      "level": 3,
+      "type": "bug",
+      "prompt": "ברגיסטר STATUS כל הביטים הם W1C (write 1 to clear). הפונקציה אמורה לנקות רק את RX_DONE, אבל אחריה אירועי TX הולכים לאיבוד. איפה הבאג?",
+      "lang": "cpp",
+      "code": "// STATUS bits: RX_DONE, TX_DONE, ERR (all W1C)\nvoid clear_rx_done(volatile Regs* dev) {\n  dev->STATUS |= RX_DONE;\n}",
+      "bugLine": 3,
+      "choices": [
+        "צריך לקרוא את STATUS פעמיים",
+        "|= קורא את STATUS (עם כל הדגלים שפעילים כרגע), מוסיף את RX_DONE וכותב הכול בחזרה. כתיבה של 1 לכל דגל פעיל מנקה גם את TX_DONE ו-ERR. צריך `dev->STATUS = RX_DONE;`",
+        "צריך &= ~RX_DONE",
+        "חסר volatile"
+      ],
+      "answer": 1,
+      "explanation": "ב-W1C כתיבת 0 לא משנה כלום, ולכן כותבים מסכה עם הביט הרצוי בלבד, בלי קריאה. &= ~RX_DONE היה שגוי אחרת: הוא כותב 1 לכל השאר הפעילים ו-0 ל-RX_DONE, כלומר מנקה בדיוק את מה שלא רצינו. זו סיבה נפוצה לאירועים שהולכים לאיבוד ב-drivers.",
+      "lesson": "sys.volatile-mmio",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.volatile-mmio.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מההבטחות הבאות volatile **כן** נותן לפי התקן?",
+      "choices": [
+        "הקומפיילר לא יבטל ולא יאחד גישות לאובייקט volatile",
+        "++ על משתנה volatile הוא אטומי",
+        "הקומפיילר לא יסדר מחדש גישות volatile ביחס לגישות לזיכרון רגיל",
+        "גישה לאובייקט volatile נחשבת התנהגות נצפית (observable behavior) של התוכנית",
+        "הקומפיילר לא יסדר מחדש גישות volatile זו ביחס לזו באותו thread",
+        "המעבד והבאס לא יסדרו מחדש את הגישות"
+      ],
+      "answer": [
+        0,
+        3,
+        4
+      ],
+      "explanation": "גישות volatile הן חלק מההתנהגות הנצפית, ולכן הקומפיילר חייב לבצע את כולן בסדר שבו נכתבו. אבל גישה לזיכרון רגיל מותר לו להזיז מעבר להן, והחומרה לא יודעת בכלל על volatile. לכן drivers צריכים גם barriers, ו-volatile לבדו לא מספיק לפרסום באפר DMA.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה טווח הכתובות של רגיסטרים של התקן חייב להיות ממופה כ-uncached (או device memory ב-ARM)?",
+      "choices": [
+        "כי volatile לא עובד עם cache",
+        "כי ה-cache קטן מדי",
+        "כי אחרת קריאה עלולה להחזיר ערך ישן מה-cache במקום הערך העדכני מההתקן, כתיבות עלולות להתעכב או להתאחד, וה-prefetcher עלול לקרוא רגיסטרים עם תופעות לוואי",
+        "כי רגיסטרים לא מיושרים ל-cache lines"
+      ],
+      "answer": 2,
+      "explanation": "volatile מבטיח שהקומפיילר יפיק את הגישה, אבל אם האזור cacheable, ה-load יכול להיענות מה-cache בלי להגיע להתקן. ב-Linux ioremap ממפה את האזור עם מאפיינים מתאימים, וב-user space mmap של resource של PCI או /dev/mem עם O_SYNC נותן uncached.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q10",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש wrapper קטן לרגיסטר MMIO של 32 ביט: בנאי מכתובת, `read()`, `write(v)`, ו-`modify(mask, value)` שמשנה רק את הביטים שבמסכה. ציין מתי אסור להשתמש ב-modify.",
+      "lang": "cpp",
+      "starter": "class Reg32 {\npublic:\n  explicit Reg32(uintptr_t addr);\n  uint32_t read() const;\n  void write(uint32_t v);\n  void modify(uint32_t mask, uint32_t value);\n};",
+      "modelAnswer": "class Reg32 {\n  volatile uint32_t* const p_;\npublic:\n  explicit Reg32(uintptr_t addr)\n      : p_(reinterpret_cast<volatile uint32_t*>(addr)) {}\n  uint32_t read() const { return *p_; }        // one 32-bit load\n  void write(uint32_t v) { *p_ = v; }           // one 32-bit store\n  // Read-modify-write: NOT atomic. Do not use on W1C or read-to-clear\n  // registers, and protect it if an ISR touches the same register.\n  void modify(uint32_t mask, uint32_t value) {\n    uint32_t v = *p_;\n    v = (v & ~mask) | (value & mask);\n    *p_ = v;\n  }\n};",
+      "rubric": [
+        "pointer ל-volatile uint32_t, גישה אחת ברוחב מלא לכל פעולה",
+        "modify מבצע קריאה אחת וכתיבה אחת, ולא |= ו-&= נפרדים",
+        "מציין ש-modify לא מתאים לרגיסטרים W1C או read-to-clear",
+        "מציין שה-RMW לא אטומי מול ISR או core אחר, ומציע critical section או רגיסטרי set/clear",
+        "בונוס: barriers מול זיכרון DMA (או שימוש ב-readl/writel ב-Linux)"
+      ],
+      "explanation": "החלק החשוב הוא לא הקוד אלא ההערות: מועמד שמבין MMIO יודע ש-RMW הוא שלוש פעולות ושיש רגיסטרים שבהם קריאה או כתיבה של 1 הן פעולות.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "header של התקן מגדיר רגיסטר של 32 ביט כ-struct של bitfields volatile, וכתיבה ל-`CTRL.enable = 1;` גורמת לפעמים ל-bus fault או לשינוי של שדות אחרים. מה ההסבר?",
+      "choices": [
+        "רוחב הגישה וה-layout של bitfields תלויים במימוש: הקומפיילר רשאי לגשת לבית או ל-halfword במקום למילה שלמה, וההתקן עשוי לתמוך רק בגישות של 32 ביט. בנוסף, כל השמה לשדה היא read-modify-write של כל הרגיסטר, וזה מסוכן עם ביטים W1C או read-to-clear",
+        "bitfields לא נתמכים ב-volatile",
+        "bitfields תמיד גורמים ל-UB",
+        "צריך לבצע cast ל-int"
+      ],
+      "answer": 0,
+      "explanation": "ב-ARM יש ל-GCC את -fstrict-volatile-bitfields ו-AAPCS מגדיר כללים, אבל זה לא נייד. רוב ספריות ה-HAL המודרניות משתמשות ב-masks ו-shifts על uint32_t volatile, או ב-wrappers שמבטיחים גישה ברוחב מלא.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-Linux, מה ההבדל בין `writel` לבין `writel_relaxed`?",
+      "choices": [
+        "writel מבטיח שכל הכתיבות הקודמות לזיכרון רגיל (למשל descriptors ובאפרי DMA) יהיו נראות להתקן לפני כתיבת ה-MMIO, ובארכיטקטורות כמו ARM הוא מוסיף barrier בשביל זה. writel_relaxed שומר רק על הסדר מול גישות MMIO אחרות לאותו התקן",
+        "writel_relaxed לא volatile",
+        "אין הבדל ב-ARM",
+        "writel_relaxed כותב 16 ביט"
+      ],
+      "answer": 0,
+      "explanation": "כתיבת doorbell חייבת להגיע אחרי שה-descriptors שהיא מצביעה עליהם נראים, ו-writel עושה את זה. ב-x86 שני ה-accessors כמעט זהים בגלל TSO ו-UC, וב-ARM ההבדל הוא wmb (dmb או dsb). relaxed משמש כשכותבים הרבה רגיסטרים רצופים ואין קשר לזיכרון DMA, כדי לחסוך barriers.",
+      "lesson": "sys.volatile-mmio",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.volatile-mmio.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "תוכנית ב-user space ממפה BAR של כרטיס FPGA על PCIe (דרך VFIO) ועושה polling בלולאה צפופה על רגיסטר סטטוס כדי לזהות שבלוק מוכן. ה-CPU ב-100% וה-throughput נמוך. מה הבעיה והחלופה?",
+      "choices": [
+        "צריך mmap עם MAP_PRIVATE",
+        "צריך volatile",
+        "PCIe לא תומך בקריאות",
+        "כל קריאת MMIO מ-PCIe היא non-posted: ה-core נעצר כ-0.5–1µs עד שהתשובה חוזרת, ולכן polling עולה הרבה ומאט. עדיף שההתקן יכתוב סטטוס או מונה ב-DMA לזיכרון של ה-host (writeback), וה-CPU יעשה polling על זיכרון רגיל ב-cache"
+      ],
+      "answer": 3,
+      "explanation": "זו הסיבה ש-NICs כותבים את הסטטוס לתוך ה-descriptors ב-RAM: ה-driver סורק זיכרון שנמצא ב-cache (וב-DDIO אפילו ב-LLC), וקריאת line חדש עולה כמו cache miss רגיל. כתיבות MMIO זולות יחסית כי הן posted, ולכן doorbell הוא כתיבה.",
+      "lesson": "sys.volatile-mmio",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.volatile-mmio.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "הסבר את ההבדלים בין volatile, std::atomic, compiler barrier ו-hardware memory barrier. תן לכל אחד דוגמה שבה הוא הכלי הנכון, ודוגמה שבה הוא לא מספיק.",
+      "modelAnswer": "volatile: הקומפיילר חייב לבצע כל גישה, בסדר ביחס לגישות volatile אחרות. נכון לרגיסטרי MMIO ולמשתנה sig_atomic_t שמשתנה ב-signal handler. לא מספיק לסנכרון בין threads (אין אטומיות, אין happens-before, אין סדר מול זיכרון רגיל או בחומרה). std::atomic: אטומיות וסדר לפי memory order, גם בקומפיילר וגם בחומרה, במודל הזיכרון של C++. נכון לכל תקשורת בין threads או בין ISR לקוד ראשי (כשהוא lock-free). לא מתאים ל-MMIO: הקומפיילר רשאי לאחד או לבטל גישות atomic מסוימות (למשל שתי loads relaxed רצופות), ואין הבטחה לרוחב הגישה או לסוג ההוראה. compiler barrier (asm volatile עם memory clobber, או atomic_signal_fence): מונע רק מהקומפיילר להזיז גישות לזיכרון מעבר לנקודה. מספיק בין ISR לקוד ראשי על core יחיד, או בין thread ל-signal handler שלו. לא מספיק בין cores או מול התקן ב-ARM. hardware barrier (dmb, dsb, mfence, sfence): מכריח את המעבד לסדר גישות כפי שנראות לאחרים. נדרש ב-driver בין כתיבת descriptor ל-doorbell ב-ARM, ואחרי NT stores ב-x86. לבדו לא עוצר את הקומפיילר, ולכן המימושים (wmb, std::atomic_thread_fence) כוללים גם compiler barrier.",
+      "rubric": [
+        "volatile: אילו הבטחות קומפיילר בלבד, ושימוש נכון ב-MMIO",
+        "atomic: אטומיות וסדר בין threads, ולמה לא ל-MMIO",
+        "compiler barrier מול hardware barrier, עם דוגמה לכל אחד",
+        "דוגמה קונקרטית: doorbell אחרי descriptor ב-ARM, או ISR על core יחיד"
+      ],
+      "explanation": "זו אחת השאלות הנפוצות ביותר בראיונות embedded ו-systems. התשובה החלשה: volatile הופך משתנה ל-thread-safe.",
+      "lesson": "sys.volatile-mmio",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.volatile-mmio.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה המצב בתקן C++23 של הביטויים `reg |= BIT;` ו-`++reg;` כש-reg הוא `volatile uint32_t&`?",
+      "choices": [
+        "שניהם deprecated מאז C++20 ועדיין deprecated",
+        "C++20 הגדיר את שניהם כ-deprecated. C++23 ביטל את ה-deprecation של compound assignment ביטי (|=, &=, ^=) בעקבות התנגדות של קהילת ה-embedded, אבל ++, --, += ודומיהם על volatile נשארו deprecated",
+        "שניהם אסורים מ-C++23",
+        "שניהם תקינים לגמרי, לא היה שינוי"
+      ],
+      "answer": 1,
+      "explanation": "המוטיבציה ב-C++20 (P1152) הייתה שהתחביר מסתיר read-modify-write לא אטומי, ונראה כמו פעולה אחת. P2327 ב-C++23 החזיר את האופרטורים הביטיים כי כל קוד HAL בעולם משתמש בהם. ++ ו-+= עדיין מייצרים אזהרות deprecation, והחלופה המפורשת היא `reg = reg + 1;`.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-ARMv8 רגיסטרי ההתקן ממופים כ-Device-nGnRE, והבאפרים של DMA כ-Normal memory. איזה סדר מובטח **בלי** barriers מפורשים?",
+      "choices": [
+        "כל הגישות, לזיכרון ולהתקן, מסודרות בסדר התוכנית",
+        "שום סדר לא מובטח, גם לא בין שני רגיסטרים של אותו התקן",
+        "גישות לאותו התקן (אותו אזור Device) מגיעות בסדר התוכנית (nR, non-Reordering), אבל אין הבטחה לסדר ביניהן לבין גישות ל-Normal memory. לכן כתיבת doorbell יכולה להקדים את כתיבת ה-descriptor ב-RAM, וצריך dmb או dsb לפניה",
+        "Normal memory תמיד נכתב לפני Device memory"
+      ],
+      "answer": 2,
+      "explanation": "nGnRE פירושו: אין gathering (איחוד גישות), אין reordering בין גישות Device לאותו אזור, ויש early write acknowledgement (כתיבות posted). הסדר הזה לא חל מול Normal memory, שהוא weakly ordered. זו בדיוק הסיבה ל-wmb המובנה ב-writel של Linux ב-ARM64.",
+      "lesson": "sys.volatile-mmio",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.volatile-mmio.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "על STM32, הלולאה הראשית מבצעת `GPIOA->ODR |= LED_PIN;`, וה-ISR של timer מבצע `GPIOA->ODR ^= SCOPE_PIN;` על אותו רגיסטר. מדי פעם ה-LED נכבה מעצמו או שה-SCOPE_PIN לא מתהפך. מה הבעיה ומה הפתרון האידיומטי?",
+      "choices": [
+        "צריך לקרוא את ODR פעמיים",
+        "ה-ISR צריך להשתמש ב-|= ולא ב-^=",
+        "חסר volatile על GPIOA",
+        "|= הוא קריאה, OR וכתיבה. אם ה-ISR רץ בין הקריאה לכתיבה של הלולאה הראשית, הכתיבה דורסת את השינוי של ה-ISR. הפתרון: רגיסטר BSRR, שבו כל כתיבה מדליקה או מכבה ביטים ספציפיים באופן אטומי בחומרה (או critical section)"
+      ],
+      "answer": 3,
+      "explanation": "זה lost update קלאסי בין שני הקשרי ביצוע על אותו רגיסטר, גם עם volatile. רגיסטרי set/clear (BSRR, או SET ו-CLR ברבים מה-MCUs) הופכים את הפעולה לכתיבה אחת בלי קריאה, ולכן אטומית. ב-Cortex-M3/M4 יש גם bit-banding, וחלופה כללית היא לחסום interrupts לרגע סביב ה-RMW.",
+      "lesson": "sys.volatile-mmio"
+    }
+  ]
+}

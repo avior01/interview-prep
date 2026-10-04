@@ -1,0 +1,354 @@
+{
+  "domain": "cpp",
+  "subtopic": "polymorphism",
+  "lessons": [
+    {
+      "id": "cpp.polymorphism",
+      "title": "virtual, vtable ופולימורפיזם",
+      "what": "פולימורפיזם דינמי מאפשר לקרוא למתודה דרך pointer או reference ל-base ולהגיע למימוש של הטיפוס האמיתי בזמן ריצה. בכל המימושים הנפוצים (Itanium ABI ב-Linux, MSVC ABI ב-Windows) זה נעשה עם vptr: pointer נסתר בכל אובייקט, שמצביע ל-vtable, טבלה סטטית של pointers לפונקציות, אחת לכל class.",
+      "when": [
+        "קבוצה פתוחה של טיפוסים שמוגדרים בזמן ריצה: plugins, קונפיגורציה, interfaces בין מודולים",
+        "כשצריך interface יציב בין ספריות (ABI) ולא הכל ב-headers",
+        "שאלות ראיון: virtual destructor, slicing, קריאה ל-virtual ב-constructor, default arguments, sizeof עם vptr, diamond"
+      ],
+      "how": [
+        "קריאה ל-virtual דרך pointer או reference: טוענים את ה-vptr מהאובייקט, טוענים את הכניסה המתאימה ב-vtable, וקוראים בעקיפין (indirect call). קריאה על אובייקט עצמו (לא דרך pointer או reference) נפתרת סטטית.",
+        "override (C++11) מבקש מהקומפיילר לוודא שהפונקציה באמת דורסת virtual. בלעדיו, הבדל קטן בחתימה (const, טיפוס פרמטר) יוצר פונקציה חדשה שמסתירה את המקורית.",
+        "final על class או מתודה מונע דריסה, ומאפשר לקומפיילר devirtualization.",
+        "ב-constructor וב-destructor הטיפוס הדינמי הוא ה-class שנבנה או נהרס כרגע. קריאה ל-virtual שם מגיעה למימוש של ה-class הנוכחי, ולא של ה-derived. קריאה ל-pure virtual משם היא UB.",
+        "default arguments נקבעים לפי הטיפוס הסטטי של הביטוי, גם כשהגוף נבחר דינמית.",
+        "slicing: העתקה של Derived לתוך אובייקט Base (by value) מעתיקה רק את חלק ה-Base. ה-vptr של העותק הוא של Base.",
+        "virtual inheritance (diamond): רק עותק אחד של ה-base המשותף, וה-class הכי נגזר הוא שבונה אותו. multiple inheritance: לכל base יש subobject בכתובת אחרת, וההמרות מזיזות את ה-pointer (thunks ב-vtable)."
+      ],
+      "complexity": "כל אובייקט מקבל vptr (8 בתים ב-64 ביט, ועוד padding). קריאה וירטואלית היא שתי טעינות ו-indirect branch, בערך 1-3 ns כשה-cache חם וה-branch predictor צודק. העלות העיקרית היא אובדן inlining ואופטימיזציות שתלויות בו, כמו vectorization. ב-call site שבו הטיפוס משתנה כל הזמן (megamorphic) יש branch mispredictions.",
+      "pitfalls": [
+        "delete דרך pointer ל-base בלי virtual destructor הוא UB",
+        "vector<Base> במקום vector<unique_ptr<Base>> גורם ל-slicing",
+        "חתימה שונה בטעות בלי override: הפונקציה לא דורסת",
+        "default argument שונה ב-derived: מבלבל, כי הערך נקבע סטטית",
+        "undefined reference to vtable: ה-key function (הוירטואלית הראשונה שאינה inline) לא מוגדרת באף TU"
+      ],
+      "senior": [
+        "devirtualization: final, LTO, או speculative devirtualization לפי profile (PGO)",
+        "שבירת ABI: הוספה או שינוי סדר של virtual functions במחלקה שכבר שוחררה משנה את ה-offsets ב-vtable",
+        "חלופות: CRTP (static), std::variant עם std::visit (קבוצה סגורה), type erasure",
+        "ב-CUDA, virtual functions על device נתמכות רק כשהאובייקט נוצר על ה-device. ב-kernels חמים נמנעים מהן ומשתמשים ב-templates"
+      ],
+      "diagram": "obj D:  [vptr]---> vtable D: [~D][f=D::f][g=B::g]\n        [B members]\n        [D members]\nb->f(): load vptr, load slot, call"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.polymorphism.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מתי קריאה למתודה עוברת dynamic dispatch (נבחר המימוש של הטיפוס האמיתי בזמן ריצה)?",
+      "choices": [
+        "בכל קריאה למתודה של class שיש לו base",
+        "רק כשמשתמשים ב-dynamic_cast לפני הקריאה",
+        "כשהמתודה static",
+        "כשהמתודה virtual והקריאה נעשית דרך pointer או reference ל-base"
+      ],
+      "answer": 3,
+      "explanation": "צריך את שני התנאים: מתודה virtual, וקריאה דרך pointer או reference, כי אז הטיפוס הדינמי יכול להיות שונה מהסטטי. קריאה על אובייקט by value נפתרת סטטית. מתודות לא-virtual תמיד נבחרות לפי הטיפוס הסטטי.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה ל-base class פולימורפי צריך virtual destructor?",
+      "choices": [
+        "כדי שאפשר יהיה ליצור ממנו אובייקטים",
+        "כי אחרת אין vtable",
+        "כדי ש-delete דרך pointer ל-base יקרא ל-destructor של ה-derived. בלי זה, delete כזה הוא UB",
+        "כדי שה-destructor ירוץ מהר יותר"
+      ],
+      "answer": 2,
+      "explanation": "delete base_ptr צריך לדעת את הטיפוס האמיתי כדי להריס את חלק ה-derived ולשחרר את הגודל הנכון. התקן קובע שבלי virtual destructor זה UB, גם אם ל-Derived אין members. הכלל: destructor של base הוא public virtual, או protected non-virtual.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו מילת מפתח (C++11) כותבים אחרי חתימת מתודה ב-derived כדי שהקומפיילר יוודא שהיא באמת דורסת מתודה virtual?",
+      "accept": [
+        "override"
+      ],
+      "explanation": "override גורם לשגיאת קומפילציה אם אין פונקציה virtual תואמת ב-base, למשל כשיש הבדל ב-const או בטיפוס פרמטר. זה תופס באג שקט שבו נוצרת פונקציה חדשה במקום דריסה.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual void f() { std::cout << 'B'; }\n  void g()         { std::cout << 'b'; }\n};\nstruct D : B {\n  void f() override { std::cout << 'D'; }\n  void g()          { std::cout << 'd'; }\n};\n\nint main() {\n  D d; B& r = d; B* p = &d; B v = d;\n  r.f(); r.g(); p->f(); v.f();\n}",
+      "choices": [
+        "DdDD",
+        "DbDB",
+        "DbDD",
+        "BbBB"
+      ],
+      "answer": 1,
+      "explanation": "r.f() ו-p->f() עוברים dynamic dispatch ומגיעים ל-D. g לא virtual ולכן נבחרת לפי הטיפוס הסטטי B. v הוא עותק by value של חלק ה-B בלבד (slicing), עם vptr של B, ולכן מודפס B.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבעיה בקוד?",
+      "code": "struct Base {\n  ~Base() {}\n  virtual void run() {}\n};\nstruct Derived : Base {\n  std::vector<int> data = std::vector<int>(1000);\n};\n\nvoid f() {\n  Base* p = new Derived;\n  delete p;\n}",
+      "bugLine": 2,
+      "choices": [
+        "ה-destructor של Base לא virtual, ולכן delete p דרך Base* הוא UB. בפועל ~Derived לא נקרא וה-vector דולף",
+        "חסר override על run ב-Derived",
+        "אסור לאתחל vector בתוך הגדרת המחלקה",
+        "צריך delete[] p"
+      ],
+      "answer": 0,
+      "explanation": "גם כשיש מתודות virtual אחרות, ה-destructor לא הופך virtual מעצמו. התיקון: virtual ~Base() = default;. בגלל זה Clang ו-GCC מזהירים עם -Wdelete-non-virtual-dtor.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מחזיקים `std::vector<Shape> shapes;` ומכניסים אליו Circle ו-Square (שניהם יורשים מ-Shape). כל הקריאות ל-area() מחזירות את המימוש של Shape. למה?",
+      "choices": [
+        "צריך לקרוא ל-area דרך iterator",
+        "area לא מסומנת override",
+        "vector לא תומך במחלקות עם virtual",
+        "slicing: ה-vector מחזיק אובייקטים מטיפוס Shape בלבד, ובהכנסה מועתק רק חלק ה-Shape. צריך std::vector<std::unique_ptr<Shape>>"
+      ],
+      "answer": 3,
+      "explanation": "container by value מחזיק אובייקטים בגודל sizeof(Shape). ה-copy constructor של Shape בונה Shape אמיתי עם vptr של Shape. פולימורפיזם דורש indirection: pointer או reference. דרך למנוע slicing: copy constructor של ה-base כ-protected או deleted.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על Linux x86-64 (Itanium ABI), מה sizeof של `struct A { int x; virtual void f(); };`?",
+      "choices": [
+        "4",
+        "8",
+        "16",
+        "12"
+      ],
+      "answer": 2,
+      "explanation": "יש vptr של 8 בתים בתחילת האובייקט ו-int של 4 בתים. ה-alignment של המחלקה הוא 8 (בגלל ה-pointer), ולכן יש padding של 4 בתים בסוף, וסך הכל 16. התקן לא מגדיר vptr, אבל זה הפריסה בכל המימושים הנפוצים.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q08",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט של `D d;`?",
+      "code": "struct B {\n  B() { hello(); }\n  virtual void hello() { std::cout << 'B'; }\n};\nstruct D : B {\n  D() { hello(); }\n  void hello() override { std::cout << 'D'; }\n};",
+      "choices": [
+        "DD",
+        "BD",
+        "BB",
+        "UB"
+      ],
+      "answer": 1,
+      "explanation": "בזמן ש-B() רץ, החלק של D עוד לא נבנה, והטיפוס הדינמי הוא B: ה-vptr מצביע ל-vtable של B. לכן hello() מגיעה ל-B::hello. ב-D() ה-vptr כבר עודכן ל-D. זה מוגדר היטב ולא UB, כל עוד הפונקציה לא pure virtual.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q09",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual void f(int x = 1) { std::cout << 'B' << x; }\n};\nstruct D : B {\n  void f(int x = 2) override { std::cout << 'D' << x; }\n};\n\nint main() {\n  D d;\n  B& b = d;\n  b.f();\n  d.f();\n}",
+      "choices": [
+        "D1D2",
+        "D2D2",
+        "B1D2",
+        "D1D1"
+      ],
+      "answer": 0,
+      "explanation": "הגוף נבחר דינמית (D::f), אבל ה-default argument נקבע בזמן קומפילציה לפי הטיפוס הסטטי של הביטוי. b הוא B&, ולכן x=1. ב-d.f() הטיפוס הסטטי הוא D, ולכן x=2. ההמלצה: לא לשנות default arguments בפונקציות שדורסות.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q10",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "process() שנקראת דרך Stage& תמיד מריצה את המימוש של Stage. למה?",
+      "code": "struct Stage {\n  virtual ~Stage() = default;\n  virtual void process(const float* in, int n) const {}\n};\nstruct Fir : Stage {\n  void process(const float* in, int n) { /* filter */ }\n};",
+      "bugLine": 5,
+      "choices": [
+        "ל-Fir חסר virtual destructor",
+        "צריך לכתוב virtual גם ב-Fir",
+        "אי אפשר לדרוס פונקציה שמקבלת pointer",
+        "Fir::process לא const, ולכן החתימה שונה. היא לא דורסת אלא מסתירה פונקציה חדשה. override היה מגלה את זה בקומפילציה"
+      ],
+      "answer": 3,
+      "explanation": "const הוא חלק מהחתימה (הוא משנה את הטיפוס של this). לכן Fir::process היא overload חדש, לא virtual, שמסתיר את המקורית. מילת virtual ב-derived לא הייתה עוזרת, כי היא רק הייתה יוצרת virtual חדשה. override הוא הכלי הנכון.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q11",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מגדירים interface: `struct I { virtual ~I() = 0; virtual void run() = 0; };` ולא כותבים מימוש ל-~I. מה קורה כשמשתמשים ב-Impl : I?",
+      "choices": [
+        "תקין, כי pure virtual לא צריכה מימוש",
+        "שגיאת קומפילציה ב-I",
+        "שגיאת link: ה-destructor של Impl קורא תמיד ל-I::~I, ולכן pure virtual destructor חייב גוף: I::~I() = default; מחוץ למחלקה",
+        "UB בזמן ריצה בלבד"
+      ],
+      "answer": 2,
+      "explanation": "pure virtual destructor הופך את המחלקה ל-abstract, אבל כל destructor של derived קורא ל-destructors של ה-bases באופן לא-וירטואלי, ולכן חייבת להיות הגדרה. pure virtual רגילה יכולה להישאר בלי גוף. אם יש לה גוף, אפשר לקרוא לה במפורש: I::run().",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q12",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על העלות של קריאה וירטואלית נכונות?",
+      "choices": [
+        "היא כוללת טעינה של ה-vptr מהאובייקט וטעינה של הכניסה מה-vtable, ואחר כך indirect call",
+        "היא מונעת inlining, אלא אם הקומפיילר מצליח לבצע devirtualization",
+        "אם המחלקה (או המתודה) מסומנת final, קריאה דרך pointer לאותה מחלקה יכולה לעבור devirtualization",
+        "כל קריאה וירטואלית מחפשת את שם הפונקציה ב-hash table",
+        "קריאה וירטואלית תמיד גורמת ל-branch misprediction"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "ה-dispatch הוא אינדקס קבוע ב-vtable שנקבע בקומפילציה, בלי חיפוש לפי שם. ה-indirect branch predictor מנבא טוב call sites שבהם הטיפוס כמעט לא משתנה (monomorphic). המחיר הגדול הוא אובדן inlining: אין constant propagation, vectorization או hoisting. final, LTO ו-PGO מאפשרים devirtualization.",
+      "lesson": "cpp.polymorphism",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.polymorphism.q13",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct A { virtual ~A() = default; };\nstruct B : A {};\nstruct C : A {};\n\nint main() {\n  A* p = new B;\n  std::cout << (dynamic_cast<B*>(p) != nullptr)\n            << (dynamic_cast<C*>(p) != nullptr);\n  try { (void)dynamic_cast<C&>(*p); }\n  catch (const std::bad_cast&) { std::cout << 'X'; }\n  delete p;\n}",
+      "choices": [
+        "11",
+        "10X",
+        "10",
+        "UB, כי ההמרה ל-C לא חוקית"
+      ],
+      "answer": 1,
+      "explanation": "dynamic_cast בודק את הטיפוס הדינמי בעזרת RTTI. ההמרה ל-B* מצליחה. ההמרה ל-C* נכשלת ומחזירה nullptr. ב-reference אין null, ולכן כישלון זורק std::bad_cast. static_cast<C*>(p) היה מתקמפל ונותן UB בשימוש.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\nstruct A { virtual void fa(); int a; };\nstruct B { virtual void fb(); int b; };\nstruct C : A, B { void fb() override; };\nC c;\nB* pb = &c;\n```\n\nמה נכון?",
+      "choices": [
+        "static_cast<void*>(pb) שונה מ-static_cast<void*>(&c), כי ה-subobject של B נמצא ב-offset אחר. pb == &c הוא true, כי &c מומר ל-B* לפני ההשוואה. קריאה ל-pb->fb() עוברת thunk שמתקן את this",
+        "pb == &c הוא false, כי הכתובות שונות",
+        "static_cast<void*>(pb) == static_cast<void*>(&c) תמיד",
+        "ההמרה ל-B* דורשת dynamic_cast"
+      ],
+      "answer": 0,
+      "explanation": "לשני base subobjects לא ריקים אסור לשבת באותה כתובת, ולכן B נמצא אחרי A (ב-Itanium: offset 16). ההמרה Derived* ל-Base* מוסיפה offset בזמן קומפילציה. ההשוואה עושה את אותה המרה ולכן מחזירה true. ב-vtable של B-in-C יש thunk שמחסיר את ה-offset מ-this לפני קפיצה ל-C::fb. בגלל זה reinterpret_cast בין pointers במחלקות עם multiple inheritance הוא באג.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש היררכיית Shape עם `area()` ו-`clone()` שמחזיר std::unique_ptr<Shape> (virtual constructor idiom), ומחלקה Drawing שמחזיקה std::vector<std::unique_ptr<Shape>> ותומכת ב-deep copy. מנע slicing של Shape. בונוס: מנע שכפול של clone בכל derived.",
+      "starter": "struct Shape { /* ... */ };\nstruct Circle : Shape { double r; /* ... */ };\nclass Drawing { /* ... */ };",
+      "modelAnswer": "#include <memory>\n#include <utility>\n#include <vector>\n\nstruct Shape {\n  virtual ~Shape() = default;\n  virtual double area() const = 0;\n  virtual std::unique_ptr<Shape> clone() const = 0;\nprotected:  // prevent slicing copies through Shape\n  Shape() = default;\n  Shape(const Shape&) = default;\n  Shape& operator=(const Shape&) = default;\n};\n\ntemplate <class D>\nstruct Cloneable : Shape {  // CRTP: one clone implementation\n  std::unique_ptr<Shape> clone() const override {\n    return std::make_unique<D>(static_cast<const D&>(*this));\n  }\n};\n\nstruct Circle final : Cloneable<Circle> {\n  double r;\n  explicit Circle(double r) : r(r) {}\n  double area() const override { return 3.141592653589793 * r * r; }\n};\n\nclass Drawing {\n  std::vector<std::unique_ptr<Shape>> shapes_;\npublic:\n  Drawing() = default;\n  Drawing(const Drawing& o) {\n    shapes_.reserve(o.shapes_.size());\n    for (const auto& s : o.shapes_) shapes_.push_back(s->clone());\n  }\n  Drawing& operator=(const Drawing& o) {\n    Drawing tmp(o);              // strong guarantee\n    shapes_.swap(tmp.shapes_);\n    return *this;\n  }\n  Drawing(Drawing&&) noexcept = default;\n  Drawing& operator=(Drawing&&) noexcept = default;\n  void add(std::unique_ptr<Shape> s) { shapes_.push_back(std::move(s)); }\n};",
+      "rubric": [
+        "virtual destructor ו-clone() pure virtual שמחזיר unique_ptr<Shape>",
+        "copy של Shape הוא protected (או deleted) כדי למנוע slicing",
+        "Drawing ממש copy עמוק עם clone ו-move ב-default",
+        "copy assignment עם strong guarantee (copy-and-swap)",
+        "CRTP (או covariant return עם raw pointer) כדי לא לשכפל את clone"
+      ],
+      "explanation": "unique_ptr לא copyable, ולכן deep copy של אוסף פולימורפי מחייב virtual clone. CRTP מבטל את הקוד החוזר, ו-protected copy מונע slicing מקרי.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q16",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט של `D d;`?",
+      "code": "struct V {\n  V()      { std::cout << 0; }\n  V(int x) { std::cout << x; }\n};\nstruct A : virtual V { A() : V(1) {} };\nstruct B : virtual V { B() : V(2) {} };\nstruct D : A, B { D() {} };",
+      "choices": [
+        "12",
+        "1",
+        "012",
+        "0"
+      ],
+      "answer": 3,
+      "explanation": "virtual base נבנה פעם אחת, על ידי ה-class הכי נגזר (D), לפני כל ה-bases הלא-וירטואליים. ה-mem-initializers V(1) ו-V(2) ב-A וב-B מתעלמים כשהם לא ה-most derived. D לא מאתחל את V במפורש, ולכן נקרא V(). כדי לקבל V(1) צריך לכתוב D() : V(1) {}.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה קורה ב-`D d;`?\n\n```cpp\nstruct B {\n  B() { init(); }\n  void init() { run(); }\n  virtual void run() = 0;\n};\nstruct D : B { void run() override {} };\n```",
+      "choices": [
+        "D::run נקרא, כי init היא לא constructor",
+        "שגיאת קומפילציה: קריאה ל-pure virtual",
+        "undefined behavior: קריאה וירטואלית ל-pure virtual בזמן בניית B. בפועל ב-GCC/Clang ה-vtable של B מצביע ל-__cxa_pure_virtual, שמדפיס pure virtual method called ומבצע abort",
+        "B::run נקרא ומחזיר בלי לעשות כלום"
+      ],
+      "answer": 2,
+      "explanation": "בזמן B() הטיפוס הדינמי הוא B, ובו run היא pure. קריאה ישירה run() מתוך ה-constructor היא UB, והקומפיילר לפעמים מזהיר. דרך פונקציה עקיפה כמו init הקומפיילר לא מזהה את זה. ה-ABI ממלא את ה-slot ב-handler שמפיל את התוכנית. זו עוד סיבה לא לקרוא ל-virtual מ-constructors, ולהעדיף two-phase init או factory.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-Linux, link נכשל עם `undefined reference to 'vtable for Widget'`. ל-Widget יש כמה virtual functions, וכולן מוצהרות. מה הסיבה הסבירה ביותר?",
+      "choices": [
+        "חסר virtual destructor",
+        "ה-key function של Widget (המתודה הוירטואלית הראשונה שאינה inline ואינה pure) מוצהרת ולא מוגדרת באף TU. ב-Itanium ABI ה-vtable נוצר רק ב-TU שמגדיר את ה-key function",
+        "Widget מוגדר ביותר מ-header אחד",
+        "ה-linker לא תומך ב-RTTI"
+      ],
+      "answer": 1,
+      "explanation": "כדי לא לייצר vtable בכל TU, ה-Itanium C++ ABI בוחר key function, ורק ה-TU שמגדיר אותה מייצר את ה-vtable ואת ה-type_info. אם שכחת להגדיר אותה (למשל destructor שהוצהר ולא מומש), או שהקובץ לא נכנס ל-link, אין vtable בכלל, והשגיאה מצביעה על ה-constructor שמאתחל את ה-vptr. בלי key function (כל הוירטואליות inline) ה-vtable נוצר בכל TU כ-COMDAT.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q19",
+      "level": 5,
+      "type": "oral",
+      "prompt": "הספרייה שלך משוחררת כ-.so עם class `Device` שיש לו virtual functions, ולקוחות יורשים ממנו. מוצר חדש דורש להוסיף מתודה וירטואלית. למה זה שובר ABI, ואילו אסטרטגיות קיימות כדי לתכנן מראש?",
+      "modelAnswer": "קוד של לקוח שקומפל מול הגרסה הישנה מכיל offsets קבועים ל-vtable: קריאה ל-dev->stop() הופכת ל-call [vptr+0x18]. הוספה באמצע משנה את ה-offsets של כל מה שאחריה. גם הוספה בסוף שוברת, כי מחלקות של הלקוח שיורשות מ-Device הוסיפו virtuals משלהן אחרי ה-slots של Device, והן מתנגשות עם ה-slot החדש. בנוסף, הוספת data members משנה את sizeof ואת ה-offsets של members ב-derived. אסטרטגיות: (1) interfaces מופשטים בלי data, עם versioning בסגנון COM: IDevice2 יורש מ-IDevice או מתקבל דרך query_interface, וממשקים קיימים לא משתנים לעולם. (2) pimpl עם API שאינו וירטואלי: הלקוח לא יורש, וההרחבה נעשית בפנים. (3) בהקשרים מסוימים: slots שמורים בסוף (reserved virtuals), כמו שעשו ב-Qt, אבל זה שביר. (4) C ABI עם opaque handles ו-function tables בגבול ה-.so, ו-wrapper של C++ ב-header-only. (5) inline namespaces או symbol versioning כדי להחזיק כמה גרסאות. כלים: abi-compliance-checker או libabigail ב-CI. בנוסף, אין ABI יציב לחריגות ול-STL types בין קומפיילרים שונים, ולכן לא חושפים std::string או std::vector בגבול.",
+      "rubric": [
+        "מסביר שקוד הלקוח מקודד offsets של vtable וגודל אובייקט",
+        "מבין שגם הוספה בסוף שוברת כשלקוחות יורשים",
+        "מציע versioned interfaces או COM-style, pimpl, או C ABI עם opaque handle",
+        "מזכיר כלי בדיקת ABI או symbol versioning",
+        "מזכיר STL ו-exceptions בגבול ה-ABI"
+      ],
+      "explanation": "בחברות שמפיצות SDKs (כמו drivers ו-CUDA libraries), יציבות ABI היא שיקול תכנון מרכזי, ומראיין סניור מצפה שתכיר אותו.",
+      "lesson": "cpp.polymorphism",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,372 @@
+{
+  "domain": "cpp",
+  "subtopic": "exceptions",
+  "lessons": [
+    {
+      "id": "cpp.exceptions",
+      "title": "Exceptions ו-noexcept",
+      "what": "exceptions מעבירים שגיאה מנקודת הזריקה (throw) ל-handler (catch) כמה רמות למעלה ב-call stack, ובדרך מתבצע stack unwinding שהורס את כל ה-locals. noexcept מצהיר שפונקציה לא זורקת. אם בכל זאת יוצא ממנה exception, נקרא std::terminate. noexcept הוא גם מידע לקומפיילר ולספרייה, למשל ל-vector שמחליט אם לעשות move או copy.",
+      "when": [
+        "שגיאות חריגות שהקורא הישיר לא יכול לטפל בהן: כשל בהקצאה, קונפיגורציה שבורה, הפרת invariant",
+        "constructors, כי אין להם ערך החזרה",
+        "noexcept: על destructors, move operations, swap, ופונקציות שבאמת לא נכשלות",
+        "לא משתמשים בהם ל-control flow רגיל, ולא בנתיב חם או בזמן-אמת שבו שגיאה צפויה. שם עדיפים error codes או std::expected (C++23)"
+      ],
+      "how": [
+        "זורקים by value ותופסים by const reference: catch (const std::exception& e). תפיסה by value גורמת ל-slicing ולהעתקה.",
+        "ה-catch הראשון שמתאים (לפי סדר הכתיבה) נבחר. לכן handlers ספציפיים נכתבים לפני כלליים.",
+        "throw; בתוך catch זורק מחדש את האובייקט המקורי. throw e; זורק עותק מהטיפוס הסטטי של e, וזה slicing.",
+        "רמות ה-exception safety: nothrow (לא נכשל), strong (מצליח או שהמצב לא משתנה), basic (אין דליפות, ה-invariants נשמרים, אבל המצב יכול להשתנות).",
+        "noexcept(expr) כאופרטור מחזיר bool בזמן קומפילציה בלי להריץ את expr. noexcept(cond) כ-specifier הופך את הפונקציה ל-noexcept לפי התנאי.",
+        "exception שיוצא מפונקציה noexcept גורם ל-std::terminate, וה-implementation מחליט אם בכלל התבצע unwinding. exception שלא נתפס בשום מקום גם גורם ל-terminate.",
+        "std::exception_ptr (current_exception ו-rethrow_exception) מעביר exception בין threads. std::async ו-std::promise עושים את זה אוטומטית."
+      ],
+      "complexity": "ה-zero-cost model (Itanium ABI): בנתיב התקין אין הוראות נוספות, אבל יש unwind tables שמגדילות את הבינארי. throw עולה בערך מיקרו-שניות: הקצאה של ה-exception object, סריקה של הטבלאות לכל frame והתאמת RTTI. לכן זמן הזריקה לא דטרמיניסטי.",
+      "pitfalls": [
+        "catch by value: slicing",
+        "throw e; במקום throw; בזמן rethrow",
+        "שני new ב-constructor בלי RAII: אם השני זורק, הראשון דולף",
+        "שמירה של pointer או reference ל-exception אחרי שה-catch נגמר",
+        "exception שיוצא מפונקציית ה-thread: std::terminate"
+      ],
+      "senior": [
+        "בחירת guarantee לכל פעולה ב-API, ותיעוד שלה",
+        "noexcept הוא חלק מטיפוס הפונקציה מ-C++17",
+        "-fno-exceptions ב-embedded, games ו-GPU: מה משתנה (new שנכשל קורא ל-abort, ה-STL לא זורק)",
+        "error codes, std::expected ו-exceptions: לפי שכיחות השגיאה, מי מטפל בה, ודרישות זמן-אמת"
+      ],
+      "diagram": "main: try { a() } catch(E&)  <-- handler\n  a(): Lock l;  b()      ~l runs\n    b(): Buf x; c()      ~x runs\n      c(): throw E{}  ---^ unwind"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.exceptions.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הדרך המומלצת לתפוס exception?",
+      "choices": [
+        "catch (const std::exception& e)",
+        "catch (std::exception e)",
+        "catch (std::exception* e)",
+        "catch (...) תמיד"
+      ],
+      "answer": 0,
+      "explanation": "תפיסה ב-const reference לא מעתיקה, לא גורמת ל-slicing, ושומרת את הטיפוס הדינמי, כך ש-what() הוירטואלי עובד נכון. תפיסה ב-pointer מתאימה רק כשזורקים pointer, וזה לא מומלץ. catch (...) מתאים ל-cleanup או לגבולות מודול, לא כברירת מחדל.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה קורה אם פונקציה שמסומנת noexcept זורקת exception שיוצא ממנה?",
+      "choices": [
+        "שגיאת קומפילציה",
+        "ה-exception נבלע בשקט",
+        "ה-exception ממשיך לעלות כרגיל",
+        "std::terminate נקרא"
+      ],
+      "answer": 3,
+      "explanation": "noexcept הוא הבטחה שהקומפיילר לא בודק בזמן קומפילציה. בזמן ריצה, exception שמגיע לגבול פונקציה noexcept גורם ל-std::terminate. בגלל זה הקומפיילר יכול לוותר על unwinding code בתוך הפונקציה.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקראת רמת ה-exception safety שבה פעולה שנכשלה משאירה את המצב בדיוק כמו שהיה לפניה (commit or rollback)?",
+      "accept": [
+        "strong",
+        "strong guarantee",
+        "strong exception guarantee"
+      ],
+      "explanation": "strong guarantee היא בעצם התנהגות של טרנזקציה. basic מבטיחה רק שאין דליפות ושהאובייקט תקין. nothrow מבטיחה שהפעולה לא נכשלת בכלל.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "try {\n  throw std::out_of_range(\"x\");\n}\ncatch (const std::exception& e)    { std::cout << 'E'; }\ncatch (const std::out_of_range& e) { std::cout << 'O'; }",
+      "choices": [
+        "O",
+        "EO",
+        "E",
+        "שגיאת קומפילציה"
+      ],
+      "answer": 2,
+      "explanation": "ה-handlers נבדקים לפי הסדר, והראשון שמתאים נבחר, לא המתאים ביותר. out_of_range יורש מ-std::exception, ולכן הראשון תופס. הקומפיילר רק מזהיר שה-handler השני לא יגיע לעולם. ה-handler הספציפי צריך לבוא קודם.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ה-log תמיד מציג הודעה כללית במקום ההודעה של ה-exception. למה?",
+      "code": "try {\n  risky();  // throws std::runtime_error(\"disk full\")\n}\ncatch (std::exception e) {\n  log(e.what());\n}",
+      "bugLine": 4,
+      "choices": [
+        "runtime_error לא יורש מ-std::exception",
+        "catch by value מעתיק רק את חלק ה-std::exception (slicing), ולכן what() הוא של std::exception. צריך const std::exception&",
+        "what() לא virtual",
+        "צריך catch (...)"
+      ],
+      "answer": 1,
+      "explanation": "הפרמטר של ה-catch הוא אובייקט חדש מטיפוס std::exception שמאותחל מה-runtime_error, וההודעה הולכת לאיבוד. what() הוא virtual, אבל האובייקט כבר באמת מטיפוס std::exception.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct A : std::exception {\n  const char* what() const noexcept override { return \"A\"; }\n};\nvoid f() {\n  try { throw A{}; }\n  catch (std::exception& e) { throw; }\n}\nint main() {\n  try { f(); }\n  catch (A&)              { std::cout << 'A'; }\n  catch (std::exception&) { std::cout << 'E'; }\n}",
+      "choices": [
+        "A",
+        "E",
+        "AE",
+        "std::terminate"
+      ],
+      "answer": 0,
+      "explanation": "throw; בלי ביטוי זורק מחדש את אותו exception object, מהטיפוס הדינמי המקורי A, בלי העתקה. לכן ה-handler של A בחוץ תופס אותו.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה קורה כש-exception לא נתפס באף catch עד main (ומעבר לו)?",
+      "choices": [
+        "התוכנית ממשיכה מהשורה שאחרי ה-throw",
+        "מערכת ההפעלה מדפיסה stack trace ומחזירה את השליטה ל-main",
+        "כל ה-destructors נקראים תמיד, ואחר כך התוכנית יוצאת עם קוד 0",
+        "std::terminate נקרא (ברירת המחדל: abort). התקן משאיר ל-implementation להחליט אם ה-stack עבר unwinding לפני כן"
+      ],
+      "answer": 3,
+      "explanation": "כשאין handler, נקרא std::terminate. ב-GCC ו-Clang ה-search phase לא מוצא handler, ולכן ה-unwinding לא מתבצע בכלל וה-destructors לא רצים. לכן לפעמים עוטפים את main ב-catch (...) כדי להבטיח cleanup.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q08",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (A מוגדר כמו בשאלה הקודמת: יורש מ-std::exception ו-what() מחזיר \"A\")",
+      "code": "void f() {\n  try { throw A{}; }\n  catch (std::exception& e) { throw e; }\n}\nint main() {\n  try { f(); }\n  catch (A&)              { std::cout << 'A'; }\n  catch (std::exception&) { std::cout << 'E'; }\n}",
+      "choices": [
+        "A",
+        "AE",
+        "E",
+        "UB"
+      ],
+      "answer": 2,
+      "explanation": "throw e; יוצר exception object חדש בהעתקה מהטיפוס הסטטי של e, שהוא std::exception. זה slicing, והטיפוס A הולך לאיבוד. לכן רק ה-handler הכללי תופס. ל-rethrow כותבים throw;.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה מבטיחה basic exception guarantee?",
+      "choices": [
+        "שהפעולה לא תזרוק",
+        "שאם הפעולה נכשלת אין דליפות משאבים וה-invariants נשמרים, כלומר האובייקט תקין ושמיש, אבל הערך שלו עשוי להשתנות",
+        "שאם הפעולה נכשלת, המצב חוזר בדיוק למה שהיה",
+        "שה-exception תמיד יתפס"
+      ],
+      "answer": 1,
+      "explanation": "basic היא המינימום שכל קוד צריך לספק. דוגמה: אם insert של טווח ל-vector נכשל באמצע (כש-move עלול לזרוק), חלק מהאיברים אולי הוכנסו, אבל ה-vector תקין. strong היא commit או rollback, ו-nothrow אומרת שאין כשל בכלל.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q10",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "void g();\nvoid h() noexcept;\nstruct S { ~S(); };\n\nint main() {\n  std::cout << noexcept(g()) << noexcept(h())\n            << noexcept(S{});\n}",
+      "choices": [
+        "011",
+        "010",
+        "000",
+        "111"
+      ],
+      "answer": 0,
+      "explanation": "האופרטור noexcept לא מריץ את הביטוי, ולכן אין צורך בהגדרות. g לא מוצהרת noexcept, ולכן 0. h כן, ולכן 1. S{} כולל default constructor מרומז שהוא noexcept, ו-destructor שהמשתמש הצהיר עליו בלי מפרט, וגם הוא noexcept מרומז. לכן 1.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q11",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבעיה ב-exception safety של המחלקה?",
+      "code": "class Pair {\n  int* a_; int* b_;\npublic:\n  Pair() : a_(new int[100]), b_(new int[100]) {}\n  ~Pair() { delete[] a_; delete[] b_; }\n};",
+      "bugLine": 4,
+      "choices": [
+        "new int[100] לא מאתחל את הזיכרון",
+        "אסור לזרוק מ-constructor",
+        "צריך delete במקום delete[]",
+        "אם ה-new השני זורק bad_alloc, ה-destructor של Pair לא נקרא (האובייקט לא נבנה), ו-a_ הוא raw pointer בלי destructor, ולכן ה-buffer הראשון דולף"
+      ],
+      "answer": 3,
+      "explanation": "כשה-constructor נכשל, רק sub-objects שנבנו במלואם נהרסים. ל-int* אין destructor שמשחרר משהו. הפתרון: std::unique_ptr<int[]> או std::vector<int> כ-members. כמו כן חסרים copy ו-move (rule of 5), וזה באג נוסף.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "פונקציה `void process() noexcept` קוראת לפונקציה שזורקת std::runtime_error, ואין try בתוך process. ל-locals ב-process יש destructors. מה התקן אומר?",
+      "choices": [
+        "ה-locals ב-process נהרסים, ואחר כך ה-exception ממשיך לקורא",
+        "std::unexpected נקרא, כמו ב-C++03",
+        "std::terminate נקרא. ה-implementation מחליט אם ה-stack עבר unwinding מלא, חלקי, או לא עבר בכלל, ולכן אין להסתמך על כך שה-destructors ירוצו",
+        "UB"
+      ],
+      "answer": 2,
+      "explanation": "[except.terminate] מתיר במפורש unwinding חלקי או אפס unwinding במקרה הזה. זה מה שמאפשר לקומפיילר לא לייצר landing pads בפונקציות noexcept, וזה חלק מהיתרון של noexcept. std::unexpected ו-dynamic exception specifications הוסרו ב-C++17.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q13",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על עלות exceptions במימוש table-based (Itanium ABI, GCC/Clang על Linux) נכונות?",
+      "choices": [
+        "כשלא נזרק exception, בלוק try לא מוסיף הוראות לנתיב התקין",
+        "throw מקצה את ה-exception object (__cxa_allocate_exception, בדרך כלל דרך malloc)",
+        "העלות של throw ו-catch דומה ל-return של error code",
+        "ה-unwind tables וה-landing pads מגדילים את הבינארי",
+        "noexcept יכול לאפשר לקומפיילר לוותר על landing pads בתוך הפונקציה ובקוראים לה",
+        "עם -fno-exceptions, new שנכשל מחזיר nullptr"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "explanation": "הנתיב התקין זול, אבל לא לגמרי חינמי: יש code size, ולפעמים קוד ה-cleanup מגביל אופטימיזציות. throw הוא סדר גודל של מיקרו-שניות, ולכן לא מתאים לנתיב שנכשל לעתים קרובות. עם -fno-exceptions, operator new הרגיל עדיין לא מחזיר nullptr. בדרך כלל הוא קורא ל-abort, וכדי לקבל nullptr משתמשים ב-new (std::nothrow).",
+      "lesson": "cpp.exceptions",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.exceptions.q14",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "המחלקה Registry מחזיקה `std::vector<std::string> names_` (לפי סדר הכנסה) ו-`std::unordered_map<std::string, int> ids_`. ממש `void add(const std::string& name, int id)` עם strong guarantee: אם משהו זורק (כולל bad_alloc, או std::invalid_argument על שם כפול), שני ה-containers נשארים בדיוק כמו שהיו.",
+      "starter": "class Registry {\n  std::vector<std::string> names_;\n  std::unordered_map<std::string, int> ids_;\npublic:\n  void add(const std::string& name, int id);\n};",
+      "modelAnswer": "#include <stdexcept>\n#include <string>\n#include <unordered_map>\n#include <vector>\n\nclass Registry {\n  std::vector<std::string> names_;\n  std::unordered_map<std::string, int> ids_;\npublic:\n  void add(const std::string& name, int id) {\n    if (ids_.count(name))                     // check before mutating\n      throw std::invalid_argument(\"duplicate: \" + name);\n\n    names_.push_back(name);                   // strong guarantee on its own\n    try {\n      ids_.emplace(name, id);                 // single-element insert: no effect if it throws\n    } catch (...) {\n      names_.pop_back();                      // nothrow rollback\n      throw;\n    }\n  }\n};",
+      "rubric": [
+        "בודק כפילות לפני כל שינוי",
+        "כל צעד בנפרד נותן strong guarantee (push_back, ו-emplace של איבר בודד)",
+        "rollback עם פעולה שהיא nothrow (pop_back) ו-rethrow עם throw;",
+        "סדר שמבטיח שה-rollback עצמו לא זורק",
+        "מזכיר חלופה: scope guard עם dismiss, או מבנה שבונה בצד ומבצע commit עם swap"
+      ],
+      "explanation": "strong guarantee על שני containers נבנית מצעדים שכל אחד מהם strong, ומ-rollback שהוא nothrow. טעות נפוצה היא rollback שבעצמו מקצה זיכרון ויכול לזרוק.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "בפרויקט שמשלב thread זמן-אמת לעיבוד אותות, קוד הגדרות ו-UI, וגם kernels של CUDA: איפה תשתמש ב-exceptions, איפה ב-error codes או std::expected, ואיפה בכלל לא? נמק.",
+      "modelAnswer": "קוד אתחול, קונפיגורציה ו-I/O: exceptions מתאימים. השגיאות נדירות, הטיפול רחוק מהמקור (בגבול ה-main או ה-UI), ו-RAII מבטיח cleanup. constructors שנכשלים זורקים, כדי שלא יהיו אובייקטים חצי-מאותחלים. ה-thread הקריטי: לא זורקים בנתיב החם. ל-throw יש latency לא דטרמיניסטי (malloc, unwinding על טבלאות, ייתכן lock ב-dl_iterate_phdr), ושגיאה כמו overflow או underrun היא אירוע צפוי ולא חריג. משתמשים ב-status codes, ב-std::expected או ב-counters, ומסמנים את הפונקציות noexcept. כל מה שעלול לזרוק (הקצאות, פעולות על containers) עובר לאתחול. בגבול ה-thread עוטפים את כל פונקציית ה-thread ב-catch, כי exception שבורח מ-thread גורם ל-terminate. מעבירים את השגיאה ל-thread הבקרה (exception_ptr או הודעה) ומחליטים אם לעשות restart. קוד device ב-CUDA לא תומך ב-exceptions בכלל. שגיאות של kernel חוזרות כ-cudaError_t מ-API ה-host, ושם בודקים אותן וממירים ל-exception או ל-status לפי השכבה. כלל אצבע: exceptions לשגיאות שהקורא הישיר לא יכול לטפל בהן, ו-expected או error code לכשלים צפויים שהקורא כן מטפל בהם. מתעדים guarantee לכל API. אם בונים עם -fno-exceptions (חלק מ-embedded), חייבים מדיניות אחידה, כי ה-STL אז קורא ל-abort בשגיאות.",
+      "rubric": [
+        "מבחין בין שגיאה חריגה לכשל צפוי, ובין קוד אתחול לנתיב חם",
+        "מסביר למה throw לא מתאים לזמן-אמת (latency לא דטרמיניסטי, הקצאה)",
+        "מזכיר exception שבורח מ-thread (terminate) והעברה עם exception_ptr",
+        "מזכיר ש-CUDA device code לא תומך ב-exceptions וטיפול ב-cudaError_t",
+        "noexcept על פונקציות הנתיב החם ו-std::expected כחלופה"
+      ],
+      "explanation": "אין תשובה אחת נכונה. מראיין סניור מצפה למדיניות לפי שכבות של המערכת, ולא ל'תמיד' או 'אף פעם'.",
+      "lesson": "cpp.exceptions",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.exceptions.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-C++17, נתון `void f() noexcept; void g();`. מה נכון?",
+      "choices": [
+        "`void (*p)() noexcept = g;` מתקמפל",
+        "noexcept הוא חלק מטיפוס הפונקציה: pointer ל-noexcept ממיר במרומז ל-pointer רגיל אבל לא להפך. אי אפשר לעשות overload רק על בסיס noexcept",
+        "`void (*q)() = f;` לא מתקמפל",
+        "noexcept הוא לא חלק מהטיפוס, ולכן כל ההמרות תקינות"
+      ],
+      "answer": 1,
+      "explanation": "P0012 (C++17) הכניס את noexcept למערכת הטיפוסים. המרה שמוסיפה הבטחה (מ-g ל-pointer שהוא noexcept) נאסרת. המרה שמורידה הבטחה (מ-f ל-pointer רגיל) מותרת. זה שינה גם mangling ו-template deduction, ולכן קוד שעבר ב-C++14 נשבר לפעמים ב-C++17.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q17",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct M { M() { throw 1; } };\n\nstruct S {\n  M m;\n  S() try : m() {\n  } catch (...) {\n    std::cout << 'S';\n  }\n};\n\nint main() {\n  try { S s; }\n  catch (int) { std::cout << \"main\"; }\n}",
+      "choices": [
+        "Smain",
+        "S",
+        "main",
+        "std::terminate"
+      ],
+      "answer": 0,
+      "explanation": "function-try-block של constructor תופס exceptions גם מה-member initializers. כשה-handler מסתיים, ה-exception נזרק מחדש אוטומטית, כי אין אובייקט S תקין להחזיר. לכן אפשר לעשות logging או לתרגם את ה-exception, אבל אי אפשר לבלוע אותו. אסור לגשת שם ל-members, כי הם כבר נהרסו.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q18",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות על exceptions ו-threads נכונות?",
+      "choices": [
+        "exception שבורח מהפונקציה של std::thread גורם ל-std::terminate",
+        "exception במשימה של std::async נשמר ונזרק מחדש ב-future::get()",
+        "std::current_exception() בתוך catch מחזיר exception_ptr, ואפשר לזרוק אותו מחדש ב-thread אחר עם std::rethrow_exception",
+        "exception שנזרק ב-thread עובר אוטומטית ל-thread שקורא ל-join()",
+        "catch (...) ב-main תופס exceptions שנזרקים ב-threads אחרים"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "לכל thread יש stack ו-unwinding משלו, ו-exception לא חוצה גבולות של thread מעצמו. std::thread לא מספק מנגנון העברה, ולכן exception שבורח ממנו גורם ל-terminate. promise ו-future (וגם async) שומרים exception_ptr ב-shared state. ב-std::thread אפשר לעשות את זה ידנית עם current_exception ו-rethrow_exception.",
+      "lesson": "cpp.exceptions",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.exceptions.q19",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות?",
+      "choices": [
+        "ב-`void swap(T& a, T& b) noexcept(noexcept(a.swap(b)));` ה-noexcept החיצוני הוא specifier והפנימי הוא אופרטור שמחושב בקומפילציה",
+        "האופרטור noexcept מריץ את האופרנד שלו בזמן ריצה כדי לבדוק אם הוא זורק",
+        "destructor שהוצהר באופן מרומז הוא noexcept, אלא אם ל-member או ל-base יש destructor שהוא noexcept(false)",
+        "move constructor שהוגדר = default מקבל noexcept לפי ה-members וה-bases",
+        "סימון פונקציה noexcept גורם לקומפיילר לוודא בזמן קומפילציה שאף קוד בתוכה לא זורק"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "noexcept(noexcept(expr)) הוא conditional noexcept: הפנימי מחזיר bool בלי להריץ את expr, והחיצוני משתמש בו כמפרט. הקומפיילר לא מאמת את ההבטחה, ולכל היותר מזהיר על throw ישיר. הפרה בזמן ריצה גורמת ל-terminate. ה-noexcept של destructors ופונקציות שהוגדרו = default מוסק מה-sub-objects.",
+      "lesson": "cpp.exceptions"
+    }
+  ]
+}

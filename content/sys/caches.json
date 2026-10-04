@@ -1,0 +1,348 @@
+{
+  "domain": "sys",
+  "subtopic": "caches",
+  "lessons": [
+    {
+      "id": "sys.caches",
+      "title": "Caches ו-false sharing",
+      "what": "המעבד מחזיק עותקים של זיכרון בהיררכיה של caches (L1, L2, L3) קטנים ומהירים, ביחידות של cache line (64 בתים ב-x86 ורוב ARM). פרוטוקול coherence (כמו MESI) שומר שכל ה-cores רואים ערך עקבי לכל line. false sharing קורה כששני threads כותבים למשתנים שונים שיושבים באותו line, וה-line קופץ ביניהם.",
+      "when": [
+        "קוד שמעבד מערכים גדולים: סדר לולאות, layout של נתונים, blocking",
+        "threads שמעדכנים מונים או מבנים סמוכים ולא מתרחבים",
+        "אופטימיזציה של DSP: FIR, FFT, ring buffers",
+        "כל שאלת ביצועים ב-NVIDIA: מראיינים מצפים למספרים ול-perf"
+      ],
+      "how": [
+        "locality: מרחבית (שכנים ב-line, prefetcher) וזמנית (שימוש חוזר כשהנתון עוד ב-cache)",
+        "set-associative: כתובת ממופה ל-set לפי ביטים באמצע. גישות עם stride של חזקה של 2 גדולה נוחתות באותו set וגורמות ל-conflict misses",
+        "write-back ו-write-allocate: כתיבה מביאה קודם את ה-line (RFO, Read For Ownership) ומסמנת אותו Modified",
+        "MESI: Modified, Exclusive, Shared, Invalid. כתיבה דורשת בעלות בלעדית ומבטלת את העותקים בשאר ה-cores",
+        "false sharing: כל כתיבה של thread אחד מבטלת את ה-line אצל השני, וכל גישה הופכת להעברה בין cores (עשרות ns במקום 1ns)",
+        "תיקון: alignas(64) או std::hardware_destructive_interference_size, צבירה למשתנה מקומי וכתיבה פעם אחת, או מבנה נתונים פר-thread",
+        "layout: SoA (מערך לכל שדה) כשמעבדים שדה אחד על הרבה איברים, AoS כשניגשים לכל השדות של איבר יחד",
+        "blocking (tiling): לעבד בלוקים שנכנסים ל-L1 או L2 כדי לנצל שימוש חוזר"
+      ],
+      "complexity": "סדרי גודל ב-x86 מודרני: L1 כ-4–5 מחזורים (כ-1ns), L2 כ-14 מחזורים, L3 כ-40–70 מחזורים, DRAM כ-80–100ns. העברת line בין cores (HITM) כ-50–100ns, ובין sockets יותר. L1D טיפוסי 32–48KB, L2 1–2MB ל-core, L3 עשרות MB משותף.",
+      "pitfalls": [
+        "מעבר על מטריצה row-major לפי עמודות",
+        "מערך מונים פר-thread בלי padding",
+        "padding ל-64 כשה-prefetcher של שורות סמוכות מושך זוגות (128 בתים)",
+        "benchmark של false sharing שהקומפיילר מבטל ע״י שמירה ברגיסטר",
+        "non-temporal stores בלי sfence לפני פרסום"
+      ],
+      "senior": [
+        "למדוד: perf stat (cache-misses, LLC-load-misses), perf c2c ל-false sharing",
+        "חישוב working set מול גודל ה-cache ובחירת גודל בלוק",
+        "MESI ו-RFO כהסבר למחיר של atomics ושל כתיבות משותפות",
+        "non-temporal stores, prefetch מפורש, ו-DDIO בהקשר של NIC"
+      ],
+      "diagram": "core0 L1          core1 L1\n[a|b|..64B..]     [a|b|..64B..]\n T0 writes a  ---> invalidate\n T1 writes b  <--- invalidate\nsame line ping-pongs: false sharing\nfix: a and b on separate lines"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.caches.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה גודל ה-cache line הנפוץ במעבדי x86 מודרניים?",
+      "choices": [
+        "8 בתים",
+        "64 בתים",
+        "4KB",
+        "512 בתים"
+      ],
+      "answer": 1,
+      "explanation": "64 בתים הוא הגודל ב-Intel וב-AMD וברוב ליבות ARM. זו יחידת ההעברה בין רמות ה-cache והיחידה שבה עובד ה-coherence. 4KB הוא גודל דף, לא line. ב-Apple M-series ה-line הוא 128 בתים.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה false sharing?",
+      "choices": [
+        "שימוש ב-shared_ptr בין threads",
+        "שני threads שכותבים למשתנים שונים שנמצאים באותו cache line, וה-line עובר ביניהם שוב ושוב",
+        "data race על משתנה משותף",
+        "שני threads שקוראים את אותו משתנה"
+      ],
+      "answer": 1,
+      "explanation": "אין כאן שיתוף לוגי, אבל החומרה עובדת ברזולוציה של line. כל כתיבה דורשת בעלות בלעדית על ה-line, ולכן ה-core השני מאבד את העותק שלו. התוצאה נכונה אבל איטית מאוד. קריאה בלבד של אותו line לא גורמת לבעיה.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה קבוע ב-C++17 (מ-`<new>`) נותן את ההפרדה המינימלית בין אובייקטים כדי להימנע מ-false sharing?",
+      "accept": [
+        "hardware_destructive_interference_size",
+        "std::hardware_destructive_interference_size"
+      ],
+      "explanation": "`alignas(std::hardware_destructive_interference_size)` מפריד אובייקטים ל-lines נפרדים. הקבוע המשלים, hardware_constructive_interference_size, הוא הגודל שבו כדאי לשים נתונים שמשמשים יחד. בפועל הרבה קוד כותב alignas(64) או 128 ישירות, כי הערך קבוע בזמן קומפילציה ולא בהכרח מתאים למעבד שעליו רצים.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "`float m[4096][4096]` ב-C++ (row-major). למה הלולאה הבאה איטית פי כמה מהגרסה עם הלולאות בסדר הפוך?\n\n```cpp\nfor (int j = 0; j < 4096; ++j)\n  for (int i = 0; i < 4096; ++i)\n    sum += m[i][j];\n```",
+      "choices": [
+        "כי הלולאה הפנימית ארוכה מדי",
+        "כי הקומפיילר לא יודע לבצע את הלולאה הזו",
+        "כי כל גישה בלולאה הפנימית קופצת 16KB (שורה שלמה). כל float מגיע מ-cache line אחר ומדף אחר, ושאר ה-line לא מנוצל לפני שהוא נזרק",
+        "כי sum צריך להיות double"
+      ],
+      "answer": 2,
+      "explanation": "ב-row-major האיברים של שורה רציפים בזיכרון. מעבר על עמודה משתמש ב-4 בתים מכל line של 64, וגם מקבל TLB miss בכל גישה ו-conflict misses בגלל ה-stride של חזקת 2. החלפת סדר הלולאות הופכת את זה לגישה רציפה שה-prefetcher וה-SIMD אוהבים.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין temporal locality ל-spatial locality?",
+      "choices": [
+        "temporal: גישות לפי סדר הזמן. spatial: גישות מכמה cores",
+        "temporal נוגע ל-L1 ו-spatial ל-L3",
+        "אין הבדל",
+        "temporal: גישה לאותו נתון שוב בקרוב. spatial: גישה לנתונים סמוכים בזיכרון"
+      ],
+      "answer": 3,
+      "explanation": "spatial locality מנוצלת כי כל miss מביא line שלם של 64 בתים, וה-prefetcher מביא את הבאים. temporal locality מנוצלת אם הנתון נשאר ב-cache עד השימוש הבא, ולכן blocking מקטין את ה-working set בין שימושים חוזרים.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "יש מיליון חלקיקים עם x, y, z, vx, vy, vz, mass, id. שלב חם בקוד סוכם רק את mass. איזה layout עדיף לשלב הזה?",
+      "choices": [
+        "SoA: מערך נפרד לכל שדה, כך ש-mass רציף בזיכרון וכל line מכיל רק נתונים שימושיים",
+        "std::map לפי id",
+        "AoS: מערך של struct Particle",
+        "linked list של חלקיקים"
+      ],
+      "answer": 0,
+      "explanation": "ב-AoS כל line מכיל רק mass אחד או שניים ושאר השדות לא נחוצים, כך שרוב רוחב הפס מתבזבז. ב-SoA ה-mass רציפים, וגם SIMD עובד באופן טבעי. כשקוד ניגש לכל השדות של אותו חלקיק יחד, AoS יכול להיות עדיף.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q07",
+      "level": 3,
+      "type": "bug",
+      "prompt": "8 threads סופרים אירועים, כל אחד באינדקס משלו. הקוד נכון, אבל עם 8 threads הוא איטי יותר מאשר עם thread אחד. איפה הבעיה?",
+      "lang": "cpp",
+      "code": "struct Stats {\n  long counts[8];\n};\nStats stats;\n\nvoid worker(int tid, const Item* items, size_t n) {\n  for (size_t i = 0; i < n; ++i)\n    if (is_event(items[i])) ++stats.counts[tid];\n}",
+      "bugLine": 2,
+      "choices": [
+        "8 מונים של 8 בתים יושבים ב-cache line אחד של 64 בתים. כל thread כותב לתא שלו, אבל ה-line קופץ בין כל ה-cores (false sharing)",
+        "long צריך להיות atomic",
+        "is_event איטית",
+        "data race על counts"
+      ],
+      "answer": 0,
+      "explanation": "אין data race, כי כל thread ניגש רק לתא שלו. התיקון: לצבור ב-local ולכתוב פעם אחת בסוף, או `struct alignas(64) Slot { long c; }; Slot counts[8];`. שימו לב שהקומפיילר לא יכול להעביר את ה-counter לרגיסטר אם is_event היא קריאה לא ידועה, ולכן כאן הבעיה תופיע בפועל.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי cache coherence (MESI)?",
+      "choices": [
+        "line במצב Modified ב-core אחד לא יכול להיות בו-זמנית במצב Shared ב-core אחר",
+        "false sharing דורש שלפחות thread אחד יכתוב ל-line",
+        "בזכות coherence, ++x על int רגיל משני threads בטוח",
+        "קריאה מ-core B של line שנמצא Modified ב-core A גורמת ל-A להעביר את הנתונים (ולעבור למצב אחר)",
+        "כתיבה ל-line שנמצא במצב Shared דורשת לבטל את העותקים שלו ב-cores אחרים"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "explanation": "coherence מבטיח שלכל line יש ערך אחד עקבי, אבל לא הופך read-modify-write של שתי הוראות לאטומי: שני cores יכולים לקרוא את אותו ערך לפני שאחד מהם כותב. קריאות בלבד משאירות את ה-line ב-Shared אצל כולם בלי תעבורה.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q09",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר מהמהיר לאיטי את זמן הגישה האופייני:",
+      "items": [
+        "רגיסטר",
+        "L1 cache",
+        "L2 cache",
+        "L3 cache",
+        "DRAM",
+        "קריאה אקראית מ-NVMe SSD"
+      ],
+      "explanation": "סדרי גודל: רגיסטר פחות ממחזור, L1 כ-1ns, L2 כ-4ns, L3 כ-15ns, DRAM כ-80–100ns, NVMe כ-10–100µs. כל קפיצה היא בערך פי 3 עד פי 1000. מראיינים מצפים לדעת את המספרים האלה בעל פה.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q10",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש `void transpose(const float* a, float* b, size_t n)` של מטריצה n×n (row-major) שתהיה יעילה ל-cache גם כש-n גדול (למשל 4096).",
+      "lang": "cpp",
+      "starter": "void transpose(const float* a, float* b, size_t n);",
+      "modelAnswer": "void transpose(const float* a, float* b, size_t n) {\n  constexpr size_t B = 32;  // 32x32 floats = 4KB per tile, two tiles fit in L1\n  for (size_t ii = 0; ii < n; ii += B)\n    for (size_t jj = 0; jj < n; jj += B) {\n      const size_t iend = std::min(ii + B, n);\n      const size_t jend = std::min(jj + B, n);\n      for (size_t i = ii; i < iend; ++i)\n        for (size_t j = jj; j < jend; ++j)\n          b[j * n + i] = a[i * n + j];\n    }\n}",
+      "rubric": [
+        "blocking: עיבוד בלוקים שנכנסים ל-L1 כך שגם הקריאה וגם הכתיבה מנצלות lines",
+        "טיפול בשוליים כש-n לא מתחלק בגודל הבלוק",
+        "נימוק לגודל הבלוק לפי גודל ה-L1",
+        "בונוס: להזכיר conflict misses ב-n של חזקת 2 (padding של השורה), ו-SIMD transpose של 8×8 בתוך הבלוק"
+      ],
+      "explanation": "בגרסה הנאיבית אחד מהצדדים תמיד בגישה לפי עמודות. עם בלוקים, ה-lines של שני הצדדים נשארים ב-cache עד שכל ה-16 floats שבהם נוצלו.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מונים פר-thread רופדו ל-64 בתים, ובכל זאת על מעבד Intel עדיין רואים האטה בין threads שהמונים שלהם צמודים. מה הסיבה הסבירה?",
+      "choices": [
+        "ה-cache line ב-Intel הוא 128 בתים",
+        "alignas לא עובד על משתנים גלובליים",
+        "ה-L3 משותף ולכן אין דרך להימנע מזה",
+        "ה-spatial prefetcher (adjacent line) מביא lines בזוגות מיושרים ל-128 בתים, ולכן גישה ל-line אחד מושכת גם את השכן שלו, ויוצרת תעבורת coherence. מקובל לרפד ל-128 בתים (כמו ב-folly ו-crossbeam)"
+      ],
+      "answer": 3,
+      "explanation": "ה-line הוא 64 בתים, אבל ה-prefetcher של L2 מתייחס לזוג lines צמודים. כשה-thread השכן כותב ל-line הצמוד, ה-prefetch שלך מושך אותו ויוצר תעבורה. בפועל ההשפעה קטנה יותר מ-false sharing אמיתי, אבל ניתנת למדידה, ולכן מבני נתונים קריטיים מרופדים ל-128.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "איזה כלי ב-Linux מזהה ישירות false sharing ומראה אילו cache lines ואילו offsets בתוכם נמצאים בתחרות?",
+      "choices": [
+        "strace",
+        "valgrind --tool=memcheck",
+        "perf c2c, שמודד HITM: טעינות שפגעו ב-line שהיה Modified ב-cache של core אחר, ומקבץ אותן לפי line ו-offset",
+        "top"
+      ],
+      "answer": 2,
+      "explanation": "perf c2c (cache-to-cache) מבוסס על דגימה של loads ו-stores עם כתובות (PEBS ב-Intel). הוא מראה אילו lines חמים, מאילו פונקציות ניגשים אליהם, ובאיזה offset, כך שרואים אם threads שונים נוגעים בשדות שונים באותו line. cachegrind מדמה cache של core יחיד ולא רואה coherence.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שלב DSP כותב באפר פלט של 512MB שלא ייקרא שוב בזמן הקרוב (ייכתב לדיסק בהמשך). איזו טכניקה מקטינה את התעבורה ואת זיהום ה-cache?",
+      "choices": [
+        "להפוך את הבאפר ל-volatile",
+        "non-temporal (streaming) stores, כמו _mm256_stream_ps: הכתיבה עוקפת את ה-cache ומשתמשת ב-write-combining, בלי RFO שקורא קודם את ה-line, ובלי לזרוק נתונים שימושיים מה-cache",
+        "לכתוב בגישה אקראית כדי לפזר את העומס",
+        "prefetch של באפר הפלט לפני הכתיבה"
+      ],
+      "answer": 1,
+      "explanation": "כתיבה רגילה ל-line שלא ב-cache מתחילה ב-Read For Ownership: קוראים 64 בתים מ-DRAM רק כדי לדרוס אותם. NT stores חוסכים את הקריאה הזו (כמעט חצי מהתעבורה בכתיבה טהורה) ולא דוחקים את ה-working set החם. ההחלטה נכונה רק כשהנתונים באמת לא ייקראו בקרוב.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "יש לך שרשרת DSP על בלוקים של 64K דגימות complex<float>: DC removal, חלון, FFT, magnitude ו-threshold, כל שלב בלולאה נפרדת על כל הבלוק. איך תנתח ותשפר את הביצועים מבחינת cache וזיכרון?",
+      "modelAnswer": "קודם חישוב: 64K × 8 בתים = 512KB לבלוק, יותר מ-L1 (48KB) וגבולי ל-L2 (1–2MB), כך שכל שלב שמעבר על כל הבלוק קורא וכותב 512KB, ו-5 שלבים הם כמה MB של תעבורה לבלוק. מודדים עם perf stat (L1-dcache-load-misses, LLC-load-misses, bandwidth) ובודקים אם השלבים הפשוטים memory-bound. שיפורים: loop fusion לשלבים elementwise (DC removal וחלון במעבר אחד, magnitude ו-threshold במעבר אחד), כך שכל דגימה נטענת פעם אחת. FFT ממילא דורש כמה מעברים: ספרייה כמו FFTW בונה plan שמודע ל-cache, ובגודל הזה עדיף לבצע in-place כדי לחסוך באפר. אם magnitude נדרש רק להשוואה לסף, להשוות |X|² ל-T² ולחסוך sqrt. alignment ל-64 בתים לטובת SIMD, ובאפרים מוקצים מראש וחמים (prefault, huge pages לצמצום TLB misses). אם כמה threads עובדים, לפצל לפי בלוקים ולא לפי שלבים, כך שהבלוק נשאר ב-L2 של אותו core, ולשים לב ל-NUMA. ואז למדוד שוב: היעד הוא להיות compute-bound ב-FFT ולא memory-bound בשלבים הפשוטים.",
+      "rubric": [
+        "חישוב working set מול גודלי ה-cache",
+        "loop fusion לשלבים elementwise",
+        "שימוש בספריית FFT ובחירת in-place, ותחבולות כמו השוואת |X|² לסף",
+        "alignment, huge pages, הקצאה מראש, ופיצול עבודה בין threads לפי בלוקים",
+        "מדידה לפני ואחרי עם perf"
+      ],
+      "explanation": "מראיינים ב-NVIDIA אוהבים את השאלה הזו כי היא מחברת DSP לארכיטקטורת מחשבים. המילה החשובה היא memory-bound.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "כתבת benchmark של false sharing: שני threads, כל אחד מבצע 10^9 פעמים `++counts[tid]` על מערך `long counts[2]` רגיל (לא atomic), עם -O2. אין שום הבדל בזמן בין counts צמודים לבין מרופדים. למה?",
+      "choices": [
+        "ה-L3 המשותף פותר את הבעיה",
+        "ל-x86 אין false sharing",
+        "ה-store buffer בולע את כל הכתיבות",
+        "הקומפיילר רשאי (בלי data race ובלי atomics) להחזיק את counts[tid] ברגיסטר לאורך הלולאה ולכתוב לזיכרון פעם אחת בסוף, או אפילו להחליף את הלולאה בחיבור יחיד. כמעט אין גישות לזיכרון, ולכן אין תעבורת coherence"
+      ],
+      "answer": 3,
+      "explanation": "בלי synchronization הקומפיילר מניח שאף thread אחר לא קורא את המשתנה, ומבצע scalar replacement. כדי למדוד false sharing צריך גישות אמיתיות: std::atomic עם relaxed, volatile (לצורך מדידה בלבד), או גוף לולאה שמונע את האופטימיזציה. זו גם הסיבה שבקוד אמיתי, למשל כשבלולאה יש קריאה לפונקציה לא ידועה, false sharing כן מופיע.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "על מעבד עם LLC **inclusive** (למשל Intel client ישנים), process אחר שסורק כמויות גדולות של זיכרון על core אחר גורם ל-misses ב-L1 וב-L2 של ה-RT thread שלך, למרות שה-working set שלך קטן מה-L2. מה המנגנון?",
+      "choices": [
+        "ה-TLB משותף בין ה-cores",
+        "ב-LLC inclusive כל line שב-L1/L2 חייב להיות גם ב-L3. כשה-L3 מפנה line בגלל לחץ מה-process השני, הוא שולח back-invalidation שמוציא את אותו line גם מה-L1/L2 הפרטיים שלך",
+        "ה-prefetcher של core אחד מפנה cache של core אחר",
+        "ה-process השני כותב לזיכרון שלך"
+      ],
+      "answer": 1,
+      "explanation": "inclusion מקל על snooping (מספיק לבדוק את L3), אבל משאיר את ה-caches הפרטיים חשופים ללחץ על ה-L3 המשותף. מעבדי שרת של Intel מ-Skylake-SP ואילך ומעבדי AMD משתמשים ב-L3 לא inclusive. ההגנה: Intel CAT (Cache Allocation Technology) או AMD L3 QoS, שמקצים ways של L3 לכל קבוצת cores.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "היצרן ממלא באפר עם `_mm256_stream_ps` (non-temporal stores), ואז מבצע `ready.store(true, std::memory_order_release)`. הצרכן, שקורא את ready עם acquire, רואה לפעמים נתונים ישנים בבאפר. למה, ב-x86?",
+      "choices": [
+        "NT stores הם weakly ordered גם ב-x86: הם עוברים דרך write-combining buffers ולא כפופים לסדר ה-TSO הרגיל. ה-release (mov רגיל) לא מסדר אותם. צריך `_mm_sfence()` אחרי ה-stream stores ולפני פרסום הדגל",
+        "NT stores לא נכתבים לזיכרון בכלל",
+        "acquire בצרכן צריך להיות seq_cst",
+        "release לא עובד ב-x86"
+      ],
+      "answer": 0,
+      "explanation": "TSO של x86 חל על stores רגילים. stores מסוג NT (וגם rep movs מהיר) הם חריגים, ויכולים להיראות אחרי stores רגילים מאוחרים יותר. sfence מבטיח שכל ה-stores הקודמים, כולל NT, נראים לפני הבאים. memcpy של glibc משתמש ב-NT stores להעתקות גדולות מאוד ומבצע sfence בסוף בדיוק בגלל זה.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

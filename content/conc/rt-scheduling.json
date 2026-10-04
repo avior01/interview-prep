@@ -1,0 +1,329 @@
+{
+  "domain": "conc",
+  "subtopic": "rt-scheduling",
+  "lessons": [
+    {
+      "id": "conc.rt-scheduling",
+      "title": "RT scheduling ו-priority inversion",
+      "what": "תזמון זמן-אמת עוסק בהבטחה שמשימות יסיימו לפני ה-deadline שלהן, ולא בממוצע מהיר. ב-Linux יש מדיניות זמן-אמת עם עדיפויות קבועות (SCHED_FIFO, SCHED_RR) ומדיניות לפי deadline (SCHED_DEADLINE). priority inversion הוא מצב שבו משימה בעדיפות גבוהה מחכה, בעקיפין, למשימות בעדיפות נמוכה ממנה.",
+      "when": [
+        "thread שחייב להגיב תוך זמן חסום: RX/TX של SDR, לולאת בקרה, audio",
+        "כשיש משאב משותף (lock) בין threads בעדיפויות שונות",
+        "כשנשאלים על Mars Pathfinder, PREEMPT_RT או rate-monotonic"
+      ],
+      "how": [
+        "SCHED_OTHER (CFS, וב-6.6 ואילך EEVDF): חלוקה הוגנת לפי nice. כל thread זמן-אמת קודם לכל thread כזה, בלי קשר ל-nice",
+        "SCHED_FIFO: עדיפות 1–99 (מספר גבוה = עדיפות גבוהה). רץ עד שנחסם, מוותר, או שמגיע thread בעדיפות גבוהה יותר. אין time slice",
+        "SCHED_RR: כמו FIFO, אבל threads באותה עדיפות מתחלפים לפי quantum",
+        "SCHED_DEADLINE: runtime, deadline ו-period לכל משימה, תזמון EDF עם CBS ו-admission control. משימה שחורגת מה-runtime נעצרת עד ה-period הבא",
+        "RT throttling: ברירת המחדל מגבילה משימות RT ל-950ms מכל שנייה (sched_rt_runtime_us), כדי שמשימה תקועה לא תקפיא את המערכת. בקרנלים חדשים זה ממומש גם דרך fair server",
+        "priority inversion: L מחזיק lock, H מחכה לו, ו-M (בינונית, לא צריכה את ה-lock) מונעת מ-L לרוץ. H מחכה ל-M לזמן לא חסום",
+        "priority inheritance (PTHREAD_PRIO_INHERIT): המחזיק יורש את העדיפות של הממתין הגבוה ביותר עד שהוא משחרר. priority ceiling (PTHREAD_PRIO_PROTECT): המחזיק עולה מיד לעדיפות תקרה שנקבעה ל-lock",
+        "PREEMPT_RT (בקרנל הראשי מאז 6.12): רוב ה-spinlocks הופכים ל-rt_mutex ישנים עם PI, interrupt handlers רצים כ-threads עם עדיפות, וכמעט כל הקרנל preemptible"
+      ],
+      "complexity": "Rate-monotonic (עדיפות לפי תדירות): מובטח schedulable אם U = sum(C_i/T_i) <= n(2^(1/n) - 1), כלומר 0.828 לשתי משימות ושואף ל-ln 2 ≈ 0.693. זה תנאי מספיק, לא הכרחי. עם periods הרמוניים RM מגיע ל-U = 1. EDF אופטימלי על core יחיד: schedulable אם ורק אם U <= 1 (כש-deadline = period).",
+      "pitfalls": [
+        "thread ב-SCHED_FIFO שעושה busy-wait על משהו ש-thread בעדיפות נמוכה צריך לעשות על אותו core",
+        "std::mutex ב-Linux אינו PI כברירת מחדל",
+        "semaphore ו-condition variable: אין בעלים, ולכן אין למי להוריש עדיפות",
+        "ב-PREEMPT_RT, IRQ threads ברירת מחדל ב-FIFO 50: thread אפליקציה גבוה יותר שמסתובב על אותו core מרעיב אותם",
+        "pthread_attr בלי PTHREAD_EXPLICIT_SCHED: ה-policy מתעלמת"
+      ],
+      "senior": [
+        "להסביר את Mars Pathfinder ולמה PI פתר",
+        "PI מול ceiling: מחיר, מניעת chained blocking ו-deadlock",
+        "הקצאת עדיפויות במערכת שלמה כולל IRQ threads, ksoftirqd ו-RCU",
+        "חישוב schedulability ו-response time analysis, ו-SCHED_DEADLINE כחלופה"
+      ],
+      "diagram": "prio\n H        wait.......run\n M     run run run\n L  lock          ..unlock\n    -----------------------> t\nwithout PI: H waits for M too\nwith PI: L runs at H prio"
+    }
+  ],
+  "questions": [
+    {
+      "id": "conc.rt-scheduling.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה priority inversion?",
+      "choices": [
+        "deadlock בין שני threads בעדיפויות שונות",
+        "מצב שבו thread בעדיפות גבוהה מחכה ל-lock שמחזיק thread בעדיפות נמוכה, ו-thread בעדיפות בינונית מונע מהמחזיק לרוץ ולשחרר",
+        "מצב שבו ה-scheduler הופך בטעות את סדר העדיפויות",
+        "מצב שבו thread בעדיפות נמוכה מקבל יותר CPU כי הוא interactive"
+      ],
+      "answer": 1,
+      "explanation": "ה-H חסום על lock של L, ו-M שלא קשור ל-lock רץ כי הוא גבוה מ-L. כך H מחכה בפועל ל-M, לזמן שאינו חסום. אין כאן deadlock: בסוף M יסיים, אבל ה-deadline של H כבר עבר.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "thread ב-SCHED_FIFO רץ על core. מתי הוא מפסיק לרוץ?",
+      "choices": [
+        "כשהוא נחסם, מוותר על ה-CPU (sched_yield), או כש-thread בעדיפות גבוהה יותר מוכן לרוץ",
+        "בסוף ה-time slice שלו, כמו כל thread",
+        "כש-thread ב-SCHED_OTHER עם nice -20 מוכן לרוץ",
+        "רק כשהוא מסתיים"
+      ],
+      "answer": 0,
+      "explanation": "ל-SCHED_FIFO אין time slice: הוא רץ עד שנחסם, מוותר, או מוחלף ע״י עדיפות RT גבוהה יותר. threads של SCHED_OTHER אף פעם לא מחליפים אותו, יהיה ה-nice אשר יהיה (חוץ מ-RT throttling, שמשאיר להם בברירת מחדל כ-5% מכל שנייה).",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקרא הפרוטוקול שבו thread שמחזיק lock מקבל זמנית את העדיפות של ה-thread הגבוה ביותר שמחכה לו?",
+      "accept": [
+        "priority inheritance",
+        "PI",
+        "PTHREAD_PRIO_INHERIT",
+        "inheritance"
+      ],
+      "explanation": "ב-priority inheritance ה-L רץ בעדיפות של H כל עוד H מחכה לו, ולכן M לא יכול להפריע. ב-POSIX מגדירים את זה עם `pthread_mutexattr_setprotocol(&a, PTHREAD_PRIO_INHERIT)`.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין SCHED_RR ל-SCHED_FIFO?",
+      "choices": [
+        "RR לא נחשב מדיניות זמן-אמת",
+        "FIFO מתזמן לפי סדר ההגעה בלי קשר לעדיפות",
+        "ב-RR, threads **באותה עדיפות** מתחלפים אחרי quantum. ב-FIFO thread רץ עד שנחסם או מוותר. ביחס לעדיפויות שונות שניהם מתנהגים אותו דבר",
+        "RR נותן לכל העדיפויות זמן שווה"
+      ],
+      "answer": 2,
+      "explanation": "גם ב-RR עדיפות גבוהה יותר תמיד מנצחת. ההבדל רק בין threads באותה רמת עדיפות: ב-FIFO הראשון רץ עד שהוא נחסם, וב-RR הם מתחלפים כל quantum (ברירת מחדל 100ms, ב-/proc/sys/kernel/sched_rr_timeslice_ms).",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-1997 ה-Mars Pathfinder עשה reset חוזר בגלל watchdog. ה-thread בעדיפות גבוהה של ה-bus חיכה ל-mutex שהחזיק thread מטאורולוגי בעדיפות נמוכה, ו-thread תקשורת בעדיפות בינונית רץ באמצע. מה היה התיקון?",
+      "choices": [
+        "החלפת ה-mutex ב-spinlock",
+        "הגדלת ה-timeout של ה-watchdog",
+        "הורדת העדיפות של ה-thread בעדיפות הגבוהה",
+        "הפעלת priority inheritance על ה-mutex, דרך שינוי פרמטר מרחוק"
+      ],
+      "answer": 3,
+      "explanation": "VxWorks תמך ב-priority inheritance, אבל הוא היה כבוי ב-mutex הזה. JPL שיחזרו את הבעיה על עותק בכדור הארץ והפעילו את הדגל מרחוק. זו דוגמת הלימוד הקלאסית ל-priority inversion.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה נכון לגבי עדיפויות ב-Linux?",
+      "choices": [
+        "nice -20 ב-SCHED_OTHER שווה ל-FIFO 99",
+        "ב-SCHED_FIFO מספר נמוך יותר הוא עדיפות גבוהה יותר",
+        "SCHED_FIFO משתמש ב-nice כדי לקבוע עדיפות",
+        "ב-SCHED_FIFO העדיפויות הן 1–99 ומספר גבוה הוא עדיפות גבוהה. ל-SCHED_OTHER יש nice בין -20 ל-19, ו-nice נמוך מקבל יותר CPU"
+      ],
+      "answer": 3,
+      "explanation": "שתי הסקאלות נפרדות: כל thread ב-RT קודם לכל thread ב-SCHED_OTHER. ב-nice ההיגיון הפוך: נמוך יותר מקבל משקל גבוה יותר. ב-ps ו-top הסקאלות מוצגות בדרכים שונות, וזה מקור נפוץ לבלבול.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread ב-SCHED_FIFO 50 עושה busy-wait על `flag`, ו-thread ב-SCHED_OTHER אמור להדליק את flag. שניהם מוצמדים לאותו core, עם הגדרות ברירת המחדל של הקרנל. מה קורה?",
+      "choices": [
+        "ה-SCHED_OTHER לא רץ עד שה-RT throttling עוצר את ה-FIFO אחרי 950ms באותה שנייה. אז הוא מקבל כ-50ms, מדליק את flag, והתקיעה היא בערך שנייה. בלי throttling זה היה נתקע לנצח",
+        "deadlock מיידי לנצח",
+        "ה-flag נדלק מיד, כי ה-scheduler הוגן",
+        "הקרנל מוריד אוטומטית את ה-FIFO ל-SCHED_OTHER"
+      ],
+      "answer": 0,
+      "explanation": "על core אחד, FIFO שמסתובב מונע כל thread לא-RT. ברירת המחדל sched_rt_runtime_us=950000 מתוך sched_rt_period_us=1000000 שומרת 5% לשאר. במערכות זמן-אמת מכבים לפעמים את ה-throttling (ערך -1), ואז באג כזה תוקע את ה-core לגמרי. הלקח: thread RT לא מחכה ב-busy-wait למשהו שתלוי ב-thread נמוך ממנו על אותו core.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי priority inheritance ו-priority ceiling?",
+      "choices": [
+        "PI מונע deadlock",
+        "על מעבד יחיד עם עדיפויות קבועות, פרוטוקול ה-priority ceiling מונע deadlock ו-chained blocking",
+        "ב-priority ceiling (PTHREAD_PRIO_PROTECT), המחזיק עולה לעדיפות התקרה מיד עם הנעילה, גם בלי ממתינים",
+        "ב-PI, העדיפות של המחזיק עולה רק כש-thread בעדיפות גבוהה ממנו באמת נחסם על ה-lock",
+        "std::mutex ב-Linux משתמש ב-PI כברירת מחדל"
+      ],
+      "answer": [
+        1,
+        2,
+        3
+      ],
+      "explanation": "PI עולה כסף רק כשיש תחרות, אבל לא מונע deadlock ומאפשר chained blocking. ceiling עולה כסף בכל נעילה (שינוי עדיפות), אבל מונע את שתי הבעיות על מעבד יחיד, ודורש לדעת מראש מי ישתמש ב-lock. std::mutex הוא pthread_mutex רגיל עם PTHREAD_PRIO_NONE, ואי אפשר לשנות את הפרוטוקול אחרי האתחול.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שלוש משימות מחזוריות על core אחד, עם (C, T) = (1, 5), (2, 6), (2, 10) ו-deadline = period. העדיפויות לפי rate-monotonic. האם מבחן Liu-Layland מבטיח שכל ה-deadlines יתקיימו?",
+      "choices": [
+        "לא, כי U ≈ 0.733 גדול מ-ln 2 ≈ 0.693",
+        "לא ניתן לדעת בלי סימולציה",
+        "כן: U ≈ 0.733 קטן מהחסם לשלוש משימות 3(2^(1/3) - 1) ≈ 0.780",
+        "כן, כי U < 1 תמיד מספיק ל-RM"
+      ],
+      "answer": 2,
+      "explanation": "U = 0.2 + 0.333 + 0.2 ≈ 0.733. החסם תלוי במספר המשימות: 0.828 לשתיים, 0.780 לשלוש, ו-ln 2 רק בגבול של אינסוף משימות. U < 1 מספיק ל-EDF, לא ל-RM. אם U היה מעל החסם, עדיין ייתכן שהמערכת schedulable, ואז בודקים עם response time analysis.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "על אותו core מוכנים לרוץ: thread A ב-SCHED_OTHER עם nice -20, ו-thread B ב-SCHED_FIFO עם עדיפות 1. מי רץ?",
+      "choices": [
+        "A, כי nice -20 היא העדיפות הגבוהה ביותר",
+        "B, כי כל thread זמן-אמת קודם לכל thread ב-SCHED_OTHER",
+        "הם מתחלקים בזמן לפי המשקל",
+        "זה תלוי במי הגיע ראשון"
+      ],
+      "answer": 1,
+      "explanation": "ה-scheduler בודק קודם את ה-runqueue של ה-RT (וה-deadline), ורק אם הם ריקים עובר ל-CFS/EEVDF. nice משפיע רק על החלוקה בין threads של SCHED_OTHER.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q11",
+      "level": 4,
+      "type": "code",
+      "prompt": "כתוב ב-C++ עם pthreads: (1) אתחול `pthread_mutex_t` עם priority inheritance, (2) פונקציה שיוצרת thread ב-SCHED_FIFO בעדיפות נתונה, ומחזירה קוד שגיאה. שים לב למלכודות הידועות.",
+      "lang": "cpp",
+      "starter": "void init_pi_mutex(pthread_mutex_t* m);\nint start_rt_thread(pthread_t* t, void* (*fn)(void*), void* arg, int prio);",
+      "modelAnswer": "void init_pi_mutex(pthread_mutex_t* m) {\n  pthread_mutexattr_t ma;\n  pthread_mutexattr_init(&ma);\n  pthread_mutexattr_setprotocol(&ma, PTHREAD_PRIO_INHERIT);\n  pthread_mutex_init(m, &ma);\n  pthread_mutexattr_destroy(&ma);\n}\n\nint start_rt_thread(pthread_t* t, void* (*fn)(void*), void* arg, int prio) {\n  pthread_attr_t a;\n  pthread_attr_init(&a);\n  // Without this the policy below is ignored (default is INHERIT_SCHED).\n  pthread_attr_setinheritsched(&a, PTHREAD_EXPLICIT_SCHED);\n  pthread_attr_setschedpolicy(&a, SCHED_FIFO);\n  sched_param sp{};\n  sp.sched_priority = prio;  // 1..99\n  pthread_attr_setschedparam(&a, &sp);\n  int rc = pthread_create(t, &a, fn, arg);  // EPERM without CAP_SYS_NICE / RLIMIT_RTPRIO\n  pthread_attr_destroy(&a);\n  return rc;\n}",
+      "rubric": [
+        "PTHREAD_PRIO_INHERIT בזמן האתחול (אי אפשר לשנות אחרי)",
+        "PTHREAD_EXPLICIT_SCHED, אחרת ה-thread יורש את מדיניות היוצר",
+        "טיפול בשגיאה: pthread_create מחזיר EPERM בלי הרשאה (ולא errno)",
+        "שחרור ה-attr objects",
+        "בונוס: mlockall לפני, affinity, והגדרת RLIMIT_RTPRIO או CAP_SYS_NICE"
+      ],
+      "explanation": "שתי המלכודות: PTHREAD_EXPLICIT_SCHED שנשכח, והנחה ש-pthread_create מחזיר -1 ו-errno, בעוד שהוא מחזיר את קוד השגיאה ישירות.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה מהבאים **אינו** שינוי ש-PREEMPT_RT מבצע בקרנל?",
+      "choices": [
+        "softirqs רצים בהקשר של thread ולא בקצה של interrupt",
+        "רוב ה-spinlock_t הופכים ל-rt_mutex שיכולים לישון ותומכים ב-priority inheritance",
+        "כל thread ב-user space מקבל אוטומטית SCHED_FIFO",
+        "interrupt handlers רצים כ-kernel threads (threaded IRQs) עם עדיפות SCHED_FIFO שאפשר לשנות"
+      ],
+      "answer": 2,
+      "explanation": "PREEMPT_RT הופך כמעט את כל הקרנל ל-preemptible: locks ישנים עם PI במקום spin עם preemption כבוי, ו-interrupt handlers הופכים ל-threads שה-scheduler מתזמן לפי עדיפות. raw_spinlock_t נשאר spin אמיתי לקוד הקריטי ביותר. ה-policy של אפליקציות לא משתנה, צריך לבקש אותה במפורש. מאז 6.12 PREEMPT_RT הוא חלק מהקרנל הראשי.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "thread H (FIFO 80) מחכה ל-`sem_wait` על POSIX semaphore ש-thread L (FIFO 10) אמור לבצע עליו `sem_post` בסיום עבודה. thread M (FIFO 50) תוקע את L. למה priority inheritance לא יכול לעזור כאן?",
+      "choices": [
+        "כי ל-semaphore אין בעלים: הקרנל לא יודע ש-L הוא זה שיבצע post, ולכן אין למי להוריש את העדיפות",
+        "כי PI עובד רק ב-SCHED_OTHER",
+        "כי semaphores לא נתמכים ב-Linux",
+        "כי PI עובד רק כשיש בדיוק שני threads"
+      ],
+      "answer": 0,
+      "explanation": "PI מבוסס על כך שה-lock יודע מי מחזיק אותו (ב-futex PI, ה-TID של הבעלים נשמר במילה). ב-semaphore, ב-condition variable או בהמתנה לאירוע, כל thread יכול לבצע post, ולכן אין למי להוריש. בתכנון RT מעדיפים mutex עם PI למשאבים משותפים, ונותנים ל-producer של אירוע קריטי עדיפות מתאימה מראש.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "הקצה עדיפויות ומדיניות לכל ה-threads במערכת ה-jammer הריאקטיבי: RX streaming, זיהוי (FFT וסף), TX, GUI, logging לדיסק. מה עוד במערכת (מעבר לקוד שלך) צריך לקבל עדיפות?",
+      "modelAnswer": "סדר לפי דדליין וקריטיות: RX streaming הכי גבוה מבין ה-threads של האפליקציה (overflow מאבד דגימות לתמיד), TX קרוב אליו (underrun מייצר שידור פגום), ואז הזיהוי, כי הוא צריך לסיים בתוך תקציב ה-latency של התגובה. כולם ב-SCHED_FIFO, כל אחד על core מבודד משלו אם אפשר. GUI ו-logging ב-SCHED_OTHER, על cores אחרים, ומתקשרים עם ה-RT threads רק דרך SPSC queues לא חוסמים, כך שאין locks משותפים ואין צורך ב-PI. מעבר לקוד שלי: ה-IRQ threads של כרטיס ה-10GbE (ב-PREEMPT_RT הם FIFO 50 כברירת מחדל) חייבים לרוץ, ולכן או מעלים את העדיפות שלהם מעל threads שמסתובבים על אותו core, או מפנים את ה-IRQ ל-core אחר. גם ksoftirqd, threads של RCU ו-kworker על ה-cores האלה, ולכן nohz_full, rcu_nocbs ו-IRQ affinity. אם UHD עובד עם DPDK, ה-polling של ה-NIC עובר ל-user space ול-core ייעודי, וזה משנה את התמונה. ולוודא ש-RT throttling לא יחתוך threads שמסתובבים.",
+      "rubric": [
+        "סדר עדיפויות מנומק לפי deadline ומחיר כישלון (RX ו-TX גבוהים ביותר)",
+        "הפרדה בין RT ל-non-RT דרך תורים לא חוסמים, בלי locks משותפים",
+        "מתייחס ל-IRQ threads, softirq ו-RCU ולא רק ל-threads של האפליקציה",
+        "affinity ובידוד cores, RT throttling"
+      ],
+      "explanation": "הטעות הנפוצה: לתת לכל ה-threads FIFO 99 ולשכוח שה-IRQ thread של ה-NIC צריך לרוץ כדי שהדגימות בכלל יגיעו.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "בקרנל PREEMPT_RT, ה-RX thread שלך ב-SCHED_FIFO 90 עושה busy-poll על socket ב-core 3. ה-IRQ של ה-NIC מנותב ל-core 3. החבילות מגיעות באיחור של מאות מילי-שניות או בכלל לא. למה?",
+      "choices": [
+        "busy-poll על socket לא נתמך ב-PREEMPT_RT",
+        "ב-PREEMPT_RT ה-interrupt handler של ה-NIC רץ כ-thread (ברירת מחדל FIFO 50) על core 3, וה-RX thread בעדיפות 90 שמסתובב שם לא נותן לו לרוץ. החבילות לא מעובדות עד ש-RT throttling משחרר את ה-core",
+        "ה-NIC לא שולח interrupts ב-PREEMPT_RT",
+        "rt_mutex בתוך ה-socket גורם ל-deadlock"
+      ],
+      "answer": 1,
+      "explanation": "ב-mainline ה-hard IRQ רץ מיד ומקדים כל thread, אבל ב-PREEMPT_RT רוב ה-handler הוא thread רגיל עם עדיפות FIFO, וגם עיבוד ה-RX ברשת (NAPI, softirq) רץ בהקשר thread. thread בעדיפות גבוהה יותר שלא נחסם לעולם מרעיב אותו. תיקונים: IRQ affinity ל-core אחר, העלאת עדיפות ה-IRQ thread (chrt על irq/NN-eth) מעל ה-RX, או קריאה חוסמת במקום spin.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "משימה ב-SCHED_DEADLINE עם runtime = 2ms, deadline = period = 10ms. במחזור מסוים היא צריכה 3ms של CPU. מה קורה?",
+      "choices": [
+        "היא ממשיכה לרוץ כרגיל, ה-runtime רק המלצה",
+        "הקרנל הורג את המשימה",
+        "היא מועברת אוטומטית ל-SCHED_OTHER לשארית",
+        "אחרי 2ms היא נעצרת (throttled) עד תחילת ה-period הבא, שבו ה-runtime מתחדש. משימות אחרות מוגנות מהחריגה שלה"
+      ],
+      "answer": 3,
+      "explanation": "SCHED_DEADLINE משתמש ב-Constant Bandwidth Server: כל משימה מקבלת לכל היותר runtime בכל period, וזה מה שמאפשר admission control וערבות לשאר המשימות. משימה שחורגת נעצרת ומפספסת את ה-deadline שלה בעצמה. אפשר לבקש signal על חריגה עם SCHED_FLAG_DL_OVERRUN. לכן מגדירים runtime לפי WCET שנמדד, עם מרווח.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "שלוש משימות עם periods של 5, 10 ו-20ms (deadline = period) ו-U = 0.95, על core יחיד עם עדיפויות rate-monotonic. האם כל ה-deadlines מובטחים?",
+      "choices": [
+        "רק אם עוברים ל-EDF",
+        "לא, כי U גדול מחסם Liu-Layland לשלוש משימות (≈ 0.780)",
+        "לא ניתן לתזמן משימות עם U מעל ln 2",
+        "כן: ה-periods הרמוניים (כל אחד מחלק את הבא), ובמקרה הזה RM schedulable בדיוק כש-U <= 1"
+      ],
+      "answer": 3,
+      "explanation": "חסם Liu-Layland הוא תנאי מספיק בלבד, והמקרה הגרוע שלו נובע מ-periods לא הרמוניים. כשה-periods הרמוניים, ה-critical instant לא יוצר זמן מבוזבז, ו-RM מגיע לניצול מלא. בפועל זה טיעון לבחור periods הרמוניים במערכות זמן-אמת (למשל בלוקי FFT בכפולות של 2). EDF היה עובד גם כאן, אבל הוא לא נדרש.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

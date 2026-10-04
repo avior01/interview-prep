@@ -1,0 +1,359 @@
+{
+  "domain": "cpp",
+  "subtopic": "templates",
+  "lessons": [
+    {
+      "id": "cpp.templates",
+      "title": "Templates",
+      "what": "template הוא תבנית שממנה הקומפיילר מייצר קוד לכל קבוצת ארגומנטים (טיפוסים או ערכים קבועים). התהליך נקרא instantiation. זה מנגנון של static polymorphism: הכל נפתר בזמן קומפילציה, בלי virtual dispatch, ועם אפשרות ל-inlining מלא.",
+      "when": [
+        "קוד גנרי שעובד על כמה טיפוסים: containers, אלגוריתמים, math על float, double ו-complex",
+        "פרמטרים שידועים בזמן קומפילציה (גודל פילטר, מספר ערוצים) כ-non-type template parameter, כדי לאפשר unrolling ו-arrays על ה-stack",
+        "בחירה של מימוש לפי תכונות של טיפוס: if constexpr, concepts, SFINAE",
+        "החלפה של virtual ב-hot path (CRTP, policy-based design)"
+      ],
+      "how": [
+        "deduction: בקריאה לפונקציה, הקומפיילר מסיק את T מהארגומנטים. אין המרות מרומזות בזמן deduction, ולכן max(3, 2.5) נכשל כש-T משותף לשני הפרמטרים.",
+        "specialization: full specialization (template<>) מספקת מימוש לטיפוס מסוים. partial specialization (למשל T*) קיימת רק ל-class templates. לפונקציות משתמשים ב-overloading.",
+        "two-phase lookup: שמות שלא תלויים ב-T נבדקים בהגדרה. שמות תלויים נבדקים ב-instantiation. שם שמגיע מ-base class תלוי לא נמצא ב-unqualified lookup, ולכן כותבים this->name.",
+        "typename לפני שם טיפוס תלוי (typename T::value_type), ו-template לפני member template תלוי (t.template get<0>()).",
+        "SFINAE: אם החלפה של הטיפוסים בחתימה נכשלת, ה-overload פשוט יוצא מהשיקול, בלי שגיאה. concepts (C++20) מחליפים את זה בתחביר ברור ובהודעות שגיאה טובות.",
+        "variadic templates ו-fold expressions: (xs + ...) מקפל את כל ה-pack. fold ריק עם + הוא שגיאה, ולכן מוסיפים ערך התחלתי: (0 + ... + xs).",
+        "ההגדרה צריכה להיות זמינה בכל נקודת instantiation, ולכן templates יושבים ב-headers. explicit instantiation ו-extern template מאפשרים לייצר את הקוד ב-TU אחד בלבד."
+      ],
+      "complexity": "אפס עלות בזמן ריצה בהשוואה לקוד שנכתב ידנית. העלות היא בזמן קומפילציה ובגודל הבינארי (code bloat), כי כל instantiation הוא עותק נפרד. על זה מתמודדים עם extern template, עם hoisting של קוד שלא תלוי ב-T, ועם type erasure כשצריך.",
+      "pitfalls": [
+        "שכחת typename או this-> בקוד שתלוי ב-template parameter",
+        "partial specialization לפונקציה לא קיימת. explicit specialization של function template לא משתתפת ב-overload resolution",
+        "השם של explicit specialization נקשר ל-primary template שמוצהר לפניו, והתוצאה תלויה בסדר ההצהרות",
+        "CTAD עם סוגריים מסולסלים: std::vector w{v.begin(), v.end()} יוצר vector של iterators",
+        "static_assert(false) בענף של if constexpr: עד התיקון ב-C++23 (P2593) זה ill-formed. משתמשים בביטוי תלוי"
+      ],
+      "senior": [
+        "static (templates, CRTP) מול dynamic (virtual) polymorphism: inlining וביצועים מול גודל בינארי, זמן קומפילציה ויציבות ABI",
+        "concepts: subsumption בין constraints בוחר את ה-overload הכי מוגבל. זה עובד רק כשה-atomic constraints הם אותו ביטוי בדיוק, כלומר דרך concepts עם שם",
+        "type erasure (std::function, std::any) כפשרה בין templates ל-virtual",
+        "ב-CUDA, templates נפוצים מאוד (CUB, Thrust, CUTLASS) כדי לקבע גדלים בזמן קומפילציה ולקבל unrolling"
+      ],
+      "diagram": "template<class T> T add(T,T)\n          |  instantiation\n   +------+------+\n add<int>   add<float>\n (own code) (own code)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.templates.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה בדרך כלל מגדירים templates ב-header ולא בקובץ cpp?",
+      "choices": [
+        "כי templates הם תמיד inline ולכן חייבים להיות קטנים",
+        "זו רק מוסכמה, ואין לזה סיבה טכנית",
+        "כי ה-linker לא תומך ב-templates",
+        "כי הקומפיילר צריך לראות את ההגדרה המלאה בכל TU שמבצע instantiation לטיפוס מסוים"
+      ],
+      "answer": 3,
+      "explanation": "הקוד של add<float> נוצר רק כשמישהו משתמש בו, ולשם כך צריך את גוף ה-template. אם ההגדרה נמצאת רק ב-cpp, TUs אחרים יקבלו undefined reference. אפשר לעקוף את זה עם explicit instantiation לרשימה סגורה של טיפוסים.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זו full (explicit) specialization של class template?",
+      "choices": [
+        "instantiation שקורה בזמן ריצה",
+        "גרסה של ה-template שמתקמפלת מהר יותר",
+        "מימוש נפרד של ה-template לקבוצה מסוימת של ארגומנטים, למשל template<> struct Hash<int> {...}",
+        "template שמקבל רק טיפוסים מספריים"
+      ],
+      "answer": 2,
+      "explanation": "specialization מחליפה את ההגדרה הכללית עבור ארגומנטים מסוימים. std::hash<T> ו-std::vector<bool> הם דוגמאות מהספרייה הסטנדרטית. partial specialization (למשל לכל T*) קיימת ל-class templates בלבד.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "בתוך template, איזו מילת מפתח חייבים לכתוב לפני `T::value_type` כדי להשתמש בו כשם של טיפוס?",
+      "accept": [
+        "typename"
+      ],
+      "explanation": "T::value_type הוא dependent name. עד שידוע מה T, הקומפיילר מניח שזה ערך ולא טיפוס. typename T::value_type x; אומר לו במפורש שזה טיפוס. C++20 הסיר את הדרישה בחלק מההקשרים, למשל ב-return type, אבל כדאי להכיר את הכלל.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "template <class T>\nT maxv(T a, T b) { return a > b ? a : b; }\n\nint main() {\n  std::cout << maxv(3, 7) << ' '\n            << maxv<double>(2, 2.5);\n}",
+      "choices": [
+        "7 2",
+        "7 2.5",
+        "שגיאת קומפילציה בקריאה השנייה",
+        "7 3"
+      ],
+      "answer": 1,
+      "explanation": "בקריאה הראשונה T מוסק כ-int. בשנייה T נקבע במפורש כ-double, ולכן אין deduction, וה-2 עובר המרה מרומזת רגילה ל-double. התוצאה 2.5.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q05",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "למה הקריאה לא מתקמפלת?",
+      "code": "template <class T>\nT maxv(T a, T b) { return a > b ? a : b; }\n\nint main() {\n  auto m = maxv(3, 2.5);\n  std::cout << m;\n}",
+      "bugLine": 5,
+      "choices": [
+        "T מוסק כ-int מהארגומנט הראשון וכ-double מהשני. ב-deduction לא מתבצעות המרות, ולכן יש התנגשות",
+        "operator> לא מוגדר בין int ל-double",
+        "auto לא יכול לקבל ערך מ-template",
+        "הקומפיילר בוחר T = double, ומקבלים narrowing error"
+      ],
+      "answer": 0,
+      "explanation": "כל פרמטר מסיק את T בנפרד, וחייבת להיות הסכמה. הפתרונות: maxv<double>(3, 2.5), cast של אחד הארגומנטים, או שני template parameters עם std::common_type_t כ-return type.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q06",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "template <class T>\nstruct Name { static const char* get() { return \"generic\"; } };\n\ntemplate <>\nstruct Name<int> { static const char* get() { return \"int\"; } };\n\nint main() {\n  std::cout << Name<int>::get() << ' '\n            << Name<long>::get() << ' '\n            << Name<const int>::get();\n}",
+      "choices": [
+        "int int int",
+        "int generic int",
+        "generic generic generic",
+        "int generic generic"
+      ],
+      "answer": 3,
+      "explanation": "specialization נבחרת רק עבור הטיפוס המדויק. long הוא טיפוס אחר, ו-const int הוא טיפוס אחר מ-int, כי אין decay בארגומנטים של class template. לכן שניהם מקבלים את ה-primary.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "נתון `template <int N> struct Fir { float taps[N]; };`. מה נכון לגבי N?",
+      "choices": [
+        "N יכול להיות כל int, גם כזה שנקרא מקובץ בזמן ריצה",
+        "N חייב להיות חזקה של 2",
+        "N חייב להיות constant expression, וכל ערך שונה של N יוצר טיפוס שונה (Fir<8> ו-Fir<16> לא קשורים)",
+        "non-type template parameters קיימים רק ל-pointers"
+      ],
+      "answer": 2,
+      "explanation": "non-type template parameter נקבע בזמן קומפילציה, ולכן אפשר להגדיר בעזרתו מערך בגודל קבוע ולתת לקומפיילר לעשות unrolling. כל N הוא instantiation נפרד. מ-C++20 אפשר גם float ו-class types מסוג structural כ-NTTP.",
+      "lesson": "cpp.templates",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.templates.q08",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "void f(int) { std::cout << \"int \"; }\n\ntemplate <class T>\nvoid f(T) { std::cout << \"T \"; }\n\nint main() {\n  f(1);\n  f(1L);\n  f('a');\n  f<>(1);\n}",
+      "choices": [
+        "int int int T",
+        "int T T T",
+        "int T int T",
+        "T T T T"
+      ],
+      "answer": 1,
+      "explanation": "f(1): שתי האפשרויות exact match, ובשוויון non-template עדיף. f(1L): ה-template נותן exact match עם T=long, וה-int דורש conversion. f('a'): ה-template נותן exact match עם T=char, וה-int דורש promotion, ו-exact match עדיף. f<>(1) מכריח שימוש ב-template.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "נתון `template <class... Ts> auto sum(Ts... xs) { return (xs + ...); }`. מה קורה עם `sum(1, 2, 3)` ועם `sum()`?",
+      "choices": [
+        "6, ו-sum() הוא שגיאת קומפילציה: unary fold ריק עם + לא מוגדר. הפתרון: (0 + ... + xs)",
+        "6, ו-0",
+        "שתיהן שגיאות קומפילציה, כי fold expressions דורשים לפחות שני ארגומנטים",
+        "6, ו-sum() מחזיר void"
+      ],
+      "answer": 0,
+      "explanation": "unary fold על pack ריק מוגדר רק עבור && (true), || (false) ו-, (void()). לכל אופרטור אחר זו שגיאה. binary fold עם ערך התחלתי פותר את זה. שימו לב שהערך ההתחלתי משפיע על הטיפוס: עם pack ריק (0 + ... + xs) מחזיר int.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה המשמעות של SFINAE?",
+      "choices": [
+        "מנגנון של זמן ריצה לבחירת specialization",
+        "כל שגיאה בגוף של template מתעלמת בשקט",
+        "הקומפיילר בוחר את ה-template הראשון שמתקמפל",
+        "כשהחלפה של template arguments בחתימה (immediate context) נכשלת, ה-candidate מוסר מ-overload resolution בלי שגיאה"
+      ],
+      "answer": 3,
+      "explanation": "Substitution Failure Is Not An Error חל רק על החתימה וה-immediate context: return type, טיפוסי הפרמטרים, default template arguments. שגיאה בגוף הפונקציה אחרי שהיא נבחרה היא hard error. std::enable_if ו-decltype(expr) בנויים על זה, ו-concepts מחליפים אותם.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q11",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות על concepts (C++20) נכונות?",
+      "choices": [
+        "הודעות השגיאה ברורות יותר, כי ה-constraint נבדק לפני instantiation של הגוף",
+        "constraints משתתפים ב-overload resolution, ואם constraint אחד subsumes אחר נבחר ה-overload המוגבל יותר",
+        "subsumption עובד גם בין שני requires נפרדים עם אותו טקסט, למשל requires std::is_integral_v<T> שנכתב פעמיים",
+        "concepts נבדקים בזמן ריצה",
+        "אפשר להוסיף requires-clause ל-member function שאינה template של class template"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "subsumption משווה atomic constraints לפי זהות, כלומר אותו ביטוי מאותו מקום בקוד. שני requires שנכתבו בנפרד הם atomic constraints שונים, גם אם הטקסט זהה, ולכן צריך named concept כדי לקבל subsumption. concepts נבדקים בזמן קומפילציה בלבד. trailing requires על member של class template הוא דרך נפוצה להפעיל מתודה רק לחלק מהטיפוסים.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q12",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "GCC ו-Clang דוחים את הקוד. למה?",
+      "code": "template <class T>\nstruct Base { void log() {} int count = 0; };\n\ntemplate <class T>\nstruct Derived : Base<T> {\n  void run() { log(); ++count; }\n};",
+      "bugLine": 6,
+      "choices": [
+        "log ו-count פרטיים כי struct יורש באופן private",
+        "חסר virtual ב-log",
+        "Base<T> הוא dependent base. ב-unqualified lookup בשלב ההגדרה לא מחפשים בו, ולכן log ו-count לא נמצאים. צריך this->log() ו-this->count, או using Base<T>::log",
+        "אסור לרשת מ-template"
+      ],
+      "answer": 2,
+      "explanation": "two-phase lookup: הקומפיילר לא יכול לדעת מה יש ב-Base<T>, כי ייתכן specialization בלי log. לכן שמות לא תלויים נבדקים מיד ולא בבסיס התלוי. this-> הופך את השם לתלוי, וה-lookup נדחה ל-instantiation. MSVC הישן (בלי /permissive-) קיבל את הקוד, וזה מקור נפוץ להפתעות.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q13",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "template <class T> struct K           { static constexpr int v = 0; };\ntemplate <class T> struct K<T*>       { static constexpr int v = 1; };\ntemplate <class T> struct K<const T*> { static constexpr int v = 2; };\ntemplate <>        struct K<int*>     { static constexpr int v = 3; };\n\nint main() {\n  std::cout << K<int>::v << K<int*>::v << K<const int*>::v\n            << K<char*>::v << K<int* const>::v;\n}",
+      "choices": [
+        "03211",
+        "03210",
+        "01210",
+        "03110"
+      ],
+      "answer": 1,
+      "explanation": "K<int*> מקבל את ה-full specialization (3). const int* מתאים גם ל-T* (עם T=const int) וגם ל-const T* (עם T=int). const T* יותר מיוחד, ולכן 2. char* מקבל T* (1). int* const הוא pointer שהוא עצמו const, והוא לא מתאים לצורה T* (top-level cv הוא חלק מהטיפוס), ולכן הוא נופל ל-primary (0).",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q14",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-C++17?",
+      "code": "std::vector v{1, 2, 3};\nstd::vector w{v.begin(), v.end()};\nstd::vector x(v.begin(), v.end());\nstd::cout << v.size() << ' ' << w.size() << ' ' << x.size();",
+      "choices": [
+        "3 2 3",
+        "3 3 3",
+        "3 2 2",
+        "שגיאת קומפילציה ב-w"
+      ],
+      "answer": 0,
+      "explanation": "CTAD עם סוגריים מסולסלים מעדיף את ה-initializer_list constructor. לכן w הוא std::vector<std::vector<int>::iterator> עם שני איברים. עם סוגריים עגולים נבחר ה-constructor של טווח iterators, ו-deduction guide מסיק vector<int>. זו מלכודת אמיתית ב-code review.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב ב-C++20 `template <class T> std::string describe(const T& v)`: למספרים (arithmetic) מחזיר std::to_string(v); לטיפוס עם מתודה `str()` שמחזירה משהו שממיר ל-std::string מחזיר אותה; לכל השאר שגיאת קומפילציה עם הודעה ברורה. בלי SFINAE.",
+      "starter": "template <class T>\nstd::string describe(const T& v);",
+      "modelAnswer": "#include <concepts>\n#include <string>\n#include <type_traits>\n\ntemplate <class T>\nconcept HasStr = requires(const T& t) {\n  { t.str() } -> std::convertible_to<std::string>;\n};\n\ntemplate <class>\ninline constexpr bool dependent_false = false;\n\ntemplate <class T>\nstd::string describe(const T& v) {\n  if constexpr (std::is_arithmetic_v<T>) {\n    return std::to_string(v);\n  } else if constexpr (HasStr<T>) {\n    return std::string(v.str());\n  } else {\n    // static_assert(false) here is ill-formed before C++23 (P2593)\n    static_assert(dependent_false<T>, \"describe: type needs str() or be arithmetic\");\n  }\n}",
+      "rubric": [
+        "concept או requires-expression שבודק t.str() עם convertible_to<std::string>",
+        "שרשרת if constexpr, כך שהענפים שלא נבחרו לא עוברים instantiation",
+        "static_assert עם ביטוי תלוי ב-T, ולא static_assert(false) (עד C++23)",
+        "מזכיר ש-const T& דורש ש-str() תהיה const, ושאפשר גם overloads עם constraints במקום if constexpr"
+      ],
+      "explanation": "השאלה בודקת את הכלים המודרניים: concepts, requires-expression ו-if constexpr. הנקודה העדינה היא static_assert(false), שעד P2593 גרם לשגיאה גם כשהענף לא נבחר.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q16",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "template <class T> void f(T)     { std::cout << 1; }\ntemplate <>        void f(int*)  { std::cout << 3; }\ntemplate <class T> void f(T*)    { std::cout << 2; }\n\nint main() {\n  int* p = nullptr;\n  f(p);\n}",
+      "choices": [
+        "3",
+        "1",
+        "שגיאת קומפילציה: ambiguous",
+        "2"
+      ],
+      "answer": 3,
+      "explanation": "ה-explicit specialization מוצהרת כשרק f(T) קיים, ולכן היא specialization של f(T) עם T=int*. ב-overload resolution משתתפים רק ה-primary templates: f(T) ו-f(T*). f(T*) יותר מיוחד ונבחר, וה-specialization שייכת ל-template שהפסיד. אם מזיזים את ה-specialization מתחת ל-f(T*), היא שייכת ל-f(T*) והפלט 3. זו הסיבה להעדיף overloads על פני specialization של function templates.",
+      "lesson": "cpp.templates",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.templates.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "בפרויקט גדול, std::vector<Sample> ו-Matrix<float, 4> מופיעים ב-200 קבצים, וזמן הקומפילציה ארוך. מה הפתרון עם `extern template` ומה ההשפעה שלו?",
+      "choices": [
+        "extern template מבטל inlining של כל ה-members, ולכן תמיד פוגע בביצועים",
+        "extern template הופך את ה-template ל-virtual ולכן הקוד משותף",
+        "extern template class Matrix<float, 4>; ב-header מונע instantiation מרומז של ה-members ב-TUs שכוללים אותו. ב-cpp אחד כותבים template class Matrix<float, 4>; (explicit instantiation) שמייצר את הקוד פעם אחת. inline functions עדיין יכולות לעבור inlining",
+        "extern template מעביר את ה-instantiation לזמן link, ולכן ה-linker מבצע את הקומפילציה"
+      ],
+      "answer": 2,
+      "explanation": "explicit instantiation declaration (C++11) אומרת לקומפיילר לא לייצר בעצמו את ה-instantiation ולהניח שהיא קיימת במקום אחר. זה חוסך זמן קומפילציה וגודל של object files, ומקטין עבודה של ה-linker על COMDAT כפולים. הסטנדרט מאפשר לקומפיילר עדיין לבצע instantiation של inline functions לצורך inlining, ולכן הביצועים לא נפגעים.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\ntemplate <class T>\nvoid g(T x) { helper(x); }\n\nvoid helper(int) { std::cout << \"int\"; }\n\nint main() { g(1); }\n```\n\nמה קורה בקומפיילר תואם תקן?",
+      "choices": [
+        "מודפס int, כי helper מוגדר לפני main",
+        "שגיאת קומפילציה: helper(x) הוא dependent call. ב-instantiation מתבצע רק ADL בנקודת ה-instantiation, ול-int אין associated namespaces, ו-unqualified lookup בשלב ההגדרה לא ראה את helper",
+        "שגיאת link",
+        "UB"
+      ],
+      "answer": 1,
+      "explanation": "בשם תלוי, unqualified lookup רגיל מתבצע בנקודת ההגדרה של ה-template, ובאותה נקודה helper עוד לא הוצהר. ב-instantiation מוסיפים רק ADL, ו-int הוא טיפוס יסודי בלי associated namespaces. אם x היה מטיפוס שמוגדר ב-namespace שבו helper מוגדר, ADL היה מוצא אותו. MSVC הישן קיבל את הקוד, ולכן זה צץ בהעברות בין פלטפורמות.",
+      "lesson": "cpp.templates"
+    },
+    {
+      "id": "cpp.templates.q19",
+      "level": 5,
+      "type": "oral",
+      "prompt": "ספריית DSP מגדירה interface Filter עם `virtual void process(span<float>)`, וכל שלב ב-pipeline הוא Filter*. הוצע לעבור ל-templates (CRTP או pipeline שנבנה בזמן קומפילציה). השווה את שתי הגישות ותן המלצה.",
+      "modelAnswer": "virtual: גמישות בזמן ריצה, כי אפשר לבנות את ה-pipeline מקונפיגורציה ולטעון plugins. ABI יציב, קוד קטן וקומפילציה מהירה. המחיר: indirect call לכל בלוק (זניח אם הבלוק גדול, למשל 4096 samples) ובלי inlining בין שלבים, ולכן אין loop fusion. אם process נקרא לכל sample, המחיר דומיננטי. templates (CRTP, או Pipeline<A, B, C> עם fold): הקומפיילר רואה את כל השרשרת, עושה inlining, יכול לאחד לולאות ולעשות vectorization, ופרמטרים כמו מספר taps הופכים ל-NTTP עם unrolling. המחיר: ה-pipeline קבוע בזמן קומפילציה, זמני קומפילציה ושגיאות קשים יותר, code bloat (instantiation לכל קומבינציה), והכל ב-headers, כלומר אין ABI יציב. ההמלצה: virtual בגבולות (בחירת שרשרת מקונפיגורציה) עם בלוקים גדולים, ו-templates בתוך kernels חמים שעובדים per-sample. כך מקבלים את שני היתרונות. אפשר גם type erasure (std::function או variant עם visit) כשהקבוצה סגורה. חשוב למדוד: אם process עובד על בלוקים, ה-virtual call כנראה לא צוואר הבקבוק.",
+      "rubric": [
+        "עלות virtual call היא בעיקר אובדן inlining ו-fusion, לא ה-call עצמו, ותלויה בגודל הבלוק",
+        "יתרונות templates: inlining, NTTP, vectorization",
+        "חסרונות templates: גמישות בזמן ריצה, code bloat, זמן קומפילציה, ABI",
+        "מציע פתרון היברידי לפי granularity, או std::variant עם visit לקבוצה סגורה",
+        "מדגיש מדידה לפני שינוי"
+      ],
+      "explanation": "תשובה טובה לא בוחרת צד באופן דוגמטי. היא מחברת את ההחלטה ל-granularity של הקריאות ולצורך בגמישות בזמן ריצה.",
+      "lesson": "cpp.templates",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

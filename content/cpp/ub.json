@@ -1,0 +1,364 @@
+{
+  "domain": "cpp",
+  "subtopic": "ub",
+  "lessons": [
+    {
+      "id": "cpp.ub",
+      "title": "Undefined behavior",
+      "what": "undefined behavior (UB) הוא מצב שבו התקן לא מטיל שום דרישה על התוכנית, לא רק על השורה הבעייתית. הקומפיילר רשאי להניח ש-UB לא קורה לעולם, ובונה על זה אופטימיזציות. לכן קוד עם UB יכול לעבוד ב-O0 ולהישבר ב-O2, או להשתנות בין גרסאות של קומפיילר.",
+      "when": [
+        "קוד שעושה אריתמטיקה על signed integers, עבודה עם pointers ו-buffers, וקוד מקבילי",
+        "קוד שעובד ב-Debug ונשבר ב-Release, או קוד שבו בדיקה נעלמת אחרי אופטימיזציה",
+        "שאלות ראיון: להבחין בין UB, unspecified ו-implementation-defined, ולהסביר איך הקומפיילר מנצל UB"
+      ],
+      "how": [
+        "שלוש קטגוריות: implementation-defined (המימוש בוחר ומתעד, למשל sizeof(long)). unspecified (אחת מכמה אפשרויות, בלי תיעוד, למשל סדר ההערכה של ארגומנטים). undefined (אין שום דרישה).",
+        "UB נפוצים: signed overflow, גישה מחוץ לגבולות, dereference של nullptr, use-after-free, קריאת משתנה לא מאותחל, data race, הפרת strict aliasing, shift ב-width או יותר או בכמות שלילית, חלוקה ב-0, INT_MIN / -1, ויציאה מסוף פונקציה שאינה void בלי return.",
+        "unsigned overflow מוגדר: wrap-around מודולו 2^N. לכן -fwrapv או unsigned משמשים כשרוצים wrap.",
+        "הקומפיילר מסיק עובדות מ-UB: אחרי p->x הוא מניח ש-p לא null ומוחק בדיקת null מאוחרת. x + 1 < x הופך ל-false. לולאה עם i++ ב-signed מניחה שאין overflow.",
+        "סדר הערכה: C++17 קבע סדר משמאל לימין ל-<<, >>, ., -> ו-[], וקבע שבהשמה צד ימין מבוצע לפני צד שמאל. שני side effects לא מסודרים על אותו משתנה (כמו i++ + i++) הם עדיין UB.",
+        "כלים: -fsanitize=undefined (UBSan), address (ASan), thread (TSan), memory (MSan, ב-Clang). גם constexpr מזהה UB בזמן קומפילציה."
+      ],
+      "complexity": "UB מאפשר אופטימיזציות: למשל signed overflow שאסור מאפשר להחליף אינדקס int במונה 64 ביט בלולאה, ולעשות vectorization. -fwrapv או בדיקות נוספות עולים מעט ביצועים. sanitizers מאטים פי 2 עד 3 (ASan) עד פי 5 עד 15 (TSan), ולכן מריצים אותם ב-CI ולא בייצור.",
+      "pitfalls": [
+        "בדיקת overflow שכתובה אחרי שה-overflow כבר קרה (x + 1 < x)",
+        "בדיקת null אחרי dereference",
+        "הנחה שגישה מחוץ לגבולות רק קוראת זבל",
+        "data race על משתנה רגיל: זה UB, ולא רק עדכון שהולך לאיבוד",
+        "השוואה בין signed ל-unsigned: -1 < 0u הוא false"
+      ],
+      "senior": [
+        "time travel: התקן לא מטיל דרישות גם על פעולות שקורות לפני ה-UB באותה ריצה",
+        "C++26: קריאת משתנה לא מאותחל נהייתה erroneous behavior (P2795), ולולאות אינסופיות טריוויאליות כבר לא UB (P2809)",
+        "תכנון API שמונע UB: span עם בדיקות ב-debug, checked arithmetic, ו-types חזקים",
+        "UB בקוד GPU: race על shared memory בלי __syncthreads וגישה לא מיושרת. compute-sanitizer הוא הכלי המקביל"
+      ],
+      "diagram": "        well-defined\n  impl-defined  (documented choice)\n  unspecified   (some valid choice)\n  undefined     (no rules at all)\n                 ^ optimizer assumes\n                   it never happens"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.ub.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של undefined behavior לפי התקן?",
+      "choices": [
+        "התוכנית תקרוס בוודאות",
+        "הקומפיילר חייב להוציא warning",
+        "התקן לא מטיל שום דרישה על התנהגות התוכנית. הקומפיילר רשאי להניח שזה לא קורה ולבצע אופטימיזציות בהתאם",
+        "התוצאה היא ערך אקראי, אבל שאר התוכנית ממשיכה כרגיל"
+      ],
+      "answer": 2,
+      "explanation": "UB יכול להיראות כמו עבודה תקינה, קריסה, ערך מוזר, או קוד שנמחק. אין חובה לאבחן אותו. בזמן קומפילציה (constexpr) הוא כן נתפס, וזה גם מה שמבדיל אותו מ-implementation-defined.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין implementation-defined ל-undefined behavior?",
+      "choices": [
+        "אין הבדל",
+        "implementation-defined: המימוש בוחר התנהגות ומתעד אותה (למשל sizeof(long)). undefined: אין שום דרישה",
+        "implementation-defined הוא תמיד באג",
+        "undefined behavior מתועד בתיעוד של הקומפיילר"
+      ],
+      "answer": 1,
+      "explanation": "קוד שתלוי ב-implementation-defined תקין, אבל לא נייד בין פלטפורמות: sizeof(long) הוא 8 ב-Linux x86-64 ו-4 ב-Windows. unspecified הוא קטגוריה שלישית: אחת מכמה אפשרויות, בלי חובת תיעוד, למשל סדר ההערכה של ארגומנטים לפונקציה.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקרא הכלי של GCC/Clang שמוסיף בדיקות בזמן ריצה ל-UB כמו signed overflow ו-shift לא חוקי? (שם הכלי או ה-flag)",
+      "accept": [
+        "UBSan",
+        "-fsanitize=undefined",
+        "UndefinedBehaviorSanitizer",
+        "fsanitize=undefined"
+      ],
+      "explanation": "UBSan מוסיף instrumentation לפעולות שעלולות להיות UB ומדווח עליהן בזמן ריצה. בשילוב עם ASan (גישה לזיכרון) ו-TSan (data races) הוא בסיס של CI בריא ל-C++.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q04",
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו מהבאים הם undefined behavior ב-C++20?",
+      "choices": [
+        "int שגולש מעבר ל-INT_MAX בחיבור",
+        "unsigned שיורד מתחת ל-0 בחיסור",
+        "קריאה של a[10] כש-a הוא int[10]",
+        "dereference של nullptr",
+        "קריאת ערך של משתנה int מקומי שלא אותחל",
+        "הנחה ש-sizeof(int) == 4"
+      ],
+      "answer": [
+        0,
+        2,
+        3,
+        4
+      ],
+      "explanation": "unsigned מוגדר כ-wrap-around מודולו 2^N. sizeof(int) הוא implementation-defined (מינימום 16 ביט), והנחה שהוא 4 היא בעיית ניידות ולא UB. קריאה של int לא מאותחל היא UB עד C++23. ב-C++26 היא erroneous behavior.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (int ו-unsigned של 32 ביט)",
+      "code": "unsigned u = 0;\nu = u - 1;\nstd::cout << (u == UINT_MAX) << ' ' << (-1 < 0u);",
+      "choices": [
+        "1 0",
+        "1 1",
+        "0 1",
+        "UB"
+      ],
+      "answer": 0,
+      "explanation": "חיסור ב-unsigned מוגדר ומבצע wrap ל-UINT_MAX. בהשוואה של int ל-unsigned, ה-int מומר ל-unsigned (usual arithmetic conversions), ולכן -1 הופך ל-UINT_MAX, ו-UINT_MAX < 0 הוא false. -Wsign-compare מזהיר על זה.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q06",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "int a[5];\nfor (int i = 0; i <= 5; ++i)\n  a[i] = i;",
+      "bugLine": 2,
+      "choices": [
+        "צריך ++i במקום i++",
+        "אין באג, כי a[5] הוא one-past-the-end וזה מותר",
+        "a לא מאותחל",
+        "התנאי <= 5 כותב ל-a[5], מחוץ לגבולות. זה UB, וב-O2 הקומפיילר יכול אפילו להסיק שהלולאה לא מסתיימת"
+      ],
+      "answer": 3,
+      "explanation": "מותר ליצור pointer ל-one-past-the-end, אבל אסור לגשת דרכו. הקומפיילר יכול להניח שאין גישה מחוץ לגבולות, ולכן ש-i <= 4 בכל איטרציה, ולפעמים מסיר את בדיקת היציאה. זה קרה בפועל ב-GCC בדוגמאות דומות.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "עבור int של 32 ביט, איזה מהביטויים הוא UB ב-C++20?",
+      "choices": [
+        "`1u << 31`",
+        "`-8 >> 1`",
+        "`1 << 32`",
+        "`1u << 0`"
+      ],
+      "answer": 2,
+      "explanation": "shift בכמות שווה ל-width של הטיפוס (המקודם), או יותר, או בכמות שלילית, הוא UB בכל תקן. ב-x86 החומרה ממסכת את הכמות ל-5 ביטים, ולכן לפעמים מקבלים 1 במקום 0. ב-C++20 (two's complement) הזזה ימינה של מספר שלילי מוגדרת כאריתמטית ונותנת -4. 1u << 31 תקין.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה GCC/Clang ב-O2 עושים עם הפונקציה הבאה?\n\n```cpp\nbool will_overflow(int x) {\n  return x + 1 < x;\n}\n```",
+      "choices": [
+        "מחזירים true רק עבור INT_MAX",
+        "מקמפלים אותה ל-return false: signed overflow הוא UB, ולכן x + 1 < x תמיד false במתמטיקה של מספרים שלמים",
+        "שגיאת קומפילציה",
+        "מחזירים true עבור כל x שלילי"
+      ],
+      "answer": 1,
+      "explanation": "הבדיקה מנסה לזהות overflow אחרי שהוא כבר קרה, ובאותו רגע זה כבר UB. הדרך הנכונה: x == INT_MAX, או לבדוק לפני הפעולה (a > INT_MAX - b), או להשתמש ב-__builtin_add_overflow. עם -fwrapv הקוד המקורי יעבוד, אבל לא נייד.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q09",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ב-Release הפונקציה קורסת כש-p הוא nullptr, למרות הבדיקה. למה?",
+      "code": "int payload_len(const Packet* p) {\n  int n = p->size;\n  if (!p)\n    return 0;\n  return n;\n}",
+      "bugLine": 2,
+      "choices": [
+        "dereference לפני הבדיקה. אם p הוא null זה UB, ולכן הקומפיילר מסיק ש-p לא null ומוחק את הבדיקה. צריך לבדוק לפני הגישה",
+        "הבדיקה !p לא עובדת על const pointer",
+        "צריך לבדוק p == NULL ולא !p",
+        "size צריך להיות unsigned"
+      ],
+      "answer": 0,
+      "explanation": "זו אופטימיזציה אמיתית (delete null pointer checks ב-GCC). היא גרמה לפרצה בקרנל של Linux ב-2009 (tun driver), ובעקבות זה הקרנל נבנה עם -fno-delete-null-pointer-checks. הסדר הנכון: לבדוק ואז לגשת.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q10",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבעיה בפונקציה?",
+      "code": "int sign(int x) {\n  if (x > 0) return 1;\n  if (x < 0) return -1;\n}",
+      "bugLine": 4,
+      "choices": [
+        "צריך else בין התנאים",
+        "x < 0 לא מוגדר עבור INT_MIN",
+        "צריך להחזיר bool",
+        "כש-x == 0 הפונקציה מגיעה לסוף בלי return. בפונקציה שאינה void (חוץ מ-main) זה UB, ולא סתם ערך זבל. Clang עלול לייצר קוד שנופל לפונקציה הבאה"
+      ],
+      "answer": 3,
+      "explanation": "ב-C, השימוש בערך ההחזרה הוא UB. ב-C++ עצם ההגעה לסוף הפונקציה היא UB. Clang ב-O2 מסמן את המסלול כ-unreachable, ולפעמים הקוד ממשיך לפונקציה הבאה בבינארי. -Wreturn-type מזהיר, וכדאי להפוך אותו לשגיאה עם -Werror=return-type.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q11",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שני threads מריצים `counter++` על `int counter` משותף, בלי סנכרון. מה נכון לפי התקן?",
+      "choices": [
+        "התוצאה הסופית עשויה להיות קטנה מהצפוי (lost updates), אבל זה לא UB",
+        "מוגדר היטב ב-x86, כי ++ הוא הוראה אחת",
+        "data race על אובייקט לא-atomic הוא UB, ולכן אין שום הבטחה, לא רק לגבי הערך הסופי",
+        "מוגדר אם counter הוא volatile"
+      ],
+      "answer": 2,
+      "explanation": "[intro.races]: שתי גישות מתנגשות שלפחות אחת מהן כתיבה, בלי happens-before ביניהן, הן UB. הקומפיילר יכול להחזיק את counter ברגיסטר כל הלולאה. volatile לא נותן אטומיות ולא סדר בין threads. הפתרון: std::atomic<int> או mutex.",
+      "lesson": "cpp.ub",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.ub.q12",
+      "level": 4,
+      "type": "multi",
+      "prompt": "נתון `int i = 0;` ו-`int a[4]{};`. אילו ביטויים הם UB ב-C++17 (כל אחד בנפרד)?",
+      "choices": [
+        "`i = i++ + 2;`",
+        "`i = ++i + i++;`",
+        "`std::cout << i << i++;`",
+        "`a[i] = i++;`",
+        "`f(++i, ++i);`",
+        "`int r = i++ + i++;`"
+      ],
+      "answer": [
+        1,
+        5
+      ],
+      "explanation": "C++17 (P0145) קבע שבהשמה צד ימין, כולל ה-side effects שלו, מבוצע לפני צד שמאל. לכן i = i++ + 2 ו-a[i] = i++ מוגדרים. ב-<< הסדר משמאל לימין. ארגומנטים לפונקציה הם indeterminately sequenced, כלומר הסדר unspecified אבל לא UB. האופרנדים של + עדיין unsequenced, ולכן שני side effects על i בתוך + הם UB.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה אפשר לומר על הלולאה (int של 32 ביט)?\n\n```cpp\nfor (int i = 0; i < 4; ++i)\n  std::cout << i * 1000000000 << ' ';\n```",
+      "choices": [
+        "מדפיסה 0 1000000000 2000000000 ואז ערך שלילי (wrap)",
+        "UB באיטרציה i=3 (3e9 > INT_MAX). מותר לקומפיילר להסיק ש-i * 1e9 לא גולש ולכן i < 3 תמיד, ולשנות את תנאי הלולאה. GCC ב-O2 ייצר בפועל לולאה אינסופית בדוגמה כזו",
+        "שגיאת קומפילציה",
+        "מדפיסה 4 ערכים נכונים, כי cout מקבל long"
+      ],
+      "answer": 1,
+      "explanation": "הקומפיילר מבצע strength reduction: מחליף את i * 1e9 במונה שגדל ב-1e9, ומבטא את תנאי היציאה דרכו. כיוון ש-overflow לא אמור לקרות, ההמרה נחשבת חוקית, והתנאי החדש לא מתקיים לעולם. זו דוגמה ש-UB משפיע על קוד שנראה לא קשור, כמו תנאי הלולאה.",
+      "lesson": "cpp.ub",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.ub.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה נכון לגבי `int x = INT_MIN; int y = x / -1;` ב-x86-64?",
+      "choices": [
+        "UB, כי התוצאה (2^31) לא ניתנת לייצוג. בפועל הוראת idiv ב-x86 זורקת #DE והתהליך מקבל SIGFPE, כמו בחלוקה ב-0. גם INT_MIN % -1 הוא UB",
+        "y == INT_MAX",
+        "y == INT_MIN בגלל wrap, וזה מוגדר",
+        "התוצאה implementation-defined"
+      ],
+      "answer": 0,
+      "explanation": "זה מקרה פינה ששוכחים כשמוודאים רק b != 0. ב-x86 החומרה מתייחסת ל-overflow בחלוקה כמו לחלוקה ב-0. גם std::abs(INT_MIN) ו--INT_MIN הם UB. בקלט לא מהימן (פרוטוקול, קובץ) זה וקטור קלאסי ל-DoS.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "הצטרפת לצוות עם codebase גדול של C++ (מיליון שורות, multi-threaded, חלקים ב-CUDA). יש באגים שמופיעים רק ב-Release או רק במכונה מסוימת. איך תבנה אסטרטגיה לאיתור ומניעה של UB?",
+      "modelAnswer": "ארבע שכבות. (1) קומפיילר: -Wall -Wextra -Wpedantic, ו-Werror על אזהרות קריטיות (return-type, sign-compare, shadow, format). בונים עם שני קומפיילרים (GCC ו-Clang), כי כל אחד תופס דברים אחרים, ומוסיפים סטטיק אנליזה (clang-tidy עם bugprone ו-cppcoreguidelines, ו-cppcheck). (2) sanitizers ב-CI: build עם ASan+UBSan שמריץ את כל הטסטים, build נפרד עם TSan (לא משלבים אותו עם ASan) לטסטים מקביליים, ו-MSan ב-Clang לקריאות לא מאותחלות, אם אפשר לבנות את כל התלויות. בקוד CUDA: compute-sanitizer עם memcheck, racecheck ו-synccheck. (3) fuzzing (libFuzzer או AFL++ עם sanitizers) על parsers וקלט חיצוני. (4) מניעה בקוד: RAII, span ו-at() ב-debug, std::atomic במקום volatile, checked arithmetic בקלט חיצוני, static_assert ו-constexpr tests שמזהים UB בקומפילציה, ו-hardening (_GLIBCXX_ASSERTIONS או libc++ hardening) גם ב-Release כשהמחיר סביר. לבאג שמופיע רק ב-Release: מקטינים בהדרגה את האופטימיזציה (bisect על -O flags או על קבצים), בודקים עם -fwrapv ו--fno-strict-aliasing כדי לזהות את קטגוריית ה-UB, ומשווים assembly. חשוב לא להשאיר flags כאלה כפתרון קבוע: זה מסתיר את הבאג.",
+      "rubric": [
+        "warnings ושני קומפיילרים, וגם static analysis",
+        "sanitizers ב-CI, כולל הבנה שאת TSan מריצים בנפרד, ו-compute-sanitizer ל-CUDA",
+        "fuzzing לקלט חיצוני",
+        "טכניקה לאבחון באג שמופיע רק ב-Release (bisect, flags אבחוניים, assembly)",
+        "מניעה בעיצוב הקוד (RAII, atomic, checked arithmetic, hardening)"
+      ],
+      "explanation": "מראיין סניור מצפה לתהליך מסודר ומדיד, ולא רק לרשימת כלים. גם חשוב להבין שאסור להשאיר flags כמו -fwrapv כ'תיקון'.",
+      "lesson": "cpp.ub",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.ub.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\nvoid f(int* p, bool verbose) {\n  if (verbose) std::puts(\"before\");\n  *p = 1;\n}\n```\n\nf נקראת עם p == nullptr ו-verbose == true. מה התקן (עד C++23) מבטיח לגבי ההדפסה של before?",
+      "choices": [
+        "מובטח שהיא תודפס, כי היא קורית לפני ה-UB",
+        "מובטח שהיא לא תודפס",
+        "ההדפסה מובטחת רק אם stdout עושה flush",
+        "שום דבר: אם ריצה מכילה UB, התקן לא מטיל דרישות על הריצה כולה, גם על פעולות שקרו לפני הפעולה הלא מוגדרת. בפועל, puts היא קריאה שהקומפיילר לא רואה לתוכה, והיא כמעט תמיד תודפס"
+      ],
+      "answer": 3,
+      "explanation": "[intro.abstract] אומר במפורש שאין דרישות 'not even with regard to operations preceding the first undefined operation'. זה מאפשר לקומפיילר להזיז קוד ולהניח הנחות לאחור (time travel). בדוגמה הזו הקומפיילר לא יכול להוכיח ש-puts חוזרת, ולכן לא יזיז את הכתיבה לפניה. אבל דוגמאות בלי קריאות חיצוניות כן נשברות כך.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה נכון לגבי לולאה `while (true) {}` (בלי I/O, volatile, atomic או סנכרון) ב-main?",
+      "choices": [
+        "תמיד מוגדרת: התוכנית תיתקע לנצח",
+        "שגיאת קומפילציה",
+        "עד C++23 זה UB לפי ה-forward progress guarantee, וקומפיילרים (בעיקר Clang) הסירו לולאות כאלה, לפעמים עם נפילה לקוד שאחריהן. C++26 (P2809) קבע שלולאה אינסופית טריוויאלית כבר לא UB",
+        "UB רק אם הלולאה בתוך thread שאינו main"
+      ],
+      "answer": 2,
+      "explanation": "[intro.progress] מאפשר להניח שכל thread יגיע בסוף לסיום או לפעולה נצפית (I/O, volatile, atomic, sync). זה מאפשר אופטימיזציות, למשל להזיז קוד אל מעבר ללולאות שהקומפיילר לא מצליח להוכיח שמסתיימות. במערכות embedded, לולאת המתנה אינסופית בלי volatile הייתה מקור לבאגים. P2809 פטר לולאות עם תנאי קבוע וגוף ריק או טריוויאלי.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון `int x; std::cout << x;` (x מקומי, לא מאותחל). מה נכון?",
+      "choices": [
+        "מדפיס 0 תמיד, כי משתנים מקומיים מאותחלים ל-0",
+        "עד C++23: UB. ב-C++26 (P2795) זה erroneous behavior: ההתנהגות מוגדרת (ערך כלשהו), אבל מותר למימוש לאבחן ולעצור. אפשר לבקש את ההתנהגות הישנה עם [[indeterminate]]",
+        "מדפיס ערך זבל כלשהו, וזה unspecified",
+        "שגיאת קומפילציה"
+      ],
+      "answer": 1,
+      "explanation": "קריאת ערך indeterminate היא UB (עם חריגים מעטים ל-unsigned char ו-std::byte), וזה יותר גרוע מזבל: הקומפיילר יכול להניח שהמסלול לא קורה. C++26 הגדיר erroneous behavior, כלומר זה עדיין באג, אבל בלי הרשות להניח הנחות קיצוניות. GCC ו-Clang מציעים כבר היום -ftrivial-auto-var-init=zero או pattern כ-hardening.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q19",
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש `bool checked_add(int a, int b, int& out)` ו-`bool checked_mul(int a, int b, int& out)` שמחזירות false אם התוצאה לא ניתנת לייצוג ב-int, בלי UB בשום קלט. בלי טיפוס רחב יותר ובלי builtins. (אחר כך ציין את ה-builtin שהיית משתמש בו בפועל.)",
+      "starter": "bool checked_add(int a, int b, int& out);\nbool checked_mul(int a, int b, int& out);",
+      "modelAnswer": "#include <climits>\n\nbool checked_add(int a, int b, int& out) {\n  if ((b > 0 && a > INT_MAX - b) ||\n      (b < 0 && a < INT_MIN - b))\n    return false;\n  out = a + b;\n  return true;\n}\n\n// CERT INT32-C: every division below is safe (divisor non-zero,\n// and never INT_MIN / -1).\nbool checked_mul(int a, int b, int& out) {\n  if (a > 0) {\n    if (b > 0) { if (a > INT_MAX / b) return false; }\n    else       { if (b < INT_MIN / a) return false; }\n  } else {\n    if (b > 0) { if (a < INT_MIN / b) return false; }\n    else       { if (a != 0 && b < INT_MAX / a) return false; }\n  }\n  out = a * b;\n  return true;\n}\n\n// In practice: __builtin_add_overflow(a, b, &out) / __builtin_mul_overflow\n// (GCC/Clang) - compiles to add + jo.",
+      "rubric": [
+        "הבדיקות מתבצעות לפני הפעולה, בלי לחשב ערך שגולש",
+        "checked_add מטפל גם בגלישה כלפי מטה (b שלילי)",
+        "checked_mul מטפל בכל צירופי הסימנים וב-0, ואף חלוקה בו היא לא UB (לא ב-0 ולא INT_MIN / -1)",
+        "מזכיר __builtin_*_overflow (או ckd_add ב-C23) כפתרון בפועל, ואת עלותו",
+        "בדיקה של מקרי קצה: INT_MIN, INT_MAX, -1, 0"
+      ],
+      "explanation": "הבדיקה עצמה חייבת להיות נקייה מ-UB, וזו המלכודת: INT_MIN / a עם a == -1 היה UB, ולכן המקרה a > 0 מופרד. בדיקה קפדנית עם מקרי הקצה היא מה שמבדיל תשובה של סניור.",
+      "lesson": "cpp.ub",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,339 @@
+{
+  "domain": "design",
+  "subtopic": "rt-design",
+  "lessons": [
+    {
+      "id": "design.rt-design",
+      "title": "תכנון מערכת זמן-אמת",
+      "what": "מערכת זמן-אמת היא מערכת שבה תוצאה נכונה שמגיעה מאוחר היא תוצאה שגויה. המטרה היא predictability: חסם עליון ידוע על זמן התגובה (worst case), לא ממוצע מהיר. hard RT: החמצת deadline היא כשל; soft RT: החמצה פוגעת באיכות.",
+      "when": [
+        "מערכות שמגיבות לאותות פיזיקליים: SDR, בקרה, אודיו, רובוטיקה",
+        "שאלות על jitter, deadlines, priority inversion, או 'למה זה עובד ב-99.9% מהזמן'",
+        "כשנדרשת מערכת שנכשלת למצב בטוח (fail-safe), למשל משדר"
+      ],
+      "how": [
+        "מגדירים deadlines ותקציב לכל משימה, ומודדים WCET (worst case) תחת עומס ולא ממוצע",
+        "מפרידים נתיב חם (קבוע, דטרמיניסטי) מנתיב קר (config, logging, UI) שרץ ב-threads בעדיפות נמוכה",
+        "בנתיב החם: אין הקצאות זיכרון, אין locks שמשותפים עם threads בעדיפות נמוכה, אין syscalls חוסמים, אין I/O",
+        "מכינים את התהליך: mlockall ו-prefault לכל ה-buffers, thread מוצמד ל-core מבודד (isolcpus), SCHED_FIFO, IRQs מוזזים ל-cores אחרים",
+        "מעדיפים פעולות מתוזמנות לפי זמן מוחלט (timed commands עם timestamp) על פני 'עכשיו', כדי שה-jitter של ה-host לא יגיע לאוויר",
+        "מגדירים מדיניות לכשל: מה עושים כשמחמיצים deadline (לדלג, לא להשלים באיחור), ו-fail-safe: TX כבוי כברירת מחדל, watchdog שמכבה אותו"
+      ],
+      "complexity": "המדד הוא max ולא ממוצע. Linux רגיל: jitter של עשרות עד מאות מיקרו-שניות ב-worst case; PREEMPT_RT עם tuning: בדרך כלל עשרות מיקרו-שניות או פחות; FPGA: מחזורי שעון, דטרמיניסטי.",
+      "pitfalls": [
+        "למדוד ממוצע ולהכריז שהמערכת עומדת בדרישות",
+        "malloc, new, std::string, std::function עם captures גדולים, או exceptions בנתיב החם",
+        "mutex משותף עם thread בעדיפות נמוכה בלי priority inheritance: priority inversion",
+        "page fault ראשון על buffer שלא נגעו בו",
+        "ברירת מחדל לא בטוחה: המשדר משדר מיד כשהתוכנה עולה, או ממשיך לשדר אחרי קריסה"
+      ],
+      "senior": [
+        "לחשוב על worst case ועל מצב הכשל, לא רק על המסלול השמח",
+        "להבחין מה שייך ל-FPGA, מה ל-thread RT ומה ל-thread רגיל",
+        "לדבר על כלים: cyclictest, ftrace, perf, histogram של זמני לולאה",
+        "לתכנן שינוי config בזמן ריצה בלי לפגוע ב-deadlines (העברה אטומית של מצביע, polling בגבול בלוק)"
+      ],
+      "diagram": "core0: OS, IRQs, logging, config\ncore2: RX thread   (FIFO 80)\ncore3: DSP thread  (FIFO 70)\n        no malloc / no locks / no I/O"
+    }
+  ],
+  "questions": [
+    {
+      "id": "design.rt-design.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין hard real-time ל-soft real-time?",
+      "choices": [
+        "hard RT רץ על חומרה, soft RT בתוכנה",
+        "ב-hard RT החמצת deadline היא כשל של המערכת; ב-soft RT החמצה מורידה איכות אבל מותרת מדי פעם",
+        "hard RT מהיר יותר מ-soft RT",
+        "soft RT לא צריך deadlines בכלל"
+      ],
+      "answer": 1,
+      "explanation": "ההבדל הוא במשמעות של החמצה: בקר של כרית אוויר הוא hard RT, וידאו streaming הוא soft RT (פריים שהגיע מאוחר נזרק). אין קשר ישיר למהירות או לחומרה מול תוכנה.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הכי מאפיין מערכת זמן-אמת טובה?",
+      "choices": [
+        "throughput ממוצע גבוה ככל האפשר",
+        "שימוש בכל ה-cores ב-100%",
+        "ריצה על מערכת הפעלה ייעודית בלבד",
+        "זמן תגובה צפוי עם חסם עליון ידוע, גם אם הממוצע אינו המהיר ביותר"
+      ],
+      "answer": 3,
+      "explanation": "real-time = predictable, לא fast. מערכת שמגיבה תמיד תוך 100 מיקרו-שניות עדיפה על מערכת שמגיבה בממוצע ב-10 אבל לפעמים ב-5 ms. אפשר לבנות soft RT טוב גם על Linux עם tuning.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q03",
+      "level": 1,
+      "type": "multi",
+      "prompt": "ממה צריך להימנע בנתיב החם של thread זמן-אמת?",
+      "choices": [
+        "פעולות אריתמטיות על float",
+        "גישה למערך שהוקצה מראש",
+        "הקצאת זיכרון דינמית (new / malloc)",
+        "נעילת mutex שמוחזק גם על ידי thread בעדיפות נמוכה",
+        "כתיבה לקובץ או ל-stdout"
+      ],
+      "answer": [
+        2,
+        3,
+        4
+      ],
+      "explanation": "הקצאה, I/O ו-locks משותפים מוסיפים זמני המתנה לא חסומים. גישה למערך מוקצה מראש (שכבר נמצא בזיכרון הפיזי) ואריתמטיקה הם בדיוק מה שהנתיב החם צריך לעשות.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה המטרה של `mlockall(MCL_CURRENT | MCL_FUTURE)` בתהליך זמן-אמת?",
+      "choices": [
+        "למנוע מ-threads אחרים לגשת לזיכרון של התהליך",
+        "לנעול את כל הדפים של התהליך ב-RAM, כדי שלא יוצאו ל-swap ולא יהיו major page faults בנתיב החם",
+        "להאיץ את ה-cache",
+        "למנוע דליפות זיכרון"
+      ],
+      "answer": 1,
+      "explanation": "mlockall מבטיח שדפים לא יפונו ל-swap. כדי למנוע גם את ה-page fault הראשון (minor fault) על זיכרון שהוקצה אבל לא נגעו בו, מבצעים בנוסף prefault: כותבים לכל ה-buffers (והמחסנית) לפני שמתחילים. אין קשר לאבטחה או ל-cache.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "thread רץ ב-SCHED_FIFO בעדיפות 80. מה זה אומר?",
+      "choices": [
+        "ה-thread מקבל 80% מזמן ה-CPU",
+        "הוא מקבל time slice קבוע ואז עובר לסוף התור",
+        "הוא רץ עד שהוא נחסם או מוותר מרצונו, ורק thread RT בעדיפות גבוהה יותר יכול להפקיע אותו; threads רגילים (SCHED_OTHER) לא ירוצו על ה-core כל עוד הוא רוצה לרוץ",
+        "הוא תמיד רץ על core 0"
+      ],
+      "answer": 2,
+      "explanation": "SCHED_FIFO הוא מדיניות עדיפות קבועה בלי time slicing: thread שמוכן לרוץ בעדיפות הגבוהה ביותר רץ. time slice בתוך אותה עדיפות הוא SCHED_RR. בגלל זה לולאה אינסופית ב-SCHED_FIFO יכולה להרעיב את כל השאר על ה-core (Linux מגביל את זה כברירת מחדל ב-RT throttling, 950 ms מתוך כל שנייה).",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q06",
+      "level": 2,
+      "type": "order",
+      "prompt": "ה-watchdog של מערכת שידור זיהה שה-thread הראשי הפסיק להגיב. סדר את פעולות ה-fail-safe:",
+      "items": [
+        "זיהוי התקלה (watchdog שלא קיבל heartbeat בזמן)",
+        "השבתת השידור (TX off / disarm) מיד",
+        "שמירת מצב ואירועים אחרונים ללוג לחקירה",
+        "עצירת ה-streams ושחרור משאבים",
+        "דיווח למפעיל ודרישת arm מחדש ידני"
+      ],
+      "explanation": "העיקרון: קודם להגיע למצב בטוח (להפסיק לשדר), ורק אחר כך לטפל בתיעוד ובניקוי. כתיבה ללוג לפני כיבוי ה-TX משאירה את המשדר פעיל בזמן לא מוגדר. חזרה לשידור לא צריכה לקרות אוטומטית אחרי תקלה.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread בעדיפות גבוהה (H) ממתין ל-mutex שמוחזק על ידי thread בעדיפות נמוכה (L). thread בעדיפות בינונית (M), שאינו קשור ל-mutex, רץ כל הזמן. מה קורה ומה הפתרון?",
+      "choices": [
+        "deadlock; הפתרון הוא סדר נעילה קבוע",
+        "priority inversion: M מונע מ-L לרוץ ולשחרר את ה-mutex, ולכן H מחכה בעקיפין ל-M; הפתרון: mutex עם priority inheritance (PTHREAD_PRIO_INHERIT) או הימנעות מ-mutex משותף",
+        "H יפקיע את L אוטומטית",
+        "אין בעיה כי H בעדיפות הגבוהה ביותר"
+      ],
+      "answer": 1,
+      "explanation": "זה priority inversion לא חסום, כמו בתקלה המפורסמת של Mars Pathfinder. עם priority inheritance, L יורש את העדיפות של H כל עוד הוא מחזיק את ה-mutex, ולכן M לא יכול להפקיע אותו. עדיף עוד יותר לתכנן כך שה-thread הקריטי לא חולק locks עם threads בעדיפות נמוכה (תורים lock-free). אין כאן deadlock כי אין מעגל המתנה.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "תוכנה צריכה לשדר burst בדיוק 2 ms אחרי שזוהה אות. היא קוראת ל-send ברגע שה-host מסיים לעבד, וזמן ההגעה לאוויר משתנה ב-±300 מיקרו-שניות. מה השינוי הנכון?",
+      "choices": [
+        "להעלות את העדיפות של ה-thread",
+        "לשדר עם timed command: חותמת זמן מוחלטת (timestamp של ה-RX + 2 ms) שה-radio מבצע לפי השעון שלו, כך שה-jitter של ה-host לא משפיע כל עוד הפקודה מגיעה לפני הזמן",
+        "להקטין את גודל ה-buffer של TX",
+        "לשדר שוב אם השידור התאחר"
+      ],
+      "answer": 1,
+      "explanation": "השעון של ה-radio (ב-USRP, time_spec ב-metadata של TX) דטרמיניסטי, וה-host רק צריך להגיע לפני הזמן. כך ה-jitter הופך מבעיה של דיוק לבעיה של margin: מספיק שה-worst case של ה-host קטן מ-2 ms. אם הפקודה מגיעה מאוחר, ה-radio מדווח late ולא משדר בזמן שגוי. העלאת עדיפות מקטינה jitter אבל לא מבטלת אותו.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "לולאת בקרה רצה כל 1 ms. איטרציה אחת לקחה 3.5 ms בגלל תקלה זמנית. מה בדרך כלל הדבר הנכון לעשות?",
+      "choices": [
+        "להריץ מיד 3 איטרציות ברצף כדי 'להשלים' את מה שהוחמץ",
+        "לעצור את המערכת",
+        "לדלג ל-period הבא לפי השעון המוחלט, לספור deadline miss, ולעבוד עם הנתונים העדכניים ולא עם הישנים",
+        "להגדיל את ה-period ל-4 ms לצמיתות"
+      ],
+      "answer": 2,
+      "explanation": "השלמה של איטרציות מעבדת נתונים מיושנים ומאריכה את האיחור (catch-up storm). ברוב מערכות הבקרה והאותות עדיף להתיישר לשעון המוחלט (clock_nanosleep עם TIMER_ABSTIME לזמן הבא שבעתיד), לרשום miss ולהמשיך. אם ה-misses חוזרים, זו בעיית תכנון שמחייבת חקירה, אבל לא שינוי period אוטומטי.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהבאים הם מקורות אפשריים ל-jitter של מיקרו-שניות עד מילישניות ב-thread RT על Linux?",
+      "choices": [
+        "שימוש ב-std::array בגודל קבוע",
+        "page faults על זיכרון שלא נגעו בו",
+        "interrupts של NIC או דיסק שמטופלים על אותו core",
+        "System Management Interrupts (SMI) של ה-BIOS",
+        "שינויי תדר ו-C-states עמוקים של ה-CPU"
+      ],
+      "answer": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "explanation": "IRQs על ה-core, page faults, יציאה מ-C-state עמוק (עשרות עד מאות מיקרו-שניות) ו-SMIs (שאפילו הקרנל לא רואה) הם כולם מקורות jitter מוכרים. לכן מזיזים IRQs, נועלים זיכרון, מגבילים C-states ומקבעים תדר. std::array בגודל קבוע לא מוסיף jitter.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מדדת את זמן העיבוד של בלוק במעבדה: ממוצע 40 מיקרו-שניות, max של 85 על פני 10 דקות. ה-deadline הוא 100 מיקרו-שניות. האם אפשר להכריז שהמערכת עומדת בדרישה?",
+      "choices": [
+        "כן, ה-max מתחת ל-deadline",
+        "כן, כי הממוצע הוא פחות מחצי ה-deadline",
+        "לא בהכרח: צריך למדוד max על פני שעות או ימים, תחת עומס מלאכותי (stress-ng, I/O, רשת), עם cyclictest לאפיון ה-platform, ולהשאיר margin; 85 מתוך 100 הוא margin קטן",
+        "לא, צריך שהממוצע יהיה מתחת ל-10 מיקרו-שניות"
+      ],
+      "answer": 2,
+      "explanation": "worst case נדיר לא יופיע ב-10 דקות במעבדה שקטה. צריך זמן ריצה ארוך, עומס רקע מייצג, ומדידה של ה-platform עצמו (latency של התעוררות). גם אז זו הערכה סטטיסטית, לא הוכחה, ולכן משאירים margin ומוסיפים ניטור ב-production של deadline misses.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "כדי לבודד core 3 ל-thread ה-RT, מה הסט המלא והנכון ביותר של צעדים?",
+      "choices": [
+        "isolcpus=3 (או cpusets) כדי שה-scheduler לא ישים שם tasks אחרים, nohz_full=3 ו-rcu_nocbs=3 להפחתת ticks ו-callbacks, הזזת IRQ affinity מ-core 3, ואז הצמדת ה-thread ל-core 3 עם SCHED_FIFO",
+        "רק taskset על ה-thread ל-core 3",
+        "nice -20 על התהליך",
+        "לכבות את hyper-threading ותו לא"
+      ],
+      "answer": 0,
+      "explanation": "taskset לבד מצמיד את ה-thread אבל לא מונע מ-tasks אחרים, IRQs, timer ticks ו-RCU callbacks לרוץ על אותו core. isolcpus ו-nohz_full מוציאים את ה-core מהשימוש הכללי ומפחיתים הפרעות קרנל; IRQ affinity מזיז interrupts. nice משפיע רק על SCHED_OTHER. כיבוי HT יכול לעזור (הסיבלינג חולק משאבים) אבל לא מספיק לבד.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "thread RT ב-SCHED_FIFO 90 מוצמד ל-core 3. thread watchdog ב-SCHED_FIFO 50, גם הוא על core 3, אמור לכבות את ה-TX אם ה-RT thread נתקע בלולאה אינסופית. מה הבעיה?",
+      "choices": [
+        "אם ה-RT thread נתקע בלולאה, ה-watchdog בעדיפות נמוכה על אותו core לעולם לא ירוץ (פרט ל-RT throttling, אם לא בוטל) ולכן לא יזהה את התקלה; ה-watchdog צריך לרוץ על core אחר, או להיות watchdog חומרתי / בתוך ה-FPGA",
+        "אין בעיה, ה-watchdog יקבל זמן CPU בזכות SCHED_FIFO",
+        "ה-watchdog צריך להיות SCHED_OTHER",
+        "צריך להגדיל את ה-timeout של ה-watchdog"
+      ],
+      "answer": 0,
+      "explanation": "ב-SCHED_FIFO ה-thread בעדיפות הגבוהה רץ כל עוד הוא מוכן לרוץ; לולאה אינסופית מרעיבה כל מה שמתחתיו על אותו core. watchdog חייב להיות בלתי תלוי במה שהוא מנטר: core אחר, עדיפות גבוהה יותר, או טוב מכל, מנגנון חומרתי (timeout ב-FPGA שמכבה TX אם לא התקבל heartbeat). SCHED_OTHER רק מחמיר.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן מנגנון safety interlock למערכת SDR שמשדרת. מה ברירת המחדל, איך עוברים למצב שידור, ומה קורה בכשלים?",
+      "modelAnswer": "עיקרון: fail-safe, כלומר כל מצב לא מוגדר מוביל ל-TX כבוי. ברירת המחדל בהפעלה היא disarmed, ושידור דורש פעולה מפורשת (למשל דגל --arm בשורת הפקודה וגם פקודת arm בזמן ריצה), כך שהרצה בטעות או בדיקה לא משדרת. ב-disarmed ה-TX stream לא נפתח, או שנשלחים רק אפסים וה-gain מינימלי, ועדיף גם RF switch או PA כבוי בחומרה. מכונת מצבים מפורשת: DISARMED, ARMED_IDLE, TRANSMITTING, FAULT; מעברים רק דרך פונקציות מוגדרות, ו-FAULT דורש reset ידני. כשלים: crash של התהליך (signal handler מינימלי + ב-UHD, ה-TX stream מפסיק כשאין samples, וטוב יותר: watchdog ב-FPGA או GPIO שמכבה PA אם לא מגיע heartbeat), deadline miss או underflow חוזר (מעבר ל-FAULT), config לא תקין (ולידציה לפני arm: תדר בתוך תחום מותר, הספק מקסימלי, משך מקסימלי). מגבלות קשיחות שלא ניתנות לשינוי בזמן ריצה: תחום תדרים, gain מקסימלי, duty cycle. תיעוד: כל arm, disarm ו-fault נרשם עם timestamp ומשתמש. בדיקות: fault injection (kill -9 באמצע שידור, ניתוק כבל, config שגוי) ואימות במדידת RF שהשידור באמת נפסק.",
+      "rubric": [
+        "ברירת מחדל disarmed ופעולה מפורשת כדי לשדר",
+        "מכונת מצבים עם מצב FAULT שדורש התערבות ידנית",
+        "התמודדות עם crash באמצעות מנגנון בלתי תלוי (חומרה / FPGA watchdog)",
+        "ולידציה ומגבלות קשיחות (תדר, הספק, duty cycle)",
+        "תיעוד ובדיקות fault injection"
+      ],
+      "explanation": "השאלה בודקת חשיבה על safety: לא רק 'איך זה עובד' אלא 'מה קורה כשזה נכשל', ועקרון ה-defense in depth.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "thread שמחכה לנתונים מתור SPSC יכול לעשות busy-polling או לחסום על futex/eventfd. מתי busy-polling היא הבחירה הנכונה, ומה הסיכון?",
+      "choices": [
+        "תמיד, כי היא תמיד מהירה יותר ואין לה מחיר",
+        "כשה-latency של wakeup (מיקרו-שניות) לא מקובל וה-thread מוצמד ל-core מבודד ייעודי; המחיר הוא core שלם ב-100% וצריכת חשמל, והסיכון הוא polling ב-SCHED_FIFO על core משותף שמרעיב threads של הקרנל",
+        "אף פעם, busy-polling תמיד מזיק",
+        "כשיש יותר threads מ-cores"
+      ],
+      "answer": 1,
+      "explanation": "wakeup דרך הקרנל עולה מיקרו-שניות ומוסיף jitter; polling מגיב תוך עשרות ns. לכן DPDK, SPDK ומערכות HFT עושות polling על cores ייעודיים. על core משותף, polling ב-SCHED_FIFO יכול להרעיב את ksoftirqd או kworkers ולגרום לבעיות רחוקות (רשת, RCU stalls). פשרה נפוצה: spin קצר ואז חסימה, או pause instruction בלולאה כדי להקטין לחץ על ה-sibling ב-HT.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q16",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו מהפעולות הבאות ב-C++ עלולות להקצות זיכרון דינמי בצורה לא מפורשת, ולכן מסוכנות בנתיב RT?",
+      "choices": [
+        "שרשור std::string שחורג מה-SSO buffer",
+        "push_back ל-std::vector שה-size שלו הגיע ל-capacity",
+        "בניית std::function מ-lambda שלוכדת כמה אובייקטים גדולים",
+        "קריאה ל-std::sort על std::array",
+        "throw של exception"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        4
+      ],
+      "explanation": "std::function מקצה כשה-callable לא נכנס ל-small buffer שלו; זריקת exception מקצה את אובייקט ה-exception (__cxa_allocate_exception ב-Itanium ABI); string ארוך מה-SSO מקצה; vector מלא מבצע reallocation. std::sort הוא in-place ולא מקצה (בניגוד ל-std::stable_sort, שמנסה להקצות buffer זמני).",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "מערכת RT צריכה לאפשר למפעיל לשנות פרמטרים (תדר, סף detection, waveform) בזמן ריצה, בלי לפגוע ב-deadlines ובלי שה-thread ה-RT יראה config חצי-מעודכן. איך תתכנן?",
+      "modelAnswer": "מפרידים: thread רגיל (non-RT) אחראי לקלט מהמפעיל, לפענוח ולולידציה. הוא בונה אובייקט config חדש ושלם (immutable), כולל כל מה שנגזר ממנו מראש (טבלאות, מקדמי filter, waveform מוכן), כך שה-thread ה-RT לא מחשב ולא מקצה כלום. ההעברה ל-RT: מצביע atomic לאובייקט ה-config; ה-RT thread טוען אותו עם acquire פעם אחת בתחילת כל בלוק ומשתמש בו לכל הבלוק, כך שהשינוי נכנס בגבול בלוק ואין מצב חצי-מעודכן. הבעיה היא שחרור הזיכרון של הגרסה הישנה: ה-RT thread לא יכול לעשות delete. פתרונות: ה-RT thread מחזיר את המצביע הישן דרך תור SPSC ל-thread הרגיל שמשחרר (quiescent state), או double buffer עם דגל 'נקרא' (ה-writer לא כותב לבאפר עד שה-RT אישר שעבר לגרסה החדשה), או RCU. אפשרות פשוטה יותר שמתאימה לקצב שינוי נמוך: ה-thread הרגיל עושה polling לקובץ config ומבצע את אותו swap. פרמטרים שמחייבים retune של ה-radio (תדר מרכזי) מבצעים כ-timed command בגבול ידוע, ומשנים קודם NCO דיגיטלי אם השינוי קטן (hybrid NCO + retune). לבסוף, כל שינוי נרשם עם גרסה, וה-RT thread מפרסם counter של הגרסה הפעילה כדי שאפשר לאמת שהשינוי נקלט.",
+      "rubric": [
+        "בניית config מלא ומאומת מחוץ ל-thread ה-RT, כולל חישובים נגזרים",
+        "החלפה אטומית של מצביע, נקראת פעם אחת בגבול בלוק (acquire/release)",
+        "פתרון לשחרור הגרסה הישנה בלי delete ב-RT (תור חזרה, double buffer, RCU)",
+        "טיפול בשינויים שמחייבים retune: timed commands, NCO דיגיטלי",
+        "גרסאות ואימות שהשינוי נקלט"
+      ],
+      "explanation": "זו בעיה קלאסית של publication בין threads עם דרישת RT. נקודת המבחן הסניורית היא ה-reclamation: מי משחרר את הזיכרון הישן ומתי.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

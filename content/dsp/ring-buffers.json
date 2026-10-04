@@ -1,0 +1,350 @@
+{
+  "domain": "dsp",
+  "subtopic": "ring-buffers",
+  "lessons": [
+    {
+      "id": "dsp.ring-buffers",
+      "title": "Ring buffers",
+      "what": "ring buffer (circular buffer) הוא FIFO בגודל קבוע שהאינדקסים שלו עוטפים לתחילת המערך. זה מבנה הנתונים הבסיסי בין שלבים ב-pipeline של DSP: בין thread ה-RX לעיבוד, בין העיבוד ל-TX, ובתוך delay lines. גרסת SPSC (producer אחד, consumer אחד) אפשר לממש lock-free עם שני atomics בלבד.",
+      "when": [
+        "העברת stream בין threads בלי הקצאות ובלי locks",
+        "ספיגת jitter: ה-producer קצבי וה-consumer עובד ב-bursts",
+        "שמירת N הדגימות האחרונות (history, pre-trigger capture)",
+        "שאלות על full מול empty, wraparound של אינדקסים, ו-false sharing"
+      ],
+      "how": [
+        "גודל חזקה של 2: האינדקס הוא `i & (N-1)` במקום `i % N`, בלי חלוקה",
+        "מונים רצים (free-running): head ו-tail סופרים כמה נכתב וכמה נקרא מאז ההתחלה ולא מתאפסים. מספר האיברים הוא `head - tail` ב-unsigned, נכון גם אחרי wrap של המונה, בתנאי ש-N מחלק את 2^bits (כלומר חזקה של 2)",
+        "full מול empty: עם אינדקסים בטווח [0,N), head==tail דו-משמעי. פתרונות: להשאיר slot אחד ריק, להחזיק count, או מונים רצים (full כש-head-tail == N)",
+        "SPSC lock-free: ה-producer כותב נתונים ואז מפרסם head עם release; ה-consumer קורא head עם acquire, קורא נתונים, ומפרסם tail עם release (וה-producer קורא tail עם acquire)",
+        "ביצועים: head ו-tail בשורות cache נפרדות (alignas(64)); כל צד שומר עותק מקומי (cached) של האינדקס של הצד השני ומרענן רק כשנראה שאין מקום או אין נתונים; עדכון אינדקסים ב-batches",
+        "קריאה רציפה של בלוק שחוצה את הסוף: שתי העתקות, או mirrored mapping: אותם דפים פיזיים ממופים פעמיים ברצף ב-virtual memory",
+        "מדיניות כשמלא: לחסום, לזרוק חדש, או לדרוס ישן. ב-RX real-time לא חוסמים את ה-producer: זורקים, סופרים, ומסמנים discontinuity"
+      ],
+      "complexity": "push ו-pop ב-O(1), בלי הקצאות. זיכרון: N איברים. גודל נדרש: קצב × הזמן הארוך ביותר שה-consumer יכול להיעצר, ועוד גודל batch.",
+      "pitfalls": [
+        "N שאינו חזקה של 2 עם מונים רצים: קפיצה באינדקס כשהמונה עוטף (ב-32 ביט וב-100 MS/s זה קורה אחרי 43 שניות)",
+        "head ו-tail באותה cache line: false sharing",
+        "relaxed במקום release/acquire: הצד השני רואה אינדקס לפני הנתונים",
+        "שתי mappings פרטיות (MAP_PRIVATE) במקום אותו קובץ זיכרון פעמיים: אלה שני buffers שונים",
+        "Python: slice assignment לא עוטף"
+      ],
+      "senior": [
+        "לנמק את הגודל במספרים: קצב, stall מקסימלי, batch",
+        "להסביר את ה-memory ordering של SPSC ולמה הוא מספיק בלי CAS",
+        "לדבר על cache: false sharing, cached indices, batching של עדכונים",
+        "להגדיר מדיניות overflow ותצפית (counters) כחלק מה-API"
+      ],
+      "diagram": "N=8, head=11, tail=6  (free-running)\nsize = 11-6 = 5\nidx:  0 1 2 3 4 5 6 7\n      d d d . . . d d\n            ^head&7=3  ^tail&7=6"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.ring-buffers.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה ring buffer?",
+      "choices": [
+        "FIFO בגודל קבוע שבו אינדקסי הקריאה והכתיבה עוטפים לתחילת המערך",
+        "רשימה מקושרת שהאיבר האחרון שלה מצביע לראשון",
+        "מבנה שגדל אוטומטית כשהוא מתמלא",
+        "stack שמאפשר גישה מהצד השני"
+      ],
+      "answer": 0,
+      "explanation": "מערך בגודל קבוע עם מקום כתיבה ומקום קריאה שמתקדמים ועוטפים. אין הקצאות בזמן ריצה, וזו בדיוק הסיבה שהוא מתאים ל-real-time. רשימה מקושרת מעגלית היא מבנה אחר עם הקצאות ו-cache locality גרוע.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה נהוג לבחור גודל ring buffer שהוא חזקה של 2?",
+      "choices": [
+        "כי זה חוסך זיכרון",
+        "כי ה-cache דורש גדלים כאלה",
+        "כי אז אפשר לחשב אינדקס עם `i & (N-1)` במקום `i % N`, ומונים רצים ב-unsigned עובדים נכון גם כשהם עוטפים",
+        "כי memcpy מהיר יותר בגדלים כאלה"
+      ],
+      "answer": 2,
+      "explanation": "AND לוקח מחזור אחד, וחלוקה (modulo בגודל שאינו ידוע בזמן קומפילציה) עשרות. החשוב יותר: N שמחלק את 2^32 או 2^64 מבטיח ש-`counter & (N-1)` ממשיך ברצף גם כשהמונה עוטף. אין דרישה כזו מה-cache, וחזקה של 2 אפילו מבזבזת זיכרון כשמעגלים כלפי מעלה.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q03",
+      "level": 1,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "from collections import deque\nd = deque(maxlen=3)\nfor i in range(1, 6):\n    d.append(i)\nprint(list(d))",
+      "choices": [
+        "[1, 2, 3]",
+        "[3, 4, 5]",
+        "[1, 2, 3, 4, 5]",
+        "IndexError"
+      ],
+      "answer": 1,
+      "explanation": "deque עם maxlen מתנהג כמו ring buffer שדורס את הישן: כשמוסיפים לאחד מלא, האיבר מהצד השני נזרק. נשארים שלושת האחרונים. זו מדיניות 'drop oldest', מתאימה ל-history אבל לא ל-stream שאסור לאבד בו נתונים.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ring buffer עם head ו-tail בטווח [0, N). המצב head == tail יכול להיות גם ריק וגם מלא. מה **אינו** פתרון לבעיה?",
+      "choices": [
+        "להשאיר תמיד slot אחד ריק: מלא הוא `(head+1)%N == tail`",
+        "להחזיק מונה count בנוסף לאינדקסים",
+        "להשתמש במונים רצים שלא מתאפסים, ו-`head - tail` נותן את הגודל",
+        "לאתחל את tail ל-1 במקום 0"
+      ],
+      "answer": 3,
+      "explanation": "שלושת הראשונים הם הפתרונות הסטנדרטיים: slot ריק (מבזבז איבר אחד), count (משתנה משותף נוסף, לא נוח ל-lock-free), או מונים רצים (הנפוץ ב-SPSC מודרני). הזזת נקודת ההתחלה לא משנה את העובדה שיש N+1 מצבים (0 עד N איברים) ורק N ערכים של הפרש.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מונים רצים ב-uint32_t אחרי ש-head עטף ו-tail עוד לא. מה מודפס?",
+      "code": "uint32_t head = 5;            // total written (wrapped)\nuint32_t tail = 4294967294u;  // total read\nstd::cout << head - tail;",
+      "choices": [
+        "-4294967289",
+        "4294967289",
+        "7",
+        "3"
+      ],
+      "answer": 2,
+      "explanation": "החיסור ב-unsigned הוא מודולו 2^32: 5 - (2^32 - 2) = 7 (mod 2^32). זה בדיוק מספר האיברים בבאפר: tail הגיע ל-2^32-2, נכתבו עוד 7 (עד 2^32+5). זו הסיבה שמונים רצים עובדים בלי טיפול מיוחד ב-wrap, כל עוד N קטן מ-2^32 ומחלק אותו.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-SDR, thread ה-RX (producer) כותב ל-ring buffer, ו-thread העיבוד לא עומד בקצב והבאפר מתמלא. מה המדיניות המקובלת?",
+      "choices": [
+        "לחסום את thread ה-RX עד שיתפנה מקום",
+        "לזרוק את הנתונים החדשים, להעלות overflow counter, ולסמן discontinuity כדי שה-consumer יאפס state",
+        "לדרוס בשקט את הנתונים הישנים ביותר",
+        "להגדיל את הבאפר עם realloc"
+      ],
+      "answer": 1,
+      "explanation": "חסימת ה-RX רק מעבירה את ה-overflow למכשיר, שם הוא גרוע יותר. דריסה בשקט ב-SPSC יוצרת race מול consumer שקורא בדיוק את ה-slot הזה, ובנוסף מסתירה את הבעיה. realloc בזמן ריצה מבטל את כל היתרון של מבנה קבוע ושובר מצביעים. הנקודה החשובה: אובדן חייב להיות גלוי, ב-counter וב-flag שמגיע לצרכן.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-SPSC ring buffer, `head` (נכתב על ידי ה-producer) ו-`tail` (נכתב על ידי ה-consumer) מוגדרים כשני atomics סמוכים ב-struct. ה-throughput נמוך מהצפוי. מה הסיבה הסבירה?",
+      "choices": [
+        "false sharing: שני המשתנים באותה cache line של 64 bytes, וכל כתיבה של צד אחד מבטלת את השורה אצל הצד השני. צריך `alignas(64)` לכל אחד",
+        "atomics תמיד איטיים",
+        "חסר mutex",
+        "הבאפר קטן מדי"
+      ],
+      "answer": 0,
+      "explanation": "גם בלי שיתוף לוגי, אותה cache line עוברת בין הליבות על כל עדכון (ping-pong של פרוטוקול ה-coherence), ועולה עשרות עד מאות ns. הפרדה לשורות שונות (ב-C++17 גם `std::hardware_destructive_interference_size`) פותרת. atomic load/store עם acquire/release ב-x86 הם mov רגילים. mutex רק יאט.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ה-consumer צריך בלוק רציף של 4096 דגימות לקלט של FFT, אבל הבלוק חוצה את סוף הבאפר. אילו פתרונות מקובלים?",
+      "choices": [
+        "אין פתרון, צריך לחכות שה-head יעטוף",
+        "לקרוא דגימה-דגימה עם `% N` בתוך ה-FFT",
+        "להגדיל את הבאפר עד שזה לא קורה",
+        "להעתיק בשתי פעולות (עד הסוף, ואז מההתחלה) ל-buffer זמני, או mirrored mapping שבו אותו זיכרון פיזי ממופה פעמיים ברצף, כך שקריאה מעבר לסוף ממשיכה בהתחלה"
+      ],
+      "answer": 3,
+      "explanation": "שתי העתקות הן הפתרון הפשוט והנייד, במחיר copy. mirrored mapping (נקרא גם magic ring buffer) נותן חלון רציף בלי העתקה, בעזרת ה-MMU. גישה עם `%` לכל דגימה הורסת את הביצועים ולא אפשרית בתוך ספריית FFT. הגדלת הבאפר לא מונעת חציה, רק משנה כמה פעמים היא קורית.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q09",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את הצעדים של `try_push` ב-SPSC ring buffer עם מונים רצים.",
+      "items": [
+        "לקרוא את head של עצמי (relaxed)",
+        "לקרוא את tail (acquire) ולבדוק ש-head - tail < N",
+        "לכתוב את הנתונים ל-buf[head & (N-1)]",
+        "לפרסם head+1 עם store ב-release"
+      ],
+      "explanation": "ה-producer הוא הכותב היחיד של head, ולכן קריאה relaxed מספיקה. ה-acquire על tail מבטיח שה-consumer סיים לקרוא את ה-slot שהוא שחרר לפני שאנחנו דורסים אותו. הכתיבה לנתונים חייבת לקרות לפני ה-release של head, אחרת ה-consumer עלול לקרוא slot שעוד לא נכתב.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q10",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "ring buffer ב-NumPy. אחרי זמן מה `write` זורק ValueError. מה הבאג?",
+      "code": "class Ring:\n    def __init__(self, n):\n        self.buf = np.zeros(n, np.complex64)\n        self.w = 0\n    def write(self, x):\n        i = self.w % len(self.buf)\n        self.buf[i:i + len(x)] = x\n        self.w += len(x)",
+      "bugLine": 7,
+      "choices": [
+        "complex64 לא תומך ב-slice assignment",
+        "`self.w` יגלוש",
+        "`%` על int של Python איטי",
+        "slice לא עוטף: כשהבלוק חוצה את סוף המערך, `buf[i:i+len(x)]` קצר יותר מ-x, והשמה בין צורות שונות נכשלת. צריך לפצל לשני חלקים"
+      ],
+      "answer": 3,
+      "explanation": "ב-NumPy (ו-Python) slice שחורג מהסוף פשוט נחתך, ולכן הצורות לא תואמות ונזרק 'could not broadcast'. התיקון: `k = min(len(x), n - i)`, השמה של x[:k] ל-buf[i:i+k] ושל x[k:] ל-buf[:len(x)-k]. int של Python לא גולש.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q11",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ring buffer עם מונה כתיבה רץ ב-32 ביט, ב-stream של 100 MS/s. בערך 43 שניות אחרי ההתחלה יש glitch, ושוב כל 43 שניות. מה הבאג?",
+      "code": "constexpr uint32_t N = 1000;\nfloat buf[N];\nuint32_t head = 0;   // free-running write counter\n\nvoid push(float x) {\n    buf[head % N] = x;\n    ++head;\n}",
+      "bugLine": 1,
+      "choices": [
+        "N=1000 אינו חזקה של 2, ולכן לא מחלק את 2^32. כש-head עוטף (2^32 דגימות ≈ 42.9 שניות ב-100 MS/s), `head % N` קופץ מ-295 ל-0 במקום להמשיך ל-296, וכל החישובים מול tail מתבלבלים",
+        "`%` איטי מדי ב-100 MS/s",
+        "buf צריך להיות מיושר",
+        "head צריך להיות atomic"
+      ],
+      "answer": 0,
+      "explanation": "2^32 mod 1000 = 296, ולכן לפני ה-wrap האינדקס האחרון הוא (2^32-1) mod 1000 = 295, ואחריו 0. שני slots נכתבים 'מחוץ לסדר' וה-consumer, שמחשב באותה צורה, רואה סדר שגוי. 2^32/100e6 ≈ 42.95 s, וזה הזמן המחזורי. תיקון: N חזקה של 2 (1024), או מונים ב-64 ביט (שעוטפים אחרי כ-5,800 שנים ב-100 MS/s). `%` אכן איטי יחסית אבל זה לא באג נכונות.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q12",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב SPSC ring buffer lock-free: template על T ועל N (חזקה של 2), עם `try_push` ו-`try_pop` שמחזירות false כשהבאפר מלא או ריק. ציין memory orders ומנע false sharing.",
+      "starter": "template <typename T, size_t N>\nclass Spsc {\npublic:\n    bool try_push(const T& v);   // producer thread only\n    bool try_pop(T& out);        // consumer thread only\n};",
+      "modelAnswer": "template <typename T, size_t N>\nclass Spsc {\n    static_assert(N > 0 && (N & (N - 1)) == 0, \"N must be a power of two\");\n    alignas(64) std::atomic<size_t> head_{0};   // written by producer\n    alignas(64) std::atomic<size_t> tail_{0};   // written by consumer\n    alignas(64) T buf_[N];\npublic:\n    bool try_push(const T& v) {\n        size_t h = head_.load(std::memory_order_relaxed);\n        if (h - tail_.load(std::memory_order_acquire) == N) return false;  // full\n        buf_[h & (N - 1)] = v;\n        head_.store(h + 1, std::memory_order_release);   // publish data\n        return true;\n    }\n    bool try_pop(T& out) {\n        size_t t = tail_.load(std::memory_order_relaxed);\n        if (head_.load(std::memory_order_acquire) == t) return false;     // empty\n        out = buf_[t & (N - 1)];\n        tail_.store(t + 1, std::memory_order_release);   // free the slot\n        return true;\n    }\n};",
+      "rubric": [
+        "מונים רצים ו-mask, עם static_assert על חזקה של 2",
+        "release על פרסום האינדקס ו-acquire על קריאת האינדקס של הצד השני",
+        "head, tail ו-buf בשורות cache נפרדות",
+        "בדיקות full/empty נכונות עם head - tail",
+        "O(1), בלי locks ובלי CAS; מזכיר שיפור עם cached indices ו-batch"
+      ],
+      "explanation": "SPSC לא צריך CAS כי לכל אינדקס יש כותב יחיד. זוג release/acquire על head מבטיח שה-consumer רואה את הנתונים, וזוג release/acquire על tail מבטיח שה-producer לא דורס slot שעוד נקרא.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "אופטימיזציה מקובלת ב-SPSC: ה-producer שומר `cachedTail` מקומי ומרענן אותו מה-atomic רק כש-`head - cachedTail == N`. מה הרווח?",
+      "choices": [
+        "חוסך את ה-memory barrier של ה-release",
+        "מאפשר כמה producers",
+        "ברוב הקריאות ה-producer לא נוגע בכלל ב-cache line של tail, ולכן היא לא עוברת בין הליבות בכל push. הקריאה המשותפת קורית רק כשנראה שהבאפר מלא",
+        "מקטין את הזיכרון של הבאפר"
+      ],
+      "answer": 2,
+      "explanation": "כל קריאה של tail מביאה את השורה מה-consumer (שכותב אליה כל הזמן), וזו תעבורת coherence יקרה. ה-cached tail שמרני: אם הוא מראה שיש מקום, באמת יש לפחות כמה שהוא מראה. אותו טריק עובד בצד ה-consumer עם cachedHead. זה לא נוגע ב-release (שחובה) ולא הופך את המבנה ל-MPSC.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "RX של 50 MS/s, sc16. ה-consumer לוקח batches של 8192 דגימות, ויכול להיעצר עד 5 ms. מה הגודל הקטן ביותר של ring buffer, כחזקה של 2 בדגימות, שעומד בזה?",
+      "choices": [
+        "2^16 (65,536)",
+        "2^17 (131,072)",
+        "2^18 (262,144)",
+        "2^20 (1,048,576)"
+      ],
+      "answer": 2,
+      "explanation": "5 ms × 50e6 = 250,000 דגימות, ועוד batch של 8192 שאולי כבר ממתין: 258,192. 2^17 קטן מדי, ו-2^18 = 262,144 עומד בזה בקושי (1 MiB ב-sc16). בפועל הייתי בוחר 2^19 בשביל מרווח, כי ה-stall המקסימלי שנמדד הוא לרוב לא הגרוע ביותר. 2^20 עובד אבל אינו המינימום.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן את ה-buffer בין thread ה-RX לבין thread העיבוד ב-jammer ריאקטיבי (100 MS/s, דרישת latency נמוכה, ואסור לאבד דגימות בלי לדעת).",
+      "modelAnswer": "SPSC ring buffer lock-free עם מונים רצים של 64 ביט וגודל חזקה של 2. הגודל: מצד אחד מספיק לספוג את ה-stall הגרוע של ה-consumer (נמדד, למשל כמה ms, כלומר כמה מאות אלפי דגימות), ומצד שני ב-jammer ריאקטיבי ה-latency חשוב, ולכן ה-consumer צריך לעבוד 'קרוב לראש' ולא לצבור backlog: אם הוא מפגר מעבר לסף, עדיף לדלג קדימה (לזרוק ישן) ולסמן, כי תגובה מאוחרת חסרת ערך. הנתונים עוברים ב-blocks (כמו ה-buffers של recv) ולא דגימה-דגימה, וה-head מתעדכן פעם לבלוק. כל block מגיע עם metadata: timestamp ומספר דגימות, ודגל discontinuity אם היה overflow; ה-consumer מאפס state (מסננים, detector) כשהוא רואה אותו. ה-producer לעולם לא חוסם: אם אין מקום, זורק ומעלה counter. פרטי מימוש: head ו-tail ב-cache lines נפרדות, cached indices, זיכרון שהוקצה מראש, mlock ו-prefault כדי שלא יהיו page faults, ואם אפשר hugepages. threads מוצמדים לליבות (affinity) ובעדיפות RT. monitoring: מילוי מקסימלי, overflow counter ו-lag ב-µs, כדי לדעת כמה מרווח באמת יש.",
+      "rubric": [
+        "SPSC lock-free עם גודל מנומק במספרים",
+        "מתייחס ל-trade-off בין ספיגת stall לבין latency, ומדיניות של דילוג קדימה",
+        "blocks עם metadata (timestamps, discontinuity) ו-reset של state",
+        "producer שלא חוסם, counters ו-monitoring",
+        "פרטי מערכת: cache lines, mlock/prefault, affinity ו-RT priority"
+      ],
+      "explanation": "ב-jammer ריאקטיבי 'לא לאבד נתונים' ו-'latency נמוך' מתנגשים. מראיין סניור מצפה לשמוע את ההתנגשות ואת ההחלטה המנומקת.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מממשים mirrored ring buffer על Linux, כך שקריאה רציפה מעבר לסוף ממשיכה בהתחלה. מה הדרך הנכונה?",
+      "choices": [
+        "`memfd_create` (או shm) בגודל שהוא כפולה של גודל הדף; לשריין 2×size של address space, ואז למפות את אותו fd פעמיים, ב-`MAP_SHARED | MAP_FIXED`, לחצי הראשון ולחצי השני",
+        "שתי קריאות ל-`mmap` עם `MAP_PRIVATE | MAP_ANONYMOUS` בכתובות סמוכות",
+        "malloc של 2×size והעתקה של כל כתיבה לשני המקומות",
+        "זה דורש hugepages ו-root"
+      ],
+      "answer": 0,
+      "explanation": "הטריק הוא שאותם דפים פיזיים מופיעים בשתי כתובות וירטואליות רצופות, ולכן חייב להיות אובייקט זיכרון משותף (fd) שממופה פעמיים, והגודל חייב להיות כפולה של גודל הדף. שתי mappings אנונימיות פרטיות הן שני זיכרונות נפרדים, והקריאה מעבר לסוף תראה אפסים. כתיבה כפולה עובדת אבל מכפילה את עלות הכתיבה. hugepages אפשריים (ואז הגודל כפולה של 2 MiB) אבל לא נדרשים.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-SPSC על ARM, ה-consumer מפרסם `tail.store(t + 1, std::memory_order_relaxed)` אחרי שקרא את ה-slot. מה יכול להשתבש?",
+      "choices": [
+        "שום דבר: ה-consumer רק קורא מה-slot, ולכן אין צורך בסדר",
+        "ה-producer לא יראה את העדכון של tail לעולם",
+        "ה-consumer עלול לקרוא נתונים ישנים",
+        "הקריאה של ה-slot יכולה להיראות כאילו קרתה אחרי ה-store של tail. ה-producer רואה את ה-slot כפנוי, כותב אליו, וה-consumer קורא ערך חדש או מעורבב (data race על ה-slot)"
+      ],
+      "answer": 3,
+      "explanation": "relaxed store לא מונע reordering של loads קודמים אחריו, ו-ARM אכן מבצע reordering כזה. כך ה-producer יכול לדרוס slot שה-consumer עוד לא סיים לקרוא. release על tail (ו-acquire בקריאה של ה-producer) מבטיח שכל הקריאות מה-slot הסתיימו לפני שהוא נראה פנוי. relaxed לא מונע מהעדכון להיראות, רק לא נותן סדר. על x86 (TSO) loads לא עוברים stores מאוחרים, ולכן הבאג נראה רק על ARM.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "SPSC של דגימות בודדות ב-100 MS/s: push ו-pop מפרסמים אינדקס על כל דגימה. ה-throughput נתקע בכ-30-50 M ops/s גם עם cached indices. מה השיפור הנכון?",
+      "choices": [
+        "להחליף ל-mutex",
+        "להוסיף עוד consumer threads",
+        "להעביר בלוקים: push/pop של מערך (למשל 1024 דגימות) עם עדכון אינדקס אחד לבלוק, וכך מספר העברות ה-cache line יורד פי 1000, במחיר latency של בלוק",
+        "להשתמש ב-seq_cst"
+      ],
+      "answer": 2,
+      "explanation": "כל פרסום של head מבטל את השורה אצל ה-consumer ולהפך, וכל העברה של cache line בין ליבות עולה עשרות ns, כלומר תקרה של עשרות מיליוני פרסומים בשנייה. ב-blocks העלות מתחלקת על אלף דגימות, וה-memcpy עצמו רציף ו-vectorized. latency נוסף: 1024 דגימות ב-100 MS/s הן 10 µs, ולכן בוחרים גודל לפי תקציב ה-latency. mutex ו-seq_cst רק מוסיפים עלות, ו-SPSC לא תומך בכמה consumers.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

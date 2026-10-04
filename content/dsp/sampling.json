@@ -1,0 +1,341 @@
+{
+  "domain": "dsp",
+  "subtopic": "sampling",
+  "lessons": [
+    {
+      "id": "dsp.sampling",
+      "title": "Sampling ו-aliasing בצד התוכנה",
+      "what": "את התיאוריה אתה מכיר: דגימה ב-fs מקפלת את הספקטרום במחזור fs. בצד התוכנה השאלות הן אחרות: כמה bytes בשנייה זורמים, כמה זיכרון צריך כדי לספוג stall, איך מזהים דגימות שאבדו, ואיך מייצגים זמן בלי לאבד דיוק. ראיון למשרת תוכנה ב-NVIDIA יבדוק בדיוק את החשבון הזה.",
+      "when": [
+        "שאלות 'האם זה נכנס ב-link' או 'כמה זיכרון צריך ל-X שניות'",
+        "תכנון buffers בין RX, עיבוד ו-TX",
+        "באגים של דגימות חסרות, overflow ('O') או underflow ('U') ב-UHD",
+        "המרת תדר אמיתי לתדר בבסיס-פס אחרי דגימה מרוכבת או undersampling"
+      ],
+      "how": [
+        "דגימה ממשית ב-fs: רוחב סרט שימושי fs/2. דגימה מרוכבת (IQ) ב-fs: רוחב סרט fs, מ-fs/2- עד fs/2+, ותדרים חיוביים ושליליים נבדלים",
+        "תדר נצפה בדגימה מרוכבת: f מודולו fs, מועבר לטווח [-fs/2, fs/2). בדגימה ממשית: מקפלים סביב כפולות של fs/2, ואזור Nyquist זוגי הופך את הספקטרום",
+        "קצב נתונים = קצב דגימה × bytes לדגימה × ערוצים. sc16 (int16 I + int16 Q) = 4 bytes, fc32 (float I + float Q) = 8 bytes, sc8 = 2 bytes",
+        "גודל buffer = קצב × זמן שצריך לספוג. 20 ms ב-100 MS/s הם 2 מיליון דגימות",
+        "זמן: לייצג timestamps כמספר שלם של ticks (int64), לא כ-float. להשוות timestamps צפויים מול בפועל כדי לגלות דגימות חסרות",
+        "שעונים: שני מכשירים עם 'אותו' קצב שונים בכמה ppm; בלי reference משותף (10 MHz + PPS) FIFO ביניהם יתרוקן או יתמלא"
+      ],
+      "complexity": "200 MS/s sc16 = 800 MB/s = 6.4 Gb/s לערוץ. 10GbE נושא בפועל כ-9.5 Gb/s של payload. זיכרון ל-1 שנייה ב-fc32 ב-200 MS/s: 1.6 GB.",
+      "pitfalls": [
+        "לבלבל בין MB/s ל-Mb/s (פי 8)",
+        "להניח שהמכשיר נתן בדיוק את קצב הדגימה שביקשת. צריך לקרוא את הקצב בפועל (get_rx_rate ב-UHD)",
+        "לשמור זמן כ-float32: אחרי 1000 שניות הרזולוציה היא 61 µs",
+        "לזרוק את ה-Q ולהשאיר רק I: הספקטרום השלילי מתקפל על החיובי",
+        "להתעלם מ-ppm offset בין שני מכשירים"
+      ],
+      "senior": [
+        "לעשות חשבון throughput בעל-פה ולשים לב לצוואר הבקבוק: link, PCIe, memory bandwidth או CPU",
+        "לתכנן גילוי ודיווח של אובדן דגימות (timestamps, sequence numbers) ולהחליט מה עושים: reset, מילוי באפסים, או סימון discontinuity",
+        "להסביר למה הפורמט על הקו (sc16, sc8) שונה מהפורמט בעיבוד (fc32), ומה המחיר של ההמרה",
+        "להבין את בעיית ה-clock domains בין מכשירים ואת הפתרונות: reference משותף או resampling אסינכרוני"
+      ],
+      "diagram": "complex fs: [-fs/2 ........ +fs/2)\nf=+30, fs=50 -> 30-50 = -20 MHz\n\nreal fs: zones of fs/2\n|  1  |  2  |  3  |  4  |\n       inv         inv"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.sampling.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "אות ממשי נדגם ב-fs = 1 MS/s. מה התדר המקסימלי שניתן לייצג בלי aliasing?",
+      "choices": [
+        "250 kHz",
+        "1 MHz",
+        "500 kHz",
+        "2 MHz"
+      ],
+      "answer": 2,
+      "explanation": "בדגימה ממשית הספקטרום סימטרי, וכל תדר מעל fs/2 מתקפל אל מתחתיו. לכן הגבול הוא fs/2 = 500 kHz. 1 MHz הוא הרוחב של דגימה מרוכבת באותו קצב, אבל גם שם הטווח הוא 500 kHz- עד 500 kHz+.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q02",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה bytes תופסת דגימה מרוכבת אחת בפורמט sc16 (I ו-Q כל אחד int16)?",
+      "accept": [
+        "4",
+        "4 bytes",
+        "4B"
+      ],
+      "explanation": "I הוא 2 bytes ו-Q הוא 2 bytes, סך הכל 4. זה הפורמט הנפוץ על הקו ב-UHD. fc32 (שני float) תופס 8 bytes, ו-sc8 תופס 2.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "טון ממשי של 700 Hz נדגם ב-fs = 1000 Hz. באיזה תדר הוא יופיע בספקטרום הדגום (בטווח 0 עד fs/2)?",
+      "choices": [
+        "700 Hz",
+        "300 Hz",
+        "200 Hz",
+        "1700 Hz"
+      ],
+      "answer": 1,
+      "explanation": "700 Hz מעל fs/2 = 500 Hz, ולכן מתקפל: fs - 700 = 300 Hz. מבחינת הדגימות, cos(2π·0.7n) זהה ל-cos(2π·0.3n). 1700 Hz הוא alias נוסף של אותו תדר, לא המיקום בטווח הבסיסי.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q04",
+      "level": 2,
+      "type": "short",
+      "prompt": "כמה MB/s (10^6 bytes) זורמים בערוץ RX אחד של 100 MS/s בפורמט sc16 מרוכב?",
+      "accept": [
+        "400",
+        "400MB/s",
+        "400 MB/s"
+      ],
+      "explanation": "100e6 דגימות × 4 bytes = 400e6 bytes/s = 400 MB/s, שזה 3.2 Gb/s. חשבון כזה צריך להיות אוטומטי בראיון: קצב × bytes לדגימה × ערוצים.",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "דוגמים IQ (מרוכב) ב-fs = 50 MS/s. מה רוחב הסרט שניתן לראות בלי aliasing?",
+      "choices": [
+        "25 MHz",
+        "100 MHz",
+        "12.5 MHz",
+        "50 MHz"
+      ],
+      "answer": 3,
+      "explanation": "בדגימה מרוכבת התדרים החיוביים והשליליים נבדלים, ולכן הטווח הוא 25- עד 25+ MHz: 50 MHz סך הכל. בפועל מסנן ה-anti-aliasing לא אידיאלי, ולכן הרוחב השימושי קטן יותר, למשל כ-80%. 25 MHz היא התשובה לדגימה ממשית.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "כמה זיכרון צריך לשמור שנייה אחת של ערוץ 200 MS/s בפורמט fc32 מרוכב (`std::complex<float>`)?",
+      "choices": [
+        "1.6 GB",
+        "800 MB",
+        "3.2 GB",
+        "400 MB"
+      ],
+      "answer": 0,
+      "explanation": "complex<float> הוא 8 bytes: 200e6 × 8 = 1.6e9 bytes. ב-sc16 זה היה 800 MB. לכן מקליטים לדיסק ב-sc16 וממירים ל-float רק בעיבוד. 3.2 GB הוא complex<double>.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q07",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nfs = 1000\nn = np.arange(8)\nx = np.cos(2*np.pi*900*n/fs)\ny = np.cos(2*np.pi*100*n/fs)\nprint(np.allclose(x, y))",
+      "choices": [
+        "False, כי התדרים שונים",
+        "True, כי 900 Hz ב-fs=1000 הוא alias של 100 Hz",
+        "False, כי x הוא alias של 100- Hz ולכן הפאזה הפוכה",
+        "ValueError על אורך המערך"
+      ],
+      "answer": 1,
+      "explanation": "cos(2π·0.9n) = cos(2πn - 2π·0.1n) = cos(2π·0.1n) לכל n שלם. ל-cos אין סימן תדר, ולכן 100 Hz ו-100- Hz נותנים אותן דגימות בדיוק. עם sin היה מתקבל היפוך סימן. allclose נדרש כי חישובי floating-point לא זהים עד הביט.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "טון מרוכב (`exp(j2πft)`) בתדר 30+ MHz ביחס למרכז, נדגם IQ ב-fs = 50 MS/s. איפה הוא יופיע ב-FFT?",
+      "choices": [
+        "20- MHz",
+        "20+ MHz",
+        "30+ MHz",
+        "5- MHz"
+      ],
+      "answer": 0,
+      "explanation": "בדגימה מרוכבת אין קיפול סימטרי אלא הזזה מעגלית: 30 - 50 = 20- MHz. בדגימה ממשית התשובה הייתה 20+ (קיפול), וזה המסיח הנפוץ. אחרי fftshift הטון יופיע ב-bin שמתאים ל-20- MHz.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread העיבוד יכול להיעצר עד 20 ms (למשל page fault או preemption). ה-RX זורם ב-100 MS/s sc16. מה הגודל המינימלי של ring buffer בין RX לעיבוד כדי לא לאבד דגימות?",
+      "choices": [
+        "800 KB",
+        "2 MB",
+        "8 MB",
+        "80 MB"
+      ],
+      "answer": 2,
+      "explanation": "100e6 × 0.02 = 2e6 דגימות, × 4 bytes = 8 MB. 2 MB הוא מספר הדגימות בטעות כ-bytes, 800 KB ו-80 MB הם שגיאות של סדר גודל. בפועל מוסיפים מרווח, ובנוסף העיבוד חייב להיות מהיר מזמן-אמת כדי לרוקן את ה-backlog אחרי ה-stall.",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "UHD מדפיס 'O' (overflow) במהלך RX. אילו מהבאים יכולים לגרום לזה? (בחר את כל הנכונים)",
+      "choices": [
+        "ה-thread שקורא ל-recv() איטי מקצב הדגימה בממוצע",
+        "socket receive buffer קטן מדי (net.core.rmem_max) לספוג bursts",
+        "ה-thread של recv לא רץ בעדיפות real-time ונעצר על ידי ה-scheduler",
+        "gain גבוה מדי שגורם ל-clipping ב-ADC",
+        "קצב דגימה נמוך מדי לאות"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "overflow אומר שה-host לא קרא מספיק מהר וה-buffers במכשיר או ב-kernel התמלאו, כך שדגימות נזרקו. הסיבות הן צד-תוכנה: צרכן איטי, buffers קטנים, או preemption. clipping הוא בעיית עוצמה באות, לא אובדן נתונים, וקצב נמוך דווקא מקל על ה-host.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q11",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את השלבים בשרשרת RX טיפוסית של SDR, מהאנטנה ועד ה-buffer באפליקציה.",
+      "items": [
+        "LNA והמרה מטה אנלוגית (mixer)",
+        "מסנן anti-aliasing אנלוגי",
+        "ADC בקצב המאסטר (master clock)",
+        "DDC ב-FPGA: NCO, מסננים ו-decimation",
+        "packetization ושליחה על 10GbE",
+        "recv() ב-host והמרה מ-sc16 ל-fc32"
+      ],
+      "explanation": "הסדר הזה מסביר איפה כל צוואר בקבוק נמצא: decimation ב-FPGA מוריד את הקצב לפני ה-link, הפורמט על הקו הוא sc16 כדי לחסוך רוחב פס, וההמרה ל-float קורית ב-host ועולה CPU.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "אות IF במרכז 70 MHz וברוחב 10 MHz נדגם ממשית ב-fs = 40 MS/s (undersampling). איפה הוא מופיע בספקטרום הדגום, ובאיזה כיוון?",
+      "choices": [
+        "במרכז 30 MHz, לא הפוך",
+        "במרכז 10 MHz, לא הפוך",
+        "במרכז 30 MHz, הפוך",
+        "במרכז 10 MHz, הפוך ספקטרלית"
+      ],
+      "answer": 3,
+      "explanation": "אזורי Nyquist ברוחב fs/2 = 20 MHz: 70 MHz נמצא באזור 4 (60-80), אזור זוגי, ולכן הספקטרום מתהפך. ה-alias: |70 - 2·40| = 10 MHz. הסרט 65-75 MHz ממופה ל-15 עד 5 MHz, בתוך 0-20 בלי חפיפה. 30 MHz גדול מ-fs/2 ולכן לא אפשרי. בתוכנה מתקנים את ההיפוך בהצמדה (conjugate) או ב-mixing ב-fs/2.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך להזרים 2 ערוצי RX של 200 MS/s כל אחד ל-host. איזו תצורה עובדת?",
+      "choices": [
+        "sc16 על link אחד של 10GbE",
+        "fc32 על שני links של 10GbE",
+        "sc16 על link אחד של 10GbE עם jumbo frames",
+        "sc8 על link אחד של 10GbE, או sc16 עם ערוץ לכל link"
+      ],
+      "answer": 3,
+      "explanation": "sc16: 2 × 200e6 × 4 B = 1.6 GB/s = 12.8 Gb/s, יותר מ-10GbE, ו-jumbo frames רק משפרים יעילות בכמה אחוזים. sc8: 6.4 Gb/s, נכנס. sc16 עם ערוץ לכל link: 6.4 Gb/s לכל link, נכנס. fc32 מכפיל ל-12.8 Gb/s לכל link ולא נכנס. המחיר של sc8: בערך 48 dB של דינמיקה במקום 96.",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-X310 עם master clock של 200 MHz, הקוד מבקש RX rate של 30 MS/s ומשתמש ב-30e6 בכל החישובים (למשל המרת offset תדר ל-bin של FFT). מה הבעיה?",
+      "choices": [
+        "אין בעיה, ה-FPGA תומך בכל קצב",
+        "ה-decimation חייב להיות שלם: 200/30 = 6.67, ו-UHD מתאם לקצב קרוב (200/7 ≈ 28.571 MS/s) עם אזהרה. כל חישוב שמשתמש ב-30e6 שגוי בכ-5%",
+        "UHD יזרוק exception ולא יתחיל stream",
+        "ה-FPGA יעשה resampling פרקציונלי ל-30 MS/s בדיוק"
+      ],
+      "answer": 1,
+      "explanation": "ה-DDC ב-X310 תומך רק ב-decimation שלם מה-master clock. UHD מעגל ל-decimation 7 ומדפיס אזהרה שהקצב בפועל הוא 28.571429 MS/s. תוכנה נכונה קוראת `get_rx_rate()` אחרי ההגדרה ומשתמשת בערך שחזר, או בוחרת master clock (184.32 או 200 MHz) שנותן חלוקה שלמה. אין resampler פרקציונלי ב-DDC הסטנדרטי.",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q15",
+      "level": 4,
+      "type": "oral",
+      "prompt": "איך היית מזהה בתוכנה שאבדו דגימות ב-stream של RX, ומה היית עושה כשזה קורה?",
+      "modelAnswer": "כל חבילה או buffer מ-recv מגיעים עם metadata: timestamp (ב-ticks או time_spec) ומספר דגימות. מחשבים את ה-timestamp הצפוי של ה-buffer הבא: הקודם ועוד n/fs, ובתוכנה עדיף בייצוג שלם של ticks או דגימות כדי למנוע שגיאות עיגול. אם ה-timestamp בפועל גדול מהצפוי, ההפרש חלקי 1/fs הוא מספר הדגימות שאבדו; אם קטן, יש בעיה אחרת (חזרה בזמן, reset). בנוסף בודקים את קודי השגיאה של UHD: ERROR_CODE_OVERFLOW, ובחיבור רשת גם sequence errors ('D'). מה עושים תלוי באפליקציה: בעיבוד שתלוי ברצף פאזה (demodulation, מסנן עם state, NCO) מסמנים discontinuity, מאפסים state של מסננים ו-PLL, ולעיתים ממלאים באפסים כדי לשמור על יישור בזמן. בהקלטה שומרים log של הפערים עם ה-timestamp. בכל מקרה מעלים counter ל-monitoring, כי אובדן דגימות הוא סימן שהמערכת לא עומדת בזמן-אמת, ואז בודקים גודל buffers, עדיפות thread, ועומס CPU.",
+      "rubric": [
+        "שימוש ב-timestamps מה-metadata והשוואה לצפוי, בייצוג שלם",
+        "חישוב מספר הדגימות שאבדו, וזיהוי מקרה של קפיצה אחורה",
+        "שימוש בקודי שגיאה של ה-driver (overflow, sequence error)",
+        "טיפול לפי האפליקציה: reset של state, מילוי אפסים, סימון discontinuity",
+        "monitoring וחקירת הגורם: buffers, עדיפות, CPU"
+      ],
+      "explanation": "התשובה החזקה מחברת בין גילוי (timestamps), תגובה (state של אלגוריתמים) ותפעול (מדדים וגורם שורש).",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "הקוד שומר את זמן הדגימה כ-`float t` בשניות מתחילת הריצה. מה הרזולוציה של t אחרי 1000 שניות, וכמה דגימות זה ב-100 MS/s?",
+      "choices": [
+        "בערך 0.12 ns, פחות מדגימה",
+        "בערך 1 µs, כ-100 דגימות",
+        "בערך 7.6 µs, כ-763 דגימות",
+        "בערך 61 µs, כ-6100 דגימות"
+      ],
+      "answer": 3,
+      "explanation": "ל-float יש 24 ביט של mantissa (23 מאוחסנים). 1000 נמצא בין 2^9 ל-2^10, ולכן ה-ulp הוא 2^(9-23) = 2^-14 ≈ 61 µs, כלומר כ-6100 דגימות ב-100 MS/s. 0.12 ns היא בערך הרזולוציה של double סביב 10^6 שניות. הפתרון: מונה דגימות שלם ב-int64 (מספיק לאלפי שנים ב-100 MS/s), וחישוב זמן רק להצגה.",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "RX במכשיר A ו-TX במכשיר B, שניהם ב-100 MS/s נומינלי, כל אחד עם שעון עצמאי. ההפרש בין השעונים הוא 2.5 ppm. ה-FIFO ביניהם מתחיל עם מרווח של 500,000 דגימות לכל כיוון. מתי הוא יתרוקן או יתמלא?",
+      "choices": [
+        "אף פעם, כי הקצבים נומינלית שווים",
+        "אחרי בערך 2 שניות",
+        "אחרי בערך 33 דקות",
+        "אחרי בערך 5.5 שעות"
+      ],
+      "answer": 2,
+      "explanation": "הפרש הקצבים: 100e6 × 2.5e-6 = 250 דגימות לשנייה. 500,000 / 250 = 2000 שניות ≈ 33 דקות. buffer גדול רק דוחה את הבעיה. פתרונות: reference משותף (10 MHz ו-PPS) כך ששני המכשירים נעולים, או resampler אסינכרוני שמתאים את היחס לפי מילוי ה-FIFO (control loop).",
+      "lesson": "dsp.sampling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.sampling.q18",
+      "level": 5,
+      "type": "code",
+      "lang": "python",
+      "prompt": "קיבלת רשימת buffers מ-RX, כל אחד `(t, n)`: timestamp בתחילת ה-buffer ביחידות ticks של שעון 200 MHz, ומספר הדגימות. קצב הדגימה הוא 200 MHz חלקי `tps` (ticks per sample, שלם). כתוב `find_gaps(bufs, tps)` שמחזירה רשימה של `(index, missing)` לכל buffer שלפניו חסרות דגימות (missing שלילי אם יש חפיפה), וזורקת ValueError על timestamp שלא מיושר לדגימה.",
+      "starter": "def find_gaps(bufs, tps):\n    ...",
+      "modelAnswer": "def find_gaps(bufs, tps):\n    gaps = []\n    for i in range(1, len(bufs)):\n        t_prev, n_prev = bufs[i - 1]\n        expected = t_prev + n_prev * tps\n        d = bufs[i][0] - expected\n        if d % tps:\n            raise ValueError(f'misaligned timestamp at {i}')\n        if d:\n            gaps.append((i, d // tps))\n    return gaps\n\n# tps=4 (50 MS/s): [(0, 100), (400, 100), (1200, 50)]\n# expected at index 2 is 800 -> d=400 ticks -> 100 missing",
+      "rubric": [
+        "חישוב בשלמים בלבד (ticks), בלי float",
+        "timestamp צפוי = הקודם + n_prev × tps",
+        "בדיקת יישור עם מודולו ודיווח שגיאה",
+        "תמיכה בהפרש שלילי (חפיפה או קפיצה אחורה) ולא רק חיובי",
+        "O(n), רשימה ריקה או buffer יחיד מחזירים []"
+      ],
+      "explanation": "החשבון בשלמים מונע שגיאות עיגול מצטברות. ב-Python `%` ו-`//` על ערך שלילי עקביים (floor), ולכן d שלילי שמתחלק ב-tps נותן מספר דגימות שלילי מדויק.",
+      "lesson": "dsp.sampling"
+    }
+  ]
+}

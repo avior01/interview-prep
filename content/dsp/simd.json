@@ -1,0 +1,324 @@
+{
+  "domain": "dsp",
+  "subtopic": "simd",
+  "lessons": [
+    {
+      "id": "dsp.simd",
+      "title": "SIMD לקוד DSP",
+      "what": "SIMD (Single Instruction, Multiple Data) מבצע את אותה פעולה על כמה ערכים ברגיסטר רחב אחד: 4 floats ב-SSE/NEON (128 ביט), 8 ב-AVX2 (256), 16 ב-AVX-512. קוד DSP הוא המועמד האידיאלי: אותה פעולה על הרבה דגימות. אבל הרווח מגיע רק אם הנתונים מסודרים נכון, אין תלויות בין איטרציות, והקוד לא מוגבל ממילא ברוחב הפס של הזיכרון.",
+      "when": [
+        "לולאות פשוטות על מערכים גדולים: המרות פורמט, חלון, gain, FIR, מכפלות מרוכבות",
+        "פרופיילר מראה שלולאה חמה היא scalar",
+        "שאלות 'למה זה לא מווקטר' או 'למה AVX-512 לא עזר'",
+        "ראיונות ב-NVIDIA: אותה חשיבה (lanes, coalescing, divergence) עוברת ל-GPU"
+      ],
+      "how": [
+        "קודם לתת לקומפיילר לווקטר: `-O3 -march=...`, `__restrict` על מצביעים, לולאה עם מספר איטרציות ידוע, בלי קריאות לפונקציות לא inline ובלי branches תלויי-נתונים. לבדוק עם `-fopt-info-vec` (GCC) או `-Rpass=loop-vectorize` (Clang)",
+        "reductions ב-float לא מווקטרים בלי היתר (הסדר משתנה): `#pragma omp simd reduction` או כמה accumulators ידניים",
+        "פריסת נתונים: SoA (מערכי re ו-im נפרדים) נותן פעולות 'אנכיות' בלבד; AoS/interleaved דורש shuffles (moveldup, movehdup, permute, addsub)",
+        "alignment: `load`/`store` מיושרים דורשים כתובת מיושרת לרוחב הרגיסטר; `loadu` עובד תמיד ובמעבדים מודרניים עולה אותו דבר על נתונים מיושרים",
+        "זנב: כש-n לא מתחלק ברוחב, לולאה scalar בסוף או masked load/store",
+        "latency מול throughput: FMA עם latency של 4 מחזורים ושני ports צריך כ-8 accumulators בלתי תלויים כדי לרוץ בשיא",
+        "arithmetic intensity: אם יש מעט FLOPs לכל byte (למשל `y = a*x + y`), הקוד memory-bound ורגיסטר רחב יותר לא יעזור"
+      ],
+      "complexity": "רווח תיאורטי עד רוחב הרגיסטר (פי 8 ב-AVX2 ל-float). בפועל מוגבל ב-memory bandwidth, ב-shuffles וב-overhead של זנב. gather עולה בערך כמו טעינה לכל lane, ולא טעינה אחת.",
+      "pitfalls": [
+        "`_mm256_load_ps` על כתובת לא מיושרת: crash",
+        "hadd בכל איטרציה במקום accumulators אנכיים",
+        "accumulator יחיד: מוגבל ב-latency של FMA",
+        "binary עם `-march=native` שרץ על מעבד ישן יותר: SIGILL",
+        "AVX-512 על Skylake-SP מוריד תדר, ובקוד מעורב יכול להאט"
+      ],
+      "senior": [
+        "לבחור vectorization 'מבחוץ' (כמה outputs בבת אחת) כדי להימנע מ-horizontal sums",
+        "לחשב arithmetic intensity ולהגיד מראש אם SIMD יעזור",
+        "runtime dispatch (target_clones, cpu_supports) ל-binary אחד שרץ בכל מקום",
+        "להעביר את אותה חשיבה ל-GPU: warps של 32 lanes, coalescing, divergence"
+      ],
+      "diagram": "AoS: re0 im0 re1 im1 re2 im2 re3 im3\nSoA: re0 re1 re2 re3 | im0 im1 im2 im3\nAVX2 lane x8: [a0..a7] * [b0..b7]"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.simd.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "כמה ערכי float32 נכנסים ברגיסטר AVX2 (ymm)?",
+      "choices": [
+        "4",
+        "16",
+        "8",
+        "32"
+      ],
+      "answer": 2,
+      "explanation": "ymm הוא 256 ביט, כלומר 8 floats של 32 ביט או 4 doubles. SSE/NEON הם 128 ביט (4 floats), ו-AVX-512 (zmm) הוא 512 ביט (16 floats).",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של SIMD?",
+      "choices": [
+        "כמה threads מריצים את אותה פונקציה",
+        "ביצוע פקודות שונות על נתונים שונים בכמה ליבות",
+        "ביצוע של כמה פקודות באותו מחזור (superscalar)",
+        "פקודה אחת שפועלת על כמה ערכים במקביל, ברגיסטר רחב"
+      ],
+      "answer": 3,
+      "explanation": "Single Instruction, Multiple Data: למשל `vmulps` אחד מכפיל 8 זוגות floats. threads הם מקביליות ברמת ליבות (MIMD). superscalar הוא היכולת של ליבה להריץ כמה פקודות שונות במקביל, וזה משלים ל-SIMD.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה ערכי int16 נכנסים ברגיסטר AVX-512?",
+      "accept": [
+        "32"
+      ],
+      "explanation": "512/16 = 32. זו אחת הסיבות שקוד fixed-point ב-int16 יכול להיות מהיר פי 2 מ-float על אותה חומרה: פי 2 lanes.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "`void add(float* a, float* b, float* c, int n) { for (...) c[i] = a[i] + b[i]; }`. הקומפיילר מוסיף בדיקה בזמן ריצה או לא מווקטר בכלל. מה הסיבה הנפוצה?",
+      "choices": [
+        "n הוא int ולא size_t",
+        "חיבור float לא אסוציאטיבי",
+        "המערכים לא מיושרים",
+        "aliasing: `c` עלול לחפוף ל-`a` או ל-`b`, ואז כתיבה לאיבר אחד משנה קלט של איטרציה אחרת. `__restrict` מבטיח שאין חפיפה"
+      ],
+      "answer": 3,
+      "explanation": "אם c = a+1, למשל, הלולאה תלויה בעצמה וגרסה וקטורית תיתן תוצאה שגויה. לכן הקומפיילר מוסיף בדיקת חפיפה (versioning) או מוותר. `__restrict` מסיר את החשש. אסוציאטיביות רלוונטית רק ל-reductions, ו-alignment לא חוסם וקטוריזציה (יש loads לא מיושרים).",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין `_mm256_load_ps` ל-`_mm256_loadu_ps`?",
+      "choices": [
+        "load דורש כתובת מיושרת ל-32 bytes ואחרת קורס; loadu עובד עם כל כתובת, ובמעבדים מודרניים מהיר באותה מידה כשהכתובת מיושרת בפועל",
+        "loadu טוען רק 4 floats",
+        "load מהיר פי 2 תמיד",
+        "loadu עוקף את ה-cache"
+      ],
+      "answer": 0,
+      "explanation": "גרסה מיושרת על כתובת לא מיושרת גורמת ל-general protection fault (SIGSEGV). מאז Nehalem/Haswell, loadu על כתובת מיושרת לא עולה יותר, והמחיר קיים רק כשהגישה חוצה cache line. לכן ברירת מחדל סבירה היא loadu עם נתונים מיושרים. טעינה שעוקפת cache היא stream (non-temporal), דבר אחר.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "לולאת AVX2 מעבדת 8 floats בכל איטרציה, ו-n=1003. מה עושים עם 3 האיברים האחרונים?",
+      "choices": [
+        "מתעלמים, זה זניח",
+        "קוראים 8 floats בכל מקרה, כי הזיכרון שאחרי המערך בטוח לקריאה",
+        "לולאת scalar קצרה אחרי הלולאה הווקטורית, או masked load/store (`_mm256_maskload_ps`, או mask registers ב-AVX-512)",
+        "מעגלים את n למטה ל-1000 ומבקשים מהקורא לרפד"
+      ],
+      "answer": 2,
+      "explanation": "הזנב חייב להיות מעובד, ובלי לגעת בזיכרון שלא שייך למערך: קריאה מעבר לסוף היא UB ועלולה לחצות לדף לא ממופה. scalar remainder הוא הפתרון הפשוט; masked operations חוסכות את הלולאה הנפרדת. ריפוד ה-buffer על ידי מי שמקצה אותו הוא אופטימיזציה לגיטימית, אבל רק אם זה חוזה מפורש של ה-API.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מכפילים מערכים גדולים של מספרים מרוכבים איבר-איבר. איזו פריסת נתונים נותנת את הקוד הווקטורי הפשוט והמהיר ביותר?",
+      "choices": [
+        "SoA: מערך של re ומערך של im. אז re = ar·br - ai·bi ו-im = ar·bi + ai·br הן פעולות אנכיות בלבד, בלי shuffles",
+        "interleaved (re, im, re, im...) כמו std::complex",
+        "מערך של structs עם padding ל-16 bytes",
+        "אין הבדל, הקומפיילר מסדר מחדש"
+      ],
+      "answer": 0,
+      "explanation": "ב-SoA כל רגיסטר מכיל 8 חלקים ממשיים או 8 מדומים, והחישוב הוא 4 כפלים (או 2 כפלים ו-2 FMA) על 8 מספרים מרוכבים. ב-interleaved צריך לשכפל ולהחליף lanes (moveldup, movehdup, permute) ואז addsub. interleaved הוא הפורמט של UHD ו-FFTW, ולכן לפעמים כדאי להמיר פעם אחת ל-SoA ולעבוד כך לאורך כמה שלבים. קומפיילרים לא משנים layout של נתונים.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q08",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה עובדת בטסטים, אבל קורסת עם SIGSEGV כשקוראים לה כ-`scale(buf + 1, n - 1, g)` (buf מיושר ל-32). באיזו שורה?",
+      "code": "void scale(float* x, size_t n, float g) {\n    __m256 vg = _mm256_set1_ps(g);\n    size_t i = 0;\n    for (; i + 8 <= n; i += 8) {\n        __m256 v = _mm256_load_ps(x + i);\n        _mm256_storeu_ps(x + i, _mm256_mul_ps(v, vg));\n    }\n    for (; i < n; ++i) x[i] *= g;\n}",
+      "bugLine": 5,
+      "choices": [
+        "`_mm256_set1_ps` לא מקבל float",
+        "`_mm256_load_ps` דורש כתובת מיושרת ל-32 bytes. `buf + 1` מיושר רק ל-4, והטעינה גורמת ל-fault. צריך `_mm256_loadu_ps`",
+        "לולאת הזנב קוראת מעבר לסוף",
+        "storeu לא יכול לכתוב לאותו מקום שממנו קראו"
+      ],
+      "answer": 1,
+      "explanation": "הטסטים השתמשו ב-buffer מיושר, ולכן עברו. כל כתובת שאינה כפולה של 32 גורמת ל-load המיושר להיכשל. ה-store כבר u ולכן לא קורס. לולאת הזנב נכונה. כתיבה in-place אחרי קריאה מאותה כתובת תקינה.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q09",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהבאים עוזרים לקבל, ולוודא, auto-vectorization של לולאה חמה ב-GCC או Clang? (בחר את כל הנכונים)",
+      "choices": [
+        "`__restrict` על מצביעי הקלט והפלט",
+        "קומפילציה עם `-O3` ועם target מתאים (`-mavx2 -mfma` או `-march=...`)",
+        "`-fopt-info-vec-missed` (GCC) או `-Rpass-missed=loop-vectorize` (Clang) כדי לראות למה לולאה לא מווקטרה",
+        "קריאה לפונקציית logging מתוך הלולאה, בתנאי",
+        "גישה ל-`std::vector<bool>` בתוך הלולאה"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "restrict מסיר חשש aliasing, ו-target מאפשר להשתמש ברגיסטרים רחבים (בלי target, x86-64 בסיסי מוגבל ל-SSE2). הדוחות של הקומפיילר מסבירים את הכשלונות. קריאה לפונקציה לא inline בתוך הלולאה, ו-vector<bool> (proxy לביטים), חוסמים וקטוריזציה.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "`y[i] = a * x[i] + y[i]` (saxpy) על מערכי float של 1 GB כל אחד. מעבר מ-AVX2 ל-AVX-512 לא שיפר כמעט כלום. למה?",
+      "choices": [
+        "הקומפיילר לא תומך ב-AVX-512",
+        "AVX-512 מוריד תדר ולכן מתקזז בדיוק",
+        "הקוד memory-bound: 2 FLOPs לכל 12 bytes שזזים (קריאת x ו-y וכתיבת y), כך שרוחב הפס של DRAM מגביל הרבה לפני היחידות החישוביות",
+        "צריך יישור ל-64 bytes"
+      ],
+      "answer": 2,
+      "explanation": "arithmetic intensity של כ-0.17 FLOP/byte. עם, נניח, 20 GB/s לליבה, זה כ-3.3 GFLOP/s, בזמן שליבה אחת מסוגלת לעשרות ומאות GFLOP/s. רגיסטרים רחבים יותר לא מזיזים bytes מהר יותר. השיפור האמיתי: fusion עם שלבים אחרים (פחות מעברים על הזיכרון), או עבודה ב-blocks שנשארים ב-cache. ירידת תדר יכולה להשפיע, אבל לא 'מתקזזת בדיוק'.",
+      "lesson": "dsp.simd",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.simd.q11",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב עם AVX2 intrinsics מכפלה איבר-איבר של שני מערכי `complex<float>` במבנה interleaved (re, im, re, im...): c[i] = a[i]·b[i]. n מספר המרוכבים, והנח n % 4 == 0.",
+      "starter": "void cmul(const float* a, const float* b, float* c, size_t n);",
+      "modelAnswer": "void cmul(const float* a, const float* b, float* c, size_t n) {\n    for (size_t i = 0; i < 2 * n; i += 8) {        // 4 complex per iter\n        __m256 va = _mm256_loadu_ps(a + i);        // ar0 ai0 ar1 ai1 ...\n        __m256 vb = _mm256_loadu_ps(b + i);        // br0 bi0 br1 bi1 ...\n        __m256 br = _mm256_moveldup_ps(vb);        // br0 br0 br1 br1 ...\n        __m256 bi = _mm256_movehdup_ps(vb);        // bi0 bi0 bi1 bi1 ...\n        __m256 sw = _mm256_permute_ps(va, 0xB1);   // ai0 ar0 ai1 ar1 ...\n        __m256 t2 = _mm256_mul_ps(sw, bi);         // ai*bi  ar*bi\n        // even lanes: ar*br - ai*bi, odd lanes: ai*br + ar*bi\n        __m256 r = _mm256_fmaddsub_ps(va, br, t2);\n        _mm256_storeu_ps(c + i, r);\n    }\n}",
+      "rubric": [
+        "שכפול חלקים ממשיים ומדומים של b (moveldup/movehdup או shuffle שקול)",
+        "החלפת re/im ב-a בתוך כל זוג (permute 0xB1)",
+        "addsub או fmaddsub עם הסימנים הנכונים: חיסור בחלק הממשי, חיבור במדומה",
+        "loadu/storeu או התייחסות מפורשת ל-alignment",
+        "מזכיר שב-SoA זה פשוט יותר, ואת הזנב כש-n לא מתחלק ב-4"
+      ],
+      "explanation": "(ar + j·ai)(br + j·bi) = (ar·br - ai·bi) + j(ai·br + ar·bi). fmaddsub מחשב va·br - t2 ב-lanes זוגיים ו-va·br + t2 באי-זוגיים, בדיוק מה שצריך. 0xB1 בוחר את הסדר [1,0,3,2] בכל 128 ביט, כלומר מחליף re ו-im.",
+      "lesson": "dsp.simd",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.simd.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "dot product ב-AVX2: בכל איטרציה מבצעים `_mm256_mul_ps`, ואז `_mm256_hadd_ps` פעמיים ומוסיפים ל-float סקלרי. הקוד איטי פי כמה מהצפוי. מה הבעיה?",
+      "choices": [
+        "hadd לא מדויק",
+        "צריך `_mm256_dp_ps`",
+        "mul צריך להיות add",
+        "horizontal operations הן איטיות (כמה uops עם shuffles) ויוצרות תלות סדרתית בכל איטרציה. נכון לצבור באופן אנכי ברגיסטרים (כמה accumulators עם FMA) ולעשות reduction אופקי אחד בסוף"
+      ],
+      "answer": 3,
+      "explanation": "hadd ב-AVX2 מפוענח לכמה uops כולל shuffles, וגם עובד רק בתוך חצאים של 128 ביט, כך שצריך עוד צעד. כשזה בתוך הלולאה, הוא מכפיל את העבודה ושרשרת התלות דרך הסקלר מגבילה את הקצב. הדפוס הנכון: accumulators אנכיים לאורך כל הלולאה, ו-reduction אחד בסוף. `dp_ps` עושה dot product רק בתוך 128 ביט ואיטי בעצמו.",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שרת Skylake-SP. החלפת לולאה קצרה מ-AVX2 ל-AVX-512 הפכה את כל ה-pipeline לאיטי ב-10%, למרות שהלולאה עצמה מהירה יותר. מה ההסבר הסביר?",
+      "choices": [
+        "AVX-512 לא נתמך ב-Skylake-SP",
+        "הקומפיילר שכח vzeroupper",
+        "ב-Skylake-SP, פקודות 512 ביט כבדות מורידות את תדר הליבה (license levels), וההורדה נמשכת זמן מה גם אחרי הלולאה. שאר הקוד, scalar ו-AVX2, רץ בתדר נמוך יותר",
+        "AVX-512 משתמש ב-cache יותר"
+      ],
+      "answer": 2,
+      "explanation": "ב-Skylake-SP ובדורות דומים, קוד AVX-512 כבד מעביר את הליבה ל-license עם תדר נמוך יותר, והחזרה איטית. כשרוב הזמן הוא בקוד אחר, ההפסד בתדר גדול מהרווח בלולאה. במעבדים חדשים (Ice Lake ומעלה, ו-AMD Zen 4) ההשפעה קטנה בהרבה. vzeroupper נוגע למעבר בין AVX ל-SSE, וקומפיילרים מוסיפים אותו אוטומטית. לכן 'למדוד את כל ה-pipeline' ולא רק את הלולאה.",
+      "lesson": "dsp.simd",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.simd.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ה-binary נבנה עם `-march=native` על מכונת build חדשה, ובמכונת היעד הוא קורס מיד עם SIGILL. מה הפתרון הנכון למוצר שצריך לרוץ על כמה דורות מעבדים?",
+      "choices": [
+        "runtime dispatch: לבנות את הפונקציות החמות בכמה גרסאות (למשל `__attribute__((target_clones(\"avx512f\",\"avx2\",\"default\")))` או בדיקה עם `__builtin_cpu_supports`) ולבחור בזמן ריצה, ואת השאר עם baseline כמו x86-64-v2",
+        "לבנות עם `-O0`",
+        "לבנות על מכונת היעד",
+        "לבטל SIMD לגמרי"
+      ],
+      "answer": 0,
+      "explanation": "-march=native משתמש בכל הפקודות של מכונת ה-build, ומעבד ישן יותר מגיע ל-illegal instruction. בנייה על מכונת היעד לא מתאימה כשיש כמה יעדים. dispatch נותן binary אחד שמנצל את מה שיש. כך עובדות ספריות כמו FFTW, MKL ו-glibc (ifunc).",
+      "lesson": "dsp.simd"
+    },
+    {
+      "id": "dsp.simd.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "dot product ארוך (נתונים ב-L1) עם accumulator יחיד מסוג `__m256` ו-FMA מגיע לכ-1/8 מה-peak של FMA ב-Skylake. מה ההסבר?",
+      "choices": [
+        "ה-loads מגבילים: 2 loads למחזור",
+        "ל-FMA יש latency של 4 מחזורים ו-throughput של 2 למחזור. עם accumulator אחד כל FMA מחכה לקודם, כלומר FMA אחד לכל 4 מחזורים במקום 8 בתהליך במקביל. צריך כ-8 accumulators בלתי תלויים",
+        "AVX2 לא תומך ב-FMA",
+        "branch misprediction בסוף הלולאה"
+      ],
+      "answer": 1,
+      "explanation": "throughput × latency = 2 × 4 = 8 FMAs בטיסה. accumulator יחיד יוצר שרשרת תלות ומקבל 1/4 FMA למחזור, כלומר 1/8 מה-peak. ה-loads אכן יכולים להגביל: 2 loads למחזור, וכל FMA ב-dot product צריך שני וקטורים מהזיכרון, כלומר תקרה של FMA אחד למחזור. אבל זה חצי מה-peak, לא שמינית; השמינית נובעת משרשרת התלות. branch בסוף הלולאה נחזה כמעט תמיד.",
+      "lesson": "dsp.simd",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.simd.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "NCO עם LUT של sin באורך 4096 עבר וקטוריזציה עם `_mm256_i32gather_ps`. השיפור לעומת scalar היה קטן. מה ההסבר, ומה החלופה הטובה יותר?",
+      "choices": [
+        "ה-LUT לא נכנס ב-cache",
+        "gather לא עובד עם float",
+        "צריך AVX-512 כדי ש-gather יעבוד",
+        "gather ב-AVX2 מבצע בפועל גישה נפרדת לכל lane, עם throughput של בערך lane אחד למחזור או פחות, כך שהוא כמעט כמו 8 loads סקלריים. חלופות: לחשב sin/cos בתוך הרגיסטרים בפולינום מתאים, או רקורסיית סיבוב (כפל ב-phasor קבוע עם נרמול מחזורי)"
+      ],
+      "answer": 3,
+      "explanation": "gather חוסך פקודות אבל לא גישות זיכרון, וב-Intel הוא מפוענח לגישה לכל אלמנט. LUT של 4096 floats הוא 16 KB, נכנס ב-L1, אז זו לא בעיית cache. פולינום (למשל minimax מסדר 5-7 אחרי range reduction) הוא רק FMAs, ומווקטר מצוין. רקורסיית סיבוב היא שני כפלים מרוכבים לדגימה, וצריך לנרמל את ה-amplitude מדי פעם כי השגיאה מצטברת.",
+      "lesson": "dsp.simd",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.simd.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "צריך FIR מרוכב-ממשי (taps ממשיים) באורך 64 על stream של 100 MS/s מרוכב, על CPU עם AVX2. איך היית מווקטר אותו, ולמה?",
+      "modelAnswer": "יש שתי דרכים לווקטר: לאורך ה-taps (dot product לכל דגימת פלט) או לאורך ה-outputs. לאורך ה-taps צריך reduction אופקי לכל דגימת פלט, וזה יקר. הדרך הטובה היא outer-loop vectorization: מחשבים 8 דגימות פלט (או 4 מרוכבות interleaved) בבת אחת. לכל tap k עושים broadcast של h[k] לרגיסטר, טוענים x[n-k .. n-k+7] (load לא מיושר מה-delay line), ומבצעים FMA לתוך accumulator של 8 outputs. אין horizontal sums בכלל, וה-taps יכולים לשבת ב-L1. עם נתונים interleaved וטאפים ממשיים, אפשר להתייחס לזרם כ-floats ולשכפל כל tap פעמיים (h0,h0,h1,h1...), או להמיר ל-SoA ולסנן את re ו-im בנפרד. כדי לעקוף את ה-latency של FMA, מחשבים כמה בלוקים של outputs במקביל (למשל 4 accumulators = 32 outputs) או מפצלים את ה-taps לשני accumulators. חשבון: 64 taps × 2 (re, im) × 100e6 = 12.8 GFMA/s; AVX2 עם 2 FMA ports ב-3 GHz נותן 48 GFMA/s בשיא, כך שליבה אחת מספיקה על הנייר, וב-overhead סביר אולי שתיים. אם המסנן לפני decimation, polyphase חוסך פי M. ולבסוף: delay line בגודל כפול כדי שכל הטעינות רציפות, FTZ, ובדיקה מול מימוש reference.",
+      "rubric": [
+        "מבחין בין וקטוריזציה לאורך taps ולאורך outputs ומעדיף outputs כדי להימנע מ-horizontal sums",
+        "broadcast של tap ו-load לא מיושר של חלון הקלט, FMA",
+        "מטפל ב-interleaved complex (שכפול taps או SoA)",
+        "כמה accumulators בגלל latency של FMA",
+        "חשבון FMA/s מול יכולת הליבה, ושוקל polyphase אם יש decimation"
+      ],
+      "explanation": "זו שאלת 'איך אתה חושב על SIMD' קלאסית: הסידור של הלולאות והנתונים חשוב יותר מבחירת intrinsics.",
+      "lesson": "dsp.simd",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

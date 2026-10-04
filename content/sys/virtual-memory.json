@@ -1,0 +1,327 @@
+{
+  "domain": "sys",
+  "subtopic": "virtual-memory",
+  "lessons": [
+    {
+      "id": "sys.virtual-memory",
+      "title": "Virtual memory",
+      "what": "כל process רואה מרחב כתובות וירטואלי פרטי. ה-MMU מתרגם כל כתובת וירטואלית לכתובת פיזית לפי page tables שהקרנל מנהל, ברזולוציה של דפים (בדרך כלל 4KB). זה נותן בידוד בין processes, הקצאה עצלה (demand paging), שיתוף דפים (ספריות, COW) והגנה (read-only, no-execute).",
+      "when": [
+        "שאלות על page faults, malloc גדול שמצליח בלי זיכרון, OOM killer",
+        "ביצועים: TLB misses, huge pages, NUMA, גישה בצעדים גדולים",
+        "זמן-אמת: mlock, prefault, TLB shootdowns",
+        "mmap של קבצים ושל זיכרון משותף"
+      ],
+      "how": [
+        "x86-64 עם 4 רמות: כתובת של 48 ביט מתחלקת ל-4 אינדקסים של 9 ביט (PML4, PDPT, PD, PT) ו-12 ביט offset. כל רמה היא טבלה של 512 רשומות של 8 בתים, כלומר דף אחד",
+        "TLB הוא cache של תרגומים. TLB miss גורם ל-page walk של עד 4 גישות לזיכרון (חלקן מה-cache). huge pages של 2MB ו-1GB מקצרים את ה-walk ומגדילים את ה-TLB reach",
+        "demand paging: mmap ו-malloc גדול רק יוצרים VMA. דף פיזי מוקצה ומאופס בגישה הראשונה דרך page fault",
+        "minor fault: הדף ב-RAM (או צריך רק דף אפס חדש) ורק ה-PTE חסר. major fault: צריך לקרוא מהדיסק (swap או קובץ)",
+        "גישה לכתובת בלי VMA, או כתיבה לאזור read-only, מסתיימת ב-SIGSEGV",
+        "overcommit: ברירת המחדל מאפשרת להקצות יותר ממה שיש. אם כולם נוגעים בזיכרון, ה-OOM killer הורג process",
+        "NUMA: ברירת המחדל היא first-touch, הדף מוקצה ב-node של ה-CPU שנגע בו ראשון",
+        "שינוי מיפויים (munmap, mprotect) דורש לבטל רשומות TLB בכל ה-cores שמריצים את ה-mm: TLB shootdown דרך IPI"
+      ],
+      "complexity": "TLB hit: כמעט חינם. page walk: עשרות מחזורים אם הטבלאות ב-cache, מאות אם לא. minor fault: בערך 0.5–2µs (כולל איפוס דף 4KB). major fault: מילי-שניות. TLB reach = entries × page size, למשל 1536 × 4KB = 6MB מול 1536 × 2MB = 3GB.",
+      "pitfalls": [
+        "להניח ש-malloc שהצליח אומר שהזיכרון באמת קיים",
+        "VSZ גדול לא אומר שימוש בזיכרון, RSS הוא הזיכרון הפיזי בפועל",
+        "אתחול באפר ב-thread אחד ושימוש בו מ-thread על NUMA node אחר",
+        "THP במערכות רגישות ל-latency: compaction ואיפוס של 2MB בתוך fault",
+        "MADV_DONTNEED על זיכרון פרטי מוחק את התוכן"
+      ],
+      "senior": [
+        "לתאר מקצה לקצה מה קורה בגישה ראשונה לזיכרון שהוקצה",
+        "TLB reach, huge pages ו-hugetlbfs מול THP",
+        "TLB shootdowns, PCID ו-KPTI",
+        "VIPT L1 cache ולמה הגודל שלו מוגבל ע״י גודל הדף"
+      ],
+      "diagram": "VA (48 bit):\n|PML4 9|PDPT 9|PD 9|PT 9|offset 12|\n   |      |      |    |\n  CR3 -> L4 -> L3 -> L2 -> L1 -> page\n TLB caches VA page -> PA page"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.virtual-memory.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה **אינו** יתרון של virtual memory?",
+      "choices": [
+        "גישה לזיכרון מהירה יותר מגישה לכתובות פיזיות",
+        "בידוד: process אחד לא יכול לגשת לזיכרון של אחר",
+        "הקצאה עצלה: דפים פיזיים מוקצים רק כשנוגעים בהם",
+        "שיתוף דפים בין processes, למשל קוד של ספריות משותפות"
+      ],
+      "answer": 0,
+      "explanation": "התרגום עולה כסף: לכן יש TLB, ו-TLB miss מוסיף page walk. היתרונות הם בידוד, demand paging, שיתוף, הגנה ומרחב כתובות רציף לכל process. virtual memory הוא trade-off של מעט ביצועים תמורת כל אלה.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה TLB?",
+      "choices": [
+        "cache של נתונים בין L1 ל-L2",
+        "cache בחומרה של תרגומים מכתובת וירטואלית לפיזית",
+        "באפר של כתיבות לזיכרון",
+        "טבלה בקרנל של כל ה-processes"
+      ],
+      "answer": 1,
+      "explanation": "Translation Lookaside Buffer שומר תרגומים אחרונים של דף וירטואלי לדף פיזי, כדי לא לבצע page walk בכל גישה. באפר הכתיבות הוא ה-store buffer, דבר אחר.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה גודל הדף הבסיסי ב-x86-64 (ב-KB)?",
+      "accept": [
+        "4",
+        "4KB",
+        "4 KB",
+        "4096",
+        "4K"
+      ],
+      "explanation": "הדף הבסיסי הוא 4KB, כלומר 12 ביט של offset. בנוסף יש huge pages של 2MB ו-1GB. ב-ARM64 אפשר גם 16KB או 64KB כגודל בסיסי (למשל ב-Apple Silicon 16KB).",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין minor page fault ל-major page fault?",
+      "choices": [
+        "minor קורה בקריאה, major בכתיבה",
+        "minor קורה ב-user space, major בקרנל",
+        "ב-minor הדף כבר בזיכרון (או צריך דף אפס חדש) ורק המיפוי חסר. ב-major צריך לקרוא את הדף מהדיסק (swap או קובץ)",
+        "minor הוא באג קטן, major גורם לקריסה"
+      ],
+      "answer": 2,
+      "explanation": "minor fault לוקח בערך מיקרו-שנייה, major מילי-שניות, כי יש I/O. שניהם חלק תקין מהפעולה של מערכת ההפעלה. גישה לא חוקית מסתיימת ב-SIGSEGV, וזה לא אחד מהשניים.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על מכונה עם 512MB פנויים, `malloc(1 << 30)` (1GB) מצליח. מה יקרה כשהתוכנית תכתוב לכל הבאפר?",
+      "choices": [
+        "שום דבר מיוחד, malloc כבר הבטיח את הזיכרון",
+        "malloc יחזיר NULL בדיעבד",
+        "הכתיבה תיכשל עם exception",
+        "הדפים מוקצים רק בגישה הראשונה. כשהזיכרון וה-swap ייגמרו, ה-OOM killer יהרוג process (אולי את שלנו)"
+      ],
+      "answer": 3,
+      "explanation": "ב-Linux עם overcommit (ברירת מחדל heuristic), malloc גדול יוצר רק מיפוי וירטואלי. הכישלון מגיע מאוחר, כשאין דף פיזי לתת ב-page fault. זו הסיבה שמערכות RT מקצות ונוגעות בכל הזיכרון באתחול.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-top, process מראה VIRT = 20GB ו-RES = 300MB. מה המשמעות?",
+      "choices": [
+        "19.7GB נמצאים ב-swap",
+        "ה-process משתמש ב-20GB זיכרון פיזי",
+        "יש memory leak של 19.7GB",
+        "20GB הם גודל כל המיפויים הווירטואליים (כולל אזורים שלא נגעו בהם וספריות), ו-300MB הם הדפים שנמצאים כרגע בזיכרון הפיזי"
+      ],
+      "answer": 3,
+      "explanation": "VIRT (VSZ) כולל stacks של threads שהוזמנו ולא נוצלו, arenas של malloc, מיפויי קבצים ועוד. RES (RSS) הוא מה שבאמת ב-RAM, כולל דפים משותפים שנספרים בכל process. ל-leak מסתכלים על RSS או PSS לאורך זמן.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q07",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "תוכנית מבצעת `*(int*)0x10 = 5;`. מה קורה ברמת מערכת ההפעלה?",
+      "choices": [
+        "הכתיבה מתבצעת לכתובת הפיזית 0x10",
+        "המעבד מתעלם מהכתיבה",
+        "ה-MMU לא מוצא מיפוי, נוצר page fault, הקרנל לא מוצא VMA שמכסה את הכתובת ושולח SIGSEGV",
+        "הקרנל מקצה דף חדש בכתובת הזו"
+      ],
+      "answer": 2,
+      "explanation": "כל segfault מתחיל כ-page fault. ההבדל הוא שהקרנל בודק אם הכתובת שייכת ל-VMA חוקי עם הרשאות מתאימות. הדף הראשון (ומעליו עד mmap_min_addr) לא ממופה בכוונה, כדי שגישה דרך null pointer תיתפס.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ל-STLB יש 1536 רשומות. מה ה-TLB reach עם דפים של 4KB לעומת דפים של 2MB?",
+      "choices": [
+        "6MB מול 3GB",
+        "1.5MB מול 768MB",
+        "6MB מול 6MB, כי מספר הרשומות זהה",
+        "60MB מול 30GB"
+      ],
+      "answer": 0,
+      "explanation": "1536 × 4KB = 6MB, ו-1536 × 2MB = 3GB. עם working set של 1GB בגישה אקראית ודפים של 4KB, כמעט כל גישה היא TLB miss, ועם 2MB כמעט אין. בפועל במעבדים רבים יש רשומות נפרדות או משותפות לגדלים השונים, אבל סדר הגודל הוא העיקר.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q09",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות?",
+      "choices": [
+        "mprotect יכול להפוך אזור ל-read-only, וכתיבה אליו תגרום ל-SIGSEGV",
+        "אותה כתובת וירטואלית בשני processes ממופה תמיד לאותה כתובת פיזית",
+        "page fault תמיד מצביע על באג בתוכנית",
+        "huge pages מקטינות את מספר ה-TLB misses בעבודה על מערכים גדולים",
+        "ב-x86-64 עם 4 רמות, page walk מלא דורש עד 4 גישות לטבלאות"
+      ],
+      "answer": [
+        0,
+        3,
+        4
+      ],
+      "explanation": "page faults הם חלק רגיל מ-demand paging ו-COW. כתובת וירטואלית היא פר-process, וכל process יכול למפות אותה לדף פיזי אחר. במעבדים מודרניים יש גם paging-structure caches שמקצרים את ה-walk בפועל.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שרת עם 2 NUMA nodes. ה-main thread (על node 0) מקצה ומאפס באפר של 8GB, ואז workers שמוצמדים ל-node 1 מעבדים אותו, ורוחב הפס יוצא כמעט חצי מהצפוי. למה?",
+      "choices": [
+        "ה-workers לא מוצמדים נכון",
+        "first-touch: הדפים הוקצו ב-node 0 כי שם נגעו בהם לראשונה, וכל גישה מ-node 1 עוברת דרך ה-interconnect בין ה-sockets",
+        "האיפוס היה איטי",
+        "הבאפר גדול מדי ל-cache"
+      ],
+      "answer": 1,
+      "explanation": "ב-Linux מדיניות ברירת המחדל מקצה דף פיזי ב-node של ה-CPU שגרם ל-page fault. התיקונים: לאתחל את הבאפר מה-threads שישתמשו בו, numactl או mbind, או להקצות בכל node באפר משלו. רלוונטי מאוד כשה-NIC של ה-USRP מחובר ל-socket מסוים.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q11",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש פונקציה שמפרקת כתובת וירטואלית של x86-64 (4 רמות, דפים של 4KB) לארבעת האינדקסים בטבלאות ול-offset, ובודקת שהכתובת canonical.",
+      "lang": "cpp",
+      "starter": "struct VaParts { unsigned pml4, pdpt, pd, pt, offset; };\nbool split_va(uint64_t va, VaParts& out);",
+      "modelAnswer": "struct VaParts { unsigned pml4, pdpt, pd, pt, offset; };\n\nbool split_va(uint64_t va, VaParts& out) {\n  // Canonical: bits 63..47 are all copies of bit 47.\n  uint64_t top = va >> 47;\n  if (top != 0 && top != 0x1FFFF) return false;\n  out.pml4   = (va >> 39) & 0x1FF;\n  out.pdpt   = (va >> 30) & 0x1FF;\n  out.pd     = (va >> 21) & 0x1FF;\n  out.pt     = (va >> 12) & 0x1FF;\n  out.offset = va & 0xFFF;\n  return true;\n}",
+      "rubric": [
+        "הזזות נכונות: 39, 30, 21, 12 ומסכות של 9 ביט, offset של 12 ביט",
+        "בדיקת canonical: ביטים 47 עד 63 זהים",
+        "הסבר: 512 רשומות של 8 בתים בכל טבלה, כלומר דף אחד",
+        "בונוס: עם דף 2MB ה-PD מצביע ישירות לדף וה-offset הוא 21 ביט"
+      ],
+      "explanation": "9 ביט לכל רמה כי טבלה היא דף של 4KB עם רשומות של 8 בתים, כלומר 512 רשומות. ביחד 4 × 9 + 12 = 48 ביט.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במערכת רגישה ל-latency, Transparent Huge Pages במצב `always` גורם ל-spikes נדירים של מאות µs. מה ההסבר והגישה המומלצת?",
+      "choices": [
+        "בזמן fault הקרנל עשוי לנסות compaction כדי למצוא 2MB רציפים, ולאפס 2MB בבת אחת, ו-khugepaged מאחד דפים ברקע. עדיף להקצות מראש huge pages (hugetlbfs או THP עם madvise על אזורים ספציפיים) ולגעת בהן באתחול",
+        "huge pages תמיד מזיקות, צריך לכבות אותן לגמרי",
+        "huge pages גורמות ל-TLB misses",
+        "הבעיה היא ב-swap של huge pages"
+      ],
+      "answer": 0,
+      "explanation": "THP משפר throughput, אבל הלוגיקה האוטומטית מכניסה עבודה לא צפויה לנתיב ה-fault וברקע. ל-RT מעדיפים שליטה מפורשת: `transparent_hugepage=madvise` (או never) ו-hugetlbfs עם דפים שמוקצים ב-boot, כך שכל ה-faults קורים באתחול. huge pages עצמן מקטינות TLB misses ולא מגדילות.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "סכימה על מערך של 1GB של float, פעם ברצף ופעם עם stride של 4096 בתים (מעבר על עמודות של מטריצה ברוחב 1024 floats). השני איטי פי עשרות. מה הסיבות העיקריות?",
+      "choices": [
+        "רק cache misses רגילים",
+        "כל גישה נוחתת בדף חדש: TLB miss כמעט בכל גישה, ה-hardware prefetcher לא חוצה גבולות של 4KB, ובנוסף כל הכתובות ממופות לאותו set ב-L1 וב-L2 (conflict misses)",
+        "הקומפיילר לא מבצע וקטוריזציה ולכן פי 8 בלבד",
+        "branch mispredictions"
+      ],
+      "answer": 1,
+      "explanation": "stride של 4KB הוא המקרה הגרוע ביותר: אותם ביטים נמוכים בכל כתובת, ולכן כולן מתחרות על אותו set ב-cache, ה-prefetcher לא עוזר, וכל גישה צריכה תרגום חדש. התיקונים: transpose או blocking (tiling), padding של רוחב השורה (למשל 1024 + 16), ו-huge pages.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תאר מקצה לקצה מה קורה כשתוכנית מבצעת `char* p = (char*)malloc(64 << 20); p[0] = 1;`, מהקריאה ל-malloc ועד שהכתיבה מסתיימת.",
+      "modelAnswer": "malloc רואה בקשה מעל M_MMAP_THRESHOLD (128KB כברירת מחדל) וקורא ל-mmap אנונימי פרטי. הקרנל יוצר VMA בגודל 64MB (ועוד header), בלי להקצות דפים פיזיים ובלי PTEs, ומחזיר כתובת. malloc כותב header קטן בתחילת האזור, וזה כבר page fault ראשון. בכתיבה ל-p[0]: המעבד מחפש ב-TLB, מפספס, ומבצע page walk מ-CR3 דרך 4 רמות. אם ה-PTE לא present נוצר #PF עם הכתובת ב-CR2. הקרנל מחפש VMA שמכסה את הכתובת, מוודא שיש הרשאת כתיבה, מקצה דף פיזי (או דף 2MB אם THP פעיל ומתאים), מאפס אותו, מעדכן את ה-PTE ואת חשבונות ה-RSS ו-memcg, וחוזר. ההוראה מבוצעת מחדש, ה-walk מצליח וה-TLB מתמלא, והכתיבה נכנסת ל-store buffer ואז ל-L1. אם אין זיכרון, OOM killer. בפעם השנייה לאותו דף אין fault.",
+      "rubric": [
+        "malloc גדול הוא mmap שיוצר VMA בלבד, בלי דפים",
+        "TLB miss, page walk, ו-#PF כש-PTE לא present",
+        "הקרנל: בדיקת VMA והרשאות, הקצאה ואיפוס, עדכון PTE, ביצוע חוזר של ההוראה",
+        "מזכיר THP, OOM, או memcg כפרטים מתקדמים"
+      ],
+      "explanation": "שאלה קלאסית בראיונות מערכות. מועמד חזק מחבר בין ה-allocator, הקרנל והחומרה.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "process ממפה קובץ עם `mmap(..., MAP_SHARED, fd, 0)`, כותב לזיכרון, ונהרג ב-SIGKILL לפני msync. מה מצב הנתונים?",
+      "choices": [
+        "רק הדף האחרון שנכתב אבוד",
+        "הכתיבות אבודות, כי לא בוצע msync",
+        "הקובץ יושחת",
+        "הכתיבות נמצאות בדפים של ה-page cache של הקרנל, שהם הקובץ עצמו. הן ייכתבו לדיסק ב-writeback רגיל וייראו לכל מי שקורא את הקובץ. רק קריסת קרנל או נפילת חשמל לפני ה-writeback יאבדו אותן"
+      ],
+      "answer": 3,
+      "explanation": "ב-MAP_SHARED הזיכרון של ה-process הוא דפי ה-page cache של הקובץ, ומותו של ה-process לא מבטל אותם, הם פשוט dirty. msync (וגם fsync) נדרשים ל-durability מול קריסת מערכת, לא מול קריסת process. זה גם בסיס לטכניקה של לוג ב-mmap ששורד קריסות של האפליקציה.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "למה L1 data cache במעבדי x86 הוא בדרך כלל 32KB עם 8 ways או 48KB עם 12 ways, ולא 64KB עם 8 ways?",
+      "choices": [
+        "L1 הוא VIPT: את ה-set בוחרים לפי ביטים של הכתובת הווירטואלית במקביל לחיפוש ב-TLB. כדי שלא יהיו aliases, ביטי ה-index וה-offset בשורה חייבים להיות בתוך 12 ביטי ה-offset של הדף, ולכן גודל way (גודל חלקי ways) מוגבל ל-4KB",
+        "כי cache line הוא 64 בתים",
+        "מגבלת שטח סיליקון בלבד",
+        "כי L2 חייב להיות גדול פי 8 מ-L1"
+      ],
+      "answer": 0,
+      "explanation": "Virtually Indexed, Physically Tagged: ה-index נלקח מה-VA כדי לחסוך זמן, וה-tag מושווה ל-PA שמגיע מה-TLB. ביטים בתוך offset הדף זהים ב-VA וב-PA, ולכן אין aliasing כל עוד ה-index נמצא שם. 32KB / 8 = 4KB, ו-48KB / 12 = 4KB. כדי להגדיל את L1 מוסיפים ways, וזה מייקר את ההשוואה. ב-Apple Silicon הדף הבסיסי 16KB, וזה חלק מהסיבה שה-L1 שם גדול יותר.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "על זיכרון אנונימי פרטי (מ-mmap) מבצעים `madvise(p, len, MADV_DONTNEED)` ואז קוראים את `p[0]`, שהכיל קודם 42. מה מתקבל?",
+      "choices": [
+        "ערך אקראי",
+        "42, כי madvise הוא רק רמז",
+        "0: הדפים שוחררו, והגישה הבאה מקבלת דף חדש מאופס",
+        "SIGSEGV, כי המיפוי בוטל"
+      ],
+      "answer": 2,
+      "explanation": "למרות השם, MADV_DONTNEED ב-Linux על מיפוי אנונימי פרטי זורק את התוכן מיד, והמיפוי נשאר. הגישה הבאה היא fault שמחזיר דף אפס. allocators משתמשים בזה כדי להחזיר זיכרון לקרנל. MADV_FREE עצלן יותר: הקרנל רשאי לשחרר רק תחת לחץ זיכרון, ועד אז אפשר לקרוא בחזרה את הערך הישן.",
+      "lesson": "sys.virtual-memory"
+    }
+  ]
+}

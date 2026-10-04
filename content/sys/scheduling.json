@@ -1,0 +1,316 @@
+{
+  "domain": "sys",
+  "subtopic": "scheduling",
+  "lessons": [
+    {
+      "id": "sys.scheduling",
+      "title": "OS scheduling",
+      "what": "ה-scheduler מחליט איזה thread רץ על כל core ולכמה זמן. ב-Linux הוא preemptive: הקרנל יכול להפסיק thread באמצע כדי להריץ אחר. ל-threads רגילים (SCHED_OTHER) המטרה היא חלוקה הוגנת לפי משקל, ול-threads זמן-אמת המטרה היא עדיפות קשיחה.",
+      "when": [
+        "ביצועים: context switches, migrations, threads שמחכים בתור להרצה",
+        "שאלות על nice, cgroups, containers ו-CPU quotas",
+        "latency של thread אינטראקטיבי או קריטי כשיש עומס רקע",
+        "ניתוח מצבים: R, S, D ו-load average"
+      ],
+      "how": [
+        "לכל CPU יש runqueue משלו. load balancing מעביר tasks בין cores מדי פעם, ו-affinity מגביל לאן מותר להעביר",
+        "CFS: לכל task יש vruntime, זמן ריצה משוקלל (זמן אמיתי × 1024 / weight). ה-scheduler מריץ את ה-task עם ה-vruntime הקטן ביותר (עץ red-black)",
+        "EEVDF (מ-6.6): מחשב לכל task lag (כמה שירות מגיע לו ביחס להוגן) ו-virtual deadline. מבין ה-tasks הזכאים (lag לא שלילי) רץ זה עם ה-deadline המוקדם ביותר. slice קצר יותר נותן latency נמוך יותר",
+        "nice בין -20 ל-19: כל צעד הוא בערך פי 1.25 במשקל (nice 0 = 1024, nice 5 = 335)",
+        "task שישן הרבה (I/O-bound) צובר פחות vruntime ומקבל CPU מהר כשהוא מתעורר",
+        "מצבים: R (רץ או ממתין ל-CPU), S (שינה שניתן להפריע), D (שינה שלא ניתן להפריע, בדרך כלל I/O). load average ב-Linux סופר R וגם D",
+        "cgroups: cpu.weight נותן חלוקה יחסית רק כשיש תחרות, cpu.max הוא תקרה קשיחה לכל period, גם כשיש cores פנויים"
+      ],
+      "complexity": "בחירת task: O(log n) בעץ red-black. context switch: כמה µs. ברירות מחדל טיפוסיות: base slice של כ-3ms (sched_base_slice_ns ב-EEVDF), ו-period של 100ms ל-CFS bandwidth (cpu.max).",
+      "pitfalls": [
+        "sched_yield כאמצעי המתנה ב-SCHED_OTHER: לא מבטיח שמישהו אחר ירוץ",
+        "affinity שמצמיד כמה threads עמוסים לאותו core בזמן ש-cores אחרים פנויים",
+        "cpu.max בקונטיינר עם הרבה threads: הקוטה נגמרת בתחילת ה-period ויש throttling ארוך",
+        "לפרש load average גבוה כעומס CPU, כשבפועל אלה tasks במצב D שמחכים ל-I/O",
+        "nice לא עוזר ל-latency קשיח: thread בעדיפות nice גבוהה עדיין משתף זמן"
+      ],
+      "senior": [
+        "להסביר vruntime ו-EEVDF, ומה ההבדל ביניהם",
+        "CFS bandwidth throttling בקונטיינרים ואיך הוא נראה כ-latency spikes",
+        "מתי לעבור מ-nice ל-SCHED_FIFO, cpusets או isolcpus",
+        "כלים: perf sched, /proc/<pid>/sched, schedstat, runqlat ב-bpftrace"
+      ],
+      "diagram": "CPU0 runqueue (by vruntime)\n      [T3:12ms]\n      /        \\\n [T1:10ms]   [T5:15ms]\n pick leftmost -> T1\n T1 runs, vruntime grows,\n re-inserted to the right"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.scheduling.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין preemptive scheduling ל-cooperative scheduling?",
+      "choices": [
+        "ב-preemptive מערכת ההפעלה יכולה לעצור thread בכל רגע (למשל ב-timer interrupt) ולהריץ אחר. ב-cooperative thread מוותר על ה-CPU רק כשהוא בוחר",
+        "preemptive קיים רק במערכות זמן-אמת",
+        "cooperative מהיר יותר תמיד ולכן Linux משתמש בו",
+        "ב-preemptive כל thread רץ עד שהוא מסיים"
+      ],
+      "answer": 0,
+      "explanation": "Linux, Windows ו-macOS הם preemptive. ב-cooperative, thread שנתקע בלולאה תוקע את כולם. coroutines ו-asyncio הם דוגמאות ל-cooperative בתוך תהליך אחד.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "לפי איזה קריטריון CFS בוחר את ה-task הבא שירוץ?",
+      "choices": [
+        "ה-task עם ה-PID הקטן ביותר",
+        "ה-task עם הכי הרבה זיכרון",
+        "ה-task שהגיע ראשון",
+        "ה-task עם ה-vruntime (זמן ריצה משוקלל) הקטן ביותר"
+      ],
+      "answer": 3,
+      "explanation": "vruntime גדל לאט יותר ל-tasks עם משקל גבוה (nice נמוך). מי שקיבל הכי מעט ביחס למשקל שלו רץ ראשון, וכך מתקבלת הוגנות פרופורציונלית.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו פקודה ב-Linux מריצה תוכנית (או משנה process קיים) כך שתרוץ רק על cores מסוימים?",
+      "accept": [
+        "taskset",
+        "sched_setaffinity",
+        "numactl"
+      ],
+      "explanation": "`taskset -c 2,3 ./prog` או `taskset -cp 2 <pid>`. מאחוריה עומד ה-syscall sched_setaffinity, ומתוך קוד עם pthreads יש pthread_setaffinity_np. numactl מאפשר גם לקבוע את ה-NUMA node של הזיכרון.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-`/proc/<pid>/status` יש voluntary_ctxt_switches ו-nonvoluntary_ctxt_switches. מה מספר גבוה של nonvoluntary מרמז?",
+      "choices": [
+        "שה-thread עושה הרבה sleep",
+        "שה-thread מוחלף בכוח (preempted) כי נגמר לו ה-slice או ש-task אחר העדיף לרוץ, כלומר יש תחרות על ה-CPU",
+        "שה-thread עושה הרבה I/O",
+        "שה-thread מחכה הרבה על locks"
+      ],
+      "answer": 1,
+      "explanation": "voluntary: ה-thread נחסם בעצמו (I/O, lock, sleep). nonvoluntary: ה-thread היה מוכן להמשיך אבל הוצא מה-CPU. ב-thread זמן-אמת מספר גבוה של nonvoluntary הוא סימן אזהרה לתחרות על ה-core.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על core עמוס רצים compile (CPU-bound) ועורך טקסט (I/O-bound, מחכה למקלדת). שניהם nice 0. למה העורך עדיין מגיב מהר?",
+      "choices": [
+        "כי לעורך יש עדיפות זמן-אמת",
+        "כי ה-compile מואט אוטומטית",
+        "כי העורך ישן רוב הזמן וצובר מעט vruntime. כשהוא מתעורר הוא בצד השמאלי של העץ ומקבל CPU כמעט מיד",
+        "כי I/O רץ על core נפרד"
+      ],
+      "answer": 2,
+      "explanation": "ה-scheduler נותן הוגנות לאורך זמן. task שמשתמש במעט CPU זכאי לו מהר כשהוא צריך. כדי שהשינה לא תצבור זכות אינסופית, ה-vruntime שלו מוצמד בהתעוררות לערך קרוב ל-min_vruntime.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שרת עם 16 cores מראה load average של 40, אבל ה-CPU כמעט idle. מה ההסבר הסביר?",
+      "choices": [
+        "ב-Linux load average כולל גם tasks במצב D (uninterruptible), שבדרך כלל מחכים ל-I/O. דיסק איטי או NFS תקוע מעלים את ה-load בלי עומס CPU",
+        "load average סופר רק threads רצים, אז יש באג",
+        "40 הוא אחוז ולא מספר tasks",
+        "ה-CPU מוסתר ע״י hyper-threading"
+      ],
+      "answer": 0,
+      "explanation": "בשונה ממערכות Unix אחרות, Linux סופר את מצב D ב-load. בודקים עם `vmstat` (עמודת b), `ps -eo state,cmd | grep ^D`, ו-iostat. load גבוה עם CPU פנוי הוא בדרך כלל בעיית I/O.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q07",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שני threads CPU-bound על core אחד: אחד עם nice 0 (weight 1024) והשני עם nice 5 (weight 335). בערך איזה חלק מה-CPU מקבל ה-thread עם nice 0?",
+      "choices": [
+        "50%",
+        "כ-75%",
+        "כ-95%",
+        "100%, nice 5 לא ירוץ"
+      ],
+      "answer": 1,
+      "explanation": "1024 / (1024 + 335) ≈ 0.75. כל צעד של nice הוא בערך פי 1.25 במשקל, כלומר כ-10% הבדל ב-CPU בין שני tasks סמוכים. nice לא מונע מאף אחד לרוץ, רק משנה את החלוקה.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי ה-scheduler של Linux?",
+      "choices": [
+        "load balancing מעביר tasks בין cores כדי לאזן עומס",
+        "לכל CPU יש runqueue משלו",
+        "thread תמיד חוזר לרוץ על אותו core שעליו רץ קודם",
+        "affinity מגביל את ה-cores שעליהם ה-thread מורשה לרוץ",
+        "sched_yield ב-SCHED_OTHER לא מבטיח ש-thread אחר ירוץ, ולכן אינו כלי המתנה אמין"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "explanation": "ה-scheduler מעדיף להשאיר thread על אותו core בגלל cache חם, אבל אין הבטחה: ב-wakeup הוא יכול לבחור core פנוי אחר, ו-load balancing מזיז. sched_yield ב-CFS או EEVDF רק מסמן את ה-task, ואם אין אחר ראוי הוא חוזר מיד.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שני threads CPU-bound הוצמדו בטעות עם taskset ל-CPU 2 בלבד, ושאר 7 ה-cores פנויים. מה קורה?",
+      "choices": [
+        "הקרנל מתעלם מ-affinity כשיש cores פנויים",
+        "אחד רץ והשני מורעב לגמרי",
+        "load balancing יעביר אחד מהם ל-core פנוי",
+        "כל אחד מקבל כ-50% של CPU 2, וה-load balancer לא יכול להזיז אותם כי affinity אוסר"
+      ],
+      "answer": 3,
+      "explanation": "affinity הוא אילוץ קשיח. זו טעות נפוצה כשמצמידים threads בלי לתכנן: התוצאה נראית כמו throughput חצוי ו-nonvoluntary switches גבוהים. בודקים עם `taskset -p` או בעמודת PSR ב-ps.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q10",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש סימולציה מינימלית של CFS: `add(id, weight)` מוסיף task, ו-`run_next(slice_ns)` בוחר את ה-task עם ה-vruntime הקטן ביותר, מריץ אותו slice ומחזיר את ה-id. task חדש לא אמור לקבל יתרון מכך שלא רץ עד עכשיו.",
+      "lang": "cpp",
+      "starter": "class MiniCfs {\npublic:\n  void add(int id, uint32_t weight);\n  int run_next(uint64_t slice_ns);\n};",
+      "modelAnswer": "class MiniCfs {\n  struct Task { uint64_t vr; int id; uint32_t w; };\n  struct Cmp {\n    bool operator()(const Task& a, const Task& b) const {\n      return a.vr != b.vr ? a.vr < b.vr : a.id < b.id;\n    }\n  };\n  std::set<Task, Cmp> rq_;    // ordered like the kernel's rb-tree\n  uint64_t min_vr_ = 0;       // monotonic floor\npublic:\n  void add(int id, uint32_t weight) {\n    rq_.insert({min_vr_, id, weight});  // start at min_vruntime, no catch-up bonus\n  }\n  int run_next(uint64_t slice_ns) {\n    if (rq_.empty()) return -1;\n    Task t = *rq_.begin();\n    rq_.erase(rq_.begin());\n    t.vr += slice_ns * 1024 / t.w;      // NICE_0 weight = 1024\n    rq_.insert(t);\n    min_vr_ = std::max(min_vr_, rq_.begin()->vr);\n    return t.id;\n  }\n};",
+      "rubric": [
+        "מבנה ממוין לפי vruntime (std::set, או heap) עם O(log n) לבחירה",
+        "עדכון vruntime לפי slice × 1024 / weight",
+        "task חדש מתחיל מ-min_vruntime ולא מ-0",
+        "שבירת שוויון דטרמיניסטית ו-min_vruntime מונוטוני"
+      ],
+      "explanation": "אם task חדש היה מתחיל עם vruntime 0, הוא היה רץ ברצף עד שיגיע לאחרים ומרעיב אותם. זו בדיוק הסיבה שהקרנל משתמש ב-min_vruntime.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "thread מחכה לדגל עם לולאת `while (!flag) sched_yield();` (ב-SCHED_OTHER). מה הבעיה?",
+      "choices": [
+        "sched_yield תמיד מרדים את ה-thread לפחות ל-time slice",
+        "sched_yield גורם ל-deadlock",
+        "אם אין thread אחר ראוי לרוץ על אותו core, sched_yield חוזר מיד והלולאה שורפת 100% CPU. אם יש, אין הבטחה שזה ה-thread שאמור להדליק את הדגל, ויש syscall בכל סיבוב. מנגנון המתנה אמיתי (futex, cv, atomic::wait) עדיף",
+        "sched_yield מוריד את העדיפות לצמיתות"
+      ],
+      "answer": 2,
+      "explanation": "ההתנהגות של sched_yield ל-SCHED_OTHER לא מוגדרת היטב ב-POSIX, וב-Linux היא השתנתה בין גרסאות. בנוסף, flag שאינו atomic הוא data race. ב-SCHED_FIFO ל-yield יש משמעות ברורה: לעבור לסוף התור של אותה עדיפות.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-cgroup v2, מה ההבדל בין `cpu.weight` לבין `cpu.max`?",
+      "choices": [
+        "אין הבדל, שניהם מגבילים CPU",
+        "cpu.weight קובע חלוקה יחסית רק כשיש תחרות (work-conserving: group יכול להשתמש בכל ה-CPU הפנוי). cpu.max הוא תקרה קשיחה של זמן CPU לכל period, גם כשה-cores פנויים",
+        "cpu.weight הוא תקרה קשיחה ו-cpu.max הוא רק רמז",
+        "cpu.max משנה nice של ה-threads"
+      ],
+      "answer": 1,
+      "explanation": "weight דומה ל-nice ברמת group. max (כמו CPU limit ב-Kubernetes) עוצר את ה-group כשהקוטה של ה-period נגמרה, וזה עלול להוסיף latency גם במכונה פנויה. לשירותים רגישים ל-latency עדיף weight, או cpusets ייעודיים.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q13",
+      "level": 4,
+      "type": "oral",
+      "prompt": "על מכונה משותפת, thread שמטפל בבקשות רגישות ל-latency מקבל spikes של כמה מילי-שניות כשמישהו מריץ build ברקע. מה האפשרויות שלך, מהקלה לחזקה, ומה המחיר של כל אחת?",
+      "modelAnswer": "ראשית מאשרים: perf sched latency או runqlat מראים זמן המתנה ב-runqueue, ו-nonvoluntary switches עולים. אפשרויות לפי עוצמה: (1) nice ל-build (או nice שלילי לשירות): משנה משקלים, אבל עם EEVDF/CFS ה-thread עדיין יכול לחכות slice שלם של task אחר כשהוא מתעורר. (2) cgroups: cpu.weight גבוה לשירות ונמוך ל-build, ו-cpu.max ל-build אם צריך תקרה. (3) slice קצר יותר ל-thread הקריטי ב-EEVDF (sched_setattr), שמקדים את ה-virtual deadline שלו. (4) cpusets: לתת לשירות cores שה-build לא רשאי לרוץ עליהם. בידוד אמיתי, אבל מבזבז cores כשהשירות idle. (5) SCHED_FIFO לשירות: קודם תמיד ל-build, אבל באג בו יכול להרעיב את המכונה, ויש RT throttling. (6) isolcpus ו-nohz_full לבידוד מלא. בנוסף לבדוק תחרות על משאבים אחרים: LLC, רוחב פס זיכרון ו-I/O, שה-scheduler לא פותר (Intel RDT/CAT יכול לחלק LLC).",
+      "rubric": [
+        "אבחון: מוכיח שזו המתנה ב-runqueue (perf sched, runqlat)",
+        "מדרג אפשרויות: nice, cgroups weight/max, cpusets, SCHED_FIFO, isolcpus",
+        "מציין מחיר וסיכון של כל אחת",
+        "מזכיר משאבים משותפים שאינם CPU: cache, זיכרון, I/O"
+      ],
+      "explanation": "מועמד חזק לא קופץ ישר ל-SCHED_FIFO 99, ומבין שבידוד CPU לא פותר תחרות על cache ו-memory bandwidth.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "process ב-SCHED_OTHER מתעורר כל 1ms לעבודה של 50µs, ובאותו core רץ job CPU-bound עם nice 19. ממה נובע רוב ה-wakeup latency הנותר?",
+      "choices": [
+        "nice 19 אוסר על ה-job לרוץ כשיש tasks אחרים",
+        "ה-job ב-nice 19 מקבל 50% מה-CPU",
+        "nice 19 מקבל עדיפות זמן-אמת",
+        "ה-scheduler לא תמיד מבצע preemption מיידי של ה-job ב-wakeup, ובנוסף ה-core עשוי לצאת מ-C-state ולשחזר cache ש-job הרקע זיהם. הרבה מזה לא נפתר ע״י nice"
+      ],
+      "answer": 3,
+      "explanation": "ה-thread הקצר מקבל עדיפות ב-wakeup בגלל vruntime נמוך, ובדרך כלל מבצע preempt ל-job, אבל זה נתון להחלטות של ה-scheduler ולגרנולריות מינימלית, וגם ה-cache וה-TLB זוהמו ע״י ה-job. nice 19 עדיין רץ (משקל 15 מול 1024), אבל לא 50%. ל-latency צפוי עוברים ל-SCHED_FIFO או ל-core נפרד.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "service בקונטיינר עם `cpu.max = 100000 100000` (CPU אחד בכל period של 100ms) מריץ 8 worker threads על מכונה עם 16 cores. p99 של latency הוא כ-90ms, למרות שממוצע השימוש ב-CPU רק 40%. מה קורה?",
+      "choices": [
+        "ה-NUMA node רחוק",
+        "ה-scheduler מריץ רק thread אחד בכל רגע בקונטיינר",
+        "CFS bandwidth throttling: ברגעי עומס 8 threads על 8 cores שורפים 100ms של קוטה ב-12.5ms של זמן אמיתי, ואז כל ה-group מושהה עד סוף ה-period, כ-87ms. ממוצע נמוך לא מונע throttling בתוך period בודד",
+        "ה-threads נלחמים על lock"
+      ],
+      "answer": 2,
+      "explanation": "הקוטה נמדדת בזמן CPU מצטבר של כל ה-threads, לא בזמן שעון. מספר threads גדול מהקוטה מאפשר לשרוף אותה מהר ואז לחכות. רואים את זה ב-cpu.stat (nr_throttled, throttled_usec). פתרונות: להגדיל את cpu.max או לבטל אותו, לצמצם threads ל-ceil של הקוטה, להשתמש ב-cpu.weight, או period קצר יותר.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-EEVDF (קרנל 6.6 ואילך), איך ה-scheduler בוחר מבין ה-tasks ב-runqueue?",
+      "choices": [
+        "מבין ה-tasks הזכאים (eligible, כלומר lag לא שלילי: קיבלו פחות או בדיוק את החלק ההוגן שלהם), נבחר זה עם ה-virtual deadline המוקדם ביותר. ה-deadline תלוי ב-slice המבוקש, ולכן task עם slice קצר מקבל latency טוב יותר",
+        "לפי סדר FIFO של התעוררות",
+        "לפי nice בלבד, בלי קשר לזמן ריצה",
+        "תמיד ה-task עם ה-vruntime הקטן ביותר, כמו CFS"
+      ],
+      "answer": 0,
+      "explanation": "EEVDF שומר על הוגנות (lag) אבל מפריד אותה מ-latency: virtual deadline = זמן הזכאות + slice / weight. task שמבקש slice קצר יקבל CPU מוקדם יותר אבל בפרוסות קטנות. זה מחליף את ההיוריסטיקות של CFS ל-wakeup preemption.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "process תקוע ו-`kill -9` לא הורג אותו. ב-ps הוא במצב D. מה המשמעות?",
+      "choices": [
+        "ה-process רץ ב-SCHED_FIFO",
+        "ה-process נמצא בתוך syscall בקרנל בשינה uninterruptible (TASK_UNINTERRUPTIBLE), בדרך כלל מחכה ל-I/O (דיסק תקול, NFS, driver). signals, כולל SIGKILL, יטופלו רק כשהוא יחזור מהשינה",
+        "ה-process חוסם signals עם sigprocmask",
+        "ה-process הוא zombie"
+      ],
+      "answer": 1,
+      "explanation": "SIGKILL לא ניתן לחסימה מ-user space, אבל הקרנל בודק אותו רק בנקודות מסוימות. בשינה uninterruptible הוא לא מעיר את ה-task. קרנלים חדשים משתמשים ב-TASK_KILLABLE בהרבה מקומות כדי לאפשר SIGKILL. zombie מופיע כ-Z, ולא ניתן להרוג אותו כי הוא כבר מת.",
+      "lesson": "sys.scheduling"
+    }
+  ]
+}

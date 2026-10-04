@@ -1,0 +1,315 @@
+{
+  "domain": "dsp",
+  "subtopic": "windows",
+  "lessons": [
+    {
+      "id": "dsp.windows",
+      "title": "Windows: מהתיאוריה לקוד",
+      "what": "חלון מכפיל frame לפני FFT כדי להקטין leakage מהקפיצה בקצוות. את הטרייד-אוף (רוחב mainlobe מול גובה sidelobes) אתה מכיר. בצד התוכנה: לחשב את החלון פעם אחת ובדיוק טוב, לבחור periodic ולא symmetric, לנרמל נכון (טון מול רעש), ולהחיל אותו ביעילות, רצוי באותו מעבר עם המרת הפורמט.",
+      "when": [
+        "כל STFT, spectrum monitor או detector מבוסס FFT",
+        "מדידת עוצמת טון (amplitude) או רצפת רעש (PSD) ממספרים של FFT",
+        "STFT עם סינתזה חזרה (overlap-add) אחרי עיבוד בתדר",
+        "מימוש בנקודה קבועה או ב-SIMD"
+      ],
+      "how": [
+        "לחשב את טבלת החלון באתחול, ב-double, ולשמור כ-float מיושר. בלולאה החמה יש רק כפל לכל דגימה",
+        "periodic (DFT-even) לניתוח ספקטרלי: w[n] = 0.5 - 0.5·cos(2πn/N). symmetric מחלק ב-N-1 ומיועד לתכנון מסנני FIR. `np.hanning` הוא symmetric, ו-`scipy.signal.get_window('hann', N)` הוא periodic",
+        "נרמול לטון: coherent gain = sum(w)/N (ל-Hann 0.5, כלומר 6.02 dB-). מחלקים את |X| ב-sum(w)",
+        "נרמול לרעש: PSD = |X|^2 / (fs·sum(w^2)). ENBW בבינים = N·sum(w^2)/sum(w)^2 (ל-Hann 1.5)",
+        "scalloping: טון באמצע בין bins מאבד 3.92 dB ב-rect ו-1.42 dB ב-Hann. flat-top כמעט אפס, במחיר mainlobe רחב מאוד",
+        "overlap-add: Hann periodic ב-50% overlap מסתכם לקבוע (COLA). בניתוח+סינתזה עם אותו חלון משתמשים ב-sqrt-Hann כך שהמכפלה היא Hann",
+        "ביצוע: לאחד חלון עם המרה מ-sc16 ל-fc32 ועם קבוע הנרמול במעבר אחד על הזיכרון; לדאטה מרוכב interleaved להכין טבלה משוכפלת [w0,w0,w1,w1,...]"
+      ],
+      "complexity": "O(N) לכל frame: כפל אחד לדגימה (שניים למרוכב), זניח לעומת ה-FFT, אבל זה עוד מעבר על הזיכרון אם לא מאחדים אותו עם שלב אחר.",
+      "pitfalls": [
+        "לחשב cos לכל דגימה בכל frame",
+        "להשתמש ב-np.hanning (symmetric) ל-STFT: שובר COLA ומזיז מעט את התכונות הספקטרליות",
+        "לנרמל ב-N במקום ב-sum(w): טונים יוצאים נמוכים ב-6 dB עם Hann",
+        "לשמור 1.0 כ-Q15: 32768 לא נכנס ב-int16",
+        "להשוות רצפת רעש בין חלונות בלי לתקן ENBW"
+      ],
+      "senior": [
+        "לבחור חלון לפי הדרישה: הפרדה בין טונים קרובים, דינמיקה מול אות חזק, או דיוק amplitude",
+        "להסביר את ההבדל בין נרמול לטון לבין נרמול לרעש, ואת ENBW",
+        "לחשוב על memory bandwidth: חלון, המרה ונרמול במעבר אחד",
+        "להכיר את ההשפעה של overlap על variance ב-Welch"
+      ],
+      "diagram": "frame edges:  /\\/\\/\\|/\\/\\/\\  jump -> leakage\nHann:        _/~~~~~~\\_\n50% overlap: _/~~\\_/~~\\_  sum = const"
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.windows.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה מכפילים frame בחלון לפני FFT?",
+      "choices": [
+        "כדי להקטין spectral leakage שנובע מהקפיצה בין תחילת ה-frame לסופו",
+        "כדי לשפר את רזולוציית התדר",
+        "כדי להקטין את זמן החישוב של ה-FFT",
+        "כדי להוריד את רצפת הרעש הלבן"
+      ],
+      "answer": 0,
+      "explanation": "ה-DFT מניח שה-frame מחזורי. אם הטון לא נכנס מספר שלם של מחזורים, יש קפיצה בקצוות שמפזרת אנרגיה לכל ה-bins. חלון מוריד את הקצוות לאפס ומקטין את ה-sidelobes. המחיר: mainlobe רחב יותר, כלומר רזולוציה גרועה יותר, ולא טובה יותר. הרעש הלבן ל-bin דווקא עולה מעט יחסית לטון (ENBW).",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה נכון לגבי חלון מלבני (בלי חלון) לעומת Hann?",
+      "choices": [
+        "למלבני sidelobes נמוכים יותר",
+        "ל-Hann mainlobe צר יותר",
+        "למלבני mainlobe צר יותר, אבל ה-sidelobe הראשון גבוה (כ-13 dB-) ודועך לאט",
+        "אין הבדל אם N חזקה של 2"
+      ],
+      "answer": 2,
+      "explanation": "החלון המלבני נותן את ה-mainlobe הצר ביותר (רוחב 2 bins בין אפסים) ו-ENBW של 1 bin, אבל sidelobe ראשון של 13.3 dB- בלבד, עם דעיכה של 6 dB לאוקטבה. Hann: mainlobe ברוחב 4 bins, sidelobe ראשון 31.5 dB- ודעיכה של 18 dB לאוקטבה.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "צריך לראות אות חלש מאוד ליד אות חזק מאוד. איזה חלון הכי מתאים מבין אלה?",
+      "choices": [
+        "Rectangular",
+        "Hann",
+        "Hamming",
+        "Blackman-Harris (4-term)"
+      ],
+      "answer": 3,
+      "explanation": "Blackman-Harris בעל 4 איברים מגיע ל-sidelobes של כ-92 dB-, כך שה-leakage מהאות החזק לא מסתיר את החלש. Hann מגיע ל-31.5 dB- בסמוך ל-mainlobe, ו-Hamming ל-כ-43 dB- אבל דועך לאט. המחיר: mainlobe רחב יותר (ENBW כ-2 bins).",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מודדים טון שנופל בדיוק על bin עם חלון Hann ונרמול ב-1/N. בכמה dB הוא ייראה נמוך מאשר עם חלון מלבני?",
+      "choices": [
+        "כ-1.42 dB",
+        "כ-3 dB",
+        "כ-6 dB",
+        "כ-1.76 dB"
+      ],
+      "answer": 2,
+      "explanation": "ה-coherent gain של Hann הוא sum(w)/N = 0.5, כלומר 20·log10(0.5) = 6.02 dB-. כדי לקבל amplitude נכון מחלקים ב-sum(w) ולא ב-N. 1.42 dB הוא ה-scalloping loss של Hann, ו-1.76 dB הוא ENBW של Hann (1.5 bins) ב-dB.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q05",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nprint(np.round(np.hanning(4), 2))",
+      "choices": [
+        "[0.   0.5  1.   0.5 ]",
+        "[0.   0.75 0.75 0.  ]",
+        "[0.25 0.75 0.75 0.25]",
+        "[0.5  1.   0.5  0.  ]"
+      ],
+      "answer": 1,
+      "explanation": "np.hanning הוא symmetric: w[n] = 0.5 - 0.5·cos(2πn/(M-1)), ולכן שני הקצוות 0, ו-n=1 נותן 0.5+0.25 = 0.75. החלון ה-periodic (חלוקה ב-N) היה נותן [0, 0.5, 1, 0.5], שזה מה שמתאים ל-FFT frames. זו מלכודת נפוצה: NumPy נותן symmetric, ו-SciPy `get_window` נותן periodic כברירת מחדל.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בלולאת STFT real-time, איך נכון להחיל חלון Hann באורך 4096?",
+      "choices": [
+        "לחשב `0.5 - 0.5*cos(...)` לכל דגימה בתוך הלולאה",
+        "לחשב טבלה פעם אחת באתחול, ובלולאה רק להכפיל דגימה בערך מהטבלה",
+        "להחיל את החלון אחרי ה-FFT בכפל איבר-איבר",
+        "להשתמש ב-lookup של cos ברזולוציה של 256 נקודות ואינטרפולציה"
+      ],
+      "answer": 1,
+      "explanation": "cos עולה עשרות מחזורים, ולכן חישוב בכל frame הוא בזבוז; טבלה של 4096 floats היא 16 KB ונכנסת ב-L1. חלון בזמן הוא קונבולוציה בתדר, ולא כפל איבר-איבר אחרי ה-FFT (ל-Hann אפשר קונבולוציה בת 3 taps בתדר, אבל זה לא כפל). LUT קטן עם אינטרפולציה מוסיף שגיאה ומורכבות בלי סיבה.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q07",
+      "level": 3,
+      "type": "short",
+      "prompt": "מה ה-ENBW (equivalent noise bandwidth) של חלון Hann, ביחידות של bins?",
+      "accept": [
+        "1.5",
+        "1.5 bins",
+        "3/2"
+      ],
+      "explanation": "ENBW = N·sum(w^2)/sum(w)^2. ל-Hann: sum(w) = N/2 ו-sum(w^2) = 3N/8, ולכן ENBW = N·(3N/8)/(N^2/4) = 1.5. המשמעות: כל bin אוסף רעש מ-1.5 bins, ורצפת הרעש עולה ב-1.76 dB יחסית לטון לעומת חלון מלבני.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ל-STFT עם 50% overlap, איזה Hann צריך: periodic (חלוקה ב-N) או symmetric (חלוקה ב-N-1), ולמה?",
+      "choices": [
+        "symmetric, כי הוא מתאפס בשני הקצוות ולכן אין leakage",
+        "אין הבדל מעשי, ההפרש בין N ל-N-1 זניח",
+        "symmetric, כי periodic לא מתאפס ב-n=N-1 ולכן יש קפיצה",
+        "periodic: הוא מתאים להנחת המחזוריות של ה-DFT, ו-Hann periodic ב-50% overlap מסתכם בדיוק לקבוע (COLA). symmetric נותן אדווה קטנה בסכום"
+      ],
+      "answer": 3,
+      "explanation": "periodic Hann באורך N הוא בדיוק symmetric Hann באורך N+1 בלי הדגימה האחרונה, כך שה-frames הבאים 'ממשיכים' אותו בצורה חלקה, והסכום של שני חלונות בהזזה של N/2 הוא 1 בדיוק. symmetric מיועד לתכנון FIR. ב-N גדול ההבדל קטן, אבל בסינתזה (overlap-add) הוא מייצר אדווה מחזורית, וב-N קטן הוא משנה את ENBW ואת ה-sidelobes.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q09",
+      "level": 3,
+      "type": "multi",
+      "prompt": "X הוא FFT באורך N של אות מוכפל בחלון w, ו-fs קצב הדגימה. אילו טענות נכונות? (בחר את כל הנכונים)",
+      "choices": [
+        "amplitude של טון שנופל על bin הוא |X[k]|/sum(w) (באות מרוכב; באות ממשי חד-צדדי כפול 2)",
+        "PSD (ביחידות של V^2/Hz) הוא |X[k]|^2/(fs·sum(w^2))",
+        "נרמול ב-1/N נכון לכל חלון גם לטונים וגם לרעש",
+        "ENBW בבינים הוא N·sum(w^2)/sum(w)^2",
+        "חלון לא משנה את היחס בין רצפת רעש ל-bin לבין גובה טון"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "לטונים חשוב הסכום הקוהרנטי sum(w), ולרעש חשוב ההספק sum(w^2). לכן אין נרמול אחד שמתאים לשניהם, והיחס ביניהם הוא בדיוק ה-ENBW: חלון עם ENBW גדול יותר מעלה את רצפת הרעש יחסית לטון. נרמול ב-1/N נכון רק לחלון מלבני ולטונים.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך למדוד amplitude של טון בדיוק של 0.1 dB, והתדר שלו לא ידוע מראש ויכול ליפול בין bins. איזה חלון?",
+      "choices": [
+        "Rectangular",
+        "Hann",
+        "Flat-top",
+        "Blackman"
+      ],
+      "answer": 2,
+      "explanation": "flat-top מתוכנן כך שה-mainlobe כמעט שטוח בטווח של חצי bin, עם scalloping loss של כ-0.01 dB, ולכן משמש בנתחי ספקטרום למדידת amplitude. Hann מאבד עד 1.42 dB באמצע בין bins, מלבני עד 3.92 dB. המחיר של flat-top: ENBW של כ-3.8 bins ו-mainlobe רחב מאוד.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "STFT עם עיבוד בתדר (למשל masking) וסינתזה ב-overlap-add, 50% overlap, עם אותו חלון בניתוח ובסינתזה. איזה חלון נותן שחזור מושלם כשהעיבוד הוא זהות?",
+      "choices": [
+        "sqrt של Hann periodic: המכפלה של חלון הניתוח וחלון הסינתזה היא Hann, שמסתכם לקבוע ב-50%",
+        "Hann periodic, כי הוא COLA ב-50%",
+        "חלון מלבני בניתוח ו-Hann בסינתזה",
+        "Hamming, כי הוא לא מתאפס בקצוות"
+      ],
+      "answer": 0,
+      "explanation": "ב-WOLA הדגימה מוכפלת פעמיים, בחלון הניתוח ובחלון הסינתזה, והתנאי לשחזור הוא שהמכפלה w^2 תהיה COLA. Hann פעמיים נותן Hann^2, שאינו COLA ב-50% (צריך 75%). sqrt-Hann פעמיים נותן Hann. סינתזה עם חלון מתאפס גם מרככת את הקצוות אחרי עיבוד שיוצר אי-רציפות. Hamming ב-50% הוא COLA לבד, אבל לא בריבוע.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q12",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `makeHann(N)` שמחזירה חלון Hann periodic כ-`std::vector<float>`, יחד עם ה-coherent gain וה-ENBW בבינים, לשימוש בנרמול מאוחר יותר.",
+      "starter": "struct Window {\n    std::vector<float> w;\n    double coherentGain;  // sum(w)/N\n    double enbwBins;      // N*sum(w^2)/sum(w)^2\n};\nWindow makeHann(size_t N);",
+      "modelAnswer": "Window makeHann(size_t N) {\n    Window r;\n    r.w.resize(N);\n    double s = 0.0, s2 = 0.0;\n    for (size_t n = 0; n < N; ++n) {\n        // periodic: divide by N, not N-1; compute in double\n        double v = 0.5 - 0.5 * std::cos(2.0 * M_PI * double(n) / double(N));\n        r.w[n] = static_cast<float>(v);\n        s += v;\n        s2 += v * v;\n    }\n    r.coherentGain = (N > 0) ? s / N : 0.0;          // 0.5\n    r.enbwBins = (s > 0) ? N * s2 / (s * s) : 0.0;    // 1.5\n    return r;\n}",
+      "rubric": [
+        "periodic: חלוקה ב-N, ולא ב-N-1",
+        "חישוב ב-double (כולל סכומים) ושמירה ב-float",
+        "coherent gain ו-ENBW לפי הנוסחאות, עם הגנה מ-N=0",
+        "מחושב פעם אחת באתחול, O(N)"
+      ],
+      "explanation": "לחלון Hann periodic יוצא בדיוק 0.5 ו-1.5. חישוב הסכומים ב-float ב-N גדול היה צובר שגיאה קטנה; ב-double היא זניחה. אם הקוד ישתמש בטבלה ב-SIMD, עדיף להקצות אותה מיושרת (למשל 64 bytes).",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך לזהות אות חלש ב-80 dB מתחת לאות חזק, במרחק של כ-5 bins ממנו, והאות החזק נופל במקום שרירותי בין bins. מה הבחירה הנכונה?",
+      "choices": [
+        "Hann, ולהגדיל N עד שהאות החלש יופיע",
+        "חלון מלבני כדי לשמור על רזולוציה מקסימלית",
+        "Hamming, כי ה-sidelobe הראשון שלו נמוך מזה של Hann",
+        "חלון עם sidelobes מתחת ל-80 dB- כמו Blackman-Harris 4-term או Kaiser עם β גבוה, ולקחת בחשבון mainlobe רחב יותר (אולי N גדול יותר)"
+      ],
+      "answer": 3,
+      "explanation": "השאלה היא כמה leakage של האות החזק מגיע 5 bins משם. ב-Hann המעטפת היא בערך sinc(f)/(1-f^2), כלומר בסביבות 54 dB- ב-5 bins (ורק ב-20 bins היא יורדת לסביבות 88 dB-). Hamming דועך לאט ונמצא שם בסביבות 50 dB-. שניהם מסתירים אות ב-80 dB-. N גדול לא מוריד sidelobes ביחידות של bins. Blackman-Harris 4-term (sidelobes של 92 dB-, mainlobe עד ±4 bins) או Kaiser עם β גבוה מספיק (בסביבות 11) פותרים את זה, והמחיר הוא mainlobe רחב יותר.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מימוש בנקודה קבועה: מקדמי חלון Hann periodic נשמרים כ-int16 ב-Q15 על ידי `int16_t(round(w[n] * 32768))`. מה קורה?",
+      "choices": [
+        "אין בעיה, Q15 מייצג [-1, 1]",
+        "w[N/2] = 1.0 בדיוק, ו-32768 לא נכנס ב-int16: ההמרה נותנת 32768-, והדגימה במרכז ה-frame מתהפכת בסימן",
+        "שגיאת קוונטיזציה של Q15 מעלה את ה-sidelobes ל-40 dB-",
+        "הקצוות (0) לא ניתנים לייצוג"
+      ],
+      "answer": 1,
+      "explanation": "Q15 מייצג [-1, 1-2^-15], ול-periodic Hann יש מקדם 1.0 בדיוק במרכז. ההמרה של 32768 ל-int16 עוטפת ל-32768-, ומתקבל מקדם של 1- במקום 1+: spike ספקטרלי שקשה להבין מאיפה הוא בא. תיקון: סקאלה של 32767 או saturation. שגיאת קוונטיזציה של 16 ביט היא בסביבות 2^-16, שמגבילה sidelobes רק סביב 90-100 dB-.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.windows.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Welch PSD עם Hann באורך N. אפשרות א': 50 frames לא חופפים. אפשרות ב': אותם נתונים בדיוק, 99 frames עם 50% overlap. מה נכון לגבי ה-variance של ההערכה?",
+      "choices": [
+        "אותו variance, כי אין נתונים חדשים",
+        "ב' גרוע יותר, כי frames חופפים מתואמים",
+        "overlap עוזר רק עם חלון מלבני",
+        "ב' טוב יותר, ה-variance בערך חצי: ב-Hann עם 50% overlap הקורלציה בין frames סמוכים קטנה (בסביבות 17%, וה-variance תלוי בריבוע שלה), כי הדגימות שמוחלשות בקצה של frame אחד נמצאות במרכז של הבא"
+      ],
+      "answer": 3,
+      "explanation": "עם חלון מלבני, frames לא חופפים כבר מנצלים את כל הדגימות במשקל מלא, ו-overlap לא מוסיף הרבה. עם Hann, frames לא חופפים 'מבזבזים' את הקצוות. ב-50% overlap הקורלציה בין הערכות סמוכות היא בערך 0.167, וה-variance של הממוצע הוא בערך (1+2·0.167^2)/K, כלומר כמעט 1/99 לעומת 1/50. המחיר הוא כפל בחישוב, ולכן 50% overlap עם Hann הוא ברירת המחדל של Welch.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "הנתונים הם `complex<float>` interleaved בזיכרון: re0, im0, re1, im1, ... והחלון ממשי. מה הדרך היעילה ביותר להחיל אותו עם AVX (8 floats לרגיסטר)?",
+      "choices": [
+        "להכין באתחול טבלה משוכפלת w0, w0, w1, w1, ... (פי 2 בזיכרון) ולבצע `_mm256_mul_ps` רגיל על הנתונים",
+        "לבצע deinterleave למערכי re ו-im נפרדים, להכפיל, ולבצע interleave חזרה",
+        "להתייחס לחלון כמרוכב עם חלק מדומה 0 ולהשתמש בכפל מרוכב מלא (addsub)",
+        "לחשב את החלון בתוך הלולאה עם sin/cos וקטורי"
+      ],
+      "answer": 0,
+      "explanation": "עם טבלה משוכפלת, כל רגיסטר של 4 דגימות מרוכבות מוכפל ברגיסטר מקביל של מקדמים: load אחד, mul אחד, store אחד, בלי shuffles. הטבלה ל-N=4096 היא 32 KB, עדיין בתוך L2 ובדרך כלל זה זניח. deinterleave/interleave מוסיפים shuffles לכל וקטור. כפל מרוכב מלא מכפיל את מספר הפעולות בלי צורך. חישוב sin/cos יקר בהרבה. שיפור נוסף: לאחד את החלון עם המרת sc16 ל-fc32 באותו מעבר.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.windows.q17",
+      "level": 5,
+      "type": "oral",
+      "prompt": "ב-pipeline של 200 MS/s, הפרופיילר מראה ש'שלב החלון' לוקח כמעט כמו ה-FFT עצמו. איך היית מתכנן מחדש את השלבים שלפני ה-FFT?",
+      "modelAnswer": "הכפל עצמו זניח (כפל לכל float), ולכן אם הוא לוקח זמן משמעותי, הבעיה היא memory bandwidth: כל שלב נפרד קורא וכותב את כל ה-buffer. ב-200 MS/s, fc32 הם 1.6 GB/s לכל מעבר, ועוד overlap שמכפיל. התכנון: לאחד את כל השלבים שלפני ה-FFT ללולאה אחת שקוראת את הנתונים הגולמיים פעם אחת: המרת sc16 ל-fc32, הכפלה בחלון שכבר מכיל את קבוע הנרמול (למשל 1/32768 ו-1/sum(w) מקופלים לתוך הטבלה), ו-DC removal אם צריך, וכתיבה ישירה ל-buffer הקלט של ה-FFT, מיושר ל-64 bytes. הטבלה משוכפלת לדאטה interleaved, נשמרת ב-L1/L2, והלולאה וקטורית (AVX2: המרת int16 ל-int32 ל-float, mul, store). בנוסף לעבוד ב-blocks שנכנסים ב-L2, כך שה-FFT קורא נתונים שעוד חמים ב-cache. עם overlap של 50%, לבחון אם עדיף להשתמש ב-buffer מעגלי ולא להעתיק את החצי החופף. אם ה-FFT מבוצע ב-GPU, להעביר sc16 על PCIe (חצי מ-fc32) ולבצע את ההמרה והחלון ב-kernel אחד לפני cuFFT, או כ-load callback של cuFFT. למדוד לפני ואחרי: bytes שעוברים לכל דגימה ו-GB/s מול הגבול של המכונה.",
+      "rubric": [
+        "מזהה שזה memory-bound ולא compute-bound, עם חשבון bandwidth",
+        "fusion: המרה, חלון ונרמול במעבר אחד",
+        "פרטי מימוש: טבלה משוכפלת ומיושרת, SIMD, blocking לפי cache",
+        "מתייחס ל-overlap ול-GPU (העברת sc16, kernel מאוחד או callback)",
+        "מדידה: GB/s מול גבול החומרה"
+      ],
+      "explanation": "זו שאלה טיפוסית של NVIDIA: כשפעולה זולה לוקחת זמן, הסיבה היא כמעט תמיד תנועת נתונים, והפתרון הוא kernel fusion.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

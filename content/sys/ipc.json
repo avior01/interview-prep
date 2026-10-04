@@ -1,0 +1,325 @@
+{
+  "domain": "sys",
+  "subtopic": "ipc",
+  "lessons": [
+    {
+      "id": "sys.ipc",
+      "title": "IPC",
+      "what": "Inter-Process Communication הוא אוסף המנגנונים להעברת נתונים ואירועים בין processes עם מרחבי כתובות נפרדים: pipes, sockets, shared memory, message queues, signals ו-eventfd. הבחירה היא trade-off בין פשטות, מספר ההעתקות, latency ומי אחראי לסנכרון.",
+      "when": [
+        "מערכת שמחולקת ל-processes (בידוד תקלות, שפות שונות, הרשאות שונות)",
+        "העברת נפח גדול (דגימות, תמונות) בין processes: shared memory",
+        "פקודות והודעות קטנות: Unix domain sockets או pipes",
+        "התראה על אירוע בלי נתונים: eventfd, futex או signal"
+      ],
+      "how": [
+        "pipe: ערוץ חד-כיווני של bytes עם באפר בקרנל (64KB כברירת מחדל ב-Linux). כתיבה של עד PIPE_BUF (4096) בתים היא אטומית ולא מתערבבת עם כותבים אחרים",
+        "Unix domain socket: כמו socket אבל מקומי, בלי TCP/IP. יש stream ו-datagram, ואפשר להעביר דרכו file descriptors (SCM_RIGHTS) והרשאות",
+        "shared memory: shm_open או memfd_create, ואז mmap עם MAP_SHARED. אפס העתקות, אבל הסנכרון באחריותך",
+        "סנכרון בזיכרון משותף: atomics שהם lock-free, pthread mutex עם PTHREAD_PROCESS_SHARED (ועדיף ROBUST), futex בלי FUTEX_PRIVATE_FLAG",
+        "ב-shared memory שומרים offsets ולא pointers, כי כל process ממפה את האזור בכתובת אחרת",
+        "התראות: eventfd (מונה שאפשר להמתין עליו ב-epoll), signals (מוגבלים ומסוכנים), או polling",
+        "pipe ו-socket מעתיקים פעמיים (user לקרנל, קרנל ל-user) ודורשים syscall בכל צד"
+      ],
+      "complexity": "ping-pong בין processes: pipe או UDS בערך 5–20µs ל-round trip (syscalls והתעוררות). shared memory עם polling על cores נפרדים: 100–300ns (העברת cache line). throughput: pipe עד כמה GB/s, shared memory מוגבל ע״י רוחב פס הזיכרון.",
+      "pitfalls": [
+        "דדלוק עם שני pipes: האב כותב הרבה לילד לפני שהוא קורא את הפלט שלו",
+        "שכחת SIGPIPE: כתיבה ל-pipe או socket שהצד השני סגר הורגת את ה-process",
+        "pointers בתוך shared memory",
+        "process שמת כשהוא מחזיק mutex בזיכרון משותף: כולם נתקעים בלי ROBUST",
+        "ftruncate של קובץ ממופה בזמן שאחר קורא: SIGBUS"
+      ],
+      "senior": [
+        "עיצוב ring buffer בזיכרון משותף עם כותב יחיד וכמה קוראים, שבו הכותב לא נחסם לעולם",
+        "seqlock ו-memory ordering נכון בין processes",
+        "העברת fds (memfd, dma-buf) ו-sealing לשיתוף בטוח",
+        "מחזור חיים: מי יוצר, מי מנקה, מה קורה כשצד אחד קורס"
+      ],
+      "diagram": "pipe/socket:  A --copy--> [kernel buf] --copy--> B\n\nshared mem:   A ---------> [ shm pages ] <------ B\n               (same physical pages,\n                sync is your job)"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.ipc.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה מנגנון IPC מאפשר להעביר מאות MB לשנייה בין processes בלי להעתיק את הנתונים דרך הקרנל?",
+      "choices": [
+        "TCP על localhost",
+        "shared memory (mmap עם MAP_SHARED)",
+        "signals",
+        "pipe"
+      ],
+      "answer": 1,
+      "explanation": "ב-shared memory שני ה-processes ממפים את אותם דפים פיזיים, ולכן הכתיבה של אחד נראית ישירות לשני. ב-pipe וב-socket הנתונים מועתקים לבאפר בקרנל ומשם החוצה. signals לא נושאים נתונים (חוץ ממילה אחת ב-sigqueue).",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה מאפיין pipe רגיל (שנוצר עם `pipe()`)?",
+      "choices": [
+        "ערוץ שעובד בין מחשבים שונים",
+        "ערוץ דו-כיווני של הודעות",
+        "ערוץ חד-כיווני של bytes, בין processes עם קשר משפחתי (שירשו את ה-fds), עם באפר בקרנל",
+        "זיכרון משותף עם סנכרון מובנה"
+      ],
+      "answer": 2,
+      "explanation": "pipe מחזיר שני fds: צד קריאה וצד כתיבה. אין גבולות הודעה, זה stream. לתקשורת דו-כיוונית צריך שני pipes או socketpair. FIFO (named pipe) מאפשר גם ל-processes לא קשורים להתחבר דרך שם במערכת הקבצים.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה signal מקבל process שכותב ל-pipe שכל צדדי הקריאה שלו נסגרו?",
+      "accept": [
+        "SIGPIPE",
+        "PIPE"
+      ],
+      "explanation": "ברירת המחדל של SIGPIPE היא לסיים את ה-process. שרתים בדרך כלל מתעלמים ממנו (SIG_IGN) או משתמשים ב-MSG_NOSIGNAL ב-send, ואז ה-write מחזיר -1 עם EPIPE.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q04",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "כמה processes כותבים שורות log ל-pipe משותף אחד. מתי מובטח שהשורות לא יתערבבו זו בזו?",
+      "choices": [
+        "תמיד, pipe הוא תור הודעות",
+        "אף פעם",
+        "רק אם יש mutex בין ה-processes",
+        "כשכל write הוא של PIPE_BUF בתים או פחות (4096 ב-Linux): כתיבה כזו אטומית"
+      ],
+      "answer": 3,
+      "explanation": "POSIX מבטיח שכתיבה של עד PIPE_BUF ל-pipe אטומית. כתיבה גדולה יותר יכולה להתחלק ולהתערבב עם כותבים אחרים. שימו לב שזה לכל write, ולכן printf שמפצל שורה לכמה writes עלול לשבור את זה.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה לתקשורת בין processes על אותה מכונה עדיף Unix domain socket על פני TCP ל-127.0.0.1?",
+      "choices": [
+        "UDS לא עובר דרך מחסנית TCP/IP (checksums, ACKs, congestion control), ולכן מהיר יותר, ומאפשר להעביר file descriptors והרשאות של השולח",
+        "UDS מאפשר תקשורת בין מחשבים",
+        "UDS לא מעתיק נתונים בכלל",
+        "TCP לא עובד על localhost"
+      ],
+      "answer": 0,
+      "explanation": "UDS עדיין מעתיק את הנתונים דרך הקרנל, אבל עם הרבה פחות עבודה. SCM_RIGHTS מאפשר להעביר fd פתוח, ו-SO_PEERCRED לבדוק מי בצד השני. TCP על localhost עובד מצוין, רק לאט יותר.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שני processes חולקים אזור זיכרון עם mmap. מה נכון לגבי סנכרון?",
+      "choices": [
+        "מספיק volatile על כל המשתנים",
+        "צריך msync אחרי כל כתיבה כדי שהצד השני יראה אותה",
+        "אין שום סנכרון מובנה: צריך atomics, mutex משותף או פרוטוקול כמו ring buffer עם אינדקסים אטומיים",
+        "הקרנל מסנכרן אוטומטית כל גישה"
+      ],
+      "answer": 2,
+      "explanation": "shared memory נותן רק את אותם דפים פיזיים. הכללים של מודל הזיכרון חלים כאילו אלה שני threads: בלי atomics עם memory order נכון יש data race. msync קשור לכתיבה לדיסק של מיפוי קבצים, לא לנראות בין processes.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q07",
+      "level": 3,
+      "type": "bug",
+      "prompt": "האב מריץ filter כילד (קורא מ-stdin, כותב ל-stdout) ומחובר אליו בשני pipes. עם קלט קטן זה עובד, ועם 10MB הכול נתקע. איפה הבעיה?",
+      "lang": "cpp",
+      "code": "// to_child: write end of child's stdin\n// from_child: read end of child's stdout\nwrite_all(to_child, big, 10 << 20);\nclose(to_child);\nstd::string out = read_all(from_child);",
+      "bugLine": 3,
+      "choices": [
+        "הילד כותב פלט תוך כדי קריאה. כשה-pipe של הפלט מתמלא (64KB) הוא נחסם ומפסיק לקרוא, ואז האב נחסם בכתיבה. כל אחד מחכה לשני",
+        "צריך לסגור את to_child לפני הכתיבה",
+        "10MB גדול מהזיכרון של pipe ולכן הכתיבה נכשלת",
+        "write_all לא מטפל ב-EINTR"
+      ],
+      "answer": 0,
+      "explanation": "זה deadlock קלאסי עם שני באפרים חסומים. הפתרון: לכתוב ולקרוא במקביל, עם poll על שני ה-fds (ו-O_NONBLOCK), או thread נפרד לכתיבה. כך עובדים subprocess.communicate ב-Python ודומיו.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי סנכרון בזיכרון משותף בין processes?",
+      "choices": [
+        "התקן מבטיח ש-std::mutex עובד בין processes",
+        "pointer שנשמר בזיכרון המשותף תקף ב-process השני",
+        "std::atomic שהוא lock-free עובד נכון בין processes בזיכרון משותף",
+        "eventfd ו-futex יכולים לשמש להתעוררות בין processes",
+        "pthread_mutex בזיכרון משותף חייב להיות מאותחל עם PTHREAD_PROCESS_SHARED"
+      ],
+      "answer": [
+        2,
+        3,
+        4
+      ],
+      "explanation": "atomics שהם lock-free הם address-free, ולכן עובדים כשאותו זיכרון ממופה בכמה מקומות. ה-mutex צריך את ה-attribute כדי שהקרנל לא יתייחס ל-futex שלו כפרטי. אותו אזור ממופה בכתובות שונות בכל process, ולכן שומרים offsets. std::mutex לא מגדיר התנהגות בין processes, גם אם בפועל ב-glibc הוא עשוי לעבוד.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "process לכידה של SDR מייצר 200 MB/s של דגימות, ו-process GUI צריך להציג spectrum מהן. מה ה-IPC המתאים?",
+      "choices": [
+        "TCP על localhost, כי הוא אמין",
+        "ring buffer בזיכרון משותף (shm_open ו-mmap) עם אינדקסים אטומיים, ו-eventfd או polling להתראה. ה-GUI קורא בקצב שלו ומדלג כשהוא מפגר",
+        "pipe, כי הוא הפשוט ביותר",
+        "signal לכל בלוק"
+      ],
+      "answer": 1,
+      "explanation": "בנפח הזה העתקות דרך הקרנל עולות CPU משמעותי, ו-pipe או TCP גם יחסמו את הכותב כשה-GUI איטי. ב-shm הכותב לא מחכה לקורא. signals לא מתאימים לנתונים ולא לקצב גבוה.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q10",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש `void* create_shm(const char* name, size_t size)` שיוצרת אזור shared memory בשם נתון בגודל נתון וממפה אותו לקריאה וכתיבה. החזר nullptr בכל כישלון ונקה משאבים.",
+      "lang": "cpp",
+      "starter": "void* create_shm(const char* name, size_t size);",
+      "modelAnswer": "void* create_shm(const char* name, size_t size) {\n  int fd = shm_open(name, O_CREAT | O_RDWR, 0600);\n  if (fd < 0) return nullptr;\n  if (ftruncate(fd, static_cast<off_t>(size)) < 0) {\n    close(fd);\n    shm_unlink(name);\n    return nullptr;\n  }\n  void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);\n  close(fd);  // the mapping stays valid after closing the fd\n  if (p == MAP_FAILED) {\n    shm_unlink(name);\n    return nullptr;\n  }\n  return p;\n}",
+      "rubric": [
+        "shm_open, ftruncate לגודל, mmap עם MAP_SHARED",
+        "בדיקת MAP_FAILED ולא nullptr",
+        "סגירת ה-fd אחרי mmap (המיפוי נשאר) וניקוי ב-shm_unlink בכישלון",
+        "הרשאות מינימליות (0600) והבנה שהשם חי עד shm_unlink",
+        "בונוס: memfd_create והעברת fd כחלופה בלי שם גלובלי, ו-MAP_POPULATE או mlock לזמן-אמת"
+      ],
+      "explanation": "הבאג הנפוץ: לבדוק `p == nullptr`. mmap מחזיר MAP_FAILED, שהוא (void*)-1. גם שכחת ftruncate נפוצה: אז האזור בגודל 0, וגישה אליו נותנת SIGBUS.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "process מת (SIGKILL) כשהוא מחזיק pthread mutex שנמצא בזיכרון משותף. מה קורה לשאר ה-processes, ואיך מתכננים לזה?",
+      "choices": [
+        "כל ה-processes מקבלים SIGKILL",
+        "הקרנל משחרר את ה-mutex אוטומטית",
+        "ה-mutex הופך ל-recursive",
+        "עם mutex רגיל, כל מי שינסה לנעול ייתקע לנצח. עם PTHREAD_MUTEX_ROBUST, הנועל הבא מקבל EOWNERDEAD, מחזיק את ה-mutex, צריך לתקן את הנתונים המוגנים ולקרוא ל-pthread_mutex_consistent"
+      ],
+      "answer": 3,
+      "explanation": "robust mutex עובד דרך רשימה שהקרנל מחזיק לכל thread (robust_list), ובמוות של ה-thread הוא מסמן את ה-mutexes שלו. EOWNERDEAD אומר שהנתונים אולי במצב לא עקבי. אם לא קוראים ל-consistent לפני unlock, ה-mutex הופך לבלתי שמיש (ENOTRECOVERABLE). זו עוד סיבה להעדיף מבנים lock-free בזיכרון משותף.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "process A שולח fd דרך Unix domain socket עם SCM_RIGHTS ל-process B. מה B מקבל?",
+      "choices": [
+        "fd חדש בטבלה של B (בדרך כלל במספר אחר), שמצביע לאותו open file description: אותו offset, אותם flags, ואותו קובץ או אובייקט",
+        "עותק של תוכן הקובץ",
+        "את אותו מספר fd כמו ב-A",
+        "רק את שם הקובץ"
+      ],
+      "answer": 0,
+      "explanation": "הקרנל מעביר הפניה לאותו אובייקט פתוח, כמו dup בין processes. כך מעבירים memfd, dma-buf או sockets מקובלים בלי שם במערכת הקבצים ובלי הרשאות פתיחה. offset משותף אומר ש-read באחד מזיז אותו גם לשני.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "benchmark של ping-pong בין שני processes על cores נפרדים: דרך pipe ה-round trip הוא כ-8µs, ודרך shared memory עם busy-poll כ-0.2µs. מה מסביר את הפער?",
+      "choices": [
+        "pipe מעתיק הרבה נתונים",
+        "ב-pipe כל כיוון הוא write ו-read (syscalls), והקורא ישן ולכן צריך wake-up דרך ה-scheduler, אולי גם יציאה מ-C-state. ב-shm עם polling העלות היא רק העברת cache line בין cores",
+        "pipe משתמש ב-TCP",
+        "shared memory עוקף את ה-cache"
+      ],
+      "answer": 1,
+      "explanation": "ההודעה עצמה קטנה, ולכן העתקה זניחה. רוב הזמן הוא syscalls ו-wakeup latency. ב-shm שני ה-cores מסתובבים על ה-line, וההעברה בין cores עולה כ-50–100ns לכל כיוון. המחיר: שני cores שרופים ב-100%.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "תכנן ערוץ בזיכרון משותף שבו process RX אחד מפרסם בלוקים של דגימות, ושלושה processes צרכנים (GUI, recorder, analyzer) קוראים אותם, כל אחד בקצב שלו. ה-RX אסור שייחסם לעולם.",
+      "modelAnswer": "ring buffer של N slots בזיכרון משותף (shm או memfd), כל slot עם seq number ובלוק נתונים, ומונה כתיבה גלובלי אטומי. הכותב: לפני כתיבה מסמן את ה-seq של ה-slot כאי-זוגי (בכתיבה), כותב את הנתונים, ואז seq זוגי חדש עם release, ומקדם את מונה הכתיבה עם release. אין מונה קריאה משותף, וכל צרכן מחזיק את מיקום הקריאה שלו בזיכרון פרטי, ולכן הכותב לא תלוי בצרכנים ולא נחסם. צרכן: קורא את מונה הכתיבה עם acquire. אם הוא מפגר ביותר מ-N, הוא מזהה overrun, קופץ קדימה וסופר בלוקים שאבדו. קריאת slot בשיטת seqlock: seq לפני (acquire), העתקת הנתונים, fence acquire, seq אחרי. אם השתנה או אי-זוגי, הבלוק נדרס בזמן הקריאה וזורקים אותו. להתראה: eventfd לכל צרכן או futex על מונה הכתיבה, כדי שצרכנים לא יבזבזו CPU. ה-layout עם offsets בלבד, מונים מיושרים ל-cache line, ו-header עם magic, גרסה וגודל כדי שצרכן יוודא תאימות. מחזור חיים: ה-RX יוצר ו-unlink בסוף, וצרכנים מתחברים ומתנתקים בלי להשפיע על הכותב.",
+      "rubric": [
+        "אין מונה קריאה משותף: כל צרכן עוקב בעצמו, והכותב לא תלוי באף צרכן",
+        "זיהוי overrun ודריסה (seq לכל slot או seqlock) ומדיניות דילוג",
+        "memory ordering נכון: release בכותב, acquire בצרכן, fence בקריאת seqlock",
+        "מנגנון התראה (eventfd או futex) ופרטי layout: offsets, alignment, header",
+        "מחזור חיים: יצירה, חיבור וניתוק, ניקוי"
+      ],
+      "explanation": "ההבדל מ-SPSC רגיל: עם כמה צרכנים הכותב לא יכול לחכות לאיטי שבהם, ולכן צריך לזהות דריסה בצד הקורא במקום למנוע אותה.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "קורא של seqlock: `s1 = seq.load(acquire); copy data (relaxed atomic loads); atomic_thread_fence(acquire); s2 = seq.load(relaxed); if (s1 == s2 && s1 % 2 == 0) ok;`. למה ה-fence נחוץ, ולמה לא מספיק לעשות את הטעינה של s2 עם acquire?",
+      "choices": [
+        "ה-fence מחליף את הצורך ב-atomics לנתונים",
+        "ה-fence נדרש רק ב-x86",
+        "הוא לא נחוץ, acquire על s1 מספיק",
+        "acquire על load מונע רק מגישות **מאוחרות** לעלות מעליו, ולא מונע מטעינות הנתונים **שלפניו** לרדת אחריו. ה-fence acquire אחרי טעינות הנתונים מבטיח שאם אחת מהן ראתה כתיבה חדשה, s2 יראה seq מעודכן"
+      ],
+      "answer": 3,
+      "explanation": "זו הנקודה מהמאמר של Hans Boehm על seqlocks: הקורא צריך שה-loads של הנתונים יהיו מסודרים לפני ה-load השני של seq, כלומר מחסום מסוג LoadLoad שהולך אחורה, ו-acquire על s2 לא נותן אותו. הנתונים עצמם חייבים להיקרא כ-atomics (relaxed), כי הקריאה מתחרה עם הכותב, ואחרת זה data race ו-UB גם אם בסוף זורקים את התוצאה.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "process B ממפה קובץ משותף שמקבל מ-A. בזמן ש-B קורא, A מבצע `ftruncate` שמקטין את הקובץ לחצי. מה קורה ל-B כשהוא ניגש לחצי השני של המיפוי, ואיך מתגוננים?",
+      "choices": [
+        "ftruncate נכשל כל עוד יש מיפוי",
+        "הוא קורא אפסים",
+        "הוא מקבל SIGBUS, כי המיפוי קיים אבל אין מאחוריו דף בקובץ. מתגוננים עם memfd_create ו-file sealing (F_SEAL_SHRINK, ואם צריך F_SEAL_WRITE), שאחריו הקרנל מסרב לכווץ את הקובץ",
+        "הקרנל מכווץ גם את המיפוי של B בבטחה"
+      ],
+      "answer": 2,
+      "explanation": "גישה למיפוי מעבר לסוף הקובץ (בדפים שלמים) מסתיימת ב-SIGBUS, לא ב-SIGSEGV. זה וקטור תקיפה כשמקבלים fd ממקור לא מהימן: הצד השני יכול להפיל אותך. sealing מאפשר לבדוק עם F_GET_SEALS שהאובייקט מוגן לפני שממפים. זה המנגנון ש-Wayland ו-systemd משתמשים בו.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מימוש של event בין שני processes עושה `futex(&shm->word, FUTEX_WAIT_PRIVATE, 0, ...)` באחד, ו-`FUTEX_WAKE_PRIVATE` בשני, על מילה בזיכרון משותף. ה-waiter לא מתעורר לעולם. למה?",
+      "choices": [
+        "futex פרטי מזוהה בקרנל לפי (mm, כתובת וירטואלית), ולכן כל process מחפש בתור אחר, ובנוסף הכתובות הווירטואליות שונות. בזיכרון משותף צריך futex בלי FUTEX_PRIVATE_FLAG, שמזוהה לפי הדף הפיזי או inode ו-offset",
+        "futex לא עובד בזיכרון משותף",
+        "ה-WAKE צריך את הערך 0",
+        "צריך לנעול mutex לפני futex"
+      ],
+      "answer": 0,
+      "explanation": "PRIVATE היא אופטימיזציה ל-futexes בתוך process אחד: הקרנל מדלג על חיפוש המיפוי. בין processes ה-key חייב להיות מבוסס על האובייקט המשותף. זה בדיוק מה ש-PTHREAD_PROCESS_SHARED משנה במימוש של pthread_mutex.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}

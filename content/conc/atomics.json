@@ -45,12 +45,12 @@
       "type": "mcq",
       "prompt": "`std::atomic<int> c;` ושני threads מבצעים `c++`. מה מובטח?",
       "choices": [
-        "כל הגדלה היא פעולת read-modify-write אחת בלתי ניתנת לחלוקה, אין עדכונים אבודים ואין data race",
-        "שהגדלות יבוצעו לסירוגין בין ה-threads",
         "שאף thread לא יעבור context switch באמצע ההגדלה",
-        "שהערך נשמר ברגיסטר ולא בזיכרון, ולכן מהיר"
+        "שהערך נשמר ברגיסטר ולא בזיכרון, ולכן מהיר",
+        "כל הגדלה היא פעולת read-modify-write אחת בלתי ניתנת לחלוקה, אין עדכונים אבודים ואין data race",
+        "שהגדלות יבוצעו לסירוגין בין ה-threads"
       ],
-      "answer": 0,
+      "answer": 2,
       "explanation": "`c++` על atomic הוא `fetch_add(1)`, פעולה אטומית אחת. אין הבטחה לסדר בין ה-threads, ו-context switch יכול לקרות לפני או אחרי הפעולה אבל לא \"באמצע\" שלה מבחינת מה שאחרים רואים. atomic דווקא מחייב גישה לזיכרון.",
       "lesson": "conc.atomics"
     },
@@ -60,12 +60,12 @@
       "type": "mcq",
       "prompt": "איזה טיפוס אטומי מובטח בתקן C++ להיות lock-free בכל פלטפורמה?",
       "choices": [
-        "std::atomic<int>",
+        "std::atomic<void*>",
         "std::atomic<bool>",
-        "std::atomic_flag",
-        "std::atomic<void*>"
+        "std::atomic<int>",
+        "std::atomic_flag"
       ],
-      "answer": 2,
+      "answer": 3,
       "explanation": "רק `std::atomic_flag` מובטח lock-free. בפועל atomic<int> ו-atomic<bool> הם lock-free כמעט בכל מקום, אבל התקן לא מחייב את זה, ולכן יש `is_always_lock_free` לבדיקה בזמן קומפילציה.",
       "lesson": "conc.atomics"
     },
@@ -74,7 +74,13 @@
       "level": 1,
       "type": "short",
       "prompt": "מה ה-memory order ברירת המחדל של פעולות על std::atomic?",
-      "accept": ["seq_cst", "memory_order_seq_cst", "std::memory_order_seq_cst", "sequentially consistent", "sequential consistency"],
+      "accept": [
+        "seq_cst",
+        "memory_order_seq_cst",
+        "std::memory_order_seq_cst",
+        "sequentially consistent",
+        "sequential consistency"
+      ],
       "explanation": "בלי ארגומנט, כל פעולה היא `memory_order_seq_cst`: יש סדר גלובלי אחד לכל פעולות ה-seq_cst שכל ה-threads מסכימים עליו. זה הכי קל להבנה והכי יקר, במיוחד ב-store על x86 ובכל פעולה ב-ARM.",
       "lesson": "conc.atomics"
     },
@@ -86,9 +92,9 @@
       "lang": "cpp",
       "code": "std::atomic<int> x{0};\n\nvoid work() {\n  for (int i = 0; i < 1000000; ++i)\n    x = x + 1;\n}",
       "choices": [
-        "תמיד 2000000",
-        "בדרך כלל פחות מ-2000000, כי x + 1 הוא load ואז store נפרדים ועדכונים הולכים לאיבוד",
         "undefined behavior בגלל data race",
+        "בדרך כלל פחות מ-2000000, כי x + 1 הוא load ואז store נפרדים ועדכונים הולכים לאיבוד",
+        "תמיד 2000000",
         "שגיאת קומפילציה, כי אי אפשר לחבר atomic עם int"
       ],
       "answer": 1,
@@ -101,15 +107,17 @@
       "type": "mcq",
       "prompt": "מה ההבדל בין `volatile int flag` לבין `std::atomic<int> flag` לתקשורת בין threads?",
       "choices": [
-        "אין הבדל ב-x86",
         "volatile מונע מהקומפיילר לבטל גישות, אבל לא נותן אטומיות ולא סדר בין threads. גישה מקבילית אליו היא עדיין data race",
         "volatile איטי יותר אבל בטוח באותה מידה",
-        "atomic מתאים רק למונים, volatile מתאים לדגלים"
+        "atomic מתאים רק למונים, volatile מתאים לדגלים",
+        "אין הבדל ב-x86"
       ],
-      "answer": 1,
+      "answer": 0,
       "explanation": "volatile נועד ל-memory-mapped IO ולמשתנים שמשתנים מחוץ לתוכנית: כל גישה מתבצעת בפועל. הוא לא מונע reordering של גישות לא-volatile סביבו, לא נותן fence בחומרה, ו-`flag++` עליו אינו אטומי. במודל הזיכרון של C++ גישה מקבילית אליו היא data race ו-UB.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q06",
@@ -119,8 +127,8 @@
       "choices": [
         "a לא משתנה, ו-expected מתעדכן לערך הנוכחי של a",
         "a מקבל את desired בכל זאת",
-        "נזרק exception",
-        "expected נשאר כמו שהיה, וצריך לקרוא שוב ל-load"
+        "expected נשאר כמו שהיה, וצריך לקרוא שוב ל-load",
+        "נזרק exception"
       ],
       "answer": 0,
       "explanation": "בכישלון ה-CAS כותב ל-expected את הערך שראה, וזה מה שמאפשר לולאת CAS בלי load נוסף: מחשבים desired חדש מ-expected המעודכן ומנסים שוב.",
@@ -132,13 +140,17 @@
       "type": "multi",
       "prompt": "אילו טענות נכונות לגבי std::atomic?",
       "choices": [
-        "compare_exchange_weak יכול להחזיר false גם כשהערך שווה ל-expected",
-        "std::atomic<T> הוא copy-constructible",
         "T חייב להיות trivially copyable",
+        "החל מ-C++20 יש fetch_add ל-std::atomic<double>",
+        "std::atomic<T> הוא copy-constructible",
         "`std::atomic<std::string>` הוא שימוש חוקי",
-        "החל מ-C++20 יש fetch_add ל-std::atomic<double>"
+        "compare_exchange_weak יכול להחזיר false גם כשהערך שווה ל-expected"
       ],
-      "answer": [0, 2, 4],
+      "answer": [
+        0,
+        1,
+        4
+      ],
       "explanation": "weak רשאי להיכשל spuriously (ב-LL/SC זה טבעי), ולכן משתמשים בו בלולאה. atomic לא ניתן להעתקה, כי העתקה של שני אטומיים יחד אינה פעולה אטומית אחת. std::string אינו trivially copyable ולכן אסור. C++20 הוסיף fetch_add/fetch_sub ל-floating-point atomics.",
       "lesson": "conc.atomics"
     },
@@ -151,12 +163,12 @@
       "code": "std::atomic<int> slots{1};\n\nbool try_acquire() {\n  if (slots.load() > 0) {\n    slots.fetch_sub(1);\n    return true;\n  }\n  return false;\n}",
       "bugLine": 4,
       "choices": [
+        "slots צריך להיות volatile",
         "load צריך memory_order_acquire",
         "check-then-act: שני threads יכולים לראות 1, ושניהם יורידו, ו-slots יגיע ל-1-. הבדיקה וההורדה חייבות להיות פעולה אטומית אחת (CAS loop)",
-        "fetch_sub לא אטומי",
-        "slots צריך להיות volatile"
+        "fetch_sub לא אטומי"
       ],
-      "answer": 1,
+      "answer": 2,
       "explanation": "כל פעולה אטומית לחוד, אבל הצירוף לא. התיקון: `int cur = slots.load(); while (cur > 0 && !slots.compare_exchange_weak(cur, cur - 1)) {} return cur > 0;`. memory order לא משנה את הבעיה, כי היא באטומיות של הצירוף ולא בסדר.",
       "lesson": "conc.atomics"
     },
@@ -168,13 +180,15 @@
       "choices": [
         "להחליף ל-memory_order_relaxed, וזה יפתור את הבעיה",
         "להגן על המונה ב-mutex",
-        "מונה נפרד לכל thread, מרופד ל-cache line משלו, והקורא סוכם את כולם כשצריך",
-        "להשתמש ב-volatile uint64_t"
+        "להשתמש ב-volatile uint64_t",
+        "מונה נפרד לכל thread, מרופד ל-cache line משלו, והקורא סוכם את כולם כשצריך"
       ],
-      "answer": 2,
+      "answer": 3,
       "explanation": "הבעיה היא ה-cache line שקופץ בין 32 cores בכל הגדלה. relaxed חוסך fences, אבל ב-x86 lock xadd נשאר אותה הוראה, והקפיצות של ה-line נשארות. sharding (מונה פר-thread עם alignas(64)) מבטל את התחרות. הקורא מקבל סכום שאולי לא עקבי לרגע מסוים, וזה מקובל לסטטיסטיקה.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q10",
@@ -193,7 +207,9 @@
       ],
       "explanation": "התנאי `cur < v` נבדק מחדש בכל סיבוב, כי thread אחר אולי כבר כתב ערך גדול יותר. הימנעות מכתיבה כשאין צורך חשובה לביצועים: כל CAS מוצלח מעביר את ה-cache line ל-Modified.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q11",
@@ -209,7 +225,9 @@
       "answer": 1,
       "explanation": "x86 הוא TSO: כל load הוא כבר acquire וכל store הוא release. seq_cst load הוא `mov` רגיל. seq_cst store דורש לחסום reordering של store ואחריו load, ולכן הוא `xchg` (או `mov` ואחריו `mfence`). כל RMW, גם relaxed, חייב lock prefix (`lock xadd`, `lock cmpxchg`) כדי להיות אטומי, כך ש-relaxed לא חוסך שם הוראות.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q12",
@@ -217,15 +235,17 @@
       "type": "mcq",
       "prompt": "למה יש בתקן גם `compare_exchange_weak` וגם `compare_exchange_strong`?",
       "choices": [
+        "weak לא מעדכן את expected בכישלון",
         "weak משתמש ב-memory order חלש יותר",
         "בארכיטקטורות LL/SC (ARM בלי LSE, POWER, RISC-V) weak הוא ניסיון LL/SC יחיד שיכול להיכשל spuriously, למשל אם ה-cache line פונה או היה interrupt. strong דורש לולאה פנימית. כשממילא יש לולאה בחוץ, weak חוסך לולאה מקוננת",
-        "weak לא מעדכן את expected בכישלון",
         "strong לא lock-free"
       ],
-      "answer": 1,
+      "answer": 2,
       "explanation": "ב-LL/SC ה-store-conditional נכשל אם ה-reservation אבד מכל סיבה, גם כשאף אחד לא שינה את הערך. strong חייב להסתיר את זה בלולאה. ב-x86 (`lock cmpxchg`) ו-ב-ARMv8.1 עם הוראת CAS שתיהן זהות. ה-memory order לא קשור להבחנה. כלל אצבע: weak בתוך לולאה, strong לניסיון בודד.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q13",
@@ -233,15 +253,17 @@
       "type": "mcq",
       "prompt": "`std::shared_ptr<Config> g_cfg;` גלובלי. thread A מבצע `g_cfg = std::make_shared<Config>(...)` מדי פעם, ו-threads אחרים מבצעים `auto c = g_cfg;`. האם זה בטוח?",
       "choices": [
-        "כן, reference count של shared_ptr אטומי ולכן הכול בטוח",
+        "לא, כי make_shared לא thread-safe",
         "לא: מונה ההפניות אטומי, אבל אובייקט ה-shared_ptr עצמו (שני pointers) לא. השמה וקריאה מקבילות לאותו אובייקט shared_ptr הן data race. צריך std::atomic<std::shared_ptr<Config>> (C++20) או mutex",
         "כן, אם Config הוא const",
-        "לא, כי make_shared לא thread-safe"
+        "כן, reference count של shared_ptr אטומי ולכן הכול בטוח"
       ],
       "answer": 1,
       "explanation": "ההבטחה של shared_ptr: threads שונים יכולים להעתיק ולהרוס עותקים שונים שחולקים את אותו control block בלי סנכרון. אבל אותו אובייקט shared_ptr שאחד כותב אליו ואחר קורא ממנו הוא data race, והקורא יכול לקבל pointer לאובייקט שה-count שלו כבר הגיע ל-0. C++20 מוסיף `std::atomic<std::shared_ptr<T>>` (לרוב לא lock-free), ולפניו היו `std::atomic_load` ו-`std::atomic_store` על shared_ptr.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q14",
@@ -257,7 +279,9 @@
       ],
       "explanation": "התשובה החלשה: atomic גלובלי עם seq_cst. התשובה החזקה מבינה את מחיר ה-cache coherence ומפרידה בין דרישת האטומיות לבין דרישת הסדר.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q15",
@@ -265,15 +289,17 @@
       "type": "mcq",
       "prompt": "על פלטפורמה מסוימת `std::atomic<Pair16>` (struct של 16 בתים) מחזיר `is_lock_free() == false`. מה ההשלכה הנכונה?",
       "choices": [
-        "רק ביצועים: הפעולות יהיו איטיות יותר אבל השימוש בטוח בכל הקשר",
-        "המימוש משתמש ב-lock פנימי (למשל טבלת locks לפי hash של הכתובת ב-libatomic). לכן שימוש בו מתוך signal handler עלול לגרום ל-deadlock, והוא לא יעבוד בין שני processes שממפים את אותו shared memory, כי טבלת ה-locks היא פר-process",
         "הקומפיילר יסרב לקמפל",
-        "הפעולות כבר לא אטומיות, ויכול להיות tearing"
+        "הפעולות כבר לא אטומיות, ויכול להיות tearing",
+        "רק ביצועים: הפעולות יהיו איטיות יותר אבל השימוש בטוח בכל הקשר",
+        "המימוש משתמש ב-lock פנימי (למשל טבלת locks לפי hash של הכתובת ב-libatomic). לכן שימוש בו מתוך signal handler עלול לגרום ל-deadlock, והוא לא יעבוד בין שני processes שממפים את אותו shared memory, כי טבלת ה-locks היא פר-process"
       ],
-      "answer": 1,
+      "answer": 3,
       "explanation": "atomic שאינו lock-free עדיין אטומי ונכון בין threads של אותו process, אבל דרך lock. אם signal קוטע thread שמחזיק את ה-lock וה-handler ניגש לאותו אובייקט, זה deadlock, ולכן התקן מגדיר כ-signal-safe רק פעולות אטומיות lock-free. בין processes, כל process מחזיק טבלת locks משלו, כך שאין הדדיות. ב-x86-64 עם GCC זה המצב עבור 16 בתים, למרות שיש cmpxchg16b, בין היתר כי load דרך cmpxchg16b כותב לזיכרון ולא עובד על דפים read-only.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q16",
@@ -282,15 +308,20 @@
       "prompt": "כל הפעולות כאן הן `memory_order_relaxed`. אילו טענות נכונות?",
       "choices": [
         "4 threads מבצעים כל אחד 1000 פעמים `x.fetch_add(1, relaxed)`. אחרי join הערך הוא בדיוק 4000",
-        "thread A כותב ל-x את 1 ואז את 2. thread B יכול לקרוא קודם 2 ואחר כך 1 מאותו x",
         "שתי קריאות relaxed של אותו x באותו thread יכולות להחזיר ערך חדש ואחר כך ערך ישן יותר",
-        "thread A כותב x=1 ואז y=1. thread B יכול לראות y==1 ואחר כך x==0",
-        "store relaxed של דגל אחרי כתיבה לבאפר לא-atomic מספיק כדי שהקורא יראה את הבאפר אחרי שראה את הדגל"
+        "store relaxed של דגל אחרי כתיבה לבאפר לא-atomic מספיק כדי שהקורא יראה את הבאפר אחרי שראה את הדגל",
+        "thread A כותב ל-x את 1 ואז את 2. thread B יכול לקרוא קודם 2 ואחר כך 1 מאותו x",
+        "thread A כותב x=1 ואז y=1. thread B יכול לראות y==1 ואחר כך x==0"
       ],
-      "answer": [0, 3],
+      "answer": [
+        0,
+        4
+      ],
       "explanation": "לכל atomic יש modification order אחד, ו-RMW תמיד קורא את הערך האחרון בסדר הזה, ולכן אין עדכונים אבודים גם ב-relaxed. coherence מבטיח שקריאות של אותו משתנה באותו thread לא הולכות אחורה בסדר הזה. relaxed לא נותן שום סדר **בין משתנים שונים**, ולכן B יכול לראות y לפני x, ולכן גם פרסום באפר דרך דגל relaxed הוא data race.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "conc.atomics.q17",
@@ -308,7 +339,9 @@
       "answer": 1,
       "explanation": "compare_exchange משווה את ייצוג האובייקט בזיכרון (כמו memcmp), לא עם `==`. -0.0 ו-+0.0 שווים לפי `==` אבל שונים בביט הסימן, ולכן ה-CAS נכשל, a נשאר -0 (cout מדפיס -0), ו-e מתעדכן ל--0.0 כך ש-signbit מחזיר 1. באותו אופן, NaN עם אותם bits כן יצליח בהשוואה, למרות ש-NaN == NaN הוא false.",
       "lesson": "conc.atomics",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

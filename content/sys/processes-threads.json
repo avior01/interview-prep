@@ -1,0 +1,322 @@
+{
+  "domain": "sys",
+  "subtopic": "processes-threads",
+  "lessons": [
+    {
+      "id": "sys.processes-threads",
+      "title": "Processes מול threads",
+      "what": "process הוא יחידת בידוד: מרחב כתובות וירטואלי משלו, טבלת file descriptors, הרשאות ומשאבים. thread הוא יחידת ביצוע בתוך process: רגיסטרים, stack ו-TID משלו, וכל השאר משותף. ב-Linux שניהם tasks שנוצרים ב-clone(), וההבדל הוא אילו משאבים משותפים.",
+      "when": [
+        "צריך בידוד ותקלה ברכיב אחד לא אמורה להפיל אחרים: processes",
+        "צריך שיתוף זיכרון זול ותקשורת מהירה: threads",
+        "הרצת תוכנית חיצונית: fork ואז exec, או posix_spawn",
+        "שאלות על zombie, orphan, copy-on-write והדפסות כפולות אחרי fork"
+      ],
+      "how": [
+        "fork(): יוצר process ילד שהוא העתק של האב. בפועל הדפים לא מועתקים: page tables מועתקים, הדפים מסומנים read-only, ונעתקים רק בכתיבה הראשונה (copy-on-write)",
+        "fork מחזיר 0 בילד, את ה-PID של הילד באב, ו-1- בכישלון",
+        "exec מחליף את תמונת ה-process (קוד, נתונים, stack) בתוכנית חדשה, ה-PID נשאר, ו-file descriptors נשארים פתוחים אלא אם סומנו O_CLOEXEC",
+        "wait או waitpid אוסף את סטטוס היציאה של ילד. ילד שסיים ועוד לא נאסף הוא zombie. ילד שהאב שלו מת הוא orphan ומאומץ ע״י init או subreaper",
+        "threads נוצרים ב-clone עם CLONE_VM, CLONE_FILES, CLONE_SIGHAND, CLONE_THREAD ועוד. getpid מחזיר את ה-TGID המשותף, ו-gettid את ה-TID של ה-thread",
+        "context switch בין processes מחליף page tables (CR3). בין threads של אותו process לא, ולכן ה-TLB וה-caches נשארים חמים",
+        "בתוכנית multithreaded, fork משכפל רק את ה-thread הקורא, ולכן בילד מותר רק async-signal-safe עד exec"
+      ],
+      "complexity": "יצירת thread: עשרות µs. fork של process קטן: עשרות עד מאות µs, וגדל עם גודל ה-page tables (process של עשרות GB לוקח מילי-שניות). context switch: 1–5µs ישירות, ועוד עלות עקיפה של cache ו-TLB קרים.",
+      "pitfalls": [
+        "שכחת wait: zombies מצטברים",
+        "printf בלי newline לפני fork: הבאפר של stdio משוכפל ומודפס פעמיים",
+        "exit() במקום _exit() בילד אחרי exec שנכשל: מריץ atexit ו-flush של באפרים של האב",
+        "fork בתוכנית multithreaded וקריאה ל-malloc או לוגים לפני exec",
+        "process ב-PID 1 בקונטיינר שלא אוסף zombies ולא מטפל ב-SIGTERM"
+      ],
+      "senior": [
+        "trade-off בין בידוד תקלות לבין עלות תקשורת, ותכנון crash domains",
+        "copy-on-write, overcommit, ולמה fork של process ענק איטי או נכשל",
+        "posix_spawn ו-vfork כחלופות",
+        "הסדר בכיבוי של process multithreaded: exit בזמן ש-threads רצים"
+      ],
+      "diagram": "process A           process B\n+-----------+       +-----------+\n| mm (VA)   |       | mm (VA)   |\n| fds       |       | fds       |\n| T1 T2 T3  |       | T1        |\n+-----------+       +-----------+\n threads share mm   no sharing\n                    unless shm"
+    }
+  ],
+  "questions": [
+    {
+      "id": "sys.processes-threads.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה משותף בין threads של אותו process אבל **לא** בין שני processes שונים (בלי הגדרה מיוחדת)?",
+      "choices": [
+        "ה-kernel",
+        "מרחב הכתובות הווירטואלי (heap, globals, קוד)",
+        "מערכת הקבצים",
+        "ה-CPU שעליו הם רצים"
+      ],
+      "answer": 1,
+      "explanation": "threads של אותו process חולקים את אותו mm: כתובת וירטואלית מצביעה לאותו מקום בכל ה-threads. processes שונים מקבלים מרחב כתובות נפרד, ומשתפים זיכרון רק במפורש (shared memory, mmap). ה-kernel ומערכת הקבצים משותפים לכולם.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה zombie process?",
+      "choices": [
+        "process שסיים לרוץ, אבל האב עוד לא אסף את סטטוס היציאה שלו עם wait, ולכן רשומת ה-process נשארת בטבלה",
+        "process שצורך זיכרון בלי לרוץ",
+        "process שנתקע בלולאה אינסופית",
+        "process שהאב שלו מת"
+      ],
+      "answer": 0,
+      "explanation": "zombie כבר שחרר את רוב המשאבים, אבל ה-PID והסטטוס נשמרים עד ש-wait אוסף אותם. process שהאב שלו מת הוא orphan, והוא מאומץ ע״י init (או subreaper) שאוסף אותו בסיום.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו משפחת syscalls מחליפה את התוכנית שרצה ב-process הנוכחי בתוכנית חדשה, בלי לשנות את ה-PID?",
+      "accept": [
+        "exec",
+        "execve",
+        "execvp",
+        "execl",
+        "exec*"
+      ],
+      "explanation": "execve (ועטיפות כמו execvp) טוען בינארי חדש לאותו process. אם הוא מצליח, הוא לא חוזר. יחד עם fork זה המודל הקלאסי של Unix להרצת תוכניות.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q04",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה האב מדפיס?",
+      "lang": "cpp",
+      "code": "int main() {\n  int x = 1;\n  if (fork() == 0) {\n    x = 2;\n    return 0;\n  }\n  wait(nullptr);\n  printf(\"%d\\n\", x);\n}",
+      "choices": [
+        "undefined behavior",
+        "2",
+        "1 או 2, תלוי בתזמון",
+        "1"
+      ],
+      "answer": 3,
+      "explanation": "לילד יש עותק פרטי של מרחב הכתובות (copy-on-write). הכתיבה שלו ל-x יוצרת לו עותק משלו של הדף, וה-x של האב לא משתנה. זה ההבדל המהותי מ-thread.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q05",
+      "level": 2,
+      "type": "output",
+      "prompt": "כמה פעמים מודפס hi (כשהפלט מופנה לטרמינל)?",
+      "lang": "cpp",
+      "code": "int main() {\n  fork();\n  fork();\n  printf(\"hi\\n\");\n}",
+      "choices": [
+        "2",
+        "3",
+        "4",
+        "1"
+      ],
+      "answer": 2,
+      "explanation": "ה-fork הראשון יוצר 2 processes, וכל אחד מהם מבצע את ה-fork השני, כך שיש 4 processes. כל אחד מדפיס פעם אחת. באופן כללי, n קריאות fork ברצף יוצרות 2 בחזקת n processes.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה זה copy-on-write ב-fork?",
+      "choices": [
+        "fork מעתיק את כל הזיכרון של האב לילד מראש",
+        "הקבצים הפתוחים מועתקים לדיסק",
+        "האב והילד חולקים את אותם דפים פיזיים כ-read-only, ודף מועתק רק כשאחד מהם כותב אליו",
+        "הילד כותב ישירות לזיכרון של האב"
+      ],
+      "answer": 2,
+      "explanation": "fork מעתיק page tables ומסמן את הדפים read-only. כתיבה גורמת ל-page fault, והקרנל מעתיק רק את הדף הזה. לכן fork ואחריו exec זול יחסית: רוב הדפים אף פעם לא מועתקים.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q07",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס בטרמינל?",
+      "lang": "cpp",
+      "code": "int main() {\n  printf(\"A\");\n  fork();\n  printf(\"B\\n\");\n}",
+      "choices": [
+        "AB בלבד",
+        "AB ואז AB",
+        "A ואז B ואז B",
+        "AB ואז B"
+      ],
+      "answer": 1,
+      "explanation": "printf כותב לבאפר של stdio ב-user space. בלי newline (ו-stdout ל-טרמינל הוא line-buffered), ה-A עדיין בבאפר בזמן ה-fork, והבאפר מועתק לילד. כל process מוסיף B ושורה חדשה ומרוקן, ולכן AB מודפס פעמיים. אם הפלט מופנה לקובץ (fully buffered) זה קורה גם עם newline. התיקון: fflush(stdout) לפני fork.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q08",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי Linux?",
+      "choices": [
+        "context switch בין שני threads של אותו process לא דורש להחליף page tables",
+        "orphan process נשאר zombie לנצח",
+        "גם threads וגם processes נוצרים בסופו של דבר דרך clone, עם דגלים שונים",
+        "gettid() מחזיר ערך שונה לכל thread",
+        "getpid() מחזיר את אותו ערך בכל ה-threads של process (ה-TGID)"
+      ],
+      "answer": [
+        0,
+        2,
+        3,
+        4
+      ],
+      "explanation": "בקרנל כל thread הוא task עם PID משלו (שזה ה-TID ב-user space), וה-TGID הוא ה-PID של ה-thread הראשון. glibc מממש fork ו-pthread_create שניהם מעל clone. orphan מאומץ ע״י init או subreaper, שאוסף אותו כשהוא מסתיים.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q09",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "באפליקציית SDR יש RX ו-DSP קריטיים, ו-GUI שמבוסס על ספרייה חיצונית שקורסת מדי פעם. מה הארכיטקטורה המתאימה?",
+      "choices": [
+        "הכול ב-process אחד עם threads, ולתפוס exceptions ב-GUI",
+        "להריץ את ה-GUI ב-thread בעדיפות נמוכה",
+        "כל thread ב-process נפרד, כולל RX ו-DSP",
+        "RX ו-DSP ב-process אחד, GUI ב-process נפרד שמקבל נתונים דרך shared memory ring buffer. קריסה של ה-GUI לא מפילה את ה-RX"
+      ],
+      "answer": 3,
+      "explanation": "segfault ב-thread אחד מפיל את כל ה-process, ו-exceptions לא תופסים segfault. process נפרד נותן crash domain נפרד. הפרדה של RX מ-DSP לשני processes מוסיפה עלות תקשורת בלי תועלת, כי שניהם קריטיים ותלויים זה בזה. עדיפות נמוכה לא נותנת בידוד.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q10",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "process אב יוצר ילד ואז מת לפני הילד. מה קורה לילד?",
+      "choices": [
+        "הקרנל הורג אותו מיד",
+        "הוא הופך ל-zombie מיד",
+        "הוא הופך ל-orphan ומאומץ ע״י init (PID 1) או ע״י subreaper שהוגדר עם PR_SET_CHILD_SUBREAPER, וזה שיאסוף אותו בסיום",
+        "הוא מקבל את ה-PID של האב"
+      ],
+      "answer": 2,
+      "explanation": "ה-orphan ממשיך לרוץ כרגיל, וההורה שלו מתעדכן. בסיום, init או ה-subreaper מבצעים wait. ילד יכול לבקש signal כשהאב מת עם prctl(PR_SET_PDEATHSIG).",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q11",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "למה context switch בין שני threads של אותו process זול יותר מ-context switch בין שני processes?",
+      "choices": [
+        "כי לא מחליפים page tables: אין טעינה של CR3, ה-TLB נשאר תקף, וגם ה-caches מכילים נתונים שרלוונטיים לשניהם. בין processes ה-TLB מתרוקן או, עם PCID, נשמר אבל הרשומות של ה-process החדש קרות",
+        "כי threads רצים תמיד על אותו core",
+        "כי threads לא שומרים רגיסטרים",
+        "כי threads לא עוברים דרך ה-scheduler"
+      ],
+      "answer": 0,
+      "explanation": "החלק הישיר (שמירת רגיסטרים ובחירת task) דומה. ההבדל העיקרי הוא בעלות העקיפה: החלפת מרחב כתובות ו-TLB misses אחר כך. PCID ב-x86 (ו-ASID ב-ARM) מאפשרים לשמור רשומות TLB של כמה מרחבים, ומקטינים את ההבדל, אבל לא מבטלים אותו.",
+      "lesson": "sys.processes-threads",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.processes-threads.q12",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "service עם RSS של 40GB מריץ פקודה חיצונית עם `system()` בכל בקשה, וכל קריאה לוקחת כמה מילי-שניות ומקפיאה לרגע את ה-service. מה הסיבה ומה הפתרון?",
+      "choices": [
+        "fork מעתיק את כל ה-page tables של 40GB (עשרות MB של PTEs) ומסמן את הדפים כ-COW, מה שגם גורם ל-page faults בכתיבות של האב אחר כך. posix_spawn (שב-glibc משתמש ב-clone עם CLONE_VFORK) נמנע מהעתקת מרחב הכתובות",
+        "system() חוסם signals",
+        "הפקודה החיצונית איטית, צריך לכתוב אותה מחדש",
+        "צריך להעלות את ה-ulimit"
+      ],
+      "answer": 0,
+      "explanation": "COW לא מעתיק דפים, אבל כן מעתיק page tables: לכל 4KB יש PTE של 8 בתים, כלומר כ-80MB של PTEs ל-40GB. בנוסף, אחרי ה-fork כל כתיבה של האב לדף משותף היא fault ו-העתקה עד שהילד מבצע exec. posix_spawn או vfork משתמשים במרחב הכתובות של האב עד ה-exec. huge pages מקטינות את מספר ה-PTEs.",
+      "lesson": "sys.processes-threads",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.processes-threads.q13",
+      "level": 4,
+      "type": "code",
+      "prompt": "ממש `int run(const std::vector<std::string>& args)` שמריצה תוכנית חיצונית עם fork ו-exec, מחכה לסיומה, ומחזירה exit code (או 128 + מספר ה-signal אם נהרגה). טפל נכון בשגיאות.",
+      "lang": "cpp",
+      "starter": "int run(const std::vector<std::string>& args);",
+      "modelAnswer": "int run(const std::vector<std::string>& args) {\n  if (args.empty()) return -1;\n  std::vector<char*> argv;  // built BEFORE fork: no allocation in the child\n  for (const auto& s : args) argv.push_back(const_cast<char*>(s.c_str()));\n  argv.push_back(nullptr);\n\n  pid_t pid = fork();\n  if (pid < 0) return -1;\n  if (pid == 0) {\n    execvp(argv[0], argv.data());\n    _exit(127);  // exec failed: _exit, not exit (no atexit, no stdio flush)\n  }\n  int status = 0;\n  while (waitpid(pid, &status, 0) < 0) {\n    if (errno != EINTR) return -1;\n  }\n  if (WIFEXITED(status)) return WEXITSTATUS(status);\n  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);\n  return -1;\n}",
+      "rubric": [
+        "בניית argv לפני fork, כך שבילד אין הקצאות (חשוב בתוכנית multithreaded)",
+        "_exit(127) אחרי exec שנכשל, ולא exit",
+        "waitpid עם טיפול ב-EINTR",
+        "פענוח status עם WIFEXITED ו-WIFSIGNALED",
+        "בונוס: posix_spawn כחלופה, O_CLOEXEC על fds של האב"
+      ],
+      "explanation": "exit() בילד היה מרוקן באפרים של stdio שהועתקו מהאב (הדפסה כפולה) ומריץ handlers של האב. בתוכנית multithreaded, הקצאה בילד עלולה להיתקע על lock שהחזיק thread אחר בזמן ה-fork.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q14",
+      "level": 4,
+      "type": "oral",
+      "prompt": "אתה מתכנן מערכת SDR עם RX, DSP, recorder לדיסק ו-GUI. איך תחליט מה ירוץ כ-threads ומה כ-processes? מה המחיר של כל בחירה?",
+      "modelAnswer": "הקריטריונים: בידוד תקלות, עלות ו-latency של תקשורת, עדיפויות ומשאבים, ופריסה. RX ו-DSP כ-threads באותו process: הם מעבירים נפח עצום (מאות MB/s), צריכים zero-copy ו-latency נמוך, ותקלה באחד ממילא משביתה את המערכת. GUI כ-process נפרד: קוד צד שלישי שקורס יותר, לא קריטי לזמן, ויכול להתחבר ולהתנתק. recorder: אפשר thread (פשוט, zero-copy) או process נפרד עם shared memory ring, אם רוצים שתקלה ב-I/O לא תשפיע. המחיר של processes: תקשורת דרך shared memory ו-futex או eventfd, סנכרון בין processes (atomics lock-free בזיכרון משותף, robust mutexes), ניהול מחזור חיים (מי מתחיל, מה קורה כשצד אחד קורס, ניקוי של shm). המחיר של threads: אין בידוד, segfault באחד מפיל הכול, ו-TLB shootdowns או page faults מ-thread לא-RT משפיעים על ה-RT. גם פריסה: processes מאפשרים להעביר את ה-GUI למחשב אחר עם socket.",
+      "rubric": [
+        "קריטריונים ברורים: בידוד, נפח ו-latency של התקשורת, עדיפויות",
+        "שיוך נכון: RX ו-DSP ביחד, GUI בנפרד",
+        "מזכיר את המחיר של IPC ושל ניהול מחזור חיים בין processes",
+        "מזכיר השפעות עקיפות בין threads: TLB shootdown, page faults, קריסה משותפת"
+      ],
+      "explanation": "אין תשובה אחת נכונה, אבל צריך נימוק מבוסס trade-offs ולא העדפה כללית.",
+      "lesson": "sys.processes-threads",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "sys.processes-threads.q15",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מכונה עם `vm.overcommit_memory = 2` (strict). process עם 30GB של זיכרון פרטי וכתיב (anonymous) קורא ל-fork כדי להריץ סקריפט קטן, ו-fork נכשל עם ENOMEM למרות שיש עשרות GB פנויים בפועל. למה?",
+      "choices": [
+        "ל-process יש יותר מדי threads",
+        "ה-PID space מלא",
+        "במצב strict הקרנל סופר commit לכל דף פרטי כתיב, וב-fork כל הדפים האלה עלולים להיות מועתקים ב-COW. לכן הוא דורש commit נוסף של 30GB לילד, וזה עובר את CommitLimit",
+        "fork תמיד מעתיק את כל הזיכרון מראש"
+      ],
+      "answer": 2,
+      "explanation": "COW דוחה את ההעתקה, אבל בתיאוריה כל דף עלול להיות מועתק, ולכן ב-strict accounting הקרנל מחייב את המקסימום. במצב ברירת המחדל (heuristic) זה בדרך כלל עובר. הפתרונות: posix_spawn או vfork, שלא משכפלים את מרחב הכתובות, או process קטן ייעודי (spawn server) שנוצר מוקדם ומריץ פקודות בשביל ה-process הגדול.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q16",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-main מסתיים ה-return בזמן ש-worker threads (detached) עדיין רצים וניגשים לאובייקט גלובלי `Logger g_log`. התוכנית קורסת לפעמים ביציאה. מה קורה?",
+      "choices": [
+        "ה-threads נהרגים לפני כל דבר אחר, ולכן אין בעיה, והקריסה ממקור אחר",
+        "return מ-main קורא ל-exit, שמריץ destructors של אובייקטים סטטיים ו-atexit handlers בזמן שה-threads האחרים עדיין רצים. הם ניגשים ל-g_log אחרי שנהרס: use-after-destruction",
+        "הקרנל שולח SIGSEGV לכל thread שעדיין רץ",
+        "exit מחכה לכל ה-threads, ולכן התוכנית אמורה להיתקע ולא לקרוס"
+      ],
+      "answer": 1,
+      "explanation": "exit מבצע את ניקוי C++ (destructors של static storage) ורק אחר כך את exit_group שהורג את כל ה-threads. בחלון הזה threads אחרים ממשיכים לרוץ על אובייקטים הרוסים. הפתרון: לעצור ולבצע join לכל ה-threads לפני היציאה מ-main, ולהימנע מ-detach. מוצא אחרון: quick_exit או _exit, שלא מריצים destructors.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "האפליקציה רצה כ-PID 1 בקונטיינר ומריצה תהליכי עזר. אחרי כמה ימים יש מאות תהליכי `<defunct>`, ו-`docker stop` תמיד לוקח 10 שניות. מה ההסבר?",
+      "choices": [
+        "באג ב-Docker",
+        "ה-zombies נוצרים בגלל cgroups",
+        "הקונטיינר לא מקבל signals בכלל",
+        "orphans בקונטיינר מאומצים ע״י PID 1 של ה-namespace, והאפליקציה לא מבצעת wait עליהם. בנוסף, הקרנל לא מפעיל את ה-default action של signal על PID 1 של namespace אם אין לו handler, ולכן SIGTERM מתעלם, ו-Docker שולח SIGKILL אחרי ה-timeout"
+      ],
+      "answer": 3,
+      "explanation": "PID 1 הוא ה-reaper של כל ה-orphans ב-namespace, וזה תפקיד של init. ה-kernel מגן על init מפני signals שאין להם handler, ולכן SIGTERM עם default action לא הורג אותו. הפתרון: init קטן כמו tini (`docker run --init`), או handler ל-SIGTERM ו-SIGCHLD עם לולאת waitpid(-1, ..., WNOHANG) באפליקציה.",
+      "lesson": "sys.processes-threads"
+    }
+  ]
+}

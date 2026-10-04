@@ -1,0 +1,358 @@
+{
+  "domain": "cpp",
+  "subtopic": "memory-layout",
+  "lessons": [
+    {
+      "id": "cpp.memory-layout",
+      "title": "מודל הזיכרון, layout ו-alignment",
+      "what": "כל אובייקט ב-C++ תופס רצף בתים (object representation) עם גודל (sizeof) ודרישת יישור (alignof). הקומפיילר מוסיף padding בין members ובסוף struct כדי שכל member יהיה מיושר. איך שמסדרים members ונתונים בזיכרון משפיע ישירות על צריכת זיכרון, על ניצול cache ועל רוחב פס, ובמערכות מקביליות גם על false sharing.",
+      "when": [
+        "struct שמשוכפל מיליוני פעמים (samples, packets, particles): כל byte של padding מוכפל",
+        "נתונים שמשותפים בין threads: מונים, head ו-tail של ring buffer",
+        "פענוח buffers בינאריים (פרוטוקולים, קבצים, DMA) ושיתוף מבנים עם C או עם hardware",
+        "בחירה בין AoS ל-SoA לקראת SIMD או GPU"
+      ],
+      "how": [
+        "alignof(T) הוא חזקה של 2. member מטיפוס T יושב ב-offset שמתחלק ב-alignof(T). ה-alignment של struct הוא המקסימום של ה-members שלו, ו-sizeof שלו הוא כפולה של ה-alignment (padding בסוף), כדי שגם מערך יהיה מיושר.",
+        "members מסודרים בזיכרון לפי סדר ההצהרה. כדי לצמצם padding מסדרים מהגדול לקטן.",
+        "אובייקט ריק תופס לפחות byte אחד, כדי שלשני אובייקטים שונים יהיו כתובות שונות. empty base optimization ו-[[no_unique_address]] (C++20) מאפשרים לו לא לתפוס מקום.",
+        "cache line ב-x86 הוא 64 בתים. שני threads שכותבים למשתנים שונים באותו line גורמים ל-false sharing: ה-line קופץ בין ה-cores. הפתרון הוא alignas(64) או std::hardware_destructive_interference_size.",
+        "trivially copyable: מותר להעתיק את האובייקט עם memcpy. standard-layout: layout צפוי, ותואם ל-C עם offsetof.",
+        "גישה דרך pointer לא מיושר, או דרך טיפוס אחר (reinterpret_cast), היא UB. ל-buffer בינארי משתמשים ב-memcpy או ב-std::bit_cast, ומטפלים ב-endianness במפורש.",
+        "אזורי זיכרון בתהליך: text (קוד), rodata (קבועים), data (globals מאותחלים), bss (globals מאופסים), heap (new/malloc), ו-stack לכל thread (locals, בדרך כלל 8MB ב-Linux)."
+      ],
+      "complexity": "גישה ל-L1 עולה כ-1 ns, ל-RAM כ-80 עד 100 ns. סריקה רציפה מנצלת את ה-prefetcher ואת כל 64 הבתים של ה-line. ב-layout שבו משתמשים רק ב-8 מתוך 24 בתים של כל struct, מנצלים שליש מרוחב הפס. false sharing יכול להאט קוד מקבילי פי 10 ויותר.",
+      "pitfalls": [
+        "#pragma pack(1) על struct שניגשים אליו הרבה: גישות לא מיושרות, וגם pointers ל-members שאסור להשתמש בהם",
+        "reinterpret_cast של buffer ל-struct: alignment, aliasing, endianness ו-padding",
+        "הנחה ש-sizeof(struct) שווה לסכום ה-members",
+        "מונים צמודים במערך שמתעדכנים מ-threads שונים",
+        "השוואת structs עם memcmp: ה-padding מכיל זבל"
+      ],
+      "senior": [
+        "AoS מול SoA (ו-AoSoA): התאמה ל-SIMD ול-coalesced access ב-GPU",
+        "ABI: Itanium משתמש מחדש ב-tail padding של base שאינו POD, ו-MSVC לא",
+        "aligned new (C++17) לטיפוסים over-aligned, והקצאה מיושרת ל-DMA או hugepages",
+        "NUMA ו-first-touch: איפה הזיכרון מוקצה פיזית לעומת ה-thread שמשתמש בו"
+      ],
+      "diagram": "struct { char c; int i; char d; }\noffset: 0  1  2  3  4  5  6  7  8  9 10 11\n        [c][pad....][  i  .....][d][pad...]\nsizeof = 12, alignof = 4"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cpp.memory-layout.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה padding ב-struct?",
+      "choices": [
+        "זיכרון שמוקצה ב-heap בנוסף לאובייקט",
+        "שדה שהמתכנת מוסיף לצורך גרסאות",
+        "בתים ריקים שהקומפיילר מוסיף בין members או בסוף ה-struct כדי שכל member יהיה מיושר לפי ה-alignment שלו",
+        "דחיסה של members כדי לחסוך מקום"
+      ],
+      "answer": 2,
+      "explanation": "המעבד ניגש ביעילות (ולפעמים רק כך) לנתונים בכתובות שמתחלקות בגודל שלהם. הקומפיילר מוסיף padding כדי לשמור על כך גם בתוך struct וגם במערך של structs.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q02",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה הערך של `alignof(double)` ב-Linux x86-64?",
+      "accept": [
+        "8"
+      ],
+      "explanation": "double הוא 8 בתים וה-ABI של x86-64 דורש לו alignment של 8. ב-i386 (32 ביט) ה-alignment של double בתוך struct היה 4, וזה היה מקור לבעיות תאימות.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q03",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "בפונקציה מוגדרים `int x;` ו-`int* p = new int;`. איפה נמצאים x, p ו-*p?",
+      "choices": [
+        "כולם ב-heap",
+        "x ו-p על ה-stack, ו-*p (ה-int שהוקצה) ב-heap",
+        "x על ה-stack, ו-p ו-*p ב-heap",
+        "x ו-p ב-data segment, ו-*p על ה-stack"
+      ],
+      "answer": 1,
+      "explanation": "locals (כולל משתנה ה-pointer עצמו) הם automatic storage, בפועל על ה-stack או ברגיסטרים. new מקצה dynamic storage (heap). כשהפונקציה מסתיימת p נעלם, אבל ה-int ב-heap נשאר, וזו דליפה אם לא שוחרר.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q04",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-x86-64?",
+      "code": "struct A { char c; int i; char d; };\nstruct B { int i; char c; char d; };\nstd::cout << sizeof(A) << ' ' << sizeof(B);",
+      "choices": [
+        "12 8",
+        "6 6",
+        "12 12",
+        "8 8"
+      ],
+      "answer": 0,
+      "explanation": "ב-A: c ב-0, שלושה בתים padding, i ב-4 עד 7, d ב-8, ועוד padding עד כפולה של 4, סך הכל 12. ב-B: i ב-0, c ב-4, d ב-5, ו-padding עד 8. אותם members, ויש הבדל של 50% בגודל רק בגלל הסדר.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q05",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה `sizeof(Empty)` עבור `struct Empty {};`?",
+      "choices": [
+        "0",
+        "8",
+        "4",
+        "1"
+      ],
+      "answer": 3,
+      "explanation": "לכל אובייקט שלם חייבת להיות כתובת ייחודית, ולכן גודל של struct ריק הוא לפחות 1 (בפועל 1). כשהוא משמש כ-base class הוא יכול לתפוס 0 (EBO).",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q06",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בקובץ ELF ב-Linux, באיזה section יושב `static int counter;` (בלי initializer, ולכן מאותחל ל-0)?",
+      "choices": [
+        ".text",
+        ".data",
+        ".bss",
+        ".rodata"
+      ],
+      "answer": 2,
+      "explanation": ".bss מחזיק משתנים עם static storage שמאותחלים לאפס. הוא לא תופס מקום בקובץ, רק גודל, והמערכת מקצה דפים מאופסים בטעינה. משתנה עם initializer שאינו אפס נכנס ל-.data, וקבועים נכנסים ל-.rodata.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q07",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-x86-64?",
+      "code": "struct S { double d; char c; };\nS arr[4];\nstd::cout << sizeof(S) << ' ' << alignof(S) << ' '\n          << sizeof(arr);",
+      "choices": [
+        "9 8 36",
+        "16 8 64",
+        "16 16 64",
+        "9 1 36"
+      ],
+      "answer": 1,
+      "explanation": "ה-alignment של S הוא 8 (בגלל ה-double). 8 + 1 = 9 מעוגל ל-16, כדי שה-d של האיבר הבא במערך יהיה מיושר. ה-padding בסוף הוא בדיוק מה שמאפשר את זה. מערך של 4 הוא 64 בתים.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q08",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ארבעה threads, וכל אחד מגדיל מונה משלו במערך `std::atomic<long> counters[4];`. הקוד איטי פי 10 מהצפוי. מה הסיבה הסבירה ואיך מתקנים?",
+      "choices": [
+        "false sharing: כל ארבעת המונים (32 בתים) באותו cache line, וכל כתיבה מבטלת את העותק אצל ה-cores האחרים. מיישרים כל מונה ל-line נפרד: struct alignas(64) { std::atomic<long> v; }",
+        "atomic איטי מטבעו, וצריך mutex",
+        "המערך על ה-stack, וצריך להקצות אותו ב-heap",
+        "צריך memory_order_seq_cst"
+      ],
+      "answer": 0,
+      "explanation": "פרוטוקול ה-coherence (MESI) עובד ברזולוציה של cache line. אין race לוגי, אבל ה-line עובר בין ה-cores בכל כתיבה. alignas(64) או std::hardware_destructive_interference_size מפרידים את המונים. פתרון נוסף: מונה מקומי לכל thread, וצבירה בסוף.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q09",
+      "level": 3,
+      "type": "short",
+      "prompt": "נתון `struct P { char a; double b; char c; int d; };` (sizeof = 24 ב-x86-64). מה ה-sizeof המינימלי שאפשר לקבל רק משינוי סדר ה-members?",
+      "accept": [
+        "16"
+      ],
+      "explanation": "בסדר double, int, char, char מקבלים 8 + 4 + 1 + 1 = 14, ו-padding לכפולה של 8 נותן 16. ב-24 בתים יש 10 בתים של padding: 7 אחרי a ו-3 אחרי c.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q10",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהטיפוסים הבאים הם trivially copyable (מותר להעתיק אותם עם memcpy)?",
+      "choices": [
+        "`struct A { int x; float y; };`",
+        "`struct B { std::array<float, 4> v; int n; };`",
+        "`struct C { virtual void f(); int x; };`",
+        "`struct D { std::vector<int> v; };`",
+        "`struct E { int x; ~E() = default; };`"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "std::array של טיפוס trivially copyable הוא בעצמו trivially copyable. פונקציה וירטואלית הופכת את ה-copy ל-non-trivial, כי צריך לאתחל vptr. vector מנהל משאב ב-heap, ו-memcpy שלו היה גורם ל-double free. destructor שהוגדר = default בהצהרה הראשונה נשאר טריוויאלי.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q11",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד עובד על x86, אבל ב-ARM מסוים הוא קורס, ו-UBSan מתלונן גם ב-x86. מה הבעיה?",
+      "code": "uint32_t read_len(const uint8_t* buf) {\n  return *reinterpret_cast<const uint32_t*>(buf + 1);\n}",
+      "bugLine": 2,
+      "choices": [
+        "uint8_t לא יכול להמיר ל-uint32_t",
+        "צריך volatile",
+        "צריך static_cast במקום reinterpret_cast",
+        "buf + 1 לא מיושר ל-4. גישה דרך uint32_t* לא מיושר היא UB, וגם הפרת strict aliasing. הפתרון: uint32_t v; std::memcpy(&v, buf + 1, 4); ואחר כך טיפול ב-endianness"
+      ],
+      "answer": 3,
+      "explanation": "x86 סובל גישה לא מיושרת (עם קנס ביצועים קטן), אבל הקומפיילר רשאי להניח יישור, למשל כשהוא מייצר הוראות SIMD מיושרות, ומעבדים אחרים זורקים alignment fault. memcpy בגודל קבוע מתקמפל ל-mov יחיד ב-x86, ולכן אין מחיר. לפורמט רשת צריך גם המרה מ-big-endian (ntohl או byteswap).",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q12",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט עם GCC או Clang על x86-64?",
+      "code": "struct Empty {};\nstruct A { Empty e; int x; };\nstruct B : Empty { int x; };\nstruct C { [[no_unique_address]] Empty e; int x; };\nstd::cout << sizeof(A) << sizeof(B) << sizeof(C);",
+      "choices": [
+        "444",
+        "848",
+        "844",
+        "888"
+      ],
+      "answer": 2,
+      "explanation": "ב-A ה-member הריק תופס byte, ועם padding ל-int יוצא 8. ב-B ה-base הריק לא תופס מקום (empty base optimization). ב-C (C++20) ה-attribute מאפשר ל-member ריק לחלוק כתובת עם member אחר. כך std::unique_ptr עם deleter ריק נשאר בגודל של pointer. MSVC מתעלם מ-[[no_unique_address]] וצריך [[msvc::no_unique_address]].",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q13",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "יש 10M samples מטיפוס `struct S { float i, q; uint64_t ts; uint32_t flags; };` (24 בתים) ב-std::vector<S>. ה-loop החם מחשב רק i*i + q*q לכל sample. מה השינוי שישפר ביצועים הכי הרבה?",
+      "choices": [
+        "להוסיף #pragma pack(1) כדי להקטין ל-20 בתים",
+        "Structure of Arrays: מערכים נפרדים ל-i, ל-q ולשאר השדות. הלולאה קוראת רק 8 בתים לכל sample במקום 24, בגישה רציפה שמתאימה ל-SIMD (טעינה של 8 floats ב-AVX)",
+        "להפוך את הלולאה ל-parallel עם יותר threads, בלי לשנות layout",
+        "להחליף float ב-double לדיוק"
+      ],
+      "answer": 1,
+      "explanation": "הלולאה מוגבלת ברוחב פס של זיכרון. ב-AoS רק שליש מכל cache line שימושי, וה-i וה-q מפוזרים בקפיצות של 24 בתים, ולכן vectorization דורש gather. ב-SoA כל line מלא בנתונים רלוונטיים והטעינות רציפות. pack(1) חוסך רק 4 בתים ושובר alignment. יותר threads על בעיה של bandwidth עוזר מעט.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q14",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נתון `struct alignas(64) Line { float v[16]; };` ו-`auto* p = new Line;`. מה נכון?",
+      "choices": [
+        "מ-C++17, new מזהה טיפוס over-aligned (alignment גדול מ-__STDCPP_DEFAULT_NEW_ALIGNMENT__, בדרך כלל 16) וקורא ל-operator new(size_t, std::align_val_t), ולכן p מיושר ל-64. ב-C++14 היישור לא היה מובטח",
+        "p מיושר ל-64 בכל תקן",
+        "alignas לא משפיע על הקצאה דינמית, רק על ה-stack",
+        "צריך תמיד posix_memalign"
+      ],
+      "answer": 0,
+      "explanation": "P0035 (C++17) הוסיף aligned new ו-aligned delete. לפני כן malloc החזיר alignment של 16 בלבד, ו-std::vector של טיפוסי SIMD מיושרים (למשל עם __m256) היה UB או קורס. גם std::allocator משתמש ב-aligned new מ-C++17.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q15",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש `void* aligned_malloc(std::size_t size, std::size_t align)` ו-`void aligned_free(void* p)` מעל malloc ו-free בלבד (בלי aligned_alloc או posix_memalign). align הוא חזקה של 2. aligned_free מקבל רק את ה-pointer.",
+      "starter": "void* aligned_malloc(std::size_t size, std::size_t align);\nvoid aligned_free(void* p);",
+      "modelAnswer": "#include <cstddef>\n#include <cstdint>\n#include <cstdlib>\n\nvoid* aligned_malloc(std::size_t size, std::size_t align) {\n  if (align == 0 || (align & (align - 1)) != 0) return nullptr;  // power of 2\n  if (align < alignof(void*)) align = alignof(void*);\n  const std::size_t extra = align - 1 + sizeof(void*);\n  if (size > SIZE_MAX - extra) return nullptr;                    // overflow\n  void* raw = std::malloc(size + extra);\n  if (!raw) return nullptr;\n  std::uintptr_t start = reinterpret_cast<std::uintptr_t>(raw) + sizeof(void*);\n  std::uintptr_t aligned = (start + align - 1) & ~static_cast<std::uintptr_t>(align - 1);\n  reinterpret_cast<void**>(aligned)[-1] = raw;   // stash original pointer\n  return reinterpret_cast<void*>(aligned);\n}\n\nvoid aligned_free(void* p) {\n  if (p) std::free(reinterpret_cast<void**>(p)[-1]);\n}",
+      "rubric": [
+        "מקצה מספיק בתים נוספים (align - 1 + sizeof(void*)) ובודק overflow של size",
+        "עיגול כלפי מעלה עם mask: (x + a - 1) & ~(a - 1)",
+        "שומר את ה-pointer המקורי מיד לפני הכתובת המיושרת, במקום מיושר ל-void*",
+        "בודק ש-align הוא חזקה של 2, ומטפל ב-nullptr בשני הצדדים",
+        "מזכיר שבפועל עדיף std::aligned_alloc (בו size חייב להיות כפולה של align) או aligned new"
+      ],
+      "explanation": "שאלת embedded ו-systems קלאסית. בודקים אריתמטיקה של pointers, עיגול עם bitmask, ומה צריך לשמור כדי לשחרר נכון.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q16",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט עם GCC או Clang על x86-64 (Itanium C++ ABI)?",
+      "code": "struct A1 { int i; char c; };\nstruct B1 : A1 { char d; };\n\nstruct A2 { A2() {} int i; char c; };\nstruct B2 : A2 { char d; };\n\nstd::cout << sizeof(B1) << ' ' << sizeof(B2);",
+      "choices": [
+        "12 12",
+        "8 8",
+        "8 12",
+        "12 8"
+      ],
+      "answer": 3,
+      "explanation": "ל-A1 ול-A2 יש sizeof 8 עם 3 בתים של tail padding. ה-Itanium ABI משתמש מחדש ב-tail padding של base רק כשה-base אינו POD לצורכי layout (לפי הגדרת POD של C++03). A1 הוא POD, ולכן d של B1 נכנס ב-offset 8 ו-sizeof הוא 12. ל-A2 יש constructor שהמשתמש סיפק, ולכן הוא non-POD, ו-d נכנס ב-offset 5 בתוך ה-padding, כך ש-sizeof הוא 8. ב-MSVC שניהם 12. זו אחת הסיבות שאסור לעשות memcpy לתוך base subobject.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q17",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה נכון לגבי `std::hardware_destructive_interference_size` (C++17)?",
+      "choices": [
+        "הוא מחושב בזמן ריצה לפי ה-CPU",
+        "הוא תמיד שווה ל-hardware_constructive_interference_size",
+        "זה קבוע של זמן קומפילציה: ההיסט המינימלי שמבטיח שני אובייקטים בלי false sharing. כיוון שהוא נכנס ל-layout של structs, ערך שונה בין יחידות קומפילציה או גרסאות קומפיילר יוצר בעיית ABI, ולכן GCC מזהיר כשמשתמשים בו ב-header (-Winterference-size). ב-x86 הוא בדרך כלל 64, אבל ב-CPUs עם adjacent-line prefetch או line של 128 עדיף ערך גדול יותר",
+        "הוא גודל דף הזיכרון"
+      ],
+      "answer": 2,
+      "explanation": "destructive היא ההפרדה שצריך כדי להימנע מ-false sharing. constructive היא הגודל המקסימלי שכדאי לשמור יחד כדי שיהיה באותו line. ב-Intel, ה-spatial prefetcher מביא זוגות של lines, ולכן יש ספריות (למשל folly) שמשתמשות ב-128. ב-Apple M1 ה-line הוא 128 בתים. כשה-ABI חשוב, עדיף קבוע מפורש של הפרויקט.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q18",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\nstruct S {\npublic:  char a;\nprivate: int  b;\npublic:  char c;\n};\n```\n\nמה התקן אומר על סדר ה-members בזיכרון?",
+      "choices": [
+        "תמיד בסדר ההצהרה, בכל תקן",
+        "עד C++20 הסדר הובטח רק בין members עם אותה access control. מ-C++23 (P1847) כל ה-non-static data members מוקצים בסדר ההצהרה. בפועל, אף קומפיילר מרכזי לא סידר אותם מחדש",
+        "הקומפיילר תמיד מסדר מחדש כדי לצמצם padding",
+        "הסדר implementation-defined, ותמיד מתועד"
+      ],
+      "answer": 1,
+      "explanation": "C++ ירש מ-C את הסדר בתוך access section, והשאיר פתח לסידור מחדש בין sections. אף אחד לא השתמש בו, ו-C++23 סגר אותו. מעשית: אסור לצפות שהקומפיילר יצמצם padding בשבילך. סדר הצהרה טוב הוא אחריות של המתכנת. S עדיין לא standard-layout, כי יש members עם access control שונה.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q19",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן את ה-layout בזיכרון של SPSC ring buffer שמעביר בלוקים של IQ samples (בלוקים של 8K complex<int16>) בין thread שמקבל מ-NIC או SDR לבין thread עיבוד, בקצב של מאות MS/s. על מה תחשוב ברמת הזיכרון?",
+      "modelAnswer": "(1) head ו-tail: כל אחד ב-cache line נפרד (alignas(64), או 128 בגלל adjacent-line prefetch), כדי שה-producer שכותב head וה-consumer שכותב tail לא יגרמו ל-false sharing. כל צד שומר עותק מקומי (cached) של האינדקס של הצד השני, וטוען אותו מחדש רק כשהתור נראה מלא או ריק. זה חוסך תעבורת coherence. (2) ה-slots עצמם: buffer רציף אחד שמיושר ל-64 לפחות, ו-4K או hugepage כשה-NIC או ה-DMA דורשים. כל בלוק (32KB) בגודל שהוא כפולה של cache line, כדי ששני בלוקים לא יחלקו line. קיבולת חזקה של 2 מאפשרת mask במקום מודולו. (3) הקצאה מראש ב-init, עם mlock או MAP_POPULATE ו-hugepages כדי למנוע page faults ו-TLB misses בנתיב החם. (4) NUMA: להקצות את ה-buffer על ה-node של ה-NIC או של ה-thread הצורך (first-touch או numa_alloc_onnode), ולקבע threads ל-cores באותו socket. (5) layout של הנתונים: SoA לעומת IQ interleaved לפי מה שהעיבוד צריך. ל-FFT בדרך כלל משאירים interleaved complex. המרה מ-int16 ל-float נעשית ב-consumer עם SIMD. (6) לגבי memory ordering: ה-producer כותב את הבלוק ואז head עם release, וה-consumer קורא head עם acquire. בלי locks. (7) מדידה: perf c2c ל-false sharing, ומוני page faults ו-cache misses.",
+      "rubric": [
+        "הפרדת head ו-tail ל-cache lines שונים, ושמירת עותק מקומי של האינדקס של הצד השני",
+        "יישור ה-buffer והבלוקים, וקיבולת חזקה של 2",
+        "הקצאה מראש, hugepages ו-page faults",
+        "NUMA ו-pinning",
+        "acquire/release על האינדקסים, ו-layout של הנתונים לפי שלב העיבוד"
+      ],
+      "explanation": "השאלה מחברת layout, cache, מקביליות ומערכות. זה בדיוק התחום שבו הפרויקט של ה-SDR שלך נותן יתרון, אז כדאי לחבר את התשובה לניסיון שלך.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    }
+  ]
+}
