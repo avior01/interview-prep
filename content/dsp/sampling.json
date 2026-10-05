@@ -18,7 +18,8 @@
         "קצב נתונים = קצב דגימה × bytes לדגימה × ערוצים. sc16 (int16 I + int16 Q) = 4 bytes, fc32 (float I + float Q) = 8 bytes, sc8 = 2 bytes",
         "גודל buffer = קצב × זמן שצריך לספוג. 20 ms ב-100 MS/s הם 2 מיליון דגימות",
         "זמן: לייצג timestamps כמספר שלם של ticks (int64), לא כ-float. להשוות timestamps צפויים מול בפועל כדי לגלות דגימות חסרות",
-        "שעונים: שני מכשירים עם 'אותו' קצב שונים בכמה ppm; בלי reference משותף (10 MHz + PPS) FIFO ביניהם יתרוקן או יתמלא"
+        "שעונים: שני מכשירים עם 'אותו' קצב שונים בכמה ppm; בלי reference משותף (10 MHz + PPS) FIFO ביניהם יתרוקן או יתמלא",
+        "DDC ב-FPGA מוריד קצב רק ב-decimation שלם מה-master clock, ולכן תמיד קוראים בחזרה את הקצב בפועל ומשתמשים בו בכל חישוב"
       ],
       "complexity": "200 MS/s sc16 = 800 MB/s = 6.4 Gb/s לערוץ. 10GbE נושא בפועל כ-9.5 Gb/s של payload. זיכרון ל-1 שנייה ב-fc32 ב-200 MS/s: 1.6 GB.",
       "pitfalls": [
@@ -34,7 +35,189 @@
         "להסביר למה הפורמט על הקו (sc16, sc8) שונה מהפורמט בעיבוד (fc32), ומה המחיר של ההמרה",
         "להבין את בעיית ה-clock domains בין מכשירים ואת הפתרונות: reference משותף או resampling אסינכרוני"
       ],
-      "diagram": "complex fs: [-fs/2 ........ +fs/2)\nf=+30, fs=50 -> 30-50 = -20 MHz\n\nreal fs: zones of fs/2\n|  1  |  2  |  3  |  4  |\n       inv         inv"
+      "diagram": "complex fs: [-fs/2 ........ +fs/2)\nf=+30, fs=50 -> 30-50 = -20 MHz\n\nreal fs: zones of fs/2\n|  1  |  2  |  3  |  4  |\n       inv         inv",
+      "details": [
+        {
+          "title": "דגימה ממשית מול מרוכבת: איפה התדר נוחת",
+          "body": "דגימה ב-fs הופכת את הספקטרום למחזורי במחזור fs: תדר f ותדר f + k·fs (לכל k שלם) נותנים בדיוק אותן דגימות. זה כל ה-aliasing. ההבדל בין ממשי למרוכב הוא רק מה נחשב 'אותו תדר'.\n\n- **ממשי:** הספקטרום סימטרי (f ו-f- הם אותו cos), ולכן הטווח הייחודי הוא 0 עד fs/2. תדר מעל fs/2 'מתקפל' כמו מראה: f_obs = |f - k·fs| עבור ה-k שמביא לטווח. קצב Nyquist (המינימום התיאורטי) הוא פעמיים התדר המקסימלי.\n- **מרוכב (IQ):** תדר חיובי ושלילי נבדלים, ולכן הטווח הוא fs/2- עד fs/2+, רוחב fs שלם. אין מראה אלא הזזה מעגלית: f_obs = f מודולו fs, מועבר ל-[-fs/2, fs/2). זה בדיוק מה ש-`np.fft.fftfreq` מחזיר לכל bin.\n\nב-FFT באורך N המרווח בין bins הוא Δf = fs/N, ו-bin k מייצג k·Δf. ב-IQ ה-bins מ-N/2 ומעלה מייצגים תדרים שליליים (k - N). כשממירים תדר שלילי לאינדקס צריך מודולו 'מתמטי' (תוצאה תמיד חיובית). ב-Python האופרטור `%` מחזיר תוצאה בסימן המחלק (תמיד חיובי ל-N חיובי), אבל ב-C++ האופרטור `%` חותך לכיוון אפס ולכן התוצאה בסימן המחולק: 3- מודולו 8 הוא 3- ולא 5. התיקון: `((k % N) + N) % N`.\n\nמכאן גם הסיבה למסנן anti-aliasing: אחרי הדגימה אין שום דרך להבחין בין אות שהיה בתוך הסרט לאות שהגיע מבחוץ ונחת עליו. ההנחתה חייבת לקרות לפני הדגימה (אנלוגית לפני ה-ADC), או לפני כל decimation דיגיטלי. decimation בלי מסנן (לקחת כל דגימה שנייה) הוא דגימה מחדש, והוא מקפל בדיוק כמו ADC."
+        },
+        {
+          "title": "Undersampling, אזורי Nyquist והיפוך ספקטרלי",
+          "body": "מחלקים את ציר התדר לאזורי Nyquist ברוחב fs/2: אזור 1 הוא 0 עד fs/2, אזור 2 הוא fs/2 עד fs, וכן הלאה. אות ממשי צר-סרט שיושב כולו בתוך אזור אחד נדגם בלי חפיפה גם אם fs קטן בהרבה מהתדר שלו: זה undersampling או bandpass sampling. ה-ADC חייב להיות בעל רוחב סרט אנלוגי שמכסה את התדר האמיתי, לא רק את fs/2.\n\n- באזור אי-זוגי האות נוחת לא הפוך (f_obs = f - k·fs). באזור זוגי הוא נוחת הפוך: התחתית של הסרט הופכת לראש (f_obs = k·fs - f).\n- תנאי לבחירת fs לסרט [fL, fH] ברוחב B: עבור n שלם, 2·fH/n ≤ fs ≤ 2·fL/(n-1), כאשר n יכול להיות 1 עד floor(fH/B). מחוץ לחלונות האלה הסרט חוצה גבול אזור ומתקפל על עצמו. בפועל לא בוחרים בקצה החלון, כי מסנן ה-bandpass לא אידיאלי.\n\nתיקון היפוך בתוכנה: על אות מרוכב בבסיס-פס, הצמדה (`conj`) ממפה f ל-f-. החלפת I ו-Q עושה אותו דבר, כי Q + jI = j·conj(I + jQ), כלומר הצמדה ועוד סיבוב פאזה קבוע. על אות ממשי, כפל ב-(-1)^n מזיז ב-fs/2 וממפה f ל-fs/2 - f בתוך אזור 1. כפל ב-1- או שינוי קצב לא מתקנים היפוך.\n\nהמחיר של undersampling הוא jitter: שגיאת זמן σ בדגימה של סינוס בתדר f גורמת לשגיאת אמפליטודה פרופורציונית לשיפוע, ו-SNR_jitter = -20·log10(2π·f·σ). ה-f כאן הוא תדר הכניסה האנלוגי האמיתי, לא fs ולא ה-alias, ולכן דגימה של 70 MHz ב-40 MS/s דורשת שעון נקי כמו של דוגם 70 MHz."
+        },
+        {
+          "title": "שרשרת ה-RX: ADC, קוונטיזציה ו-DDC",
+          "body": "השרשרת הטיפוסית: LNA ו-mixer אנלוגי (המרה מטה), מסנן anti-aliasing, ADC בקצב ה-master clock, ואז DDC ב-FPGA: NCO שמזיז את התדר, שרשרת CIC ו-halfband ו-decimation. משם packetization ל-10GbE, ובצד ה-host `recv()` והמרה ל-float.\n\n**קוונטיזציה:** ADC אידיאלי של N ביט עם סינוס full-scale נותן SNR ≈ 6.02·N + 1.76 dB, כשרעש הקוונטיזציה מפוזר על כל 0 עד fs/2. כל ביט שווה כ-6 dB, ולכן sc8 נותן כ-48 dB של דינמיקה ו-sc16 כ-96 dB. decimation עם סינון מוסיף processing gain כי הוא זורק רעש מחוץ לסרט.\n\n**decimation שלם:** ב-X310 ה-DDC מוריד קצב רק ביחס שלם מה-master clock (200 או 184.32 MHz). בקשה ל-30 MS/s מ-200 MHz היא 6.67; UHD מעגל ל-7 ומקבלים 28.571 MS/s עם אזהרה. לכן אחרי `set_rx_rate` קוראים `get_rx_rate()` ומשתמשים בערך שחזר. שים לב שחלוקה שלמה בקוד (200/30 = 6) נותנת ערך שלישי, שגוי גם הוא.\n\n**DC offset ו-LO leakage:** במקלט zero-IF דליפה של ה-LO ו-DC offset יוצרים spike ב-bin של DC, בדיוק במרכז. הפתרון המקובל הוא LO offset tuning: מכוונים את ה-LO האנלוגי בהיסט מחוץ לסרט המעניין (ב-UHD עם `tune_request_t(freq, lo_off)`), וה-NCO ב-DDC מחזיר את האות למרכז. ה-spike נשאר בתדר שזז החוצה ומסונן ב-decimation. התנאי: fs ורוחב הסרט האנלוגי צריכים להכיל גם את האות וגם את ההיסט. לאפס את bin ה-DC מוחק גם את תוכן האות שם."
+        },
+        {
+          "title": "חשבון throughput, זיכרון ו-buffers",
+          "body": "הנוסחה היחידה שצריך: bytes/s = קצב דגימה × bytes לדגימה × ערוצים. sc16 הוא 4 bytes לדגימה מרוכבת, fc32 (`std::complex<float>`) הוא 8, `complex<double>` הוא 16, ו-sc8 הוא 2. לביטים כופלים ב-8, ולא מתבלבלים בין MB/s ל-Mb/s.\n\n- 10GbE נושא בפועל כ-9.5 Gb/s של payload. jumbo frames (MTU של 9000) מקטינים overhead של headers וקצב חבילות, אבל משפרים רק בכמה אחוזים; הם לא הופכים 12.8 Gb/s ל-10.\n- גודל ring buffer = קצב × זמן ה-stall הכי ארוך שצריך לספוג, ועוד מרווח. אחרי stall הצרכן חייב להיות מהיר מזמן-אמת כדי לרוקן את ה-backlog.\n- הקלטה לדיסק: שומרים ב-sc16 (חצי מ-fc32), וכותבים בבלוקים גדולים ומיושרים (O_DIRECT) כדי שה-page cache לא יהפוך לצוואר בקבוק. NVMe יכול לרדת בקצב הכתיבה אחרי שה-SLC cache מתמלא, ולכן מתכננים לפי קצב sustained.\n\nמלכודת בקוד: חשבון כזה ב-`int` גולש מהר. 200e6 × 4 × 2 × 8 = 1.28e10, הרבה מעל 2^31. ב-C++ גלישה של signed int היא undefined behavior, והשמה למשתנה `long long` אחרי הכפל לא עוזרת, כי הכפל עצמו חושב ב-int. צריך שהאופרנד הראשון כבר יהיה 64 ביט."
+        },
+        {
+          "title": "זמן, timestamps וגילוי אובדן דגימות",
+          "body": "UHD מדווח בעיות זמן-אמת בתווים: **'O'** הוא overflow ב-RX (ה-host לא קרא מספיק מהר, buffers במכשיר או ב-kernel התמלאו ודגימות נזרקו), **'U'** הוא underflow ב-TX (ה-host לא סיפק דגימות בזמן וה-buffer במכשיר התרוקן), **'D'** הוא sequence error ברשת (חבילות שאבדו או הגיעו לא בסדר), ו-**'L'** הוא late: פקודה או burst עם timestamp שכבר עבר. הסיבות הן צד-תוכנה: צרכן איטי, socket buffer קטן (`net.core.rmem_max`), thread בלי עדיפות real-time, page faults.\n\nגילוי אובדן: כל buffer מ-`recv` מגיע עם metadata שכולל `time_spec` ומספר דגימות. הזמן הצפוי של ה-buffer הבא הוא הקודם ועוד n/fs. מייצגים זמן כמספר שלם: ticks של ה-master clock או אינדקס דגימה ב-int64 (מספיק לכ-2900 שנים ב-100 MS/s). הפרש חיובי הוא דגימות שאבדו, שלילי הוא חפיפה או קפיצה אחורה (reset). את ההפרש מחשבים ב-signed: הפרש של `uint64_t` שיוצא 'שלילי' נעטף למספר עצום ומדווח כפער ענק.\n\nלמה לא float: ל-float יש 24 ביט mantissa, ולכן סביב 1000 שניות ה-ulp הוא 2^-14 ≈ 61 µs, אלפי דגימות. double טוב בהרבה (כ-0.12 ns סביב 10^6 שניות) אבל צבירה של `t += 1/fs` עדיין צוברת שגיאת עיגול. זמן מחשבים מהמונה השלם רק כשצריך להציג.\n\nמה עושים בפער: תלוי באפליקציה. עיבוד עם state (מסננים, PLL, NCO, demodulation) צריך סימון discontinuity ו-reset, לפעמים מילוי באפסים כדי לשמור יישור בזמן, ובכל מקרה counter ל-monitoring."
+        },
+        {
+          "title": "שעונים, ppm ו-reference משותף",
+          "body": "שני מתנדים עם 'אותו' תדר נומינלי שונים בכמה ppm (חלקים למיליון). 1 ppm של 10 MHz הוא 10 Hz. ההשלכות:\n\n- **sample rate offset:** הפרש קצבים = fs × Δppm דגימות לשנייה. FIFO בין RX של מכשיר אחד ל-TX של אחר יתמלא או יתרוקן תוך מרווח/הפרש שניות. buffer גדול רק דוחה.\n- **carrier frequency offset:** אם ה-LO נגזר מאותו גביש, אותה שגיאה ב-ppm כפול תדר הנושא. 2.5 ppm ב-2.4 GHz הם 6 kHz.\n\nהפתרונות: **10 MHz reference** משותף נועל את התדרים, כך שאין drift ארוך-טווח. **PPS** (פולס פעם בשנייה) משותף, יחד עם `set_time_unknown_pps` או `set_time_next_pps`, נותן לכל המכשירים אותו epoch של זמן, כך ש-timestamps ניתנים להשוואה. 10 MHz בלי PPS נותן קצב זהה אבל זמנים לא מיושרים. ושום reference לא הופך את פאזת ה-LO של סינתסייזר לידועה: אחרי כל tune ה-PLL ננעל בפאזה אקראית, ולכן מערכות קוהרנטיות (beamforming) צריכות כיול פאזה או שיתוף LO.\n\nכשאין reference משותף משתמשים ב-resampler אסינכרוני עם control loop: מודדים את מילוי ה-FIFO לאורך זמן, מעריכים את השיפוע (least squares), ומתאימים את יחס ה-resampling. בהערכת השיפוע עם אינדקסי דגימה גדולים (10^15 ומעלה) הנוסחה הנאיבית עם Σk² מאבדת ספרות בגלל cancellation; ממרכזים קודם (מחסירים ממוצע או את הדגימה הראשונה ב-int64) ורק אז ממירים ל-double."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: undersampling של סרט 130-150 MHz ב-fs = 80 MS/s",
+          "body": "fs/2 = 40 MHz, ולכן האזורים הם: 1 = 0-40, 2 = 40-80, 3 = 80-120, 4 = 120-160.\n\n- הסרט כולו בתוך אזור 4 (120 עד 160), אין חציית גבול. בדיקה לפי הנוסחה עם n = 4: 2·150/4 = 75 ≤ 80 ≤ 2·130/3 = 86.7. תקין.\n- אזור 4 זוגי, ולכן הספקטרום מתהפך: f_obs = 2·80 - f = 160 - f.\n- 130 MHz נוחת ב-30 MHz, 150 MHz נוחת ב-10 MHz. הסרט 10-30 MHz בתוך 0-40, אבל הקצה העליון והתחתון התחלפו.\n\nאם היינו בוחרים fs = 70: fs/2 = 35, והגבול בין אזור 4 ל-5 נמצא ב-140 MHz, באמצע הסרט, כלומר קיפול של חצי הסרט על החצי השני. הלקח: בודקים את שני הקצוות, לא רק את המרכז."
+        },
+        {
+          "title": "דוגמה: throughput ו-buffer לשני ערוצים ב-100 MS/s",
+          "body": "- sc16: 2 × 100e6 × 4 = 800 MB/s = 6.4 Gb/s. נכנס ב-10GbE אחד (כ-9.5 Gb/s payload).\n- stall של 50 ms: 800e6 × 0.05 = 40 MB של ring buffer לפחות: 5 מיליון דגימות לכל ערוץ × 4 bytes × 2 ערוצים.\n- המרה ל-fc32 ב-host מכפילה את תעבורת הזיכרון ל-1.6 GB/s רק לכתיבת הפלט, ועוד הקריאה של הקלט.\n- הקלטה של 10 דקות ב-sc16: 800e6 × 600 = 480 GB. ב-fc32 זה היה 960 GB.\n\nהלקח: לבחור פורמט לפי צוואר הבקבוק (link, דיסק, זיכרון), ולהמיר ל-float רק איפה שחייבים."
+        },
+        {
+          "title": "דוגמה: גילוי פערים לפי ticks",
+          "body": "master clock של 200 MHz, fs = 25 MS/s, כלומר tps = 8 ticks לדגימה. כל buffer הוא 1000 דגימות = 8000 ticks.\n\n- buffer 0: t = 0. צפוי לבא: 0 + 1000·8 = 8000.\n- buffer 1: t = 8000. הפרש 0, תקין. צפוי: 16000.\n- buffer 2: t = 24000. הפרש 8000 ticks = 1000 דגימות חסרות.\n- buffer 3: t = 30000 (צפוי 32000). הפרש 2000- ticks = 250- דגימות: חפיפה או reset, מקרה שצריך לדווח בנפרד.\n- הפרש של 4 ticks (לא מתחלק ב-8) אומר timestamp לא מיושר לדגימה, כלומר באג או שינוי קצב.\n\nאם החישוב היה ב-`uint64_t`, ההפרש של buffer 3 היה נעטף ל-2^64 - 2000 ומדווח כפער של כ-2.3·10^18 דגימות."
+        },
+        {
+          "title": "דוגמה: drift של 1.5 ppm ב-50 MS/s",
+          "body": "- הפרש קצבים: 50e6 × 1.5e-6 = 75 דגימות לשנייה.\n- FIFO עם מרווח של 200,000 דגימות: 200000 / 75 ≈ 2667 שניות ≈ 44 דקות עד שהוא מתרוקן או מתמלא.\n- אותו גביש מייצר LO של 900 MHz: CFO של 900e6 × 1.5e-6 = 1350 Hz.\n- הערכה מהמדידה: אחרי 10^9 דגימות שנכתבו (20 שניות) ה-FIFO גדל ב-1500 דגימות. שיפוע 1500 / 10^9 = 1.5e-6, כלומר 1.5 ppm, והכותב מהיר מהקורא.\n\nהלקח: ppm קטן נראה זניח, אבל הוא מצטבר לינארית בזמן, ולכן פותרים אותו ב-reference משותף או ב-control loop, לא ב-buffer גדול יותר."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Aliasing",
+          "def": "תדרים שנבדלים בכפולה שלמה של fs נותנים אותן דגימות בדיוק, ולכן אחרי הדגימה אי אפשר להבחין ביניהם. מונעים רק בסינון לפני הדגימה."
+        },
+        {
+          "term": "Nyquist rate / תדר Nyquist",
+          "def": "קצב Nyquist הוא פעמיים התדר המקסימלי באות ממשי (המינימום התיאורטי). תדר Nyquist הוא fs/2, הגבול העליון שנדגם בלי קיפול."
+        },
+        {
+          "term": "דגימה מרוכבת (IQ)",
+          "def": "דגימה של I ו-Q במקביל. מבחינה בין תדרים חיוביים לשליליים, ולכן רוחב הסרט הוא fs שלם, מ-fs/2- עד fs/2+. aliasing הוא הזזה מעגלית ולא מראה."
+        },
+        {
+          "term": "אזור Nyquist",
+          "def": "רצועה ברוחב fs/2 על ציר התדר. אות שיושב כולו באזור אחד נדגם בלי חפיפה; באזור זוגי הספקטרום מתהפך."
+        },
+        {
+          "term": "Undersampling / bandpass sampling",
+          "def": "דגימה של אות צר-סרט בקצב נמוך מתדרו, כשהסרט כולו באזור Nyquist אחד. תנאי: 2fH/n ≤ fs ≤ 2fL/(n-1). דורש ADC עם רוחב סרט אנלוגי מתאים ושעון עם jitter נמוך."
+        },
+        {
+          "term": "היפוך ספקטרלי",
+          "def": "הספקטרום מופיע במראה (התדר הנמוך הופך לגבוה). קורה באזור Nyquist זוגי או ב-high-side mixing. מתקנים ב-conj, בהחלפת I ו-Q, או בכפל ב-(-1)^n על אות ממשי."
+        },
+        {
+          "term": "מסנן anti-aliasing",
+          "def": "מסנן לפני ה-ADC (או לפני כל decimation) שמנחית את מה שמחוץ לסרט. אחרי הדגימה כבר אי אפשר להפריד alias מהאות."
+        },
+        {
+          "term": "Decimation",
+          "def": "הורדת קצב פי M: סינון low-pass ואז לקיחת כל דגימה M. בלי הסינון זה פשוט דגימה מחדש שמקפלת תדרים מעל fs/(2M)."
+        },
+        {
+          "term": "DDC (Digital Down Converter)",
+          "def": "שרשרת ב-FPGA: NCO שמזיז תדר, מסנני CIC ו-halfband ו-decimation שלם מה-master clock. מורידה את הקצב לפני ה-link."
+        },
+        {
+          "term": "NCO",
+          "def": "מתנד דיגיטלי (phase accumulator וטבלת sin/cos) שמכפיל את האות ב-exp(-j2πf n/fs) כדי להזיז אותו בתדר."
+        },
+        {
+          "term": "Master clock ו-get_rx_rate",
+          "def": "שעון ה-ADC ב-USRP (ב-X310: 200 או 184.32 MHz). הקצב בפועל הוא master חלקי decimation שלם, ולכן קוראים `get_rx_rate()` אחרי ההגדרה ולא סומכים על הערך שביקשת."
+        },
+        {
+          "term": "sc16 / sc8 / fc32",
+          "def": "פורמטים של UHD: sc16 = int16 I + int16 Q (4 bytes), sc8 = int8 + int8 (2 bytes), fc32 = שני float (8 bytes). על הקו משתמשים ב-sc16 או sc8, בעיבוד ב-fc32."
+        },
+        {
+          "term": "SNR של קוונטיזציה",
+          "def": "ל-ADC אידיאלי של N ביט עם סינוס full-scale: SNR ≈ 6.02·N + 1.76 dB. כ-6 dB לביט: 12 ביט ≈ 74 dB. כהערכת דינמיקה גסה (6 dB לביט בלי ה-1.76) sc8 נותן כ-48 dB ו-sc16 כ-96 dB."
+        },
+        {
+          "term": "Clock jitter",
+          "def": "שגיאה אקראית ברגע הדגימה. מגבילה SNR ל-20·log10(2π·f·σ)- כאשר f הוא תדר הכניסה האנלוגי, ולכן חמורה במיוחד ב-undersampling."
+        },
+        {
+          "term": "FFT bin spacing",
+          "def": "Δf = fs/N. ב-IQ ה-bins מ-N/2 והלאה מייצגים תדרים שליליים (k - N). המרה של תדר שלילי לאינדקס דורשת מודולו חיובי; `%` ב-C++ שומר את סימן המחולק."
+        },
+        {
+          "term": "fftshift",
+          "def": "סידור מחדש של פלט FFT כך שה-bin של DC באמצע והתדרים השליליים משמאל. משנה תצוגה, לא את המיפוי."
+        },
+        {
+          "term": "DC offset ו-LO leakage",
+          "def": "במקלט zero-IF דליפת LO ו-offset אנלוגי יוצרים spike ב-DC, במרכז הספקטרום. תיקון אוטומטי משאיר שארית ומוחק תוכן אמיתי ב-DC."
+        },
+        {
+          "term": "LO offset tuning",
+          "def": "כיוון ה-LO האנלוגי בהיסט מחוץ לסרט, והחזרה דיגיטלית ב-NCO של ה-DDC. ב-UHD: `tune_request_t(freq, lo_off)`. ה-spike של DC נשאר מחוץ לסרט ומסונן."
+        },
+        {
+          "term": "Throughput ו-MB/s מול Mb/s",
+          "def": "קצב × bytes לדגימה × ערוצים. 1 byte = 8 bits; 400 MB/s הם 3.2 Gb/s. 10GbE נושא כ-9.5 Gb/s של payload."
+        },
+        {
+          "term": "Jumbo frames",
+          "def": "חבילות Ethernet עם MTU של כ-9000 bytes. מפחיתות overhead וקצב interrupts, שיפור של כמה אחוזים, לא הכפלה של רוחב הפס."
+        },
+        {
+          "term": "Ring buffer ו-stall",
+          "def": "buffer מעגלי בין thread שמייצר ל-thread שצורך. גודלו לפחות קצב × ה-stall הארוך ביותר (page fault, preemption), והצרכן חייב להיות מהיר מזמן-אמת כדי להשלים backlog."
+        },
+        {
+          "term": "Overflow 'O' / Underflow 'U'",
+          "def": "'O': ב-RX ה-host לא קרא בזמן ודגימות נזרקו. 'U': ב-TX ה-host לא סיפק בזמן וה-DAC שידר אפסים. שתיהן בעיות זמן-אמת בצד התוכנה."
+        },
+        {
+          "term": "Sequence error 'D' ו-late 'L'",
+          "def": "'D': חבילות רשת שאבדו או הגיעו לא בסדר (מזוהה לפי sequence numbers). 'L': פקודה או burst עם timestamp שכבר עבר."
+        },
+        {
+          "term": "net.core.rmem_max",
+          "def": "הגבול של Linux לגודל socket receive buffer. ערך קטן לא מספיק לספוג bursts של 10GbE, ו-UHD ממליץ להגדיל אותו."
+        },
+        {
+          "term": "עדיפות real-time ו-preemption",
+          "def": "thread רגיל יכול להיעצר על ידי ה-scheduler לאלפיות שנייה. thread של recv מקבל עדיפות real-time (SCHED_FIFO) וזיכרון נעול כדי להקטין stalls."
+        },
+        {
+          "term": "Timestamp ו-time_spec",
+          "def": "ה-metadata של כל buffer ב-UHD כולל את זמן הדגימה הראשונה. השוואה לזמן הצפוי (הקודם + n/fs) מגלה דגימות חסרות או חפיפה."
+        },
+        {
+          "term": "Ticks ומונה int64",
+          "def": "ייצוג זמן כמספר שלם של מחזורי master clock או דגימות. חשבון מדויק בלי עיגול, ו-int64 מספיק לאלפי שנים ב-100 MS/s. הפרשים מחשבים ב-signed."
+        },
+        {
+          "term": "ulp של float",
+          "def": "המרחק בין שני float סמוכים. עם 24 ביט mantissa, סביב 1000 שניות הוא 2^-14 ≈ 61 µs, ולכן float לא מתאים לזמן מוחלט."
+        },
+        {
+          "term": "Discontinuity",
+          "def": "נקודה ברצף הדגימות שבה חסר מידע. עיבוד עם state (מסננים, PLL, NCO) צריך reset או סימון, ולעיתים מילוי אפסים לשמירת יישור בזמן."
+        },
+        {
+          "term": "ppm",
+          "def": "חלקים למיליון. שגיאת שעון של x ppm נותנת הפרש קצב fs·x·1e-6 דגימות לשנייה ו-CFO של f_carrier·x·1e-6 אם ה-LO נגזר מאותו גביש."
+        },
+        {
+          "term": "10 MHz reference ו-PPS",
+          "def": "10 MHz משותף נועל את תדרי השעונים (אין drift). PPS משותף עם `set_time_unknown_pps` נותן epoch זמן משותף. אף אחד מהם לא קובע את פאזת ה-LO אחרי tune."
+        },
+        {
+          "term": "Resampler אסינכרוני",
+          "def": "משנה קצב ביחס לא שלם שמתעדכן בזמן ריצה. משמש לגישור בין clock domains: control loop מעריך את השיפוע של מילוי ה-FIFO ומתקן את היחס."
+        },
+        {
+          "term": "Least squares וממורכז",
+          "def": "שיפוע = Σ(dx·dy)/Σ(dx²) אחרי הפחתת ממוצעים. הנוסחה הנאיבית עם Σk² על ערכים ענקיים סובלת מ-cancellation ב-double."
+        },
+        {
+          "term": "Signed overflow ב-C++",
+          "def": "גלישה של int היא undefined behavior. כפל של כמה int מחושב ב-int גם אם התוצאה מושמת ל-long long, ולכן אחד האופרנדים צריך להיות 64 ביט מההתחלה."
+        }
+      ]
     }
   ],
   "questions": [
@@ -335,6 +518,328 @@
         "O(n), רשימה ריקה או buffer יחיד מחזירים []"
       ],
       "explanation": "החשבון בשלמים מונע שגיאות עיגול מצטברות. ב-Python `%` ו-`//` על ערך שלילי עקביים (floor), ולכן d שלילי שמתחלק ב-tps נותן מספר דגימות שלילי מדויק.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "UHD מדפיס 'U' במהלך שידור (TX). מה זה אומר?",
+      "choices": [
+        "underflow: ה-host לא סיפק דגימות בזמן, וה-buffer במכשיר התרוקן",
+        "האות שנקלט חלש מדי ונמצא מתחת לרצפת הרעש של ה-ADC",
+        "overflow של ה-buffer במכשיר כי ה-host שלח דגימות מהר מדי",
+        "המכשיר לא נעול על ה-10 MHz reference החיצוני"
+      ],
+      "answer": 0,
+      "explanation": "'U' הוא underflow ב-TX: ה-DAC צריך דגימה כל 1/fs, וכשה-host מאחר ה-buffer מתרוקן והמכשיר משדר אפסים או קוטע את ה-burst. שליחה מהירה מדי לא גורמת ל-overflow ב-TX כי יש flow control שחוסם את ה-host. אות חלש ונעילת reference הן בעיות אחרות שאין להן קשר לתו הזה.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "אות ממשי מכיל תדרים עד 20 kHz. מה קצב הדגימה המינימלי התיאורטי (קצב Nyquist) בלי aliasing?",
+      "accept": [
+        "40 kHz",
+        "40kHz",
+        "40",
+        "40000",
+        "40 kS/s",
+        "40kS/s",
+        "40000 Hz"
+      ],
+      "explanation": "קצב Nyquist לאות ממשי הוא פעמיים התדר המקסימלי: 2 × 20 kHz = 40 kHz. בפועל דוגמים מעט מעל (למשל 44.1 או 48 kHz באודיו) כדי להשאיר למסנן ה-anti-aliasing מעבר הדרגתי. 20 kHz היה נכון רק לדגימה מרוכבת, שבה רוחב הסרט שווה ל-fs.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה שמים מסנן anti-aliasing אנלוגי לפני ה-ADC?",
+      "choices": [
+        "כדי להקטין את רעש הקוונטיזציה של ה-ADC",
+        "כדי להגביל את קצב הנתונים שעובר על ה-link ל-host",
+        "כי אחרי הדגימה אי אפשר להבחין בין אות שבתוך הסרט ל-alias שהגיע מחוץ לו, ולכן חייבים להנחית אותו לפני",
+        "כדי לתקן חוסר איזון בין I ל-Q"
+      ],
+      "answer": 2,
+      "explanation": "תדר f ותדר f + k·fs נותנים אותן דגימות, ולכן כל אות מחוץ לסרט שמגיע ל-ADC נוחת על הסרט ולא ניתן להסרה אחר כך. רעש הקוונטיזציה נקבע על ידי מספר הביטים, לא על ידי המסנן. קצב הנתונים נקבע על ידי fs ופורמט הדגימה, ו-IQ imbalance מתוקן בכיול ולא במסנן low-pass.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "מתנד נומינלי של 10 MHz עם שגיאה של 2 ppm. בכמה Hz הוא סוטה מהנומינלי?",
+      "accept": [
+        "20",
+        "20 Hz",
+        "20Hz"
+      ],
+      "explanation": "ppm הוא חלק למיליון: 10e6 × 2e-6 = 20 Hz. אותה שגיאה יחסית עוברת לכל תדר שנגזר מהמתנד: ל-sample clock ול-LO. לכן ב-LO של 2.4 GHz אותם 2 ppm הם 4.8 kHz.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "ממירים תדר שלילי לאינדקס bin ב-FFT מרוכב באורך 8. מה מודפס?",
+      "code": "#include <cstdio>\n#include <cmath>\nint main() {\n    const int N = 8;\n    const double fs = 8000.0;\n    double df = fs / N;          // 1000 Hz per bin\n    double f = -3000.0;          // tone below center\n    int bin = (int)std::lround(f / df) % N;\n    std::printf(\"%d\\n\", bin);\n}",
+      "choices": [
+        "-3",
+        "5",
+        "3",
+        "undefined behavior, כי מודולו של מספר שלילי לא מוגדר"
+      ],
+      "answer": 0,
+      "explanation": "ב-C++ (מאז C++11) החילוק השלם חותך לכיוון אפס, ולכן `%` מחזיר תוצאה בסימן המחולק: 3- % 8 = 3-. האינדקס הנכון הוא 5 (bins מ-N/2 ומעלה הם התדרים השליליים), וזה מה ש-Python היה נותן כי שם `%` מחזיר בסימן המחלק. זה מוגדר היטב, לא UB. התיקון: `((k % N) + N) % N`.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q24",
+      "level": 2,
+      "type": "short",
+      "prompt": "FFT באורך 4096 על דגימות IQ ב-30.72 MS/s. מה המרווח בין bins, ב-kHz?",
+      "accept": [
+        "7.5",
+        "7.5 kHz",
+        "7.5kHz",
+        "7500 Hz",
+        "7500"
+      ],
+      "explanation": "Δf = fs / N = 30.72e6 / 4096 = 7500 Hz = 7.5 kHz. ב-IQ ה-4096 bins מכסים את כל הטווח מ-15.36- עד 15.36+ MHz, ולא רק את החצי החיובי. כדי לשפר רזולוציה מגדילים N (זמן תצפית ארוך יותר), לא את fs.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q25",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "הקוד מחשב decimation מ-master clock של 200 MHz לקצב מבוקש של 30 MS/s. מה מודפס?",
+      "code": "#include <cstdio>\nint main() {\n    int master = 200;     // MHz\n    int want = 30;        // MS/s\n    int decim = master / want;\n    std::printf(\"%d %.3f\\n\", decim, (double)master / decim);\n}",
+      "choices": [
+        "6 33.333",
+        "7 28.571",
+        "6.67 30.000",
+        "6 30.000"
+      ],
+      "answer": 0,
+      "explanation": "חילוק שלם חותך: 200/30 = 6, והקצב שמתקבל הוא 200/6 = 33.333 MS/s. UHD עצמו מעגל לשלם הקרוב (7) ומקבל 28.571, ולכן קוד שמחשב decimation בעצמו בחילוק שלם יוצא לא תואם למה שהמכשיר עושה בפועל. בכל מקרה הקצב אינו 30, ותמיד צריך להשתמש בקצב שחזר מ-`get_rx_rate()`.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מורידים קצב פי 2 בלי מסנן. מה מודפס?",
+      "code": "import numpy as np\nN = 64\nn = np.arange(N)\nx = np.cos(2*np.pi*0.375*n)   # 375 Hz at fs=1000\ny = x[::2]                    # fs=500, no filter\nk = np.argmax(np.abs(np.fft.rfft(y)))\nprint(k * 500 / len(y))",
+      "choices": [
+        "375.0",
+        "125.0",
+        "250.0",
+        "187.5"
+      ],
+      "answer": 1,
+      "explanation": "אחרי לקיחת כל דגימה שנייה הקצב הוא 500 Hz ו-fs/2 = 250 Hz. 375 Hz מעל הגבול ומתקפל ל-500 - 375 = 125 Hz. len(y) = 32, המרווח 15.625 Hz, והשיא ב-bin 8, כלומר 125.0. 375 הוא מה שהיה יוצא עם מסנן נכון אילו האות היה בסרט, אבל הוא לא ניתן לייצוג ב-500 Hz. 187.5 הוא בלבול בין חלוקת התדר לחלוקת הקצב. לכן decimation תמיד מתחיל ב-low-pass.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q27",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מחשב את קצב הביטים של שני ערוצים ב-200 MS/s sc16. איפה הבאג ומה הוא?",
+      "code": "#include <cstdint>\n#include <cstdio>\nint main() {\n    int rate = 200000000;      // 200 MS/s\n    int bytes_per_sample = 4;  // sc16\n    int channels = 2;\n    long long bits = rate * bytes_per_sample * channels * 8;\n    std::printf(\"%.1f Gb/s\\n\", bits / 1e9);\n}",
+      "bugLine": 7,
+      "choices": [
+        "ה-`long long` לא מספיק גדול להכיל 1.28e10",
+        "המשתנה rate גולש כי 200 מיליון לא נכנס ב-int",
+        "חלוקה ב-1e9 צריכה להיות ב-1024^3 כדי לקבל Gb/s",
+        "הכפל מחושב כולו ב-int ו-1.28e10 גולש: signed overflow הוא undefined behavior, וההשמה ל-long long קורית רק אחרי"
+      ],
+      "answer": 3,
+      "explanation": "הטיפוס של הביטוי נקבע לפי האופרנדים, לא לפי המשתנה שמקבל את התוצאה. 200e6 × 4 × 2 × 8 = 1.28e10 > 2^31, ולכן הכפל ב-int גולש (UB; בפועל מודפס מספר שלילי או זבל). 200 מיליון עצמו נכנס ב-int (עד כ-2.1e9), ו-long long מכיל עד 9.2e18. ב-networking ה-G הוא 10^9 ולא 2^30. התיקון: `int64_t rate` או `(int64_t)rate * ...`.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q28",
+      "level": 3,
+      "type": "short",
+      "prompt": "ADC אידיאלי של 12 ביט, סינוס full-scale, ורעש קוונטיזציה בלבד מפוזר על כל 0 עד fs/2. מה ה-SNR בקירוב, ב-dB (מספר שלם)?",
+      "accept": [
+        "74",
+        "74 dB",
+        "74dB",
+        "74.0"
+      ],
+      "explanation": "SNR ≈ 6.02·N + 1.76 = 6.02 × 12 + 1.76 = 74.0 dB. כל ביט מוסיף כ-6 dB, ולכן 16 ביט נותנים כ-98 dB ו-8 ביט כ-50. אם אחרי הדגימה מסננים לסרט צר יותר ומורידים קצב, מרוויחים processing gain של 10·log10(OSR) מעל המספר הזה.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q29",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "אות ממשי בסרט 100-120 MHz נדגם ישירות (undersampling) בלי mixer. איזה קצב דגימה מאפשר דגימה בלי שהסרט יתקפל על עצמו?",
+      "choices": [
+        "45 MS/s",
+        "55 MS/s",
+        "49 MS/s",
+        "70 MS/s"
+      ],
+      "answer": 2,
+      "explanation": "התנאי: 2·fH/n ≤ fs ≤ 2·fL/(n-1). עבור n = 5: 48 ≤ fs ≤ 50, ולכן 49 תקין: fs/2 = 24.5, והסרט כולו בתוך אזור 5 (98 עד 122.5), אזור אי-זוגי ולא הפוך, ונוחת ב-2 עד 22 MHz. ב-45 גבול האזורים 112.5 חוצה את הסרט, ב-55 הגבול 110 חוצה אותו, וב-70 הגבול 105. כל אלה גדולים מ-2B = 40, וזו בדיוק המלכודת: ב-bandpass sampling קצב מעל 2B לא מספיק, יש חלונות מותרים בלבד.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q30",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אחרי undersampling באזור Nyquist זוגי הספקטרום של האות הפוך. אילו פעולות בתוכנה מתקנות את ההיפוך? (בחר את כל הנכונים)",
+      "choices": [
+        "על אות מרוכב בבסיס-פס: הצמדה (conj) של כל הדגימות",
+        "על אות ממשי: כפל ב-(-1)^n, שממפה f ל-fs/2 - f",
+        "על אות מרוכב: החלפה בין I ל-Q בכל דגימה",
+        "כפל של כל הדגימות ב-1-",
+        "interpolation פי 2 אחרי הדגימה"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "הצמדה ממפה f ל-f-, וזה בדיוק היפוך. החלפת I ו-Q נותנת Q + jI = j·conj(I + jQ), כלומר הצמדה ועוד סיבוב פאזה קבוע של 90°, ולכן גם היא מתקנת. כפל ב-(-1)^n הוא הזזה ב-fs/2, ועל אות ממשי בתוך 0 עד fs/2 הוא ממפה f ל-fs/2 - f. כפל ב-1- הוא רק סיבוב פאזה של 180°, ו-interpolation משנה קצב אבל שומר על סדר התדרים.",
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q31",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במקלט zero-IF מופיע spike קבוע ב-bin של DC (LO leakage ו-DC offset), בדיוק במרכז האות שאתה צריך. מה הפתרון המקובל ב-UHD בלי לאבד את תוכן האות?",
+      "choices": [
+        "לכוון את ה-LO האנלוגי בהיסט מחוץ לסרט (LO offset ב-`tune_request_t`) ולהחזיר את האות למרכז עם ה-NCO ב-DDC, כך שה-spike נופל מחוץ לסרט ומסונן",
+        "להוריד את ה-RX gain עד שה-spike נעלם מתחת לרצפת הרעש",
+        "לאפס את bin ה-DC בכל FFT",
+        "להכפיל את קצב הדגימה כדי שה-spike יתפזר על יותר bins"
+      ],
+      "answer": 0,
+      "explanation": "ה-spike נוצר בתדר ה-LO האנלוגי. כשמזיזים את ה-LO בהיסט (למשל חצי מ-fs) וה-NCO הדיגיטלי מחזיר את האות למרכז, ה-spike זז לתדר שמחוץ לסרט ומסונן ב-decimation. הורדת gain מנחיתה גם את האות ולרוב לא את הדליפה. איפוס bin ה-DC מוחק את תוכן האות שם, ו-fs גבוה יותר משאיר את ה-spike ב-DC. התנאי: fs והסרט האנלוגי צריכים להכיל את האות ועוד את ההיסט.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q32",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה אמורה להחזיר כמה דגימות חסרות לפני כל buffer (שלילי בחפיפה). בבדיקה עם buffer שמתחיל מוקדם מהצפוי היא מדווחת פער של כ-4.6·10^18 דגימות. איפה הבאג?",
+      "code": "#include <cstdint>\n#include <vector>\nstruct Buf { uint64_t t; uint32_t n; };   // t in ticks\n// missing samples before each buffer (negative = overlap)\nstd::vector<int64_t> gaps(const std::vector<Buf>& b, uint64_t tps) {\n    std::vector<int64_t> out;\n    for (size_t i = 1; i < b.size(); ++i) {\n        uint64_t expected = b[i-1].t + b[i-1].n * tps;\n        uint64_t d = b[i].t - expected;\n        if (d != 0) out.push_back(d / tps);\n    }\n    return out;\n}",
+      "bugLine": 9,
+      "choices": [
+        "`b[i-1].n * tps` מחושב ב-32 ביט וגולש כי n הוא uint32_t",
+        "ההפרש מחושב ב-uint64_t: כשה-buffer מוקדם מהצפוי החיסור נעטף ל-2^64 פחות ההפרש, וזה מתחלק ומדווח כפער עצום",
+        "הלולאה גולשת כשהווקטור ריק כי b.size() - 1 הוא מספר ענק",
+        "חילוק ב-tps חותך, וצריך לעגל עם `std::round`"
+      ],
+      "answer": 1,
+      "explanation": "חיסור unsigned מוגדר כמודולו 2^64, ולכן הפרש של 100- ticks הופך ל-2^64 - 100, ואחרי חילוק ב-4 ל-כ-4.6·10^18. התיקון: לחשב `int64_t d = int64_t(b[i].t) - int64_t(expected)` ולחלק ב-signed. `n * tps` מקודם ל-uint64_t כי tps הוא uint64_t, אז אין גלישה של 32 ביט. הלולאה מתחילה ב-1 ומשווה `i < b.size()`, כך שווקטור ריק לא נכנס ללולאה. העיגול לא רלוונטי כי timestamps מיושרים מתחלקים ב-tps בדיוק (ולא מיושרים צריך לדווח, לא לעגל).",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q33",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "אות IF ב-70 MHz נדגם ב-fs = 40 MS/s (undersampling, ה-alias נוחת ב-10 MHz). ל-sampling clock יש jitter של 1 ps RMS. מה גבול ה-SNR שה-jitter לבדו קובע?",
+      "choices": [
+        "כ-84 dB, כי אחרי הדגימה האות יושב ב-10 MHz",
+        "כ-72 dB, כי מה שקובע הוא קצב הדגימה 40 MHz",
+        "כ-61 dB, כי צריך להציב בנוסחה את קצב Nyquist של האות, 140 MHz",
+        "כ-67 dB, כי מה שקובע הוא תדר הכניסה האנלוגי 70 MHz"
+      ],
+      "answer": 3,
+      "explanation": "SNR_jitter = -20·log10(2π·f·σ), ו-f הוא תדר האות שה-ADC רואה ברגע הדגימה, כי שגיאת הזמן מתורגמת לשגיאת אמפליטודה דרך שיפוע האות: 2π × 70e6 × 1e-12 ≈ 4.4e-4, כלומר כ-67.1 dB. ה-alias ב-10 MHz נוצר רק אחרי הדגימה, ולכן 84 dB אופטימי מדי. fs לא מופיע בנוסחה, ו-2f הוא בלבול עם קצב Nyquist. זה המחיר המרכזי של undersampling: השעון צריך להיות נקי כמו של דוגם 70 MHz.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q34",
+      "level": 5,
+      "type": "multi",
+      "prompt": "שני USRP נעולים על אותו 10 MHz reference, אבל אין להם PPS משותף. אילו טענות נכונות? (בחר את כל הנכונים)",
+      "choices": [
+        "קצבי הדגימה שלהם זהים לטווח ארוך, ולכן FIFO ביניהם לא יתרוקן בגלל drift",
+        "ה-timestamps שלהם לא חולקים epoch, ולכן אי אפשר ליישר דגימות לפי זמן בלי כיול נוסף",
+        "הפאזה בין ה-LOs שלהם קבועה וידועה אחרי כל tune, ולכן beamforming עובד בלי כיול",
+        "ה-FIFO ביניהם עדיין יתרוקן בסופו של דבר, כמו בלי reference, רק לאט יותר",
+        "PPS משותף עם `set_time_unknown_pps` היה נותן לשניהם אותו epoch, עד הפרש אורכי הכבלים"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "10 MHz משותף נועל את כל ה-PLLs לאותו תדר, ולכן אין הפרש קצבים ממוצע וה-FIFO יציב. אבל השעונים התחילו לספור ברגעים שונים, ובלי PPS אין נקודת ייחוס משותפת: `set_time_unknown_pps` מחכה לפולס ומאפס את הזמן בשני המכשירים באותו edge. פאזת ה-LO נקבעת מחדש בכל נעילה של ה-PLL של הסינתסייזר, ולכן היא אקראית בין tunes; מערכות קוהרנטיות צריכות כיול פאזה, שיתוף LO או timed tune במכשירים שתומכים בזה.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q35",
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "בין RX במכשיר A ל-TX במכשיר B יש FIFO. מודדים מדי פעם זוג `(k, level)`: k הוא מספר הדגימות שנכתבו מתחילת הריצה (int64, יכול להגיע ל-10^15 ויותר בריצה ארוכה), ו-level הוא מילוי ה-FIFO בדגימות. כתוב `double estimate_ppm(const std::vector<std::pair<int64_t,int64_t>>& obs)` שמחזירה את הפרש הקצבים ב-ppm לפי התאמת קו ישר (least squares). חיובי אומר שה-FIFO מתמלא (הכותב מהיר). שים לב ליציבות נומרית.",
+      "starter": "double estimate_ppm(const std::vector<std::pair<int64_t, int64_t>>& obs);",
+      "modelAnswer": "#include <cstdint>\n#include <stdexcept>\n#include <utility>\n#include <vector>\n\ndouble estimate_ppm(const std::vector<std::pair<int64_t, int64_t>>& obs) {\n    const size_t n = obs.size();\n    if (n < 2) throw std::invalid_argument(\"need >= 2 points\");\n    const int64_t k0 = obs[0].first, l0 = obs[0].second;\n    double mx = 0, my = 0;               // means of exact int64 offsets\n    for (const auto& [k, l] : obs) { mx += double(k - k0); my += double(l - l0); }\n    mx /= n; my /= n;\n    double sxx = 0, sxy = 0;             // centered sums: no cancellation\n    for (const auto& [k, l] : obs) {\n        const double dx = double(k - k0) - mx, dy = double(l - l0) - my;\n        sxx += dx * dx; sxy += dx * dy;\n    }\n    if (sxx == 0) throw std::invalid_argument(\"all k equal\");\n    return sxy / sxx * 1e6;              // fill samples per written sample -> ppm\n}",
+      "rubric": [
+        "שיפוע least squares: Σ(dx·dy)/Σ(dx²), והמרה ל-ppm בכפל ב-1e6",
+        "יציבות נומרית: הפחתת k0 ב-int64 (מדויק) ומרכוז לפני ההמרה ל-double, ולא הנוסחה הנאיבית n·Σk² - (Σk)² שסובלת מ-cancellation בערכים ענקיים",
+        "טיפול בקלט מנוון: פחות משתי נקודות, או כל ה-k זהים (Sxx = 0)",
+        "סימן נכון: level עולה עם k אומר כותב מהיר, תוצאה חיובית",
+        "O(n) זמן, O(1) זיכרון נוסף; אזכור שבשימוש אמיתי זה נכנס ל-control loop של resampler אסינכרוני"
+      ],
+      "explanation": "השיפוע של level כפונקציה של k הוא בדיוק (f_w - f_r)/f_w, כלומר ההפרש היחסי. הנוסחה הנאיבית מחסירה שני מספרים בסדר גודל של n²·k², ובבדיקה עם k ≈ 4·10^15 היא החזירה 2.45 ppm במקום 2.50, בעוד הגרסה הממורכזת מדויקת. החסרה של k0 ב-int64 היא מדויקת, ורק ההפרש הקטן עובר ל-double.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "dsp.sampling"
+    },
+    {
+      "id": "dsp.sampling.q36",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן מערכת שמקליטה לדיסק שני ערוצי RX של 200 MS/s כל אחד במשך שעה, בלי לאבד דגימות, ומאפשרת לדעת בדיוק איפה היו פערים אם היו. עבור על המספרים ועל נקודות הכשל.",
+      "modelAnswer": "מספרים: sc16 הוא 4 bytes, שני ערוצים ב-200 MS/s הם 1.6 GB/s = 12.8 Gb/s, ושעה היא 5.76 TB. fc32 היה מכפיל ל-3.2 GB/s ו-11.5 TB, ולכן מקליטים ב-sc16 בפורמט הגולמי. link: 12.8 Gb/s לא נכנס ב-10GbE אחד, ולכן ערוץ לכל link (6.4 Gb/s כל אחד) או sc8 אם 48 dB מספיקים. ב-host: thread של recv לכל ערוץ בעדיפות real-time, מוצמד ל-core ול-NUMA node של כרטיס הרשת, socket buffers גדולים (rmem_max), ו-ring buffer גדול בזיכרון נעול (למשל 2 עד 4 שניות, 3.2 עד 6.4 GB) שסופג stalls של הדיסק. thread כתיבה נפרד כותב בבלוקים גדולים ומיושרים עם O_DIRECT כדי לעקוף את ה-page cache. דיסק: 1.6 GB/s sustained למשך שעה, כולל אחרי שה-SLC cache של ה-NVMe מתמלא, ולכן RAID0 של כמה NVMe ובדיקה מראש של קצב sustained, ולא לפי ה-datasheet. שלמות: שומרים metadata (למשל SigMF) עם קצב בפועל מ-get_rx_rate, תדר, gain, וזמן התחלה ב-ticks; לכל buffer משווים timestamp לצפוי בחשבון שלם, ורושמים log של כל פער עם מיקום בדגימות וגודל; סופרים 'O' ו-'D'. monitoring חי של מילוי ה-ring ושל קצב הכתיבה, והתראה לפני שה-buffer מתמלא. אם יש שני מכשירים, 10 MHz ו-PPS משותפים כדי ששני הערוצים יהיו מיושרים בזמן.",
+      "rubric": [
+        "חשבון נכון: 1.6 GB/s, 12.8 Gb/s, כ-5.8 TB לשעה, ובחירת sc16 על פני fc32",
+        "פתרון ל-link: ערוץ לכל 10GbE או sc8, עם המחיר בדינמיקה",
+        "ארכיטקטורה: recv threads ב-real-time, ring buffer גדול בזיכרון נעול, thread כתיבה נפרד עם O_DIRECT ובלוקים גדולים",
+        "דיסק: קצב sustained ולא burst (SLC cache), RAID0 של NVMe, בדיקה מראש",
+        "שלמות ותיעוד: timestamps בשלמים, log של פערים, metadata עם הקצב בפועל, monitoring"
+      ],
+      "explanation": "מועמד חזק מתחיל במספרים ומזהה את שלושת צווארי הבקבוק (link, זיכרון, דיסק), ומתכנן גם גילוי ותיעוד של כשל ולא רק את המסלול התקין.",
+      "tags": [
+        "nvidia"
+      ],
       "lesson": "dsp.sampling"
     }
   ]

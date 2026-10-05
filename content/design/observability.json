@@ -33,7 +33,169 @@
         "במערכות RT: מדידה בעלות קבועה וזניחה, histogram פר thread, והוצאה אסינכרונית",
         "לדבר על sampling (head מול tail), retention ועלות"
       ],
-      "diagram": "metrics -> 'is something wrong?'\ntraces  -> 'where is it wrong?'\nlogs    -> 'why is it wrong?'"
+      "diagram": "metrics -> 'is something wrong?'\ntraces  -> 'where is it wrong?'\nlogs    -> 'why is it wrong?'",
+      "details": [
+        {
+          "title": "שלושת העמודים: metrics, logs, traces",
+          "body": "**metrics** הם מספרים שנדגמים לאורך זמן, עם labels קטנים (endpoint, region). זולים לאחסון ולשאילתה, ולכן מתאימים להתראות, ל-dashboards ולמגמות. שלושה סוגים:\n- **counter:** רק עולה (requests_total, drops_total). מחשבים ממנו קצב (rate) לאורך חלון. כשהתהליך עולה מחדש ה-counter מתאפס, ופונקציות כמו rate ב-Prometheus מזהות את האיפוס ומתקנות. counter עמיד גם לאובדן דגימה: ההפרש משוחזר מהדגימה הבאה.\n- **gauge:** ערך נוכחי שעולה ויורד (עומק תור, זיכרון בשימוש, טמפרטורה). דגימה שאבדה היא מידע שאבד.\n- **histogram:** ספירה של מדידות לפי דליים (buckets). מאפשר אחוזונים, וניתן לחיבור בין שרתים.\n\n**logs** הם רשומות של אירועים בודדים, עם הקשר מלא. structured logging (JSON עם שדות קבועים: timestamp, level, request_id, device_id) מאפשר לסנן ולחבר לפי שדה בלי regex שביר. יקרים בנפח, ולכן לא כותבים לוג על כל פריט בנתיב החם.\n\n**traces** עוקבים אחרי בקשה אחת דרך כמה שירותים. לכל בקשה trace_id, וכל שלב הוא span עם זמני התחלה וסיום ו-parent. ה-trace_id עובר בין שירותים ב-headers (context propagation, למשל traceparent של W3C ב-OpenTelemetry).\n\nהחלוקה המעשית: metrics עונים 'האם משהו לא בסדר', traces 'איפה', ו-logs 'למה'."
+        },
+        {
+          "title": "SLI, SLO, SLA ו-error budget",
+          "body": "**SLI** (indicator) הוא מה שמודדים, בדרך כלל כיחס: אחוז הבקשות שהצליחו, או אחוז הבקשות שהסתיימו תוך 200 ms. **SLO** (objective) הוא היעד הפנימי: 99.9% על חלון מתגלגל של 30 יום. **SLA** (agreement) הוא התחייבות חוזית ללקוח עם השלכות (זיכוי כספי), ובדרך כלל מקלה מה-SLO כדי להשאיר מרווח.\n\n**error budget** הוא 1 − SLO: כמות הכשלים המותרת. ב-99.9% על 30 יום זה 0.1% מ-43,200 דקות, כלומר 43.2 דקות. ב-99.99% רק 4.32 דקות. ה-budget הוא כלי ניהולי: כשנשאר הרבה, אפשר לשחרר מהר; כשהוא נגמר, מקפיאים שינויים ומשקיעים באמינות.\n\nאיפה מודדים: SLI בצד השרת לא רואה בקשות שלא הגיעו אליו (DNS, load balancer, רשת). לכן מודדים קרוב למשתמש ככל האפשר: logs של ה-load balancer, synthetic probes (בקשות בדיקה יזומות מבחוץ), או RUM (Real User Monitoring, מדידה בדפדפן או ב-client).\n\nזמינות של תלויות סדרתיות מוכפלת: שירות שתלוי בשלושה רכיבים של 99.9% כל אחד (ובלי redundancy) לא יכול לעבור 0.999³ ≈ 99.7%."
+        },
+        {
+          "title": "התראות: סימפטומים, burn rate וחלונות",
+          "body": "התראה שמעירה אדם (page) צריכה להיות דחופה, אמיתית ודורשת פעולה. התראות על סיבות (CPU מעל 80%, דיסק מעל 70%) רבות ורועשות, ויוצרות alert fatigue: אנשים מתחילים להתעלם, כולל מההתראות החשובות. מתריעים על סימפטומים שהמשתמש מרגיש, וסיבות מעבירים ל-dashboards ולטיקטים. חריג לגיטימי: תנאי שבוודאות יהפוך לסימפטום, כמו דיסק שיתמלא בעוד 4 שעות.\n\n**burn rate** הוא קצב שריפת ה-budget ביחס לקצב 'המותר'. burn rate 1 שורף את כל ה-budget בדיוק בסוף החלון (30 יום = 720 שעות). אם SLO הוא 99.9% ושיעור השגיאות הנוכחי 0.5%, ה-burn rate הוא 0.5/0.1 = 5, וה-budget ייגמר בעוד 30/5 = 6 ימים.\n\nההמלצה של ה-SRE workbook: multi-window, multi-burn-rate. page על burn rate 14.4 לאורך שעה (2% מה-budget בשעה), page על burn rate 6 לאורך 6 שעות (5%), וטיקט על burn rate נמוך לאורך ימים. לכל תנאי מוסיפים חלון קצר (למשל 5 דקות) שגם הוא חייב לעבור את הסף: כך ההתראה נסגרת מהר אחרי שהבעיה נפתרה, ולא ממשיכה לצלצל רק כי החלון הארוך עוד 'זוכר' את התקלה."
+        },
+        {
+          "title": "cardinality, histograms ואחוזונים",
+          "body": "ב-Prometheus כל שילוב ייחודי של שם metric וערכי labels הוא time series נפרדת. המספר הוא מכפלת מספר הערכים של כל label. histogram מוסיף series לכל bucket (כולל +Inf), ועוד _sum ו-_count. metric עם endpoint (20 ערכים), status (5), region (6), ו-histogram של 12 buckets, הוא 20 × 5 × 6 × 14 = 8,400 series.\n\nlabel עם ערכים לא חסומים (user_id, request_id, URL גולמי עם מזהים) מפוצץ את הזיכרון ואת זמני השאילתה. מידע פר-משתמש או פר-בקשה שייך ל-logs ול-traces. ב-labels שמים ערכים מקבוצה קטנה וחסומה: endpoint כתבנית (/users/{id}), status code, region.\n\nאחוזונים: ממוצע של p99 בין שרתים אינו p99. histograms ניתנים לחיבור: סוכמים counts לכל bucket ומחשבים אחוזון מההתפלגות המאוחדת (histogram_quantile על sum by (le)). החישוב מניח פיזור לינארי בתוך bucket, ולכן הדיוק תלוי בגבולות הדליים. אם יעד ה-SLO הוא 300 ms, צריך bucket שגבולו בדיוק 300 ms; אחרת אחוז הבקשות מתחת ל-300 ms הוא הערכה בלבד.\n\n**exemplars** הם trace_id לדוגמה שמוצמד לנקודה ב-histogram, כך שמגרף של p99 קופצים ישר ל-trace של בקשה איטית."
+        },
+        {
+          "title": "sampling, profiling וחקירה של בעיות נדירות",
+          "body": "אי אפשר לשמור כל trace במערכת עם מיליוני בקשות בדקה.\n- **head-based sampling:** ההחלטה מתקבלת בתחילת הבקשה (למשל 1% אקראי) ועוברת הלאה עם ה-trace_id. זול ופשוט, אבל רוב ה-traces הנדירים והמעניינים נזרקים.\n- **tail-based sampling:** כל ה-spans נשמרים זמנית ב-collector, וההחלטה מתקבלת אחרי שה-trace הסתיים: שומרים את כל השגיאות וה-traces האיטיים, ודוגמים מעט מהרגילים. מחיר: buffering וזיכרון ב-collector, וצורך שכל ה-spans של trace יגיעו לאותו collector.\n\nבעיות לסירוגין: קודם מאפיינים (כל ה-instances או חלק? בשעות קבועות? מתואם עם deploy, GC, cron?). אם כל ה-spans של בקשה התארכו יחד, החשד הוא ב-host או ב-runtime: GC pause, noisy neighbor (VM או container אחר שמתחרה על אותו hardware), CPU steal (זמן שה-hypervisor נתן למכונה אחרת), או CPU throttling של cgroup (container שחרג מה-quota שלו מושהה עד סוף התקופה). אם span אחד התארך, החשד בתלות או ב-lock.\n\n**continuous profiling** (למשל מבוסס eBPF, שמריץ תוכניות קטנות ובטוחות בקרנל) דוגם stacks כל הזמן בעלות נמוכה, ומאפשר לראות מה רץ בדיוק בזמן ה-spike."
+        },
+        {
+          "title": "observability במערכות זמן-אמת",
+          "body": "בנתיב זמן-אמת המדידה עצמה לא יכולה להפריע:\n- **בלי I/O סינכרוני:** printf או fprintf יכולים להיחסם על טרמינל או pipe מלא. ב-SDR זה מספיק כדי שה-thread לא ימשוך samples בזמן, וה-radio ידווח overflow ('O' ב-UHD). ב-TX ההפך: underflow ('U') כשה-samples לא מגיעים בזמן.\n- **שעון:** clock_gettime(CLOCK_MONOTONIC) עובר דרך vDSO, קוד שהקרנל ממפה לתהליך כדי שקריאה תהיה בלי syscall, בעלות של עשרות ns. CLOCK_MONOTONIC לא קופץ. CLOCK_REALTIME הוא שעון קיר ש-NTP יכול להזיז אחורה או קדימה, ולכן לא מתאים למדידת משכים.\n- **אגרגציה מקומית:** histogram per-thread (מערך counters) ומקסימום רץ, בלי lock. thread אחר קורא snapshot דרך double buffer או seqlock (מונה גרסה שהכותב מעלה לפני ואחרי הכתיבה, והקורא מנסה שוב אם הגרסה השתנתה או אי-זוגית). mutex משותף יוצר contention ו-priority inversion (thread בעדיפות גבוהה מחכה ל-lock שמחזיק thread בעדיפות נמוכה).\n- **לוגים חריגים:** רשומות בינאריות קטנות ל-ring buffer lock-free, ו-thread רקע ממיר וכותב. flight recorder שומר תמיד את X השניות האחרונות ונשמר לדיסק כשמזוהה תקלה.\n\nמדדים חשובים ב-pipeline: עומק תור ו-high-water mark (המקסימום שהתור הגיע אליו) בכל שלב, histogram של זמן עיבוד בלוק כולל max, overflows ו-underflows, ו-drops לפי סיבה."
+        },
+        {
+          "title": "זמן בין מכונות: NTP, PTP ו-clock skew",
+          "body": "latency חד-כיווני בין שתי מכונות נמדד בשני שעונים שונים. NTP מסנכרן בדרך כלל לרמה של מאות מיקרו-שניות עד מילישניות ברשת מקומית, וגרוע יותר ב-WAN. ההפרש בין השעונים, clock skew, יכול להיות גדול מה-latency עצמו, ואז התוצאה חסרת משמעות ואפילו שלילית.\n\nפתרונות:\n- **PTP (IEEE 1588) עם hardware timestamping:** ה-NIC חותם זמן ברגע שהפקטה עוברת בחומרה, בלי ה-jitter של התוכנה. מגיע לרמה של עשרות ns עד מיקרו-שניות.\n- **round trip על אותו שעון:** מודדים RTT במכונה אחת ומחלקים ב-2, בהנחה שהנתיב סימטרי.\n- **מקור זמן משותף:** GPS או GPSDO בשתי התחנות.\n\nCLOCK_MONOTONIC לא עוזר כאן: נקודת האפס שלו שונה בכל מכונה, ולכן אין משמעות להשוואה בין מכונות."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: error budget ו-burn rate",
+          "body": "SLO: 99.9% בקשות מוצלחות על 30 יום. מגיעות 1,000 בקשות בשנייה.\n\n- סך הבקשות בחלון: 1,000 × 86,400 × 30 ≈ 2.59 מיליארד.\n- budget: 0.1%, כלומר כ-2.59 מיליון בקשות שמותר שייכשלו, או 43.2 דקות של השבתה מלאה.\n- deploy גרוע מעלה את שיעור השגיאות ל-1.44%. burn rate = 1.44 / 0.1 = 14.4.\n- בשעה כזו נשרף 14.4 / 720 = 2% מה-budget, וההתראה המהירה (שעה, 14.4) נדלקת.\n- אם השיעור היה 0.5% לאורך זמן: burn rate 5, וה-budget נגמר בעוד 6 ימים. זו התראה איטית יותר, שמגיעה מהחלון של 6 שעות או מטיקט.\n\nהלקח: burn rate הופך 'כמה רע עכשיו' ל'כמה זמן נשאר', וזה מה שקובע אם להעיר מישהו."
+        },
+        {
+          "title": "דוגמה: ממוצע של p99 מול histogram מאוחד",
+          "body": "20 שרתים. 19 מהם עם p99 של 50 ms, ואחד חולה שבו רוב הבקשות לוקחות בין 1.5 ל-2 s (p99 של 2 s). כל אחד מקבל אותו עומס.\n\n- ממוצע ה-p99: (19 × 50 + 2,000) / 20 ≈ 148 ms. לא מתאר שום התפלגות אמיתית.\n- מה באמת קורה: השרת החולה מטפל ב-5% מהבקשות, ורובן איטיות. לכן כ-5% מכלל הבקשות לוקחות יותר מ-1.5 s, וה-p99 האמיתי של השירות נמצא בין 1.5 ל-2 s.\n- הדרך הנכונה: סוכמים את ה-bucket counts מכל 20 השרתים ומחשבים p99 מההתפלגות המאוחדת.\n\nהלקח: אחוזונים מחשבים מהתפלגות, לא ממצעים."
+        },
+        {
+          "title": "דוגמה: חישוב cardinality",
+          "body": "metric בשם http_request_duration_seconds מסוג histogram.\n\n- labels: endpoint (20 ערכים), status (5), region (6). שילובים: 600.\n- 12 buckets כולל +Inf, ועוד _sum ו-_count: 14 series לכל שילוב.\n- סך הכל: 600 × 14 = 8,400 series. סביר.\n- מישהו מוסיף label של customer_id עם 10,000 לקוחות: 84 מיליון series. Prometheus יקרוס.\n\nהלקח: customer_id שייך ל-logs או ל-traces, או ל-metric נפרד שמחושב רק עבור 20 הלקוחות הגדולים."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "metrics, logs, traces",
+          "def": "שלושת סוגי האותות: מספרים לאורך זמן (זולים, להתראות), אירועים בודדים עם הקשר (לחקירה), ומסלול של בקשה בין שירותים (לאיתור מקום הבעיה)."
+        },
+        {
+          "term": "counter",
+          "def": "metric שרק עולה (requests_total). מחשבים ממנו rate; איפוס ב-restart מזוהה ומתוקן, ואובדן דגימה לא מאבד מידע."
+        },
+        {
+          "term": "gauge",
+          "def": "metric של ערך נוכחי שעולה ויורד, כמו עומק תור או זיכרון. דגימה שאבדה היא מידע שאבד."
+        },
+        {
+          "term": "histogram",
+          "def": "ספירת מדידות לפי buckets. מאפשר אחוזונים וניתן לחיבור בין שרתים; הדיוק תלוי בגבולות הדליים."
+        },
+        {
+          "term": "structured logging",
+          "def": "לוגים עם שדות קבועים (JSON), כך שאפשר לסנן ולחבר לפי request_id או device_id בלי regex."
+        },
+        {
+          "term": "trace_id, span, context propagation",
+          "def": "מזהה משותף לבקשה, יחידת עבודה עם זמני התחלה וסיום ו-parent, והעברת המזהה בין שירותים ב-headers (W3C traceparent)."
+        },
+        {
+          "term": "RED",
+          "def": "Rate, Errors, Duration: שלושת המדדים לכל שירות, מנקודת המבט של מי שקורא לו."
+        },
+        {
+          "term": "USE",
+          "def": "Utilization, Saturation, Errors לכל משאב. saturation היא עבודה שממתינה, כמו run queue ארוך ב-CPU."
+        },
+        {
+          "term": "SLI / SLO / SLA",
+          "def": "המדד, היעד הפנימי, וההתחייבות החוזית ללקוח. ה-SLA בדרך כלל מקל מה-SLO."
+        },
+        {
+          "term": "error budget",
+          "def": "1 − SLO: כמות הכשלים המותרת בחלון. ב-99.9% על 30 יום זה 43.2 דקות."
+        },
+        {
+          "term": "burn rate",
+          "def": "קצב שריפת ה-budget ביחס לקצב שיגמור אותו בדיוק בסוף החלון. שיעור שגיאות חלקי (1 − SLO)."
+        },
+        {
+          "term": "multi-window multi-burn-rate",
+          "def": "שילוב של כמה ספים וחלונות (שעה ב-14.4, 6 שעות ב-6) עם חלון קצר מאשר, כדי לתפוס תקלות מהירות ואיטיות ולסגור התראה מהר אחרי שהבעיה נפתרה."
+        },
+        {
+          "term": "alert fatigue",
+          "def": "עודף התראות לא רלוונטיות שגורם לאנשים להתעלם, גם מהחשובות. נמנע בהתראה על סימפטומים."
+        },
+        {
+          "term": "synthetic probes ו-RUM",
+          "def": "בקשות בדיקה יזומות מבחוץ, ומדידה אצל משתמשים אמיתיים. רואים כשלים שהשרת לא רואה כי הבקשה לא הגיעה אליו."
+        },
+        {
+          "term": "cardinality",
+          "def": "מספר ה-time series: מכפלת מספר הערכים של כל label (וב-histogram גם מספר ה-buckets). labels לא חסומים מפוצצים אותו."
+        },
+        {
+          "term": "histogram_quantile ו-sum by (le)",
+          "def": "ב-Prometheus: סכימת counts לכל גבול bucket (le) מכל השרתים, וחישוב אחוזון בהנחת פיזור לינארי בתוך bucket."
+        },
+        {
+          "term": "exemplar",
+          "def": "trace_id לדוגמה שמוצמד לנקודה ב-metric, כדי לעבור מגרף ישירות ל-trace של בקשה איטית."
+        },
+        {
+          "term": "head-based / tail-based sampling",
+          "def": "החלטה אם לשמור trace בתחילתו (זול, מפספס נדירים) או בסופו לפי התוצאה (שומר שגיאות ואיטיים, דורש buffering ב-collector)."
+        },
+        {
+          "term": "continuous profiling ו-eBPF",
+          "def": "דגימת stacks רציפה בעלות נמוכה, לרוב בעזרת eBPF: תוכניות קטנות ומאומתות שרצות בקרנל."
+        },
+        {
+          "term": "noisy neighbor, CPU steal, cgroup throttling",
+          "def": "מקורות האטה מה-host: שכן שמתחרה על אותו hardware, זמן שה-hypervisor נתן ל-VM אחר, ו-container שהושהה כי חרג מה-CPU quota."
+        },
+        {
+          "term": "vDSO",
+          "def": "קוד שהקרנל ממפה לכל תהליך, כך ש-clock_gettime רץ בלי syscall, בעשרות ns."
+        },
+        {
+          "term": "CLOCK_MONOTONIC מול CLOCK_REALTIME",
+          "def": "שעון שלא קופץ ומתאים למדידת משכים, מול שעון קיר ש-NTP יכול להזיז. MONOTONIC לא בר-השוואה בין מכונות."
+        },
+        {
+          "term": "seqlock / double buffer",
+          "def": "דרכים לקרוא snapshot עקבי בלי lock: מונה גרסה שהקורא בודק לפני ואחרי, או שני עותקים שמתחלפים."
+        },
+        {
+          "term": "priority inversion",
+          "def": "thread בעדיפות גבוהה מחכה ל-lock שמחזיק thread בעדיפות נמוכה, שאולי לא מקבל CPU. סיבה להימנע מ-mutex בנתיב זמן-אמת."
+        },
+        {
+          "term": "overflow / underflow (UHD)",
+          "def": "overflow ('O'): ה-host לא משך samples של RX בזמן וה-buffer התמלא. underflow ('U'): samples של TX לא הגיעו בזמן."
+        },
+        {
+          "term": "high-water mark",
+          "def": "העומק המקסימלי שתור הגיע אליו בחלון זמן. מראה כמה קרוב היה להצפה, גם כשהעומק הנוכחי נמוך."
+        },
+        {
+          "term": "flight recorder",
+          "def": "buffer שתמיד מחזיק את האירועים המפורטים של השניות האחרונות ונשמר לדיסק כשמזוהה תקלה."
+        },
+        {
+          "term": "store-and-forward ו-heartbeat",
+          "def": "שמירה מקומית ושליחה כשהקישור חוזר, והודעת 'אני חי' תקופתית שהיעדרה מעוררת התראה."
+        },
+        {
+          "term": "clock skew, NTP, PTP",
+          "def": "הפרש בין שעוני מכונות. NTP מגיע למאות מיקרו-שניות עד ms; PTP עם hardware timestamping לעשרות ns עד מיקרו-שניות."
+        }
+      ]
     }
   ],
   "questions": [
@@ -328,6 +490,223 @@
       "lesson": "design.observability",
       "tags": [
         "nvidia",
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה מהבאים מתאים להיות gauge ולא counter?",
+      "choices": [
+        "מספר הבקשות שהתקבלו מאז העלייה",
+        "עומק התור הנוכחי",
+        "מספר השגיאות המצטבר",
+        "מספר הבתים שנשלחו"
+      ],
+      "answer": 1,
+      "explanation": "gauge מייצג ערך נוכחי שעולה ויורד, כמו עומק תור. בקשות, שגיאות ובתים שנשלחו רק מצטברים, ולכן הם counters, ומהם מחשבים קצב לאורך חלון.",
+      "lesson": "design.observability"
+    },
+    {
+      "id": "design.observability.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה error budget?",
+      "choices": [
+        "כמות הכשלים המותרת בחלון הזמן, כלומר 1 פחות ה-SLO",
+        "התקציב הכספי שמוקצה לתיקון באגים",
+        "מספר ההתראות המותר בשבוע",
+        "הקנס שמשלמים ללקוח כשה-SLA מופר"
+      ],
+      "answer": 0,
+      "explanation": "ב-SLO של 99.9%, ה-budget הוא 0.1% מהבקשות או מהזמן. הוא משמש להחלטות: כשנשאר budget אפשר לשחרר מהר, וכשנגמר מקפיאים שינויים. הקנס ללקוח הוא חלק מה-SLA, לא ה-budget.",
+      "lesson": "design.observability",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה מודדים משך זמן עם CLOCK_MONOTONIC ולא עם CLOCK_REALTIME?",
+      "choices": [
+        "CLOCK_MONOTONIC לא קופץ כש-NTP או אדם משנים את השעה, ולכן הפרש בין שתי קריאות הוא תמיד משך אמיתי",
+        "CLOCK_MONOTONIC מסונכרן בין כל המכונות ברשת",
+        "CLOCK_REALTIME לא זמין ב-Linux",
+        "CLOCK_MONOTONIC מדויק לרמת ns ו-CLOCK_REALTIME רק לשניות"
+      ],
+      "answer": 0,
+      "explanation": "שעון קיר יכול לזוז אחורה או קדימה בתיקון של NTP, ואז משך שנמדד יוצא שגוי ואף שלילי. CLOCK_MONOTONIC רק מתקדם. הוא לא מסונכרן בין מכונות: נקודת האפס שלו שונה בכל אחת. שני השעונים בעלי אותה רזולוציה ב-Linux.",
+      "lesson": "design.observability",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.observability.q21",
+      "level": 2,
+      "type": "short",
+      "prompt": "כמה דקות של השבתה מותרות ב-SLO של availability של 99.99% על חלון של 30 יום?",
+      "accept": [
+        "4.32",
+        "4.32 min",
+        "4.32 minutes"
+      ],
+      "explanation": "30 × 24 × 60 = 43,200 דקות, ו-0.01% מהן הן 4.32 דקות. בתקציב כזה אין זמן לתגובה ידנית של אדם, ולכן צריך failover אוטומטי ו-deploys הדרגתיים עם rollback אוטומטי.",
+      "lesson": "design.observability",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-dashboard מציגים את הערך הגולמי של ה-counter requests_total. מה הבעיה, ומה מציגים במקום?",
+      "choices": [
+        "אין בעיה, הערך הגולמי הוא מספר הבקשות לשנייה",
+        "הערך הגולמי מצטבר מאז העלייה, ולכן לא מראה עומס; מציגים קצב לאורך חלון (rate), שגם מתקן איפוס של ה-counter ב-restart",
+        "צריך להפוך אותו ל-gauge ולאפס אותו בכל דקה",
+        "צריך להציג את הממוצע שלו בין השרתים"
+      ],
+      "answer": 1,
+      "explanation": "counter הוא סכום מצטבר: הוא גדל כל הזמן, ו-restart מאפס אותו. rate מחשב את קצב העלייה לשנייה בחלון ומזהה איפוסים. איפוס ידני בכל דקה הופך את המדד ל-gauge שמאבד מידע כשדגימה מתפספסת.",
+      "lesson": "design.observability"
+    },
+    {
+      "id": "design.observability.q23",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדרו את שלבי החקירה האופייניים מרגע שנדלקת התראה ועד שמבינים את הסיבה:",
+      "items": [
+        "מתקבלת התראה על burn rate גבוה של ה-SLO",
+        "ב-metrics מאתרים אילו instances, אזורים ו-endpoints מושפעים",
+        "ב-traces של בקשות שנכשלו מוצאים את ה-span שבו נוצרה השגיאה",
+        "ב-logs של אותו span ואותו trace_id קוראים את פרטי השגיאה",
+        "ב-postmortem מתעדים את הסיבה ומוסיפים מדידה שתזהה אותה מוקדם יותר"
+      ],
+      "explanation": "metrics עונים 'האם ואיפה בגדול', traces מצמצמים לשלב הספציפי, ו-logs נותנים את ה-'למה'. ה-trace_id הוא מה שמחבר בין traces ל-logs. ה-postmortem סוגר את המעגל.",
+      "lesson": "design.observability"
+    },
+    {
+      "id": "design.observability.q24",
+      "level": 3,
+      "type": "short",
+      "prompt": "שירות תלוי בשלושה שירותים אחרים בשרשרת, וכל בקשה חייבת את שלושתם. לכל אחד availability של 99.9%, בלתי תלוי באחרים. מה ה-availability המקסימלי של השירות, באחוזים, בעיגול לעשירית?",
+      "accept": [
+        "99.7",
+        "99.7%"
+      ],
+      "explanation": "0.999³ ≈ 0.997, כלומר 99.7%. השירות לא יכול להבטיח SLO של 99.9% בלי redundancy, caching, או degradation כשתלות לא זמינה. זה גם הסבר לכך שלתלויות נדרש SLO מחמיר יותר מזה של השירות שמעליהן.",
+      "lesson": "design.observability",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q25",
+      "level": 3,
+      "type": "multi",
+      "prompt": "ל-metric של זמן טיפול בבקשות HTTP רוצים להוסיף labels. אילו מתאימים מבחינת cardinality?",
+      "choices": [
+        "status code",
+        "region",
+        "הנתיב הגולמי, למשל /users/48213/orders",
+        "תבנית ה-route, למשל /users/{id}/orders",
+        "request_id"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "status code, region ותבנית ה-route הם קבוצות קטנות וחסומות. נתיב גולמי עם מזהים ו-request_id יוצרים time series חדשה כמעט לכל בקשה ומפוצצים את ה-cardinality. את המזהים שומרים ב-logs וב-traces.",
+      "lesson": "design.observability"
+    },
+    {
+      "id": "design.observability.q26",
+      "level": 4,
+      "type": "short",
+      "prompt": "metric מסוג histogram ב-Prometheus עם labels: endpoint (20 ערכים), status (5) ו-region (6). ל-histogram יש 12 buckets כולל +Inf, ובנוסף _sum ו-_count. כמה time series הוא יוצר לכל היותר?",
+      "accept": [
+        "8400",
+        "8,400"
+      ],
+      "explanation": "שילובי labels: 20 × 5 × 6 = 600. לכל שילוב 12 series של buckets ועוד _sum ו-_count, כלומר 14. סך הכל 600 × 14 = 8,400. label נוסף של 100 ערכים היה מכפיל את זה פי 100.",
+      "lesson": "design.observability"
+    },
+    {
+      "id": "design.observability.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "SLO של 99.9% הצלחה על 30 יום. מאז deploy אתמול, שיעור השגיאות יציב על 0.5%. מה ה-burn rate, ומתי ייגמר ה-budget אם לא נעשה כלום (בהנחה שה-budget היה מלא לפני ה-deploy)?",
+      "choices": [
+        "burn rate 0.5; ה-budget ייגמר בעוד 60 יום",
+        "burn rate 5; ה-budget ייגמר כ-6 ימים אחרי ה-deploy",
+        "burn rate 50; ה-budget ייגמר בעוד 14 שעות",
+        "burn rate 2; ה-budget ייגמר כ-15 ימים אחרי ה-deploy"
+      ],
+      "answer": 1,
+      "explanation": "burn rate = שיעור שגיאות / (1 − SLO) = 0.5% / 0.1% = 5. burn rate 1 גומר את ה-budget ב-30 יום, ולכן 5 גומר אותו ב-30/5 = 6 ימים. ההתראה המהירה (14.4 לשעה) לא תידלק, אבל זו בדיוק הסיבה לחלון של 6 שעות ב-burn rate 6 ולטיקט ב-burn rate נמוך יותר.",
+      "lesson": "design.observability",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "SLI מוגדר כ'אחוז הבקשות שהסתיימו תוך 300 ms', ומחושב מ-histogram ב-Prometheus עם buckets של 50, 100, 250, 500 ו-1000 ms. מה הבעיה העיקרית?",
+      "choices": [
+        "אין bucket שגבולו 300 ms, ולכן אחוז הבקשות מתחת ל-300 ms הוא אינטרפולציה בתוך bucket של 250-500 ms ולא מדידה; צריך להוסיף גבול בדיוק ב-300 ms",
+        "histogram לא יכול לשמש ל-SLI, רק summary",
+        "יש יותר מדי buckets, וזה מפוצץ cardinality",
+        "צריך למדוד את ה-SLI מממוצע ה-latency במקום מ-histogram"
+      ],
+      "answer": 0,
+      "explanation": "Prometheus יודע רק כמה בקשות נפלו מתחת ל-250 ומתחת ל-500. histogram_quantile מניח פיזור לינארי בתוך ה-bucket, וההערכה יכולה לטעות בהרבה יותר מה-budget כולו (0.1%). bucket בדיוק בסף הופך את ה-SLI ליחס מדויק של שני counters. summary דווקא גרוע יותר, כי אחוזונים שלו לא ניתנים לאיחוד בין שרתים. חמישה buckets הם cardinality קטן.",
+      "lesson": "design.observability",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ה-SLI של availability נמדד כאחוז תשובות שאינן 5xx בלוגים של השרתים, ומראה 99.99%. באותו שבוע לקוחות דיווחו על תקלה של 20 דקות שבה שינוי DNS שגוי מנע מחלק מהם להגיע לשירות. מה הלקח העיקרי?",
+      "choices": [
+        "ה-SLI תקין; תקלות DNS הן באחריות הלקוח",
+        "SLI בצד השרת לא רואה בקשות שלא הגיעו אליו; צריך למדוד קרוב למשתמש, למשל logs של ה-load balancer, synthetic probes מבחוץ ו-RUM",
+        "צריך להוסיף 4xx לספירת השגיאות",
+        "צריך להאריך את חלון ה-SLO ל-90 יום כדי שהתקלה תתמסמס"
+      ],
+      "answer": 1,
+      "explanation": "בקשה שנכשלה ב-DNS, ב-TLS או ב-load balancer לא מופיעה בלוגים של השרת, ולכן ה-SLI מודד את מה שקל ולא את מה שהמשתמש חווה. probes חיצוניים מכמה אזורים ו-RUM תופסים כשלים כאלה. ספירת 4xx לא קשורה (רובן שגיאות לקוח), והארכת החלון רק מסתירה את הבעיה.",
+      "lesson": "design.observability",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.observability.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "הגדר SLIs, SLOs והתראות לשירות הודעות בזמן אמת בסגנון Teams: משתמש שולח הודעה, היא נשמרת, ונמסרת דרך WebSocket לכל המכשירים המחוברים של הנמענים. מה תמדוד, איפה, ואיך תתריע?",
+      "modelAnswer": "מתחילים ממה שהמשתמש חווה: (1) שליחה מצליחה: אחוז ההודעות שהשולח קיבל עליהן אישור שמירה; (2) latency של מסירה: אחוז ההודעות שהגיעו למכשיר מחובר של נמען תוך 1 s מרגע השליחה; (3) שלמות: אחוז ההודעות שנמסרו בסופו של דבר, בלי חורים ברצף. SLOs לדוגמה: 99.95% שליחה מוצלחת, 99% מסירה תוך 1 s ו-99.9% תוך 5 s, על 28 או 30 יום. מדידה: אישור השליחה נמדד גם ב-client (RUM) וגם ב-gateway. latency מסירה דורש timestamp מקצה לקצה; כי השעונים במכשירים לא אמינים, מודדים בצד השרת מקבלת ההודעה עד ACK מהמכשיר דרך ה-WebSocket, ומוסיפים מדידה ב-client כבקרה. שלמות: לכל שיחה sequence number, וה-client מדווח על חורים; בנוסף synthetic users בכמה אזורים שולחים זה לזה הודעות בדיקה כל דקה ומודדים מקצה לקצה. metrics פנימיים לחקירה ולא להתראה: עומק תורי fan-out, מספר חיבורי WebSocket לכל gateway, reconnect rate, latency של storage. labels: region, client type, ו-gateway, לא user_id או conversation_id. התראות: multi-window multi-burn-rate על כל SLO (page על 14.4 לשעה ועל 6 ל-6 שעות, טיקט על 1 ל-3 ימים), עם חלון קצר מאשר; התראה נפרדת על synthetic probe שנכשל בכמה אזורים יחד; התראה על ירידה פתאומית במספר החיבורים, כי תקלה שמנתקת את כולם לא תייצר שגיאות בכלל. traces עם tail-based sampling שמחזיקים כל הודעה שהמסירה שלה עברה 5 s, ו-exemplars מה-histogram של latency.",
+      "rubric": [
+        "SLIs מנקודת מבט המשתמש: הצלחת שליחה, latency מסירה, שלמות",
+        "בעיית שעונים בין מכשיר לשרת ופתרון (מדידה בצד שרת עד ACK, synthetic users)",
+        "בחירת labels עם cardinality חסום והפרדה בין מדדי התראה למדדי חקירה",
+        "multi-window burn-rate alerts, ו-probes חיצוניים",
+        "זיהוי מצבים 'שקטים' (ירידה בחיבורים, חורים ברצף) שלא מייצרים שגיאות"
+      ],
+      "explanation": "תשובה חזקה מגדירה SLIs שמשקפים את חוויית המשתמש, מכירה בכך שחלק מהכשלים לא מייצרים שגיאות בשרת, ובונה התראות שמבוססות על budget ולא על ספים שרירותיים.",
+      "lesson": "design.observability",
+      "tags": [
         "microsoft"
       ]
     }

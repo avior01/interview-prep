@@ -35,7 +35,145 @@
         "aliasing constructor: shared_ptr<Member> שחולק בעלות עם האובייקט המכיל",
         "pimpl עם unique_ptr: מצהירים על ה-destructor וה-move operations ב-header ומגדירים אותם (= default) בקובץ cpp"
       ],
-      "diagram": "shared_ptr a ---+--> [ T object ]\nshared_ptr b ---+\n   \\  \\\n    +--+--> [ control block ]\nweak_ptr w -----> strong=2 weak=1\n                  deleter, alloc"
+      "diagram": "shared_ptr a ---+--> [ T object ]\nshared_ptr b ---+\n   \\  \\\n    +--+--> [ control block ]\nweak_ptr w -----> strong=2 weak=1\n                  deleter, alloc",
+      "details": [
+        {
+          "title": "בעלות כחלק מהטיפוס",
+          "body": "pointer גולמי (`T*`) לא אומר מי אחראי למחוק את האובייקט. smart pointer הוא wrapper של RAII שהופך את זה לחלק מהטיפוס:\n\n- `std::unique_ptr<T>`: בעלים יחיד. ב-destructor הוא מוחק את האובייקט. move-only: אי אפשר להעתיק, אפשר להעביר בעלות עם std::move, ואז המקור נשאר ריק (nullptr, וזה מובטח).\n- `std::shared_ptr<T>`: בעלות משותפת. כל עותק מגדיל reference count, והאובייקט נמחק כשהעותק האחרון נהרס.\n- `std::weak_ptr<T>`: צופה באובייקט של shared_ptr בלי להחזיק בו. לא מונע מחיקה.\n- `T*` או `T&`: גישה בלי בעלות. לגיטימי לגמרי בפרמטר של פונקציה שרק משתמשת באובייקט.\n\n`std::auto_ptr` הוא הניסיון הישן (C++98) לבעלות בלעדית: ה-\"copy\" שלו העביר בעלות בשקט, ולכן הוא שבר מכולות ואלגוריתמים. הוא deprecated ב-C++11 והוסר ב-C++17.\n\nיצירה: `std::make_unique<T>(args...)` (C++14) ו-`std::make_shared<T>(args...)` (C++11) בונים את האובייקט ואת ה-smart pointer יחד, בלי new חשוף בקוד. ה-constructor של smart pointer מ-pointer גולמי הוא explicit, ולכן `std::shared_ptr<int> p = new int(1);` לא מתקמפל; צריך `std::shared_ptr<int> p(new int(1));`.\n\nפעולות בסיסיות: `get()` מחזיר את ה-pointer הגולמי בלי לשנות בעלות. `reset(p)` מוחק את הנוכחי (או מוריד count) ולוקח את p. `release()` (רק ב-unique_ptr) מוותר על הבעלות ומחזיר את ה-pointer בלי למחוק; מי שקרא ל-release ולא שמר את התוצאה יצר דליפה. `explicit operator bool` בודק אם יש אובייקט.\n\nמערכים: `std::unique_ptr<T[]>` קורא ל-delete[] ונותן operator[]. `std::shared_ptr<T[]>` קיים מ-C++17, ו-`std::make_shared<T[]>(n)` מ-C++20. `std::shared_ptr<int>(new int[n])` קורא ל-delete במקום delete[], וזה UB. ברוב המקרים עדיף פשוט std::vector.\n\nהמרות: unique_ptr ממיר ל-shared_ptr (`std::shared_ptr<T> s = std::move(u);` או ישירות מ-make_unique), כי בעלות בלעדית אפשר להפוך למשותפת. ההפך לא קיים. `unique_ptr<Base>` ו-`shared_ptr<Base>` מקבלים pointer ל-Derived (upcast) באופן מרומז."
+        },
+        {
+          "title": "unique_ptr מבפנים: deleter וגודל",
+          "body": "`std::unique_ptr<T, D>` מחזיק pointer ו-deleter מטיפוס D. ברירת המחדל היא `std::default_delete<T>`, struct ריק שקורא ל-delete. בכל המימושים הנפוצים deleter ריק לא תופס מקום (empty base optimization או `[[no_unique_address]]`), ולכן unique_ptr הוא 8 בתים ב-64 ביט, בדיוק כמו pointer, וכל הפעולות inline. אין overhead על new/delete ידני.\n\ncustom deleter: למשאב שלא משתחרר עם delete (fclose, cudaFree, החזרה ל-pool). יש שלוש דרכים, עם השלכות על הגודל:\n\n- function pointer (`decltype(&fclose)`): ה-pointer לפונקציה הוא state, ולכן ה-unique_ptr הוא 16 בתים, והקריאה היא indirect call.\n- lambda בלי captures או struct ריק עם operator(): טיפוס ריק, 8 בתים, והקריאה inline.\n- `std::integral_constant<decltype(&fclose), &fclose>`: טריק שהופך function pointer לטיפוס ריק.\n\nה-deleter הוא חלק מהטיפוס. לכן ה-destructor של `unique_ptr<Base>` קורא ל-`delete` על `Base*`, ואם ל-Base אין virtual destructor ובפועל מוחזק Derived, זה UB.\n\npimpl ו-incomplete type: מותר להצהיר `std::unique_ptr<Impl>` כש-Impl רק הוצהר (forward declaration). אבל ה-destructor של unique_ptr, שבו default_delete עושה `delete`, דורש Impl שלם (התקן מחייב שגיאה, ובמימוש יש static_assert על sizeof). אם המחלקה החיצונית לא מצהירה על destructor, הקומפיילר מייצר אותו inline בכל TU שמשתמש בה, שם Impl לא שלם, וזו שגיאת קומפילציה. התיקון: להצהיר `~Widget();` ב-header ולהגדיר `Widget::~Widget() = default;` בקובץ cpp, אחרי ההגדרה של Impl. אותו דבר לגבי move constructor ו-move assignment.\n\nמבנים מקושרים: רשימה של `struct Node { std::unique_ptr<Node> next; };` נהרסת רקורסיבית: ה-destructor של כל node הורס את next, שהורס את next שלו, וכן הלאה. עם מיליוני nodes זה stack overflow. התיקון: destructor איטרטיבי שמנתק את השרשרת בלולאה (למשל מעביר את next למשתנה מקומי ומשחרר node אחד בכל סיבוב)."
+        },
+        {
+          "title": "shared_ptr מבפנים: control block",
+          "body": "shared_ptr הוא שני pointers (16 בתים ב-64 ביט): אחד לאובייקט ואחד ל-control block. ב-control block יש:\n\n- strong count: כמה shared_ptr מחזיקים בעלות. `use_count()` מחזיר אותו (רק לדיבאג; ב-multithreading הערך עלול להשתנות מיד).\n- weak count: כמה weak_ptr צופים (ובמימושים, עוד 1 כל עוד strong > 0).\n- deleter ו-allocator.\n\nכשה-strong count מגיע ל-0, נקרא ה-destructor של T (דרך ה-deleter). כשגם ה-weak count מגיע ל-0, משתחרר ה-control block עצמו.\n\nמי יוצר control block: make_shared, constructor מ-pointer גולמי, והמרה מ-unique_ptr. העתקה של shared_ptr קיים רק מגדילה את ה-count. לכן שני shared_ptr שנבנים מאותו pointer גולמי (או מ-this) יוצרים שני control blocks, כל אחד עם count 1, ושניהם ימחקו את האובייקט: double delete.\n\ntype erasure של ה-deleter: ה-constructor של shared_ptr הוא template על הטיפוס האמיתי (`template<class Y> shared_ptr(Y* p)`), והוא שומר ב-control block deleter שמוחק Y*. לכן `std::shared_ptr<Base>(new Derived)` ו-`make_shared<Derived>()` שהומר ל-shared_ptr<Base> קוראים ל-~Derived נכון גם בלי virtual destructor. אבל אם ה-pointer כבר הומר ל-Base* לפני שה-shared_ptr ראה אותו, ה-deleter מקבל Base*, ושוב יש UB. בגלל אותו type erasure, shared_ptr לא סובל מבעיית ה-incomplete type של pimpl.\n\nmake_shared מול shared_ptr(new T):\n\n- make_shared מבצע הקצאה אחת לאובייקט ול-control block יחד: מהיר יותר, locality טובה יותר, ובטוח מבחינת exceptions.\n- אין make_shared עם custom deleter (יש `allocate_shared` עם allocator).\n- make_shared בונה את T מתוך הספרייה, ולכן constructor פרטי לא נגיש לו.\n- כיוון שזו הקצאה אחת, הזיכרון של T חוזר ל-allocator רק כשגם ה-weak count מתאפס. ה-destructor של T רץ בזמן (כש-strong מתאפס), אבל sizeof(T) נשאר תפוס כל עוד יש weak_ptr.\n\naliasing constructor: `std::shared_ptr<int> py(sp, &sp->y);` יוצר shared_ptr שמצביע על member, אבל חולק את ה-control block של sp. האובייקט המכיל חי כל עוד py חי.\n\nthread safety: עדכוני ה-count אטומיים, ולכן threads שונים יכולים להעתיק ולהרוס עותקים נפרדים של shared_ptr לאותו אובייקט בבטחה. אבל אותו מופע של shared_ptr (אותו משתנה) שנכתב ב-thread אחד ונקרא ב-thread אחר הוא data race, כי מדובר בשני pointers שמתעדכנים לא אטומית. C++20 הוסיף `std::atomic<std::shared_ptr<T>>` (לפני כן הפונקציות std::atomic_load ו-std::atomic_store, שהוצאו משימוש ב-C++20). והאובייקט T עצמו לא מוגן בכלל: גישה אליו צריכה סנכרון משלה."
+        },
+        {
+          "title": "weak_ptr, מעגלים ו-enable_shared_from_this",
+          "body": "מעגל: אם parent מחזיק shared_ptr ל-child, ו-child מחזיק shared_ptr ל-parent, אז כשהמשתנים המקומיים נהרסים לכל אחד נשאר count 1 מהשני. אף אחד לא מגיע ל-0, וזו דליפה. הכלל: בעלות זורמת בכיוון אחד (מלמעלה למטה), ו-back-pointer הוא `std::weak_ptr` או pointer גולמי (אם ידוע שה-parent חי יותר מה-child).\n\nשימוש ב-weak_ptr:\n\n- `lock()` מחזיר shared_ptr: לא ריק אם האובייקט חי, ריק אם לא. הבדיקה וההגדלה של ה-count מתבצעות אטומית.\n- `expired()` מחזיר true אם strong count הוא 0.\n- הדפוס הנכון: `if (auto s = w.lock()) { s->f(); }`. הדפוס השגוי: `if (!w.expired()) w.lock()->f();`. בין הבדיקה ל-lock, thread אחר עלול לשחרר את ה-reference האחרון, ואז lock מחזיר nullptr ויש dereference שלו (TOCTOU: time-of-check to time-of-use).\n\nweak_ptr כמפתח ב-map או set: אין לו operator<, כי הוא לא יכול להבטיח שה-pointer עדיין תקף. משתמשים ב-`std::owner_less<>`, שמשווה לפי owner_before, כלומר לפי ה-control block ולא לפי הכתובת שמוצבעת. כך שני pointers עם אותו control block (למשל aliasing) נחשבים שקולים, והסדר נשאר יציב גם אחרי שהאובייקט מת.\n\nenable_shared_from_this: אובייקט שצריך לתת shared_ptr לעצמו (למשל כדי לרשום callback אסינכרוני שישאיר אותו חי) יורש מ-`std::enable_shared_from_this<T>` וקורא ל-`shared_from_this()`. מאחורי הקלעים יש בבסיס weak_ptr שה-shared_ptr הראשון (make_shared) ממלא. לכן אסור לקרוא ל-shared_from_this לפני שהאובייקט מנוהל על ידי shared_ptr, למשל ב-constructor; מ-C++17 זה זורק `std::bad_weak_ptr`. `weak_from_this()` (C++17) מחזיר weak_ptr ולא זורק. `std::shared_ptr<T>(this)` הוא באג: control block שני."
+        },
+        {
+          "title": "איך מעבירים smart pointers לפונקציות, ומה זה עולה",
+          "body": "C++ Core Guidelines (R.30, R.32–R.37, F.7) מסכמים את זה כך:\n\n- הפונקציה רק משתמשת באובייקט: `T&`, `const T&` או `T*`. לא smart pointer. הקורא מחזיק בעלות לאורך כל הקריאה, ולכן האובייקט חי.\n- הפונקציה לוקחת בעלות בלעדית (sink): `std::unique_ptr<T>` by value. הקורא כותב std::move.\n- הפונקציה שומרת עותק משותף: `std::shared_ptr<T>` by value, ובתוכה std::move לתוך ה-member או המכולה.\n- הפונקציה אולי שומרת עותק: `const std::shared_ptr<T>&`, ומעתיקה רק אם צריך.\n- הפונקציה מחליפה את ה-pointer של הקורא: `std::unique_ptr<T>&` או `std::shared_ptr<T>&`.\n\nספירת פעולות atomic: עבור `void add(std::shared_ptr<W> w) { v_.push_back(std::move(w)); }`:\n\n- `add(sp)`: העתקה לפרמטר היא increment אחד. ה-move לתוך ה-vector לא נוגע ב-count. הפרמטר נהרס כשהוא ריק, בלי decrement. סך הכול: פעולה אטומית אחת.\n- `add(std::move(sp))`: אפס פעולות אטומיות, אבל sp של הקורא ריק אחרי הקריאה.\n- אם add הייתה מקבלת `const std::shared_ptr<W>&` ומעתיקה פנימה, `add(std::move(sp))` היה עולה increment, ו-sp עדיין היה מחזיק עותק.\n\nכמה זה עולה: atomic increment/decrement הוא read-modify-write עם lock prefix ב-x86, עשרות מחזורים כשה-cache line מקומי, ויותר כשכמה cores נוגעים באותו control block (ה-cache line קופץ ביניהם: contention). בנוסף, מי שמשחרר את ה-reference האחרון מריץ את ה-destructor ואת ה-free, ובמערכת זמן-אמת זה עלול להיות ה-thread הקריטי. לכן ב-hot path מעדיפים העברת בעלות ליניארית (unique_ptr, או handles מ-pool שהוקצה מראש דרך SPSC queue), ו-shared_ptr רק כשבאמת אורך החיים לא ידוע."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מעקב אחרי strong ו-weak count",
+          "body": "`auto a = std::make_shared<Img>();` (הקצאה אחת: Img ו-control block).\n\n1. אחרי היצירה: strong=1, weak=0.\n2. `auto b = a;` strong=2.\n3. `std::weak_ptr<Img> w = a;` strong=2, weak=1.\n4. `a.reset();` strong=1. Img עדיין חי.\n5. `b.reset();` strong=0: נקרא ~Img (ה-buffers שהוא מנהל משתחררים). אבל הבלוק המשותף, כולל sizeof(Img), עדיין תפוס כי weak=1.\n6. `w.expired()` מחזיר true, ו-`w.lock()` מחזיר shared_ptr ריק.\n7. w נהרס: weak=0, והבלוק כולו חוזר ל-allocator.\n\nעם `std::shared_ptr<Img>(new Img)` היו שתי הקצאות, ובצעד 5 הזיכרון של Img היה חוזר מיד; רק ה-control block הקטן היה מחכה ל-w."
+        },
+        {
+          "title": "דוגמה: מעגל parent-child ושבירתו",
+          "body": "`root` ו-`kid` נוצרים עם make_shared. root->children מחזיק shared_ptr ל-kid, ו-kid->parent מחזיק shared_ptr ל-root.\n\n1. אחרי החיבור: root strong=2 (המשתנה root ו-kid->parent), kid strong=2 (המשתנה kid ו-root->children).\n2. ביציאה מה-scope המשתנים נהרסים: root strong=1, kid strong=1.\n3. אף אחד לא מגיע ל-0, ולכן אף destructor לא רץ: שני הצמתים דולפים.\n\nכש-parent הוא weak_ptr: בצעד 1 root strong=1 בלבד. ביציאה root מגיע ל-0, ~Node של root הורס את children, ו-kid מגיע ל-0. הכול משתחרר."
+        },
+        {
+          "title": "דוגמה: כמה refcount operations בקריאה אחת",
+          "body": "`Registry::add(std::shared_ptr<W> w)` שומרת את w ב-vector עם std::move. ל-sp של הקורא יש count=1.\n\n- `reg.add(sp)`: העתקה לפרמטר, count=2 (increment אחד). move לתוך ה-vector: count נשאר 2. הפרמטר נהרס ריק: בלי decrement. סך הכול פעולה אטומית אחת, ובסוף count=2 (sp וה-vector).\n- `reg.add(std::move(sp))`: move לפרמטר ו-move ל-vector, אפס פעולות אטומיות. count=1, ו-sp ריק.\n- `void show(const W& w)` שנקראת עם `show(*sp)`: אפס פעולות, וזה מה שצריך כשהפונקציה רק קוראת."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "std::unique_ptr",
+          "def": "smart pointer לבעלות בלעדית. move-only, מוחק ב-destructor, ובלי overhead על pointer רגיל כשה-deleter ריק."
+        },
+        {
+          "term": "std::shared_ptr",
+          "def": "smart pointer לבעלות משותפת: שני pointers (לאובייקט ול-control block). כל העתקה והריסה מעדכנות count אטומי."
+        },
+        {
+          "term": "std::weak_ptr",
+          "def": "צופה באובייקט של shared_ptr בלי להאריך את חייו. lock() מחזיר shared_ptr (ריק אם האובייקט מת), expired() בודק אם מת."
+        },
+        {
+          "term": "std::auto_ptr",
+          "def": "ה-smart pointer הישן של C++98 שה-copy שלו העביר בעלות בשקט. deprecated ב-C++11 והוסר ב-C++17."
+        },
+        {
+          "term": "control block",
+          "def": "בלוק שמנוהל על ידי shared_ptr: strong count, weak count, deleter ו-allocator. נוצר ב-make_shared, בבנייה מ-pointer גולמי או מהמרה מ-unique_ptr."
+        },
+        {
+          "term": "strong / weak count, use_count",
+          "def": "strong: כמה shared_ptr מחזיקים בעלות; ב-0 נקרא ה-destructor של T. weak: כמה weak_ptr צופים; כשגם הוא 0 משתחרר ה-control block. use_count מחזיר את ה-strong."
+        },
+        {
+          "term": "make_unique / make_shared",
+          "def": "יוצרים אובייקט ו-smart pointer בלי new חשוף. make_shared מקצה את האובייקט וה-control block יחד; make_shared<T[]>(n) קיים מ-C++20."
+        },
+        {
+          "term": "allocate_shared",
+          "def": "כמו make_shared אבל עם allocator מותאם. אין גרסה של make_shared עם custom deleter."
+        },
+        {
+          "term": "release / reset / get",
+          "def": "get מחזיר pointer גולמי בלי לשנות בעלות. reset מוחק את הנוכחי ולוקח חדש. release (unique_ptr) מוותר על הבעלות בלי למחוק, ואם לא שומרים את התוצאה יש דליפה."
+        },
+        {
+          "term": "default_delete / custom deleter",
+          "def": "default_delete הוא struct ריק שקורא ל-delete (או delete[] ל-T[]). custom deleter מחליף אותו, למשל fclose; function pointer מגדיל את unique_ptr ל-16 בתים, lambda בלי captures לא."
+        },
+        {
+          "term": "EBO / [[no_unique_address]]",
+          "def": "טכניקות שבהן member או base מטיפוס ריק לא תופסים מקום. כך unique_ptr עם deleter ריק נשאר בגודל pointer."
+        },
+        {
+          "term": "type erasure של deleter",
+          "def": "shared_ptr שומר את ה-deleter ב-control block, מחוץ לטיפוס. לכן shared_ptr<Base>(new Derived) מוחק נכון בלי virtual destructor, ו-pimpl עם shared_ptr לא דורש טיפוס שלם ב-destructor."
+        },
+        {
+          "term": "aliasing constructor",
+          "def": "shared_ptr<U>(sp, ptr): מצביע ל-ptr (למשל member) אבל חולק את ה-control block של sp, ולכן משאיר את האובייקט המכיל חי."
+        },
+        {
+          "term": "enable_shared_from_this",
+          "def": "base class שמאפשר ל-this לקבל shared_ptr שחולק את ה-control block הקיים, דרך shared_from_this. לפני שהאובייקט מנוהל (למשל ב-constructor) זורק bad_weak_ptr מ-C++17. weak_from_this לא זורק."
+        },
+        {
+          "term": "std::bad_weak_ptr",
+          "def": "exception שנזרק כשבונים shared_ptr מ-weak_ptr שפג (בבנאי, לא ב-lock) או מ-shared_from_this על אובייקט שלא מנוהל."
+        },
+        {
+          "term": "std::owner_less / owner_before",
+          "def": "השוואה לפי ה-control block ולא לפי הכתובת. מאפשרת להשתמש ב-weak_ptr כמפתח ב-map או set, כי ל-weak_ptr אין operator<."
+        },
+        {
+          "term": "מעגל הפניות (reference cycle)",
+          "def": "אובייקטים שמחזיקים shared_ptr זה לזה; ה-count לא מגיע ל-0 והם דולפים. שוברים עם weak_ptr או pointer גולמי ל-back-pointer."
+        },
+        {
+          "term": "pimpl",
+          "def": "pointer to implementation: המחלקה ב-header מחזיקה unique_ptr<Impl> ל-struct שמוגדר רק ב-cpp. מסתיר פרטים ומקצר קומפילציה. ה-destructor צריך להיות מוגדר ב-cpp."
+        },
+        {
+          "term": "incomplete type",
+          "def": "טיפוס שהוצהר בלי הגדרה (struct Impl;). מותר להחזיק אליו pointer, אבל delete עליו דורש הגדרה מלאה בנקודה שבה ה-destructor עובר instantiation."
+        },
+        {
+          "term": "std::atomic<std::shared_ptr<T>>",
+          "def": "C++20: load ו-store אטומיים על אותו מופע של shared_ptr. בלעדיו, כתיבה וקריאה מקבילות לאותו משתנה shared_ptr הן data race."
+        },
+        {
+          "term": "TOCTOU",
+          "def": "time-of-check to time-of-use: בדיקה (expired) ושימוש (lock) נפרדים, ובינתיים המצב משתנה. ב-weak_ptr פותרים עם lock אחד ובדיקה של התוצאה."
+        },
+        {
+          "term": "Core Guidelines R.30 / F.7",
+          "def": "כללי ה-C++ Core Guidelines: להעביר smart pointer לפונקציה רק כשהיא משנה או שותפה לבעלות; אחרת T& או T*."
+        },
+        {
+          "term": "contention על cache line",
+          "def": "כמה cores שכותבים לאותו cache line (למשל refcount) גורמים לו לעבור ביניהם שוב ושוב, וכל פעולה אטומית מתייקרת מאוד."
+        },
+        {
+          "term": "pool ו-SPSC queue",
+          "def": "pool: buffers שהוקצו מראש ומוחזרים לשימוש חוזר במקום free. SPSC queue: תור של producer אחד ו-consumer אחד, בלי locks, להעברת handles בין שלבי pipeline."
+        },
+        {
+          "term": "SFINAE / enable_if ב-converting constructor",
+          "def": "template constructor כמו UniquePtr(UniquePtr<U>&&) מוגבל עם enable_if_t<is_convertible_v<U*, T*>> (או requires ב-C++20), כך שהוא קיים רק כש-U* ממיר ל-T*, למשל Derived ל-Base."
+        }
+      ]
     }
   ],
   "questions": [
@@ -368,6 +506,195 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "cpp.smart-pointers.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו פונקציה מ-C++14 יוצרת `std::unique_ptr<T>` בלי לכתוב new בקוד?",
+      "accept": [
+        "std::make_unique",
+        "make_unique"
+      ],
+      "explanation": "std::make_unique<T>(args...) בונה את האובייקט ומחזיר unique_ptr. ב-C++11 היה רק make_shared. בלי new חשוף אין סיכוי לשכוח delete או לבנות שני בעלים מאותו pointer.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "שלושה shared_ptr מצביעים לאותו אובייקט. מתי האובייקט נמחק?",
+      "choices": [
+        "כשהראשון מבין השלושה נהרס",
+        "רק בסוף התוכנית",
+        "כשקוראים ל-delete על אחד מהם",
+        "כשהאחרון מבין השלושה נהרס או מתאפס (strong count מגיע ל-0)"
+      ],
+      "answer": 3,
+      "explanation": "כל shared_ptr מוסיף 1 ל-strong count. כל הריסה או reset מורידה 1, וכשהמונה מגיע ל-0 נקרא ה-deleter. אסור לקרוא ל-delete על get() של shared_ptr: זה double delete.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו הצהרה מנהלת נכון את `new int[10]`?",
+      "choices": [
+        "`std::unique_ptr<int[]> p(new int[10]);`",
+        "`std::unique_ptr<int> p(new int[10]);`",
+        "`std::shared_ptr<int> p(new int[10]);`",
+        "`std::weak_ptr<int[]> p(new int[10]);`"
+      ],
+      "answer": 0,
+      "explanation": "unique_ptr<int[]> משתמש ב-default_delete<int[]>, שקורא ל-delete[], ונותן operator[]. unique_ptr<int> ו-shared_ptr<int> יקראו ל-delete רגיל על מערך, וזה UB. weak_ptr לא יכול להיבנות מ-pointer גולמי בכלל. ברוב המקרים std::vector<int>(10) עדיף.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::weak_ptr<int> w;\n{\n  auto s = std::make_shared<int>(4);\n  w = s;\n  std::cout << w.expired() << *w.lock();\n}\nstd::cout << w.expired() << (w.lock() ? 'y' : 'n');",
+      "choices": [
+        "141n",
+        "041n",
+        "040y",
+        "04 ואז UB ב-lock()"
+      ],
+      "answer": 1,
+      "explanation": "בתוך הבלוק s חי, ולכן expired() הוא false (מודפס 0) ו-lock() מחזיר shared_ptr ל-4. ביציאה s נהרס, strong count מגיע ל-0, ו-expired() מחזיר true (1). lock() על weak_ptr שפג מוגדר היטב ומחזיר shared_ptr ריק.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "המטרה הייתה לסגור את החיבור מיד כשהוא לא תקין. מה הבאג?",
+      "code": "auto conn = std::make_unique<Conn>(addr);\nif (!conn->ok()) {\n  conn.release();\n  return;\n}\nuse(*conn);",
+      "bugLine": 3,
+      "choices": [
+        "release() מוחק את ה-Conn, ואז ה-destructor של unique_ptr מוחק שוב: double delete",
+        "release() מוותר על הבעלות ומחזיר את ה-pointer בלי למחוק; התוצאה לא נשמרת, ולכן ה-Conn דולף. צריך reset()",
+        "אסור לקרוא ל-release() על unique_ptr שנוצר עם make_unique",
+        "release() זורק exception כשהאובייקט לא תקין"
+      ],
+      "answer": 1,
+      "explanation": "release() מחזיר את ה-pointer הגולמי ומאפס את ה-unique_ptr, והאחריות למחוק עוברת למי שקיבל את התוצאה. כאן אף אחד לא קיבל אותה. reset() מוחק את האובייקט ומאפס. גם פשוט return בלי כלום היה תקין, כי ה-destructor של conn מוחק.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q25",
+      "level": 3,
+      "type": "multi",
+      "prompt": "נתון `struct B { virtual ~B() = default; }; struct D : B {};`. אילו שורות מתקמפלות? (כל שורה בנפרד)",
+      "choices": [
+        "`std::shared_ptr<int> s = std::make_unique<int>(1);`",
+        "`std::unique_ptr<int> u = std::make_shared<int>(1);`",
+        "`std::shared_ptr<B> b = std::make_shared<D>();`",
+        "`std::unique_ptr<B> ub = std::make_unique<D>();`",
+        "`std::shared_ptr<int> p = new int(1);`"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "unique_ptr rvalue ממיר ל-shared_ptr, כי בעלות בלעדית אפשר להפוך למשותפת. ההפך אסור: shared_ptr לא יכול לוותר על הבעלות של שאר העותקים. upcast מ-D ל-B מותר בשניהם. ה-constructor מ-pointer גולמי הוא explicit, ולכן copy-initialization מ-new int(1) לא מתקמפל.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q26",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד רץ ב-thread של callbacks, ואובייקט ה-Listener עלול להיהרס ב-thread אחר. מה הבאג?",
+      "code": "void notify(const std::weak_ptr<Listener>& w,\n            const Event& e) {\n  if (!w.expired())\n    w.lock()->on_event(e);\n}",
+      "bugLine": 4,
+      "choices": [
+        "expired() לא thread-safe, וצריך mutex סביבו",
+        "lock() על weak_ptr זורק std::bad_weak_ptr כשהאובייקט מת",
+        "צריך להעביר את w by value",
+        "בין expired() ל-lock() ה-reference האחרון עלול להשתחרר; אז lock() מחזיר shared_ptr ריק ויש dereference של nullptr. צריך `if (auto s = w.lock()) s->on_event(e);`"
+      ],
+      "answer": 3,
+      "explanation": "זה TOCTOU: הבדיקה והשימוש נפרדים. lock() בודק ומגדיל את ה-count אטומית, ולכן shared_ptr שהוא מחזיר שומר את האובייקט חי לאורך כל הקריאה. lock() לא זורק; bad_weak_ptr נזרק רק בבניית shared_ptr ישירות מ-weak_ptr שפג. expired() עצמו לא יוצר data race.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך shared ownership על מערך של n floats. מה נכון?",
+      "choices": [
+        "`std::shared_ptr<float>(new float[n])` תקין מ-C++11, כי shared_ptr מזהה מערכים",
+        "ב-C++17 `std::shared_ptr<float[]>(new float[n])` קורא ל-delete[] ונותן operator[]; `std::make_shared<float[]>(n)` קיים רק מ-C++20",
+        "shared_ptr לא תומך במערכים בשום תקן, ולכן חייבים shared_ptr<std::vector<float>>",
+        "`std::make_shared<float[]>(n)` קיים מ-C++11"
+      ],
+      "answer": 1,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "shared_ptr<float> עם new[] קורא ל-delete ולא delete[], וזה UB (לפני C++17 היה צריך deleter מפורש). C++17 הוסיף תמיכה ב-T[] ב-shared_ptr, ו-C++20 הוסיף make_shared למערכים, עם הקצאה אחת לנתונים ול-control block. shared_ptr<vector<float>> עובד, אבל מוסיף indirection והקצאה נוספת.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "`void Registry::add(std::shared_ptr<W> w) { v_.push_back(std::move(w)); }`. לקורא יש `sp` עם use_count 1, והוא קורא `reg.add(sp);`. כמה פעולות אטומיות על ה-refcount מתבצעות בקריאה הזאת (כולל הריסת הפרמטר)?",
+      "choices": [
+        "אחת: increment בהעתקה לפרמטר. ה-move ל-vector לא נוגע במונה, והפרמטר נהרס ריק",
+        "שתיים: increment לפרמטר ו-decrement כשהוא נהרס",
+        "שלוש: increment לפרמטר, increment ל-vector, decrement בהריסת הפרמטר",
+        "אפס, כי הקומפיילר מבטל את ההעתקה"
+      ],
+      "answer": 0,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "העתקה מ-lvalue מגדילה את המונה. move constructor של shared_ptr מעביר את שני ה-pointers ומאפס את המקור, בלי לגעת במונה, והריסה של shared_ptr ריק לא עושה כלום. אם הקורא לא צריך את sp יותר, add(std::move(sp)) עולה אפס. הקומפיילר לא רשאי לבטל העתקה מ-lvalue בעל שם.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "רשימה מקושרת `struct Node { int v; std::unique_ptr<Node> next; };` עם 10 מיליון צמתים. head (unique_ptr) יוצא מה-scope. מה קורה, ולמה?",
+      "choices": [
+        "שחרור רגיל ב-O(n), כי unique_ptr משחרר בלולאה",
+        "הצמתים לא משתחררים, כי unique_ptr לא תומך במבנים רקורסיביים",
+        "סביר stack overflow: ~Node הורס את next, שקורא ל-~Node של הצומת הבא, וכן הלאה, כך שעומק הרקורסיה הוא אורך הרשימה. התיקון: destructor איטרטיבי שמנתק את next בלולאה",
+        "UB, כי unique_ptr<Node> מוצהר בתוך Node כשהטיפוס עדיין לא שלם"
+      ],
+      "answer": 2,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "ההריסה המרומזת היא רקורסיה: כל destructor קורא ל-destructor של ה-member next לפני שהוא חוזר. עם מיליוני צמתים זה חורג מ-stack של כמה MB. tail-call optimization לא מובטח כאן. תיקון: ב-~List או ~Node, לולאה שמעבירה את next למשתנה מקומי (auto p = std::move(head->next)) ומשחררת צומת אחד בכל סיבוב. ההצהרה תקינה, כי ה-destructor של unique_ptr עובר instantiation רק אחרי ש-Node שלם.",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "id": "cpp.smart-pointers.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "רוצים `std::set` של `std::weak_ptr<Session>` כדי לזכור אילו sessions כבר טופלו. אילו טענות נכונות?",
+      "choices": [
+        "ל-weak_ptr אין operator<, ולכן `std::set<std::weak_ptr<Session>>` עם ה-comparator ברירת המחדל לא מתקמפל",
+        "`std::set<std::weak_ptr<Session>, std::owner_less<>>` משווה לפי ה-control block, ולכן הסדר נשאר יציב גם אחרי שה-Session נהרס",
+        "owner_less משווה לפי הכתובת ש-get() של ה-shared_ptr המתאים היה מחזיר",
+        "shared_ptr שנבנה עם aliasing constructor לתוך member של Session ייחשב שקול ל-weak_ptr של ה-Session עצמו לפי owner_less",
+        "כדי להשוות weak_ptrs חייבים קודם lock() על כל אחד"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "ל-weak_ptr אין get() או operator<, כי ה-pointer עלול להיות לא תקף. owner_before משווה control blocks, ולכן מפתח לא משנה את מקומו כשהאובייקט מת, ושני pointers עם אותו בעלים (כולל aliasing) שקולים. השוואה לפי get() הייתה מבדילה בין ה-Session ל-member שלו. lock() לא נדרש, וגם היה מחזיר ריק לאובייקטים שמתו.",
+      "lesson": "cpp.smart-pointers"
     }
   ]
 }

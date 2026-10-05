@@ -33,7 +33,157 @@
         "תכנון API שמונע UB: span עם בדיקות ב-debug, checked arithmetic, ו-types חזקים",
         "UB בקוד GPU: race על shared memory בלי __syncthreads וגישה לא מיושרת. compute-sanitizer הוא הכלי המקביל"
       ],
-      "diagram": "        well-defined\n  impl-defined  (documented choice)\n  unspecified   (some valid choice)\n  undefined     (no rules at all)\n                 ^ optimizer assumes\n                   it never happens"
+      "diagram": "        well-defined\n  impl-defined  (documented choice)\n  unspecified   (some valid choice)\n  undefined     (no rules at all)\n                 ^ optimizer assumes\n                   it never happens",
+      "details": [
+        {
+          "title": "ארבע רמות של 'מוגדר' בתקן",
+          "body": "התקן מתאר מכונה מופשטת, ולכל פעולה יש אחת מארבע רמות:\n\n- well-defined: התוצאה קבועה בתקן. למשל unsigned overflow הוא wrap-around מודולו 2^N, ו-`vector::at` מחוץ לגבולות זורק out_of_range.\n- implementation-defined: המימוש בוחר התנהגות וחייב לתעד אותה. דוגמאות: sizeof(int) ו-sizeof(long) (8 ב-Linux x86-64, 4 ב-Windows), האם char הוא signed, alignment של טיפוסים. קוד שתלוי בזה תקין אבל לא נייד.\n- unspecified: אחת מכמה התנהגויות תקינות, בלי חובת תיעוד, ויכולה להשתנות בין ריצות. דוגמאות: סדר ההערכה של ארגומנטים לפונקציה, השוואת `<` בין pointers לשני אובייקטים שונים, הערך של מה ש-remove השאיר אחרי הסוף.\n- undefined: אין שום דרישה. התוכנית יכולה לעשות כל דבר, והקומפיילר רשאי להניח שזה לא קורה. אין חובה לאבחן.\n\nC++26 מוסיף רמה חמישית: erroneous behavior. זה עדיין באג, אבל ההתנהגות מוגדרת (למשל ערך כלשהו בקריאת משתנה לא מאותחל), ומותר למימוש לאבחן ולעצור. ההבדל מ-UB: אסור לאופטימייזר להניח שזה לא קורה.\n\nבתוך constexpr, כל UB הוא שגיאת קומפילציה. לכן constexpr tests הם דרך זולה לתפוס UB באריתמטיקה."
+        },
+        {
+          "title": "איך האופטימייזר מנצל UB",
+          "body": "הקומפיילר לא 'מזהה UB ומעניש'. הוא מניח שהתוכנית חוקית, ומסיק עובדות מההנחה הזו:\n\n- signed overflow לא קורה, ולכן `x + 1 < x` הוא false, ולולאה `for (int i = 0; i < n; ++i)` מסתיימת אחרי בדיוק n צעדים. זה מאפשר להחליף i במונה 64 ביט או ב-pointer, ולעשות vectorization.\n- אחרי `p->x` ה-pointer לא null, ולכן `if (!p)` מאוחר יותר נמחק (delete null pointer checks).\n- אין גישה מחוץ לגבולות, ולכן בלולאה שכותבת `a[i]` עם a בגודל 5, i קטן מ-5 וייתכן שתנאי היציאה מוסר.\n- מסלול שמגיע לסוף פונקציה שאינה void בלי return מסומן unreachable.\n- strength reduction: `i * 1000000000` מוחלף במונה שגדל ב-1e9, ותנאי הלולאה מתבטא דרכו. אם המכפלה הייתה גולשת, התנאי החדש לעולם לא מתקיים.\n\ntime travel: התקן לא מטיל דרישות על ריצה שמכילה UB, גם לא על פעולות שקרו לפניו. הקומפיילר יכול להזיז קוד לפני או אחרי, כל עוד הוא לא יכול להוכיח שהפעולה הקודמת (כמו קריאה לפונקציה חיצונית) לא חוזרת.\n\nforward progress: עד C++23 הקומפיילר רשאי להניח שכל thread מגיע בסוף לסיום או לפעולה נצפית (I/O, volatile, atomic, סנכרון). לולאה אינסופית בלי אף אחד מאלה היא UB, ו-Clang הסיר לולאות כאלה. C++26 (P2809) פטר לולאות אינסופיות טריוויאליות כמו `while (true) {}`."
+        },
+        {
+          "title": "אריתמטיקה: overflow, promotions ו-shifts",
+          "body": "signed overflow הוא UB: חיבור, חיסור וכפל שתוצאתם מחוץ לטווח, `-INT_MIN`, `std::abs(INT_MIN)`, ו-`INT_MIN / -1` (וגם `INT_MIN % -1`). ב-x86 הוראת idiv על INT_MIN / -1 זורקת #DE, ומתקבל SIGFPE כמו בחלוקה ב-0. חלוקה ב-0 היא UB בכל טיפוס שלם.\n\nunsigned מוגדר כ-wrap. לכן `0u - 1` הוא UINT_MAX. בהשוואה בין int ל-unsigned, ה-int מומר ל-unsigned (usual arithmetic conversions), ולכן `-1 < 0u` הוא false.\n\ninteger promotion: לפני פעולה אריתמטית, טיפוסים קטנים מ-int (char, short, uint8_t, uint16_t) מקודמים ל-int אם int יכול לייצג את כל הערכים שלהם. התוצאות:\n- `unsigned char a = 200, b = 100; int c = a + b;` נותן 300, בלי wrap, כי החישוב ב-int.\n- `uint16_t a = 65535, b = 65535; a * b` מחושב ב-int: 4294836225 גדול מ-INT_MAX, וזה signed overflow, כלומר UB, למרות ששני האופרנדים unsigned. התיקון: להמיר קודם, למשל `uint32_t{a} * b`.\n- `uint8_t x = 255; x++;` מוגדר: החישוב ב-int נותן 256, וההמרה בחזרה ל-uint8_t היא מודולו 256, כלומר 0.\n\nshifts: הזזה בכמות שלילית או בכמות שגדולה או שווה לרוחב הטיפוס המקודם היא UB (`1 << 32` עבור int של 32 ביט). ב-x86 החומרה ממסכת את הכמות ל-5 ביטים, ולכן לפעמים מקבלים 1. מ-C++20 (two's complement מחייב) הזזה ימינה של שלילי היא אריתמטית, והזזה שמאלה של signed מוגדרת כל עוד הכמות חוקית.\n\nכלים: בדיקה לפני הפעולה (`a > INT_MAX - b`), `__builtin_add_overflow` ו-`__builtin_mul_overflow` (GCC ו-Clang, מתקמפלים ל-add ו-jo), ו-`-fwrapv` שהופך signed overflow ל-wrap. -fwrapv מתאים לאבחון, לא כתיקון קבוע."
+        },
+        {
+          "title": "זיכרון: גבולות, lifetime, null ו-strict aliasing",
+          "body": "- גבולות: מותר ליצור pointer ל-one-past-the-end של מערך (`a + 5` במערך של 5), ומותר להשוות אליו, אבל אסור לגשת דרכו. גישה ל-`a[5]` היא UB, גם קריאה. גם `v.reserve(10); v[5] = 1;` הוא UB, כי אין אובייקט באינדקס 5 למרות שיש זיכרון.\n- null: dereference של nullptr הוא UB. גם העברת nullptr ל-memcpy או memset הוא UB לפי C (שמכתיב את החוזה של פונקציות אלה ב-C++), אפילו עם אורך 0. GCC מסמן את הפרמטרים nonnull ולכן מוחק בדיקות null שמופיעות אחרי הקריאה. C2y שינה את זה ל-C, אבל קוד קיים צריך להיזהר.\n- lifetime: use-after-free, החזרת reference או pointer למשתנה מקומי (dangling), ושימוש ב-iterator אחרי reallocation, כולם UB. הזיכרון לפעמים עדיין מכיל את הערך הישן, ולכן הבאג מופיע רק לפעמים.\n- const: שינוי של אובייקט שהוגדר const (גם דרך const_cast) הוא UB, וגם שינוי של string literal. const_cast מותר לכתיבה רק אם האובייקט המקורי לא const.\n- לא מאותחל: קריאת ערך של משתנה מקומי לא מאותחל היא UB עד C++23 (חוץ מ-unsigned char ו-std::byte במקרים מסוימים). ב-C++26 erroneous behavior, ואפשר לבקש את ההתנהגות הישנה עם `[[indeterminate]]`.\n\nstrict aliasing: מותר לגשת לאובייקט רק דרך glvalue מהטיפוס שלו (כולל signed/unsigned וה-cv של אותו טיפוס), או דרך `char`, `unsigned char` או `std::byte`. גישה ל-float דרך `uint32_t*` היא UB, והקומפיילר מניח ש-`float*` ו-`int*` לא מצביעים לאותו מקום, ולכן יכול לשנות סדר של קריאות וכתיבות. `signed char` (ו-int8_t, שהוא בדרך כלל signed char) לא ברשימה ב-C++. union type punning, כלומר קריאה מ-member שאינו האחרון שנכתב, היא UB ב-C++ (מותרת ב-C). הדרכים הנכונות: `std::memcpy` (שהקומפיילר מתרגם להוראה אחת) או `std::bit_cast` (C++20, דורש אותו גודל וטיפוסים trivially copyable, ועובד גם ב-constexpr).\n\nalignment: גישה דרך pointer שלא מיושר לטיפוס היא UB. ב-x86 זה בדרך כלל עובד (לאט), אבל ב-ARM או כשהקומפיילר משתמש בהוראות SIMD שדורשות יישור, זה נופל. קריאת uint32 מ-buffer של bytes עושים עם memcpy."
+        },
+        {
+          "title": "סדר הערכה ו-data races",
+          "body": "sequenced-before: יחס בין הערכות באותו thread. אם שתי פעולות על אותו אובייקט scalar הן unsequenced, ולפחות אחת מהן side effect (כתיבה), זה UB. `i++ + i++` הוא UB, כי האופרנדים של + לא מסודרים.\n\nC++17 (P0145) הגדיר סדר להרבה מקרים:\n- בהשמה (`=`, `+=` וכו'), צד ימין כולל ה-side effects שלו מבוצע לפני צד שמאל. לכן `i = i++ + 2` ו-`a[i] = i++` מוגדרים.\n- `<<`, `>>`, `.`, `->`, `[]` (האופרנד השמאלי קודם), וקריאה לפונקציה (הביטוי של הפונקציה לפני הארגומנטים).\n- ארגומנטים לפונקציה הם indeterminately sequenced: כל אחד מוערך במלואו, אבל הסדר unspecified. `f(++i, ++i)` לא UB, רק לא צפוי.\n\ndata race: שתי גישות לאותו memory location מ-threads שונים, לפחות אחת כתיבה, אחת לפחות לא atomic, ובלי happens-before ביניהן. זה UB, לא רק 'ערך לא צפוי'. הקומפיילר רשאי להחזיק את המשתנה ברגיסטר, למזג כתיבות או לפצל אותן. volatile לא פותר: הוא מונע מהקומפיילר להשמיט גישות, אבל לא נותן אטומיות ולא סדר בין threads. הפתרון: `std::atomic` או mutex."
+        },
+        {
+          "title": "כלים ושיטה",
+          "body": "- warnings: `-Wall -Wextra`, ובמיוחד `-Werror=return-type`, `-Wsign-compare`, `-Wshift-count-overflow`. לבנות עם GCC ו-Clang.\n- UBSan (`-fsanitize=undefined`): signed overflow, shifts, חלוקה, null, alignment, הגעה ל-unreachable. מהיר יחסית.\n- ASan (`-fsanitize=address`): גישה מחוץ לגבולות ב-heap, stack ו-globals, use-after-free, use-after-return. האטה פי 2 בערך.\n- TSan (`-fsanitize=thread`): data races. האטה פי 5 עד 15, ולא משלבים אותו עם ASan באותו build.\n- MSan (Clang בלבד): קריאת זיכרון לא מאותחל. דורש שכל התלויות יקומפלו איתו.\n- compute-sanitizer: המקביל ב-CUDA (memcheck, racecheck, synccheck). בקוד GPU, race על shared memory בלי `__syncthreads()` הוא UB קלאסי.\n- hardening: `_GLIBCXX_ASSERTIONS` או libc++ hardening, `-ftrivial-auto-var-init=zero` או pattern, ו-`-fno-delete-null-pointer-checks` (הקרנל של Linux משתמש בו).\n\nבאג שמופיע רק ב-Release: bisect על רמות אופטימיזציה או על קבצים, בדיקה עם `-fwrapv` ו-`-fno-strict-aliasing` כדי לזהות את קטגוריית ה-UB, והשוואת assembly. אחרי שמבינים, מתקנים את הקוד ולא משאירים את ה-flag."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: הלולאה שהפכה לאינסופית",
+          "body": "`for (int i = 0; i < 4; ++i) print(i * 1000000000);` עם int של 32 ביט.\n\n- i=0: 0. i=1: 1e9. i=2: 2e9 (עדיין קטן מ-INT_MAX = 2,147,483,647).\n- i=3: 3e9, גדול מ-INT_MAX. זה UB.\n- הקומפיילר עושה strength reduction: במקום לכפול בכל איטרציה, הוא מחזיק מונה m שמתחיל ב-0 וגדל ב-1e9, ומחליף את התנאי `i < 4` ב-`m < 4e9`.\n- 4e9 לא נכנס ב-int, ו-m 'לעולם לא גולש' לפי ההנחה. התנאי תמיד true, והלולאה אינסופית.\n\nהלקח: UB באיטרציה אחת שינה את תנאי היציאה, קוד שנראה לא קשור. התיקון: `long long` או `int64_t` לכפל."
+        },
+        {
+          "title": "דוגמה: uint16_t כפול uint16_t",
+          "body": "`uint16_t a = 65535, b = 65535; uint32_t r = a * b;`\n\n- integer promotion: int (32 ביט) יכול לייצג את כל ערכי uint16_t, ולכן a ו-b מקודמים ל-int ולא ל-unsigned.\n- המכפלה: 65535 · 65535 = 4,294,836,225.\n- INT_MAX = 2,147,483,647, ולכן זה signed overflow, כלומר UB.\n- ב-constexpr הקומפיילר מוציא overflow in constant expression. UBSan מדווח signed integer overflow בזמן ריצה.\n- בפועל לרוב מתקבל הערך הנכון, ולכן הבאג שקט עד שהאופטימייזר מנצל אותו.\n\nהתיקון: `uint32_t{a} * b`, וכך החישוב ב-unsigned 32 ביט, שם 4,294,836,225 נכנס."
+        },
+        {
+          "title": "דוגמה: בדיקת null שנעלמה",
+          "body": "`int n = p->size; if (!p) return 0; return n;`\n\n- השורה הראשונה ניגשת ל-*p. אם p היה null, זה UB.\n- הקומפיילר מסיק: בכל ריצה חוקית p לא null.\n- לכן `if (!p)` תמיד false, ונמחק.\n- ב-Release, קריאה עם nullptr קורסת בשורה הראשונה, והבדיקה לא עוזרת. ב-kernel, שבו כתובת 0 יכולה להיות ממופה, זה היה פרצת אבטחה (tun driver, 2009).\n\nאותו מנגנון עם memcpy: `memcpy(dst, src, 0)` גורם ל-GCC להניח ש-src לא null, ובדיקה `if (src)` שאחריו נמחקת."
+        },
+        {
+          "title": "דוגמה: קריאת float כ-bits",
+          "body": "רוצים את ה-bits של 1.0f.\n\n- `*(uint32_t*)&f` מפר strict aliasing. ברוב המקרים מקבלים 0x3F800000, אבל מותר לקומפיילר לסדר מחדש את הגישות, למשל לקרוא לפני כתיבה ל-f שקדמה לה.\n- union עם float ו-uint32_t: UB ב-C++ (מותר ב-C).\n- `std::memcpy(&u, &f, 4)`: מוגדר. הקומפיילר מתרגם להוראת mov אחת, בלי קריאה אמיתית ל-memcpy.\n- `std::bit_cast<uint32_t>(f)` (C++20): מוגדר, עם בדיקת גודל בקומפילציה, ועובד גם ב-constexpr: התוצאה 0x3F800000 (סימן 0, exponent 127, mantissa 0)."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "undefined behavior",
+          "def": "התקן לא מטיל שום דרישה על הריצה כולה. הקומפיילר רשאי להניח שזה לא קורה ולבנות על כך אופטימיזציות. בתוך constexpr זו שגיאת קומפילציה."
+        },
+        {
+          "term": "implementation-defined",
+          "def": "המימוש בוחר התנהגות ומתעד אותה: sizeof(long), signedness של char, alignment. תקין אבל לא נייד."
+        },
+        {
+          "term": "unspecified behavior",
+          "def": "אחת מכמה התנהגויות תקינות, בלי חובת תיעוד: סדר הערכת ארגומנטים, השוואת `<` בין pointers לאובייקטים שונים."
+        },
+        {
+          "term": "erroneous behavior",
+          "def": "C++26 (P2795): התנהגות מוגדרת של קוד שגוי, כמו קריאת משתנה לא מאותחל. מותר לאבחן ולעצור, אבל אסור לאופטימייזר להניח שזה לא קורה. `[[indeterminate]]` מחזיר את ההתנהגות הישנה."
+        },
+        {
+          "term": "signed overflow",
+          "def": "תוצאה של פעולה על signed שלא נכנסת בטווח. UB, כולל `-INT_MIN`, `abs(INT_MIN)` ו-`INT_MIN / -1`. unsigned לעומת זאת עושה wrap מוגדר."
+        },
+        {
+          "term": "integer promotion",
+          "def": "טיפוסים קטנים מ-int (char, short, uint8_t, uint16_t) מקודמים ל-int לפני אריתמטיקה. לכן uint16_t כפול uint16_t יכול לגרום ל-signed overflow."
+        },
+        {
+          "term": "usual arithmetic conversions",
+          "def": "הכללים שמביאים שני אופרנדים לטיפוס משותף. int מול unsigned באותו רוחב: ה-int מומר ל-unsigned, ולכן `-1 < 0u` הוא false."
+        },
+        {
+          "term": "shift UB",
+          "def": "הזזה בכמות שלילית, או בכמות שגדולה או שווה לרוחב הטיפוס המקודם, היא UB. מ-C++20 הזזה ימינה של שלילי היא אריתמטית ומוגדרת."
+        },
+        {
+          "term": "-fwrapv",
+          "def": "flag של GCC ו-Clang שהופך signed overflow ל-wrap מוגדר. מבטל אופטימיזציות מסוימות. מתאים לאבחון, לא כתיקון."
+        },
+        {
+          "term": "__builtin_add_overflow",
+          "def": "builtin של GCC ו-Clang (גם mul ו-sub) שמחשב ומחזיר האם היה overflow, בלי UB. מתקמפל להוראה ובדיקת דגל. ב-C23 יש ckd_add."
+        },
+        {
+          "term": "one-past-the-end",
+          "def": "pointer למקום שאחרי האיבר האחרון של מערך. מותר ליצור ולהשוות, אסור לגשת דרכו."
+        },
+        {
+          "term": "dangling reference ו-use-after-free",
+          "def": "גישה לאובייקט אחרי סוף ה-lifetime שלו: local שהוחזר by reference, זיכרון ששוחרר, iterator אחרי reallocation. UB שלפעמים 'עובד'."
+        },
+        {
+          "term": "delete null pointer checks",
+          "def": "אופטימיזציה שמוחקת בדיקת null אחרי dereference או אחרי העברת ה-pointer לפונקציה שמסומנת nonnull (כמו memcpy). `-fno-delete-null-pointer-checks` מבטל אותה."
+        },
+        {
+          "term": "const_cast ו-const object",
+          "def": "const_cast מסיר const מהטיפוס. כתיבה דרכו מותרת רק אם האובייקט המקורי לא הוגדר const. שינוי של const אמיתי או של string literal הוא UB."
+        },
+        {
+          "term": "strict aliasing",
+          "def": "מותר לגשת לאובייקט רק דרך הטיפוס שלו (ווריאנטים signed/unsigned ו-cv), או דרך char, unsigned char, std::byte. הפרה היא UB, והקומפיילר מניח שטיפוסים שונים לא חופפים."
+        },
+        {
+          "term": "union type punning",
+          "def": "כתיבה ל-member אחד של union וקריאה מ-member אחר. מותר ב-C, UB ב-C++."
+        },
+        {
+          "term": "std::bit_cast",
+          "def": "C++20: מפרש מחדש את ה-bits של אובייקט כטיפוס אחר באותו גודל (שניהם trivially copyable). מוגדר ועובד ב-constexpr. החלופה הישנה היא memcpy."
+        },
+        {
+          "term": "alignment",
+          "def": "דרישה שכתובת של טיפוס תהיה כפולה של ערך מסוים (4 ל-uint32_t בדרך כלל). גישה דרך pointer לא מיושר היא UB, גם אם x86 סובל אותה."
+        },
+        {
+          "term": "sequenced-before ו-unsequenced",
+          "def": "יחס הסדר בין הערכות באותו thread. שני side effects לא מסודרים על אותו scalar (כמו `i++ + i++`) הם UB."
+        },
+        {
+          "term": "indeterminately sequenced",
+          "def": "הערכות שכל אחת מתבצעת במלואה, אבל הסדר ביניהן unspecified. כך ארגומנטים לפונקציה, ולכן `f(++i, ++i)` לא UB."
+        },
+        {
+          "term": "data race",
+          "def": "שתי גישות לאותו memory location מ-threads שונים, לפחות אחת כתיבה ולפחות אחת לא atomic, בלי happens-before. UB. volatile לא פותר, atomic או mutex כן."
+        },
+        {
+          "term": "forward progress guarantee",
+          "def": "ההנחה שכל thread מגיע בסוף לסיום או לפעולה נצפית (I/O, volatile, atomic, sync). לולאה אינסופית בלי אלה היא UB עד C++23. C++26 פטר לולאות טריוויאליות."
+        },
+        {
+          "term": "time travel",
+          "def": "כינוי לכך שה-UB משחרר את הקומפיילר מדרישות גם לגבי פעולות שקרו לפניו באותה ריצה."
+        },
+        {
+          "term": "strength reduction",
+          "def": "אופטימיזציה שמחליפה פעולה יקרה בזולה, למשל כפל בכל איטרציה במונה שגדל בקבוע. מסתמכת על כך שאין signed overflow."
+        },
+        {
+          "term": "UBSan, ASan, TSan, MSan",
+          "def": "sanitizers של GCC ו-Clang: UB אריתמטי ו-null (UBSan), גישות זיכרון ו-use-after-free (ASan), data races (TSan), קריאת זיכרון לא מאותחל (MSan, Clang בלבד). מריצים ב-CI."
+        },
+        {
+          "term": "compute-sanitizer",
+          "def": "הכלי של NVIDIA לקוד CUDA: memcheck לגישות זיכרון, racecheck ל-races על shared memory, synccheck לשימוש שגוי ב-__syncthreads."
+        }
+      ]
     }
   ],
   "questions": [
@@ -359,6 +509,193 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "cpp.ub.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "בקריאה `f(a(), b())`, איזו קטגוריה מתארת את הסדר שבו a ו-b נקראות?",
+      "choices": [
+        "undefined behavior",
+        "unspecified: כל אחת מוערכת במלואה, אבל הסדר ביניהן לא מוגדר ויכול להשתנות",
+        "implementation-defined, והקומפיילר מתעד את הסדר",
+        "מוגדר משמאל לימין מ-C++17"
+      ],
+      "answer": 1,
+      "explanation": "ארגומנטים לפונקציה הם indeterminately sequenced: אין חפיפה ביניהם, אבל הסדר unspecified, ואין חובה לתעד אותו או לשמור עליו עקבי. C++17 קבע סדר משמאל לימין לאופרטורים כמו << ו-[], ולא לארגומנטים. אם a ו-b תלויות זו בזו, צריך לקרוא להן בנפרד לפני הקריאה ל-f.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה קורה ב-`char* s = const_cast<char*>(\"abc\"); s[0] = 'x';`?",
+      "choices": [
+        "undefined behavior: string literal הוא אובייקט const, ושינוי שלו (גם אחרי const_cast) הוא UB. בפועל הוא יושב בזיכרון read-only והכתיבה גורמת ל-segfault",
+        "תקין: const_cast מסיר את ה-const ומאפשר כתיבה",
+        "s הופך ל-\"xbc\" רק במקום הזה, ושאר המופעים של \"abc\" לא משתנים",
+        "שגיאת קומפילציה"
+      ],
+      "answer": 0,
+      "explanation": "const_cast משנה רק את הטיפוס של הביטוי, לא את האובייקט עצמו. כתיבה מותרת רק אם האובייקט המקורי לא הוגדר const. literals נשמרים ב-.rodata, ולעתים מופעים זהים חולקים אותו זיכרון. מי שצריך buffer שאפשר לשנות כותב `char s[] = \"abc\";`, שמעתיק את התוכן למערך.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה sanitizer של GCC/Clang מזהה גישה מחוץ לגבולות של buffer ו-use-after-free? (שם הכלי או ה-flag)",
+      "accept": [
+        "ASan",
+        "AddressSanitizer",
+        "-fsanitize=address",
+        "fsanitize=address"
+      ],
+      "explanation": "ASan מוסיף אזורי red zone סביב הקצאות ומחזיק shadow memory שמסמן אילו bytes חוקיים. כל גישה נבדקת. הוא מזהה גם use-after-return ו-double free, ומאט בערך פי 2. UBSan מכסה UB אריתמטי, ו-TSan מכסה data races.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q23",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה מחזירה לפעמים מחרוזת משובשת. למה?",
+      "code": "const std::string& device_name(int id) {\n  std::string name = \"rx\" + std::to_string(id);\n  return name;\n}\n\nint main() {\n  std::cout << device_name(3);\n}",
+      "bugLine": 3,
+      "choices": [
+        "std::to_string לא עובד עם int",
+        "צריך std::move(name) ב-return",
+        "מוחזר reference למשתנה מקומי שנהרס ביציאה מהפונקציה (dangling reference). השימוש בו הוא UB. צריך להחזיר std::string by value",
+        "const reference מאריך את החיים של name"
+      ],
+      "answer": 2,
+      "explanation": "name נהרס בסוף הפונקציה, וה-reference מצביע לזיכרון שכבר לא שייך לאובייקט. החזרה by value זולה, כי יש NRVO או move. const reference מאריך חיים רק ל-temporary שנקשר אליו ישירות, לא למשתנה מקומי שמוחזר. GCC ו-Clang מזהירים על כך (-Wreturn-local-addr).",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q24",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "unsigned char a = 200, b = 100;\nint c = a + b;\nstd::uint8_t x = 255;\nx++;\nstd::cout << c << ' ' << int(x);",
+      "choices": [
+        "44 0",
+        "300 256",
+        "UB",
+        "300 0"
+      ],
+      "answer": 3,
+      "explanation": "לפני החיבור a ו-b מקודמים ל-int (integer promotion), ולכן התוצאה 300 בלי wrap. ב-x++ החישוב ב-int נותן 256, וההמרה בחזרה ל-uint8_t מוגדרת כמודולו 256, כלומר 0. אין כאן UB: אין signed overflow, וההמרה ל-unsigned תמיד מוגדרת.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "רוצים את ייצוג ה-bits של float. איזו דרך מוגדרת היטב ב-C++20?",
+      "choices": [
+        "`uint32_t u = *reinterpret_cast<uint32_t*>(&f);`",
+        "`union { float f; uint32_t u; } x; x.f = f; uint32_t u = x.u;`",
+        "`uint32_t u = std::bit_cast<uint32_t>(f);`",
+        "`uint32_t u = static_cast<uint32_t>(f);`"
+      ],
+      "answer": 2,
+      "explanation": "bit_cast מעתיק את ה-bits לאובייקט חדש מאותו גודל, ומוגדר (וגם עובד ב-constexpr). memcpy היא החלופה מלפני C++20. גישה דרך uint32_t* לאובייקט float מפרה strict aliasing. קריאת member לא פעיל של union מותרת ב-C אבל UB ב-C++. static_cast ממיר את הערך המספרי (1.5 הופך ל-1), ולא את ה-bits.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q26",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהבאים הם undefined behavior?",
+      "choices": [
+        "`const int k = 5; const_cast<int&>(k) = 6;`",
+        "`int n = 5; const int& r = n; const_cast<int&>(r) = 6;`",
+        "קריאה מ-member של union שאינו ה-member האחרון שנכתב (ב-C++)",
+        "`std::memcpy(&u, &f, sizeof f);` כש-u הוא uint32_t ו-f הוא float",
+        "השוואה עם `<` בין pointers לשני מערכים נפרדים"
+      ],
+      "answer": [
+        0,
+        2
+      ],
+      "explanation": "k הוגדר const, ולכן כתיבה אליו היא UB (בפועל הקומפיילר כבר הציב 5 בכל השימושים). n לא const, ו-const_cast דרך reference ל-const חוקי. union punning הוא UB ב-C++. memcpy בין טיפוסים trivially copyable באותו גודל מוגדר. השוואה רלציונית בין pointers לאובייקטים שונים היא unspecified, לא UB (ו-std::less מבטיח סדר מלא).",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "עם int של 32 ביט: `std::uint16_t a = 65535, b = 65535; std::uint32_t r = a * b;`. מה נכון?",
+      "choices": [
+        "מוגדר: שני האופרנדים unsigned, ולכן יש לכל היותר wrap",
+        "r == 4294836225 תמיד, כי היעד הוא uint32_t",
+        "שגיאת קומפילציה בגלל narrowing",
+        "UB: a ו-b מקודמים ל-int (שמכיל את כל ערכי uint16_t), והמכפלה 4294836225 גדולה מ-INT_MAX, כלומר signed overflow. התיקון: `std::uint32_t{a} * b`"
+      ],
+      "answer": 3,
+      "explanation": "integer promotion הופך טיפוסים קטנים ל-int ולא ל-unsigned int, כל עוד int יכול לייצג את כל הערכים שלהם. החישוב ב-int גולש, וזה UB למרות שאין בקוד אף טיפוס signed. ב-constexpr הקומפיילר מוציא overflow in constant expression, ו-UBSan מדווח בזמן ריצה. הטיפוס של היעד לא משפיע על הטיפוס של החישוב.",
+      "lesson": "cpp.ub",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.ub.q28",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "parser של header בינארי עובד על x86 אבל קורס על ARM, ולפעמים נותן ערכים שגויים ב-O3. מה הבעיה?",
+      "code": "// buf: received bytes, header starts at offset 1\nuint32_t read_len(const uint8_t* buf) {\n  return *reinterpret_cast<const uint32_t*>(buf + 1);\n}",
+      "bugLine": 3,
+      "choices": [
+        "צריך static_cast במקום reinterpret_cast",
+        "גישה דרך uint32_t* לזיכרון של bytes מפרה strict aliasing, ו-buf + 1 כמעט בוודאות לא מיושר ל-4. שניהם UB: x86 סובל גישה לא מיושרת, ARM או הוראות SIMD מיושרות נופלים. התיקון: memcpy ל-uint32_t מקומי (ואז המרת endianness אם צריך)",
+        "uint8_t לא יכול להצביע על header",
+        "חסר const על הערך המוחזר"
+      ],
+      "answer": 1,
+      "explanation": "אין אובייקט uint32_t בכתובת הזו, ולכן הגישה מפרה aliasing, והכתובת לא מיושרת ל-alignof(uint32_t). הקומפיילר רשאי להשתמש בהוראות שמניחות יישור, ולסדר מחדש את הקריאה ביחס לכתיבות ל-buf. memcpy מוגדר, והקומפיילר מתרגם אותו להוראת load אחת שמתאימה לפלטפורמה. בפרוטוקולי רשת צריך גם לטפל ב-byte order.",
+      "lesson": "cpp.ub",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.ub.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\nvoid copy_in(char* dst, const char* src, size_t n) {\n  std::memcpy(dst, src, n);\n  if (src == nullptr) log_warning();\n}\n```\n\nב-O2, GCC מחק את הבדיקה ואת הקריאה ל-log_warning. הקוד נקרא לפעמים עם src == nullptr ו-n == 0. מה ההסבר?",
+      "choices": [
+        "באג בקומפיילר: memcpy עם n == 0 לא ניגש לזיכרון ולכן אין כאן UB",
+        "הקומפיילר מוחק בדיקות שמופיעות אחרי קריאה לפונקציה של libc",
+        "החוזה של memcpy (שמגיע מתקן C) דורש pointers תקינים גם כש-n == 0. העברת nullptr היא UB, ולכן הקומפיילר (שמסמן את הפרמטרים nonnull) מסיק ש-src לא null ומוחק את הבדיקה. התיקון: לבדוק לפני הקריאה",
+        "nullptr לא ניתן להשוואה ל-const char*"
+      ],
+      "answer": 2,
+      "explanation": "C קובע שפונקציות הספרייה מקבלות pointers תקינים אלא אם נאמר אחרת, ו-memcpy לא מחריג את n == 0. glibc מסמנת את הפרמטרים nonnull, וזה מזין את אותה אופטימיזציה שמוחקת null checks אחרי dereference. תקן C2y שינה את זה ל-C, אבל קוד שנבנה היום לא יכול להסתמך על כך. UBSan עם -fsanitize=nonnull-attribute תופס את זה.",
+      "lesson": "cpp.ub"
+    },
+    {
+      "id": "cpp.ub.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות על strict aliasing וייצוג אובייקטים ב-C++20 נכונות?",
+      "choices": [
+        "מותר לקרוא את ה-bytes של כל אובייקט דרך `unsigned char*`, `char*` או `std::byte*`",
+        "מותר לגשת לכל אובייקט דרך `std::int8_t*`, כי הוא טיפוס בגודל byte",
+        "`std::bit_cast<To>(from)` דורש ש-To ו-From יהיו באותו גודל ו-trivially copyable, ויכול לרוץ בזמן קומפילציה",
+        "קריאה של member לא פעיל ב-union מוגדרת ב-C++ כמו ב-C",
+        "`std::memcpy` בין float ל-uint32_t (אותו גודל) מוגדר"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "רשימת החריגים של aliasing ב-C++ כוללת רק char, unsigned char ו-std::byte. signed char לא ברשימה (בניגוד ל-C), ו-int8_t הוא בדרך כלל signed char, ולכן אין הבטחה. union punning מוגדר ב-C, אבל ב-C++ רק ה-member הפעיל חי. memcpy ו-bit_cast יוצרים אובייקט חדש מה-bits, ולכן מוגדרים.",
+      "lesson": "cpp.ub"
     }
   ]
 }

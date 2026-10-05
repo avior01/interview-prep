@@ -5,35 +5,249 @@
     {
       "id": "py.gil",
       "title": "GIL",
-      "what": "ה-Global Interpreter Lock הוא mutex ב-CPython שמבטיח שרק thread אחד מריץ Python bytecode בכל רגע. לכן threads לא נותנים מקביליות אמיתית לקוד Python טהור שהוא CPU-bound, אבל כן עוזרים ל-I/O ולקוד C שמשחרר את ה-GIL. מ-3.13 יש build ניסיוני free-threaded (PEP 703) בלי GIL.",
+      "what": "ה-Global Interpreter Lock הוא mutex ב-CPython שמבטיח שרק thread אחד מריץ Python bytecode בכל רגע. לכן threads לא נותנים מקביליות אמיתית לקוד Python טהור שהוא CPU-bound, אבל כן עוזרים ל-I/O ולקוד C שמשחרר את ה-GIL. ה-GIL הוא פרט מימוש של CPython, לא חלק מהשפה. מ-3.13 יש build נפרד free-threaded (PEP 703, `python3.13t`) בלי GIL, ניסיוני ב-3.13 ונתמך רשמית (אבל עדיין לא ברירת מחדל) ב-3.14.",
       "when": [
         "בחירה בין threading, multiprocessing ו-asyncio",
         "קוד Python שלא מואץ כשמוסיפים threads",
         "שאלות על thread safety ב-Python ועל race conditions למרות ה-GIL"
       ],
       "how": [
-        "thread שמחזיק את ה-GIL מריץ bytecode; threads אחרים שרוצים לרוץ מבקשים ממנו לשחרר, וזה קורה אחרי switch interval (ברירת מחדל 5 ms, sys.getswitchinterval)",
-        "פעולות I/O חוסמות (sockets, קבצים, time.sleep) משחררות את ה-GIL, ולכן threads מתאימים לעבודה I/O-bound",
-        "הרחבות C כמו NumPy, hashlib ו-zlib משחררות את ה-GIL בחישובים ארוכים, ואז threads כן רצים במקביל",
-        "ל-CPU-bound בקוד Python טהור: multiprocessing / ProcessPoolExecutor (כל תהליך עם interpreter ו-GIL משלו), במחיר של pickling ו-IPC",
-        "ה-GIL לא הופך קוד ל-thread-safe: x += 1 הוא כמה פעולות bytecode, ו-switch יכול לקרות ביניהן; check-then-act תמיד דורש Lock",
-        "asyncio: thread אחד, concurrency של I/O בלי threads; לא עוזר ל-CPU-bound"
+        "thread שמחזיק את ה-GIL מריץ bytecode; thread אחר שרוצה לרוץ מחכה עד switch interval (ברירת מחדל 5 ms, `sys.getswitchinterval`), ואז מבקש מהמחזיק לשחרר, והמחזיק משחרר בנקודת הבדיקה הבאה",
+        "פעולות I/O חוסמות (sockets, קבצים, `time.sleep`) משחררות את ה-GIL, ולכן threads מתאימים לעבודה I/O-bound",
+        "הרחבות C כמו NumPy, hashlib (על buffers גדולים) ו-zlib משחררות את ה-GIL בחישובים ארוכים, ואז threads כן רצים במקביל על כמה cores",
+        "ל-CPU-bound בקוד Python טהור: multiprocessing / ProcessPoolExecutor (כל תהליך עם interpreter ו-GIL משלו), במחיר של pickling, IPC והפעלת תהליכים",
+        "ה-GIL לא הופך קוד ל-thread-safe: `x += 1` הוא כמה פעולות bytecode, ו-switch יכול לקרות ביניהן; check-then-act תמיד דורש Lock",
+        "asyncio: thread אחד, concurrency של I/O בלי threads; לא עוזר ל-CPU-bound",
+        "חלופות חדשות: build free-threaded (3.13t/3.14t) ו-subinterpreters עם GIL לכל interpreter (PEP 684 ב-3.12, `InterpreterPoolExecutor` ב-3.14)"
       ],
-      "complexity": "N threads על קוד Python טהור CPU-bound: זמן כמו thread אחד או גרוע מעט (תקורת החלפה). N תהליכים: עד פי N, פחות עלות העברת הנתונים (pickle) והפעלת התהליכים.",
+      "complexity": "N threads על קוד Python טהור CPU-bound: זמן כמו thread אחד או גרוע מעט (תקורת החלפה). N תהליכים: עד פי N, פחות עלות העברת הנתונים (pickle, עשרות עד מאות µs לכל משימה קטנה, תלוי מערכת הפעלה) והפעלת התהליכים. threads על קוד C שמשחרר GIL: עד פי N, מוגבל ברוחב פס של זיכרון.",
       "pitfalls": [
-        "להניח שה-GIL מגן על counters משותפים",
+        "להניח שה-GIL מגן על counters משותפים או על check-then-act",
         "להעביר מערכים גדולים ל-workers של multiprocessing ולשלם יותר על pickling מאשר על החישוב",
         "lambda או פונקציה מקומית ב-ProcessPoolExecutor: לא ניתנות ל-pickle",
-        "חסר if __name__ == '__main__' כשה-start method הוא spawn (Windows, macOS): כל worker מריץ מחדש את קוד ה-top level",
-        "fork של תהליך שיש בו threads: locks שהוחזקו ב-threads אחרים נשארים נעולים לנצח בילד"
+        "חסר `if __name__ == '__main__'` כשה-start method הוא spawn (Windows, macOS): כל worker מריץ מחדש את קוד ה-top level ונכשל",
+        "fork של תהליך שיש בו threads: locks שהוחזקו ב-threads אחרים נשארים נעולים לנצח בילד",
+        "threads חיצוניים מעל BLAS שכבר מרובה-threads: oversubscription",
+        "`threading.Lock` אינו reentrant: אותו thread שמנסה לנעול פעמיים נתקע; ל-reentrancy יש `RLock`"
       ],
       "senior": [
         "להבחין בין I/O-bound, CPU-bound בקוד Python, ו-CPU-bound בקוד C שמשחרר GIL",
-        "להכיר את ה-convoy effect: thread CPU-bound פוגע ב-latency של threads של I/O",
-        "לדעת על free-threaded CPython (3.13t): מה הוא נותן ומה המחיר (תאימות הרחבות, overhead ב-single thread)",
-        "לבחור ארכיטקטורה: קוד חם ב-NumPy / Cython / C++ שמשחרר GIL, ו-Python כ-glue"
+        "להכיר את ה-convoy effect: thread CPU-bound פוגע ב-latency של threads של I/O, ואת ה-trade-off של setswitchinterval",
+        "לדעת על free-threaded CPython: biased reference counting, locks לכל אובייקט, overhead ב-single thread, תאימות הרחבות, ו-races שה-GIL הסתיר",
+        "לבחור ארכיטקטורה: קוד חם ב-NumPy / Cython / C++ שמשחרר GIL, ו-Python כ-glue; תהליכים עם shared memory כשצריך",
+        "בהרחבות C: לשחרר GIL סביב חישוב טהור, לא לגעת ב-PyObject בלי GIL, ולבדוק סיגנלים"
       ],
-      "diagram": "T1: ##run##.....##run##.....\nT2: .......##run##.....##run\n     one holder at a time\n     I/O or C code -> releases"
+      "diagram": "T1: ##run##.....##run##.....\nT2: .......##run##.....##run\n     one holder at a time\nT2 waits 5ms -> drop request\nI/O or C code -> releases",
+      "details": [
+        {
+          "title": "למה יש GIL ומה הוא בדיוק מגן",
+          "body": "CPython מנהל זיכרון בעזרת **reference counting**: לכל אובייקט יש מונה הפניות שמשתנה בכל השמה, קריאה לפונקציה או יציאה מ-scope. אם שני threads משנים את אותו מונה בלי סנכרון, המונה מתקלקל, ואובייקט משתחרר בזמן שעדיין משתמשים בו (crash) או לא משתחרר לעולם (leak). במקום lock לכל אובייקט, CPython בחר ב-lock אחד גדול: ה-GIL.\n\nהיתרונות: ה-interpreter פשוט ומהיר ב-single thread, והרחבות C נכתבות בלי לחשוב על נעילות. המחיר: רק thread אחד מריץ **bytecode** בכל רגע, ולכן קוד Python טהור לא מתקדם מהר יותר עם threads.\n\nה-GIL הוא פרט מימוש של CPython ולא חלק מהגדרת השפה. Jython ו-IronPython רצים בלי GIL, ו-PyPy כן משתמש ב-GIL. `threading.Thread` ב-CPython הוא thread אמיתי של מערכת ההפעלה (pthread או Windows thread), שה-OS מתזמן כרגיל; ה-GIL רק קובע מי מהם רשאי להריץ bytecode.\n\nה-GIL מגן על ה-interpreter, לא על הלוגיקה שלך. פעולה בודדת על list או dict (append, השמה של מפתח) לא תשחית את המבנה, אבל זו התנהגות של CPython ולא הבטחה של השפה. כל רצף של כמה פעולות (`counter += 1`, check-then-act) יכול להיקטע באמצע ולאבד עדכונים, ולכן צריך `threading.Lock` או `queue.Queue`."
+        },
+        {
+          "title": "איך ה-GIL עובר בין threads",
+          "body": "מאז 3.2 (ה-\"new GIL\") ההחלפה מבוססת זמן ולא מספר פקודות. thread שרוצה את ה-GIL מחכה על condition variable עם timeout של **switch interval** (5 ms כברירת מחדל). אם ה-timeout פג וה-GIL עדיין תפוס, הוא מדליק דגל `gil_drop_request` ב-**eval breaker**, מנגנון שה-eval loop בודק בנקודות מסוימות (קפיצות אחורה בלולאות, קריאות לפונקציות).\n\nה-thread המחזיק רואה את הדגל בנקודת הבדיקה הבאה, משחרר את ה-GIL ומחכה עד שמישהו אחר באמת תפס אותו (FORCE_SWITCHING), כדי שלא יחזור לתפוס אותו מיד. רק אחרי זה הוא חוזר לבקש את ה-GIL כמו כל thread ממתין.\n\nבנוסף, כל קריאה חוסמת (`recv`, `read`, `time.sleep`) משחררת את ה-GIL מרצון לפני ההמתנה ותופסת אותו מחדש אחריה. `sys.setswitchinterval` משנה את ה-interval: ערך קטן משפר את התגובה של threads ממתינים במחיר יותר החלפות ופחות throughput; הוא לא מוסיף מקביליות. ה-interval לא משפיע על קוד C שמחזיק את ה-GIL, כי קוד C לא עובר דרך ה-eval breaker.\n\n**convoy effect**: thread של I/O משחרר את ה-GIL בכל פעולת רשת, וכשהנתונים מגיעים הוא צריך לקבל את ה-GIL בחזרה מ-thread חישובי, ומחכה עד 5 ms בכל פעם. בקשה עם הרבה סבבי I/O צוברת עיכוב גדול, למרות שה-thread החישובי \"לא אמור\" להפריע."
+        },
+        {
+          "title": "מי משחרר את ה-GIL: I/O, NumPy והרחבות C",
+          "body": "הרחבת C משחררת את ה-GIL עם `Py_BEGIN_ALLOW_THREADS` ומחזירה אותו עם `Py_END_ALLOW_THREADS`. בין שני המאקרואים אסור לגעת באובייקטי Python: לא `Py_DECREF`, לא `PyErr_SetString`, לא קריאה ל-callback של Python, ולא יצירת אובייקטים. מותר: חישוב C טהור על זיכרון שהושג מראש (למשל דרך buffer protocol, `Py_buffer`, שמחזיק את ה-buffer חי), syscalls חוסמים ו-memcpy. thread של C שרוצה לקרוא ל-Python צריך לתפוס את ה-GIL עם `PyGILState_Ensure`.\n\nsignal handlers של Python רצים רק ב-main thread וכשה-interpreter מקבל שליטה. לכן חישוב C ארוך שמחזיק את ה-GIL גם מקפיא threads אחרים וגם משהה את Ctrl+C. בחישוב ארוך קוראים מדי פעם ל-`PyErr_CheckSignals` (עם GIL) כדי לאפשר ביטול.\n\nבפועל: NumPy משחרר את ה-GIL ברוב הפעולות הכבדות (ufuncs על מערכים גדולים, FFT, BLAS), hashlib משחרר רק על נתונים גדולים מסף של כ-2 KB (על הרבה מחרוזות קצרות ה-GIL כמעט לא משתחרר), zlib ו-I/O של קבצים משחררים. `ctypes` משחרר את ה-GIL אוטומטית בקריאות דרך `CDLL` (אבל לא דרך `PyDLL`), ו-Cython מאפשר בלוק `with nogil`.\n\nכש-threads מריצים קוד ששחרר GIL הם באמת מקבילים, אבל רק כל עוד רוב הזמן נמצא בתוך קוד C. לולאת Python שקוראת לאלפי פעולות NumPy קטנות מבלה את רוב הזמן ב-bytecode ולא תסקייל. ו-BLAS שכבר מרובה-threads בעצמו, יחד עם threads חיצוניים, יוצר **oversubscription**: יותר threads מ-cores ותחרות על cache."
+        },
+        {
+          "title": "multiprocessing: start methods, pickle ועלויות",
+          "body": "ב-multiprocessing ו-ProcessPoolExecutor לכל worker יש interpreter ו-GIL משלו, ולכן קוד Python רץ במקביל באמת. כל ארגומנט ותוצאה עוברים **pickle** דרך pipe. הפונקציה עצמה נשלחת לפי השם המלא שלה (module + qualname), ולכן lambda ופונקציה מקומית לא עובדות; פונקציה ברמת ה-module או `functools.partial` שלה כן.\n\n**start methods**: `fork` משכפל את התהליך (מהיר, אבל רק ה-thread הקורא קיים בילד, ו-locks שהיו נעולים על ידי threads אחרים נשארים נעולים לנצח); `spawn` מפעיל interpreter חדש שמייבא מחדש את ה-module הראשי (איטי יותר, בטוח; ברירת המחדל ב-Windows וב-macOS); `forkserver` מבקש מתהליך שרת נקי לבצע fork. מ-3.12 Python מתריע (DeprecationWarning) על fork בתהליך עם כמה threads, וב-3.14 ברירת המחדל ב-Linux השתנתה מ-fork ל-forkserver.\n\nב-spawn, ה-worker מייבא את הקובץ הראשי, ולכן קוד ברמה העליונה שיוצר pool חייב להיות תחת `if __name__ == '__main__'`; אחרת ה-worker מנסה ליצור pool בעצמו, נזרק RuntimeError על bootstrapping, והתהליך הראשי מקבל `BrokenProcessPool`.\n\nעלויות: הפעלת תהליך עולה עשרות ms, ושליחת משימה קטנה עולה עשרות עד מאות µs. משימות קטנות מאחדים עם `chunksize`. נתונים גדולים לא שולחים ב-pickle: מעבירים נתיב ו-offset, או משתמשים ב-`multiprocessing.shared_memory` / `np.memmap` כך שכל worker ניגש לאותם בתים בלי העתקה."
+        },
+        {
+          "title": "בלי GIL: free-threaded CPython ו-subinterpreters",
+          "body": "**free-threaded build** (PEP 703): build נפרד של CPython (מותקן כ-`python3.13t` או `python3.14t`) שבו threads מריצים bytecode במקביל. ב-3.13 הוא ניסיוני; ב-3.14 הוא נתמך רשמית (PEP 779) אבל עדיין לא ברירת המחדל. ה-build הרגיל עדיין עם GIL. `sys._is_gil_enabled()` (3.13+) אומר אם ה-GIL פעיל בזמן ריצה.\n\nאיך זה עובד בלי לשבור את ה-reference counting: **biased reference counting** (ה-thread שיצר אובייקט מעדכן את המונה בלי פעולות אטומיות, ו-threads אחרים משתמשים במונה נפרד אטומי), **immortal objects** (PEP 683, למשל None ו-int קטנים, שהמונה שלהם לא משתנה), ספירה דחויה לחלק מהאובייקטים, הקצאה דרך **mimalloc**, ו-locks פנימיים לכל אובייקט (critical sections) עבור list, dict ודומיהם. ב-3.13t גם ה-specializing adaptive interpreter (PEP 659) מכובה, ולכן ה-overhead ב-single thread גבוה; ב-3.14 הוא הופעל מחדש והפער קטן בהרבה.\n\nתאימות: מודול הרחבה שלא הצהיר שהוא תומך (slot `Py_mod_gil`) גורם להפעלת ה-GIL מחדש בזמן import, אלא אם מריצים עם `PYTHON_GIL=0` או `-X gil=0`. וקוד משתמש: races שה-GIL הסתיר (switch רק כל 5 ms ורק בנקודות מסוימות) נעשים נפוצים, כי עכשיו שני threads באמת מבצעים read-modify-write באותו זמן. ה-interpreter נשאר בטוח; הלוגיקה שלך לא.\n\n**subinterpreters**: מ-3.12 (PEP 684) לכל interpreter בתוך אותו תהליך יכול להיות GIL משלו, וב-3.14 (PEP 734) יש `concurrent.interpreters` ו-`concurrent.futures.InterpreterPoolExecutor`. זה מודל דמוי-תהליכים בתוך תהליך אחד: מקביליות אמיתית, אבל אובייקטים לא משותפים בין interpreters (מעבירים נתונים, בדרך כלל דרך pickle או טיפוסים שניתנים לשיתוף), והרחבות C צריכות לתמוך ב-multi-phase init ובבידוד."
+        },
+        {
+          "title": "איך בוחרים: טבלת החלטה",
+          "body": "- I/O-bound (רשת, דיסק, DB): threads (ThreadPoolExecutor) או asyncio. ה-GIL משתחרר בזמן ההמתנה. מגבילים concurrency.\n- CPU-bound בקוד Python טהור: ProcessPoolExecutor עם chunksize, או להעביר את הלולאה ל-NumPy / Cython / C++. ב-3.14 אפשר לשקול InterpreterPoolExecutor או build free-threaded, בזהירות.\n- CPU-bound בקוד C שמשחרר GIL (NumPy, hashlib על buffers גדולים): threads מספיקים ואין העתקות; שימו לב ל-oversubscription עם BLAS.\n- שילוב I/O עם latency רגיש וחישוב: להפריד את החישוב לתהליך כדי להימנע מ-convoy effect.\n\nבכל המקרים: מצב משותף בין threads דורש Lock (`Lock` לא reentrant, `RLock` כן), ותור בין threads הוא `queue.Queue`. לבעיה של \"לחשב פעם אחת לכל מפתח\" יש דפוס של dict של `Future`-ים תחת lock קצר: מי שהכניס את ה-Future מחשב מחוץ ל-lock, והשאר מחכים ל-`result()`."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: איך counter += 1 מאבד עדכון",
+          "body": "`counter` שווה 5, ושני threads מבצעים `counter += 1`. ב-bytecode זה LOAD_GLOBAL, BINARY_OP (+), STORE_GLOBAL.\n\n- T1: LOAD_GLOBAL, קורא 5\n- החלפה: ה-GIL עובר ל-T2\n- T2: LOAD_GLOBAL קורא 5, BINARY_OP נותן 6, STORE_GLOBAL כותב 6\n- החלפה: ה-GIL חוזר ל-T1\n- T1: BINARY_OP על ה-5 שקרא קודם נותן 6, STORE_GLOBAL כותב 6\n\nהתוצאה 6 במקום 7: עדכון אחד אבד, למרות שבכל רגע רק thread אחד רץ. ב-CPython 3.10+ עם GIL זה נדיר בפועל (ניסוי של 4 threads × 100,000 נותן לעתים קרובות 400,000 בדיוק), כי ה-eval breaker לא נבדק בין שלוש הפקודות האלה. זה פרט מימוש ולא הבטחה, וב-build free-threaded אותו קוד מאבד עדכונים בקלות. התיקון: `with lock: counter += 1`."
+        },
+        {
+          "title": "דוגמה: chunksize ומיליון משימות קטנות",
+          "body": "מיליון items, `score` לוקחת 2 µs, 8 cores. סדרתית: 1,000,000 × 2 µs = 2 שניות.\n\n- `ex.map(score, items)` בלי chunksize: כל item נשלח לבד ב-IPC. תקורה של כ-100 µs ל-item נותנת כ-100 שניות, פי 50 יותר גרוע מסדרתי (ב-Windows נמדד אפילו כ-0.9 ms ל-item).\n- `chunksize = 1,000,000 // (8 × 4) = 31,250`: נשלחות רק 32 חבילות, תקורה של כמה ms בסך הכל, והחישוב מתחלק: 2 s / 8 = 0.25 שניות, ועוד זמן הפעלת התהליכים.\n\nהכפל ב-4 נותן לכל worker כמה chunks, כך שאם chunk אחד איטי, האחרים לא מחכים לו (load balancing). והלקח הרחב: אם score וקטורית, NumPy על כל המערך בבת אחת עדיף על כל pool."
+        },
+        {
+          "title": "דוגמה: convoy effect במספרים",
+          "body": "שרת עם thread חישובי בקוד Python טהור ו-thread רשת. בקשה דורשת 10 סבבי I/O (קריאת headers, שאילתת DB, שליחת תשובה וכו'), וכל סבב רשת לוקח 0.1 ms.\n\n- בלי ה-thread החישובי: בערך 10 × 0.1 = 1 ms.\n- עם ה-thread החישובי: אחרי כל סבב, thread הרשת מחכה עד switch interval כדי לקבל את ה-GIL. במקרה הגרוע 10 × 5 ms = 50 ms נוספים, ובממוצע עשרות ms.\n- `sys.setswitchinterval(0.0005)`: המקרה הגרוע יורד ל-10 × 0.5 = 5 ms, במחיר פי 10 יותר החלפות ופחות throughput לחישוב.\n\nהפתרון האמיתי: להעביר את החישוב לתהליך נפרד (או לקוד C שמשחרר GIL), כך שהוא לא מתחרה על אותו GIL."
+        },
+        {
+          "title": "דוגמה: מה מאיץ עם 4 threads (נמדד על CPython 3.13 עם GIL)",
+          "body": "ניסוי על מכונה עם 12 cores לוגיים, 4 threads מול ריצה סדרתית של אותה עבודה:\n\n- `np.fft.fft` על 4 מערכים של 2^22 איברים: 5.1 s סדרתי מול 2.2 s עם threads. NumPy משחרר GIL, וההאצה מוגבלת ברוחב הפס של הזיכרון.\n- `hashlib.sha256` על 4 buffers של 200 MB: 1.35 s מול 0.37 s, כמעט פי 4. hashlib משחרר GIL על buffers גדולים.\n- `hashlib.sha256` על 400,000 מחרוזות של 64 בתים: 1.0 s מול 0.9 s, כמעט בלי שיפור: מתחת לסף ה-GIL לא משתחרר, ורוב הזמן הוא bytecode של הלולאה.\n- 4 threads שכל אחד עושה `time.sleep(1)`: כ-1 שנייה בסך הכל, לא 4, כי sleep משחרר GIL.\n\nהלקח: השאלה היא לא \"Python או לא\", אלא איפה הזמן נמצא: ב-bytecode (GIL מוחזק) או בתוך קוד C / המתנה (GIL משוחרר)."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "GIL (Global Interpreter Lock)",
+          "def": "mutex אחד ב-CPython שמבטיח שרק thread אחד מריץ Python bytecode בכל רגע. מגן על מבני ה-interpreter, לא על הלוגיקה של המשתמש."
+        },
+        {
+          "term": "CPython",
+          "def": "המימוש הרשמי והנפוץ של Python, כתוב ב-C. ה-GIL שייך לו; Jython ו-IronPython בלי GIL, PyPy עם GIL."
+        },
+        {
+          "term": "bytecode",
+          "def": "הפקודות שה-interpreter מריץ (למשל LOAD_GLOBAL, BINARY_OP, STORE_GLOBAL). פעולת Python אחת כמו `x += 1` היא כמה פקודות, וה-GIL יכול לעבור ביניהן."
+        },
+        {
+          "term": "reference counting",
+          "def": "ניהול הזיכרון של CPython: לכל אובייקט מונה הפניות, והוא משתחרר כשהמונה מגיע לאפס. עדכון לא מסונכרן של המונה מכמה threads הוא הסיבה המקורית ל-GIL."
+        },
+        {
+          "term": "OS thread",
+          "def": "`threading.Thread` ב-CPython הוא thread אמיתי של מערכת ההפעלה שה-OS מתזמן; ה-GIL רק מגביל מי מריץ bytecode."
+        },
+        {
+          "term": "switch interval",
+          "def": "הזמן (ברירת מחדל 5 ms, `sys.getswitchinterval`) שאחריו thread ממתין מבקש מהמחזיק לשחרר את ה-GIL. `setswitchinterval` משנה אותו: פחות latency מול יותר החלפות, בלי מקביליות נוספת."
+        },
+        {
+          "term": "eval breaker / gil_drop_request",
+          "def": "דגלים שה-eval loop בודק בנקודות מסוימות (קפיצות אחורה, קריאות). thread ממתין מדליק את gil_drop_request, והמחזיק משחרר בבדיקה הבאה ומחכה שמישהו אחר יתפוס (FORCE_SWITCHING)."
+        },
+        {
+          "term": "I/O-bound / CPU-bound",
+          "def": "I/O-bound: רוב הזמן מחכים לרשת או לדיסק (threads ו-asyncio מתאימים). CPU-bound: רוב הזמן חישוב; בקוד Python טהור צריך תהליכים או קוד native."
+        },
+        {
+          "term": "convoy effect",
+          "def": "thread של I/O שחוזר מהמתנה צריך לחכות עד switch interval כדי לקבל את ה-GIL מ-thread חישובי, בכל סבב I/O, וה-latency מצטבר."
+        },
+        {
+          "term": "Py_BEGIN_ALLOW_THREADS / Py_END_ALLOW_THREADS",
+          "def": "מאקרואים ב-C API ששחררים ומחזירים את ה-GIL סביב קוד שלא נוגע באובייקטי Python (חישוב טהור, syscall חוסם). בתוכם אסור Py_DECREF, יצירת אובייקטים או הרמת exceptions."
+        },
+        {
+          "term": "PyGILState_Ensure",
+          "def": "פונקציית C API שמאפשרת ל-thread של C (למשל callback של driver) לתפוס את ה-GIL לפני קריאה לקוד Python, ו-PyGILState_Release משחררת."
+        },
+        {
+          "term": "PyErr_CheckSignals",
+          "def": "בודק אם הגיע סיגנל (כמו Ctrl+C) ומריץ את ה-handler של Python. קוד C ארוך קורא לו מדי פעם (עם GIL) כדי לאפשר ביטול, כי handlers רצים רק ב-main thread כשה-interpreter מקבל שליטה."
+        },
+        {
+          "term": "buffer protocol / Py_buffer",
+          "def": "דרך לקבל מצביע לזיכרון הגולמי של אובייקט (bytes, bytearray, מערך NumPy) שנשאר חי כל עוד ה-view מוחזק; מאפשר לעבוד על הנתונים אחרי שחרור ה-GIL."
+        },
+        {
+          "term": "ctypes CDLL / PyDLL",
+          "def": "קריאה לספרייה native דרך CDLL משחררת את ה-GIL אוטומטית בזמן הקריאה; PyDLL מחזיק אותו (לפונקציות שנוגעות ב-C API)."
+        },
+        {
+          "term": "NumPy / BLAS ושחרור GIL",
+          "def": "רוב הפעולות הכבדות של NumPy (ufuncs על מערכים גדולים, FFT, BLAS) משחררות GIL, ולכן threads סקיילים כשרוב הזמן בתוך קוד וקטורי."
+        },
+        {
+          "term": "hashlib",
+          "def": "משחרר את ה-GIL רק כשהנתונים גדולים מסף של כ-2 KB (פרט מימוש). על buffers גדולים threads סקיילים; על הרבה מחרוזות קצרות כמעט לא."
+        },
+        {
+          "term": "oversubscription",
+          "def": "יותר threads פעילים מ-cores, למשל threads חיצוניים מעל BLAS שכבר מרובה-threads. גורם להחלפות הקשר ולתחרות על cache, ולפעמים להאטה."
+        },
+        {
+          "term": "Cython with nogil",
+          "def": "בלוק ב-Cython שבו קוד C שנוצר רץ בלי GIL; מאפשר מקביליות אמיתית עם threads ללולאות שנכתבו בטיפוסי C."
+        },
+        {
+          "term": "race condition / check-then-act",
+          "def": "תוצאה שתלויה בתזמון בין threads. check-then-act (`if key not in d: d[key] = ...`) הוא שתי פעולות, ו-thread אחר יכול להיכנס ביניהן גם עם GIL."
+        },
+        {
+          "term": "threading.Lock / RLock",
+          "def": "Lock הוא mutex לא reentrant: אותו thread שמנסה לתפוס אותו שוב נתקע (deadlock). RLock סופר כמה פעמים ה-thread הנוכחי תפס אותו ומאפשר כניסה חוזרת."
+        },
+        {
+          "term": "queue.Queue",
+          "def": "תור thread-safe להעברת עבודה בין threads, עם blocking put/get ו-maxsize. אין צורך ב-Lock נוסף סביבו."
+        },
+        {
+          "term": "Future (concurrent.futures)",
+          "def": "אובייקט שמחזיק תוצאה או exception שיגיעו בעתיד; `result()` חוסם עד שהם מוכנים. שימושי כדי שכמה threads יחכו לאותו חישוב."
+        },
+        {
+          "term": "multiprocessing / ProcessPoolExecutor",
+          "def": "הרצת workers בתהליכים נפרדים, לכל אחד interpreter ו-GIL משלו. מקביליות אמיתית ל-CPU-bound, במחיר הפעלה, pickle ו-IPC."
+        },
+        {
+          "term": "pickle",
+          "def": "סריאליזציה של אובייקטים; כך עוברים ארגומנטים ותוצאות בין תהליכים. פונקציות נשלחות לפי שם, ולכן lambda ופונקציות מקומיות נכשלות (PicklingError / AttributeError)."
+        },
+        {
+          "term": "functools.partial",
+          "def": "עוטף פונקציה עם חלק מהארגומנטים קבועים. partial של פונקציה ברמת ה-module ניתן ל-pickle, ולכן תחליף נפוץ ל-lambda ב-ProcessPoolExecutor."
+        },
+        {
+          "term": "chunksize",
+          "def": "פרמטר של `map` ב-ProcessPoolExecutor / Pool שמאחד כמה items לחבילה אחת ב-IPC, וכך מקטין את התקורה למשימות קטנות."
+        },
+        {
+          "term": "start methods: fork / spawn / forkserver",
+          "def": "fork משכפל את התהליך (מהיר, מסוכן עם threads); spawn מפעיל interpreter חדש ומייבא מחדש את ה-module הראשי (Windows, macOS); forkserver מבצע fork מתהליך שרת נקי (ברירת מחדל ב-Linux מ-3.14)."
+        },
+        {
+          "term": "if __name__ == '__main__'",
+          "def": "שומר שמונע מקוד ה-top level לרוץ כשה-module מיובא. ב-spawn ה-worker מייבא את הקובץ הראשי, ובלי השומר הוא מנסה ליצור pool בעצמו ונכשל."
+        },
+        {
+          "term": "BrokenProcessPool",
+          "def": "exception שה-pool זורק כש-worker מת בצורה לא צפויה (למשל נכשל ב-bootstrapping או קרס); אחריו ה-pool לא שמיש."
+        },
+        {
+          "term": "fork + threads deadlock",
+          "def": "אחרי fork רק ה-thread הקורא קיים בילד, אבל locks מועתקים במצבם. lock שהיה נעול על ידי thread אחר נשאר נעול לנצח. מ-3.12 יש DeprecationWarning על fork בתהליך עם threads."
+        },
+        {
+          "term": "shared_memory / np.memmap",
+          "def": "שיתוף בתים בין תהליכים בלי העתקה: `multiprocessing.shared_memory` נותן בלוק זיכרון משותף, ו-memmap ממפה קובץ לזיכרון. חוסך pickle של מערכים גדולים."
+        },
+        {
+          "term": "free-threaded build (PEP 703)",
+          "def": "build נפרד של CPython בלי GIL (`python3.13t`, `python3.14t`). ניסיוני ב-3.13, נתמך רשמית אבל לא ברירת מחדל ב-3.14 (PEP 779). `sys._is_gil_enabled()` מחזיר אם ה-GIL פעיל."
+        },
+        {
+          "term": "PYTHON_GIL / Py_mod_gil",
+          "def": "הרחבת C מצהירה על תמיכה ב-free-threading דרך slot בשם Py_mod_gil; import של הרחבה שלא הצהירה מפעיל את ה-GIL מחדש, אלא אם מגדירים PYTHON_GIL=0 או -X gil=0."
+        },
+        {
+          "term": "biased reference counting",
+          "def": "ב-free-threaded build: ה-thread שבבעלותו האובייקט מעדכן מונה מקומי בלי פעולות אטומיות, ו-threads אחרים מעדכנים מונה משותף אטומי. חוסך את מחיר האטומיות במקרה הנפוץ."
+        },
+        {
+          "term": "immortal objects (PEP 683)",
+          "def": "אובייקטים (כמו None, True ו-int קטנים) שהמונה שלהם לא משתנה לעולם, מ-3.12. מונעים תחרות על מונים של אובייקטים שכולם משתמשים בהם."
+        },
+        {
+          "term": "mimalloc ו-per-object locks",
+          "def": "ב-free-threaded build ההקצאה עוברת דרך mimalloc (thread-safe ומאפשר קריאות אופטימיות), ו-list, dict ודומיהם מוגנים ב-lock פנימי לכל אובייקט (critical section)."
+        },
+        {
+          "term": "specializing adaptive interpreter (PEP 659)",
+          "def": "מנגנון מ-3.11 שמחליף פקודות bytecode בגרסאות מותאמות לטיפוסים בזמן ריצה. מכובה ב-3.13t (חלק גדול מה-overhead שם) והופעל מחדש ב-3.14t."
+        },
+        {
+          "term": "subinterpreters (PEP 684, PEP 734)",
+          "def": "כמה interpreters בתוך תהליך אחד, כל אחד עם GIL משלו (מ-3.12). ב-3.14 יש `concurrent.interpreters` ו-`InterpreterPoolExecutor`. מקביליות אמיתית בלי שיתוף אובייקטים, והרחבות צריכות לתמוך בבידוד."
+        },
+        {
+          "term": "asyncio",
+          "def": "concurrency של I/O על thread אחד עם event loop. לא נותן מקביליות CPU ולא עוקף את ה-GIL."
+        },
+        {
+          "term": "SO_RCVBUF / recv_into / memoryview",
+          "def": "SO_RCVBUF הוא גודל buffer הקליטה של socket בקרנל (סופג bursts). `recv_into` כותב ישירות ל-buffer קיים (memoryview או מערך NumPy) בלי ליצור אובייקט bytes לכל packet."
+        },
+        {
+          "term": "py-spy",
+          "def": "sampling profiler חיצוני ל-Python שמראה איפה כל thread מבלה, כולל המתנה ל-GIL, בלי לשנות את הקוד."
+        }
+      ]
     }
   ],
   "questions": [
@@ -333,6 +547,281 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "py.gil.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "האם ה-GIL הוא חלק מהגדרת שפת Python?",
+      "choices": [
+        "כן, כל מימוש של Python חייב GIL",
+        "לא, זה פרט מימוש של CPython (ושל PyPy); Jython ו-IronPython רצים בלי GIL, ו-CPython עצמו מציע build free-threaded מ-3.13",
+        "כן, אבל רק מ-Python 3",
+        "לא, ה-GIL קיים רק ב-Windows"
+      ],
+      "answer": 1,
+      "explanation": "הגדרת השפה לא מחייבת GIL; הוא החלטה של CPython שמפשטת reference counting והרחבות C. גם CPython עצמו מציע build בלי GIL (PEP 703). ה-GIL קיים ב-CPython בכל מערכות ההפעלה, וקיים גם ב-Python 2.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הסיבה המרכזית לכך ש-CPython השתמש ב-GIL מלכתחילה?",
+      "choices": [
+        "להגן על reference counting ועל מבני הנתונים הפנימיים של ה-interpreter מעדכון בו-זמני, בלי lock לכל אובייקט ועם הרחבות C פשוטות",
+        "כדי להפוך כל קוד משתמש ל-thread-safe אוטומטית",
+        "כדי להאיץ קוד מרובה threads",
+        "כי מערכות הפעלה לא תמכו ב-threads כשנכתב Python"
+      ],
+      "answer": 0,
+      "explanation": "כל השמה משנה מונה הפניות, ועדכון לא מסונכרן ממספר threads היה גורם ל-crash או ל-leak. lock אחד גדול הוא פתרון פשוט ומהיר ב-single thread. הוא לא מגן על הלוגיקה של המשתמש (counter += 1 עדיין לא בטוח) ולא מאיץ threads; הוא דווקא מגביל אותם.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה `threading.Thread` ב-CPython?",
+      "choices": [
+        "green thread שה-interpreter מתזמן בעצמו בתוך thread אחד של מערכת ההפעלה",
+        "thread אמיתי של מערכת ההפעלה, שה-OS מתזמן; ה-GIL רק קובע מי מהם רשאי להריץ Python bytecode בכל רגע",
+        "תהליך נפרד עם זיכרון משלו",
+        "coroutine של asyncio"
+      ],
+      "answer": 1,
+      "explanation": "CPython יוצר thread אמיתי (pthread או Windows thread) לכל threading.Thread, ולכן threads יכולים לרוץ במקביל ב-I/O ובקוד C ששחרר את ה-GIL. green threads הם מודל של ספריות כמו gevent; תהליך נפרד הוא multiprocessing; coroutine היא asyncio, על thread אחד.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q22",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס (בקירוב)?",
+      "code": "import threading, time\n\ndef task():\n    time.sleep(1)\n\nstart = time.perf_counter()\nts = [threading.Thread(target=task) for _ in range(4)]\nfor t in ts:\n    t.start()\nfor t in ts:\n    t.join()\nprint(round(time.perf_counter() - start))",
+      "choices": [
+        "4",
+        "0",
+        "1",
+        "2"
+      ],
+      "answer": 2,
+      "explanation": "time.sleep משחרר את ה-GIL בזמן ההמתנה, ולכן ארבעת ה-threads ישנים במקביל והכל לוקח כשנייה. 4 היה נכון אילו ה-GIL היה מוחזק בזמן sleep, וזו בדיוק הסיבה ש-threads כן מתאימים ל-I/O. 0 היה נכון רק בלי join.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q23",
+      "level": 2,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "ב-Windows הקוד נכשל (RuntimeError ב-workers ו-BrokenProcessPool בתהליך הראשי). באיזו שורה הבאג ולמה?",
+      "code": "from concurrent.futures import ProcessPoolExecutor\n\ndef square(x):\n    return x * x\n\nwith ProcessPoolExecutor(4) as ex:\n    print(list(ex.map(square, range(5))))",
+      "bugLine": 6,
+      "choices": [
+        "square חייבת להיות lambda כדי שאפשר יהיה לשלוח אותה ל-workers",
+        "יצירת ה-pool נמצאת ברמה העליונה בלי `if __name__ == '__main__'`; ב-spawn כל worker מייבא מחדש את הקובץ הראשי ומנסה ליצור pool בעצמו",
+        "ProcessPoolExecutor לא עובד ב-Windows",
+        "צריך chunksize כשיש פחות items מ-workers"
+      ],
+      "answer": 1,
+      "explanation": "ב-spawn (ברירת המחדל ב-Windows וב-macOS) ה-worker מפעיל interpreter חדש ומייבא את ה-module הראשי, ולכן קוד ברמה העליונה רץ שוב בתוכו; multiprocessing מזהה ניסיון ליצור תהליכים בשלב ה-bootstrapping וזורק RuntimeError. התיקון: לעטוף את בלוק ה-with ב-`if __name__ == '__main__':`. lambda דווקא לא ניתנת ל-pickle, ו-chunksize לא קשור.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה האפקט של `sys.setswitchinterval(0.0005)` (במקום 0.005 של ברירת המחדל) בתוכנית עם כמה threads?",
+      "choices": [
+        "threads של Python טהור ירוצו במקביל על כמה cores",
+        "ה-GIL ישוחרר גם בתוך קוד C ארוך שמחזיק אותו",
+        "אין השפעה, הערך נקבע רק בזמן build",
+        "threads ממתינים יקבלו את ה-GIL מהר יותר (latency נמוך יותר ל-I/O threads), במחיר יותר החלפות ופחות throughput לחישוב; אין מקביליות נוספת"
+      ],
+      "answer": 3,
+      "explanation": "ה-interval קובע כמה זמן thread ממתין מחכה לפני שהוא מבקש מהמחזיק לשחרר. ערך קטן מקצר את ההמתנה ומקל על convoy effect, אבל מוסיף תקורת החלפה. הוא לא מאפשר לשני threads להריץ bytecode במקביל, ולא משפיע על קוד C שמחזיק את ה-GIL, כי קוד כזה לא עובר דרך נקודות הבדיקה של ה-eval loop.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q25",
+      "level": 2,
+      "type": "multi",
+      "prompt": "ב-CPython הרגיל (עם GIL), אילו גישות יתנו האצה אמיתית על 8 cores ללולאה כבדה בקוד Python טהור, שמחולקת ל-8 חלקים עצמאיים?",
+      "choices": [
+        "ProcessPoolExecutor עם 8 workers",
+        "multiprocessing.Pool(8)",
+        "ThreadPoolExecutor עם 8 threads",
+        "asyncio.gather על 8 coroutines",
+        "8 אובייקטי threading.Thread עם daemon=True",
+        "לכתוב את הלולאה ב-Cython עם בלוק `with nogil` ולהריץ אותה ב-8 threads"
+      ],
+      "answer": [
+        0,
+        1,
+        5
+      ],
+      "explanation": "תהליכים מקבלים GIL נפרד כל אחד, ולכן רצים במקביל. Cython עם nogil הופך את הלולאה לקוד C שרץ בלי GIL, ואז threads באמת מקבילים. threads רגילים (daemon או לא) ו-asyncio חולקים GIL אחד, וקוד Python טהור יתבצע בפועל סדרתית.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שני workloads עם `ThreadPoolExecutor(4)`: (A) sha256 על 4 קבצים של 500 MB שכבר בזיכרון; (B) sha256 על 4 מיליון מחרוזות של 64 בתים. באיזה מקרה threads מאיצים משמעותית?",
+      "choices": [
+        "בשניהם, hashlib תמיד משחרר את ה-GIL",
+        "רק ב-A: hashlib משחרר את ה-GIL רק על נתונים גדולים מסף של כ-2 KB, וב-B רוב הזמן הוא bytecode של הלולאה וקריאות קצרות שמחזיקות GIL",
+        "רק ב-B, כי יש יותר משימות לחלק",
+        "באף אחד, hashlib כתוב ב-Python"
+      ],
+      "answer": 1,
+      "explanation": "שחרור ותפיסה מחדש של ה-GIL עולים זמן, ולכן hashlib משחרר רק מעל סף (פרט מימוש, כ-2 KB). ב-A כל קריאה היא שנייה של חישוב C בלי GIL, ו-4 threads נותנים כמעט פי 4. ב-B כל hash לוקח מיקרו-שנייה, ה-GIL מוחזק, ותקורת הלולאה ב-Python שולטת. כמות המשימות לא משנה כשהן מחזיקות את אותו GIL.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q27",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "`get` נקראת מכמה threads, ו-`expensive` חייבת לרוץ לכל היותר פעם אחת לכל key. באיזו שורה הבאג?",
+      "code": "import threading\n\ncache = {}\nlock = threading.Lock()\n\ndef get(key):\n    if key not in cache:\n        with lock:\n            cache[key] = expensive(key)\n    return cache[key]",
+      "bugLine": 7,
+      "choices": [
+        "הבדיקה נעשית מחוץ ל-lock: שני threads יכולים לראות שה-key חסר, ואז כל אחד בתורו נכנס ל-lock ומחשב; צריך לבדוק שוב בתוך ה-lock (או לבדוק רק בתוכו)",
+        "`with lock` לא עובד על threading.Lock, צריך acquire ו-release מפורשים",
+        "קריאה מ-dict בלי lock תשחית את ה-dict ב-CPython",
+        "`return cache[key]` צריך להיות בתוך ה-lock, אחרת יוחזר ערך חלקי"
+      ],
+      "answer": 0,
+      "explanation": "זה check-then-act: הבדיקה וההכנסה הן שתי פעולות, ו-thread אחר יכול להיכנס ביניהן. ה-lock רק מסדר את שני החישובים אחד אחרי השני, לא מונע אותם. תיקון: double-checked locking (בדיקה נוספת בתוך ה-lock), ואם expensive ארוך, dict של Future-ים כדי לא להחזיק lock גלובלי בזמן החישוב. with lock תקין, וקריאה בודדת מ-dict לא משחיתה אותו ב-CPython; ערך שכבר נכתב ל-dict לא \"חלקי\".",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q28",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס בשורה האחרונה?",
+      "code": "import threading\n\nlock = threading.Lock()\n\ndef g():\n    with lock:\n        print(\"g\")\n\ndef f():\n    with lock:\n        g()\n\nt = threading.Thread(target=f, daemon=True)\nt.start()\nt.join(timeout=1)\nprint(\"alive\" if t.is_alive() else \"done\")",
+      "choices": [
+        "done",
+        "g ואז RuntimeError",
+        "alive",
+        "done, אחרי ש-g מודפס"
+      ],
+      "answer": 2,
+      "explanation": "threading.Lock אינו reentrant: f מחזיק אותו, ו-g באותו thread מנסה לתפוס אותו שוב ונחסם לנצח. g לא מודפס, join חוזר אחרי timeout של שנייה, וה-thread עדיין חי, לכן מודפס alive (daemon=True מאפשר לתוכנית לצאת). Lock לא זורק שגיאה על נעילה כפולה; ל-reentrancy משתמשים ב-RLock.",
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q29",
+      "level": 4,
+      "type": "order",
+      "prompt": "ב-CPython עם GIL (3.2+), thread A מריץ לולאת Python ארוכה ו-thread B רוצה לרוץ. סדר את השלבים עד ש-B רץ:",
+      "items": [
+        "B מבקש את ה-GIL ומחכה על condition variable עם timeout של switch interval",
+        "ה-timeout פג וה-GIL עדיין תפוס, אז B מדליק את gil_drop_request ב-eval breaker",
+        "A מגיע לנקודת בדיקה ב-eval loop (למשל קפיצה אחורה בלולאה) ורואה את הבקשה",
+        "A משחרר את ה-GIL ומחכה עד שמישהו אחר יתפוס אותו",
+        "B תופס את ה-GIL ומריץ bytecode, ו-A חוזר לבקש את ה-GIL כ-thread ממתין"
+      ],
+      "explanation": "זה ה-new GIL של Antoine Pitrou: החלפה מבוססת זמן ולא מספר פקודות. ההמתנה של A עד ש-B באמת תפס (FORCE_SWITCHING) מונעת מ-A לתפוס מחדש מיד, כמו שקרה ב-GIL הישן. ההמתנה של עד 5 ms לפני הדלקת הבקשה היא בדיוק המקור ל-convoy effect.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q30",
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "prompt": "כתוב מחלקה `OncePerKey(compute)` עם מתודה `get(key)` שנקראת מהרבה threads. `compute(key)` איטית (מאות ms) וחייבת לרוץ לכל היותר פעם אחת לכל key. threads שמבקשים key שנמצא בחישוב מחכים לתוצאה; חישובים של keys שונים רצים במקביל (אסור להחזיק lock גלובלי בזמן compute). אם compute זורקת, כל הממתינים מקבלים את ה-exception.",
+      "starter": "import threading\nfrom concurrent.futures import Future\n\nclass OncePerKey:\n    def __init__(self, compute):\n        ...\n    def get(self, key):\n        ...",
+      "modelAnswer": "import threading\nfrom concurrent.futures import Future\n\nclass OncePerKey:\n    def __init__(self, compute):\n        self._compute = compute\n        self._lock = threading.Lock()\n        self._futs = {}\n\n    def get(self, key):\n        with self._lock:               # short critical section\n            fut = self._futs.get(key)\n            owner = fut is None\n            if owner:\n                fut = Future()\n                self._futs[key] = fut\n        if owner:                      # compute outside the lock\n            try:\n                fut.set_result(self._compute(key))\n            except BaseException as e:\n                fut.set_exception(e)\n        return fut.result()            # waits if another thread computes",
+      "rubric": [
+        "check-then-insert אטומי תחת lock אחד, כך שרק thread אחד הופך ל-owner של key",
+        "compute רץ מחוץ ל-lock, כך ש-keys שונים מחושבים במקביל ו-get של keys מוכנים לא נחסם",
+        "Future (או Event + slot) כדי שהממתינים יקבלו תוצאה או exception",
+        "טיפול ב-exception: set_exception כדי שממתינים לא ייתקעו לנצח; דיון אם לשמור כשל ב-cache או לאפשר retry",
+        "זיכרון גדל עם מספר ה-keys (O(K)); לשקול eviction"
+      ],
+      "explanation": "ה-GIL לא עוזר כאן: הבדיקה וההכנסה חייבות להיות אטומיות יחד, ולכן lock קצר. החזקת lock גלובלי סביב compute הייתה נכונה אבל מסדרת את כל ה-keys. בלי set_exception, כשל של ה-owner משאיר את כל הממתינים תקועים ב-result() לנצח. בגרסה הזאת כשל נשמר ב-cache; כדי לאפשר retry מסירים את ה-Future מה-dict בכשל.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q31",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-Python 3.14 נוסף `concurrent.futures.InterpreterPoolExecutor`. מה הוא נותן לעומת ThreadPoolExecutor ו-ProcessPoolExecutor?",
+      "choices": [
+        "זה ThreadPoolExecutor עם שם חדש; כל ה-workers חולקים GIL אחד",
+        "כל worker הוא subinterpreter בתוך אותו תהליך עם GIL משלו (PEP 684), כך שקוד Python טהור רץ במקביל בלי הפעלת תהליכים; אבל אובייקטים לא משותפים בין interpreters (נתונים מועברים, בדרך כלל ב-pickle), והרחבות C צריכות לתמוך ב-subinterpreters",
+        "הוא מבטל את ה-GIL בתהליך כולו, כמו ה-build ה-free-threaded",
+        "הוא מריץ את ה-workers בתהליכים נפרדים אבל משתף ביניהם את כל האובייקטים בלי pickle"
+      ],
+      "answer": 1,
+      "explanation": "subinterpreters עם GIL לכל interpreter קיימים מ-3.12 ב-C API, וב-3.14 (PEP 734) נוספו `concurrent.interpreters` ו-InterpreterPoolExecutor. זה מודל ביניים: מקביליות כמו תהליכים, תקורת הפעלה קטנה יותר, אבל בידוד מלא של אובייקטים. הוא לא מבטל את ה-GIL אלא מכפיל אותו, ו-free-threading הוא build נפרד לגמרי.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q32",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו מנגנונים משמשים את ה-build ה-free-threaded של CPython (PEP 703) כדי לעבוד בלי GIL?",
+      "choices": [
+        "biased reference counting: ה-thread שבבעלותו האובייקט מעדכן מונה בלי פעולות אטומיות, ו-threads אחרים משתמשים במונה משותף אטומי",
+        "locks פנימיים לכל אובייקט (critical sections) עבור list, dict ומבנים דומים",
+        "mimalloc כ-allocator, שמאפשר גם קריאות אופטימיות בלי lock לחלק מהמבנים",
+        "החלפת ה-GIL ב-lock גלובלי אחד שמוחזק רק בזמן הקצאות זיכרון",
+        "ביטול reference counting לטובת tracing GC בלבד",
+        "ב-3.13t ה-specializing adaptive interpreter (PEP 659) מכובה, וזו סיבה מרכזית ל-overhead ב-single thread"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        5
+      ],
+      "explanation": "PEP 703 שומר על reference counting אבל הופך אותו ל-biased (רוב העדכונים מקומיים וזולים), נשען על immortal objects ועל ספירה דחויה, מחליף את ה-allocator ל-mimalloc, ומגן על containers ב-lock לכל אובייקט. ב-3.13t ה-specialization כובה כי עדיין לא היה thread-safe, ולכן single thread היה איטי משמעותית; ב-3.14 הוא הופעל מחדש. אין lock גלובלי חלופי, ו-tracing GC לבד היה שובר את סמנטיקת השחרור המיידי ש-CPython מבטיח בפועל.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "py.gil"
+    },
+    {
+      "id": "py.gil.q33",
+      "level": 5,
+      "type": "multi",
+      "prompt": "בהרחבת C, אילו פעולות מותר לבצע בין `Py_BEGIN_ALLOW_THREADS` ל-`Py_END_ALLOW_THREADS`?",
+      "choices": [
+        "חישוב C טהור על מצביע שהושג מראש דרך buffer protocol (`Py_buffer` שעדיין מוחזק)",
+        "קריאה חוסמת ל-`read()` או `recv()` של מערכת ההפעלה",
+        "`Py_DECREF` על אובייקט זמני שכבר לא צריך",
+        "`PyErr_SetString` כדי לדווח על שגיאה שהתגלתה בחישוב",
+        "`memcpy` לתוך ה-buffer של bytearray שהושג מראש דרך Py_buffer",
+        "קריאה ל-callback של Python שהמשתמש העביר"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "בלי GIL מותר רק מה שלא נוגע במצב של ה-interpreter: חישוב וכתיבה לזיכרון גולמי שה-Py_buffer שומר חי, ו-syscalls. Py_DECREF עלול לשחרר אובייקט ולהריץ קוד Python (__del__), PyErr_SetString יוצר אובייקטים ונוגע ב-thread state, וקריאה ל-callback דורשת GIL. הדפוס הנכון: לשמור קוד שגיאה במשתנה C, ולהרים את ה-exception אחרי Py_END_ALLOW_THREADS.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "py.gil"
     }
   ]
 }

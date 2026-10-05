@@ -34,7 +34,141 @@
         "LRU ו-LFU ב-O(1), ו-std::list::splice להזזת איבר בלי הקצאה",
         "lock-free linked structures: CAS, בעיית ABA ו-memory reclamation (hazard pointers, epochs)"
       ],
-      "diagram": "reverse:\nprev  cur   next\nnull  [1]-> [2]-> [3]-> null\n      cur->next = prev, then shift:\nnull <-[1]  [2]-> [3]\n       prev cur   next"
+      "diagram": "reverse:\nprev  cur   next\nnull  [1]-> [2]-> [3]-> null\n      cur->next = prev, then shift:\nnull <-[1]  [2]-> [3]\n       prev cur   next",
+      "details": [
+        {
+          "title": "המבנה ועלויות הפעולות",
+          "body": "ב-**singly linked list** כל node מחזיק ערך ו-pointer ל-next; האחרון מצביע ל-nullptr. ב-**doubly linked list** יש גם prev. אין חישוב כתובת לפי אינדקס, ולכן גישה לאיבר ה-k עולה O(k), חיפוש O(n), ו-binary search לא עוזר (כל קפיצה לאמצע היא סריקה).\n\nהיתרון: כשיש כבר pointer למקום, הכנסה ומחיקה הן O(1) בלי להזיז איברים. ב-singly צריך את ה-node **הקודם** כדי למחוק (לעדכן את ה-next שלו); ב-doubly מספיק pointer ל-node עצמו, כי prev נותן את השכן. עם tail pointer, הוספה לסוף היא O(1) בשתיהן.\n\nטריק כשיש רק pointer ל-node באמצע singly list (בלי head): מעתיקים אליו את הערך של הבא ומוחקים את הבא. לא עובד על ה-node האחרון, ומשבש pointers חיצוניים ל-node שנמחק בפועל.\n\nבעולם האמיתי list איטית לרוב מ-vector: כל node הוא הקצאה נפרדת, שני pointers לאיבר, ו-iteration הוא pointer chasing עם cache miss כמעט לכל node. היא עדיפה כשצריך יציבות של iterators ו-pointers, **splice** (העברת nodes בין רשימות ב-O(1) בלי העתקה), או אובייקטים שאסור להזיז. במערכות ביצועים משתמשים ב-**intrusive lists**: ה-next וה-prev נמצאים בתוך האובייקט עצמו (list_head בקרנל של Linux), בלי הקצאה נוספת."
+        },
+        {
+          "title": "אבני בניין: dummy, היפוך, fast/slow",
+          "body": "**Dummy head (sentinel)**: node מזויף לפני ה-head. מחיקת ה-head או הכנסה לפניו הופכות לפעולות רגילות, כי לכל node אמיתי יש קודם. בסוף מחזירים dummy.next. ב-C++ ה-dummy יכול לשבת על ה-stack.\n\n**היפוך איטרטיבי**: prev = nullptr, cur = head. בכל צעד: שומרים next = cur->next, דורסים cur->next = prev, מקדמים prev = cur ו-cur = next. בסוף prev הוא ה-head החדש. אם דורסים את cur->next לפני ששומרים אותו – שאר הרשימה אובד. O(n) זמן ו-O(1) זיכרון; היפוך רקורסיבי עולה O(n) ב-call stack.\n\n**Fast/slow**: slow צעד, fast שני צעדים. התנאי while (fast && fast->next) מגן מגישה ל-nullptr. כש-fast מגיע לסוף, slow באמצע (באורך זוגי – האמצע **השני**; כדי לקבל את הראשון, למשל לפני פיצול ב-merge sort, משתמשים ב-while (fast->next && fast->next->next)).\n\n**זיהוי מעגל (Floyd)**: אם יש מעגל, fast 'סוגר' על slow בצעד אחד בכל איטרציה והם נפגשים. O(1) זיכרון, לעומת hash set של nodes ב-O(n). כדי למצוא את **תחילת המעגל**: אחרי המפגש מחזירים מצביע אחד ל-head ומקדמים את שניהם בצעד אחד – הם נפגשים בכניסה. אורך המעגל: מקבעים אחד ומקדמים את השני עד שחוזר.\n\n**ה-n-י מהסוף**: מקדמים את fast ב-n + 1 צעדים מה-dummy, ואז שניהם יחד עד ש-fast הוא nullptr; slow עומד לפני ה-node שצריך למחוק."
+        },
+        {
+          "title": "מיזוג, מיון וחיבור",
+          "body": "**Merge Two Sorted Lists**: dummy ו-tail; בכל צעד מחברים ל-tail את הקטן מבין שני ה-heads (עם ≤ – יציב), ובסוף מחברים את השארית בפעולה אחת. O(m + n), O(1) זיכרון, בלי הקצאות.\n\n**Merge k Sorted Lists** (N nodes בסך הכול): min-heap של k ה-heads נותן O(N log k); מיזוג זוגי (divide and conquer, כמו merge sort על הרשימות) נותן גם O(N log k) עם O(1) זיכרון נוסף. מיזוג **אחת-אחת** לתוך תוצאה מצטברת עולה O(N·k), כי התוצאה המצטברת נסרקת שוב בכל מיזוג.\n\n**Sort List**: merge sort מתאים לרשימות – המיזוג לא צריך גישה אקראית ולא מערך עזר. top-down רקורסיבי צורך O(log n) ב-call stack; O(1) אמיתי דורש **bottom-up**: ממזגים תתי-רשימות באורך 1, 2, 4, ... quicksort עם head כ-pivot הוא O(n²) על קלט ממוין, ו-heapsort דורש גישה לפי אינדקס.\n\n**Add Two Numbers** (ספרות בסדר הפוך): עוברים על שתי הרשימות במקביל עם carry; ממשיכים כל עוד אחת מהן לא נגמרה **או** שיש carry, כדי ש-99 + 1 ייתן 0 → 0 → 1."
+        },
+        {
+          "title": "בעיות מורכבות כהרכבה של אבני בניין",
+          "body": "- **Reorder List** (L0 → Ln → L1 → Ln−1 ...): מוצאים אמצע, **מנתקים** (slow->next = nullptr), הופכים את החצי השני, וממזגים לסירוגין. שכחת הניתוק משאירה את סוף החצי הראשון מצביע לתוך החצי ההפוך – ונוצר מעגל.\n- **Palindrome Linked List** ב-O(1) זיכרון: אמצע, היפוך החצי השני, השוואה, והחזרת ההיפוך (או לפחות לציין שהקלט משתנה).\n- **Reverse Nodes in k-Group**: לפני כל היפוך בודקים שיש עוד k nodes; קבוצה אחרונה קצרה מ-k נשארת כמו שהיא. מחברים את הסוף של קבוצה הפוכה ל-head של הבאה. O(n) זמן, O(1) זיכרון בגרסה האיטרטיבית.\n- **Rotate List** ב-k: k יכול להיות גדול מ-n, ולכן k %= n (ואם 0 – אין שינוי). מחברים את ה-tail ל-head (מעגל), והולכים n − k צעדים כדי לחתוך: ה-node ה-(n − k) הוא ה-tail החדש.\n- **Intersection of Two Lists**: pA רץ על A ואז על B, ו-pB על B ואז על A. שניהם עוברים a + b + c צעדים ונפגשים בחיתוך, או מגיעים יחד ל-nullptr.\n- **Copy List with Random Pointer**: משלבים כל עותק אחרי המקור (A → A' → B → B'), ואז A'.random = A.random->next, ולבסוף מפרידים. העותק של X הוא תמיד X->next, ולכן אין צורך ב-hash map.\n- **Remove Linked List Elements**: עם dummy ו-cur; אם cur->next צריך להימחק מדלגים עליו **בלי** לקדם את cur (אולי גם הבא צריך להימחק)."
+        },
+        {
+          "title": "מבני נתונים שבנויים על רשימות",
+          "body": "**LRU Cache**: hash map מ-key ל-node (או iterator) ברשימה דו-כיוונית שמסודרת לפי שימוש אחרון. get מזיז את ה-node לחזית; put מוסיף לחזית ומוציא מהזנב כשמלא. ה-node שומר גם את ה-key כדי למחוק מה-map ב-eviction. ב-C++: std::list עם splice, שמזיז node ב-O(1) בלי הקצאה וה-iterator נשאר תקף.\n\n**LFU Cache**: hash map מ-key ל-node, hash map מ-frequency לרשימה דו-כיוונית (LRU בתוך כל frequency), ומשתנה minFreq. גישה מעבירה node מרשימה f ל-f + 1; אם רשימת minFreq התרוקנה, minFreq++. הכנסה חדשה מאפסת minFreq = 1. הכול O(1).\n\n**Skip list**: רשימה ממוינת עם 'נתיבים מהירים': כל node מקבל גובה אקראי (גובה h בהסתברות 2^(−h)), ובכל רמה יש רשימה של כל ה-nodes שגובהם לפחות כך. חיפוש מתחיל ברמה העליונה ויורד. O(log n) בתוחלת לחיפוש, הכנסה ומחיקה, O(n) זיכרון בתוחלת, O(n) worst-case. פשוט יותר מעץ מאוזן ונוח למקביליות (Java ConcurrentSkipListMap, memtable ב-LevelDB/RocksDB, sorted sets ב-Redis).\n\n**std::list::splice**: מאז C++11, size() חייב להיות O(1), ולכן splice של טווח **מרשימה אחרת** הוא לינארי (צריך לספור כמה עברו). splice של כל הרשימה, של איבר בודד, או של טווח בתוך אותה רשימה – O(1)."
+        },
+        {
+          "title": "זיכרון, בעלות ו-lock-free",
+          "body": "**unique_ptr ו-destructor רקורסיבי**: אם כל node מחזיק std::unique_ptr<Node> next, השחרור של head הורס את next, שהורס את ה-next שלו, וכן הלאה – רקורסיה בעומק n ו-stack overflow ב-10⁶ nodes. התיקון: destructor איטרטיבי – while (head) head = std::move(head->next); – כל איטרציה מעבירה את הבעלות לבא לפני שה-node הישן נמחק, וה-next שלו כבר ריק.\n\n**רקורסיה על רשימות**: כל פונקציה רקורסיבית על רשימה (היפוך, מיזוג, הדפסה הפוכה) צורכת O(n) ב-call stack; ב-10⁶ nodes זה קורס. בראיון כדאי להציע גרסה איטרטיבית.\n\n**Treiber stack** (lock-free stack על singly list): pop קורא old = head ו-next = old->next, ואז CAS(head, old, next). **בעיית ABA**: בין הקריאה ל-CAS, thread אחר עושה pop ל-A, pop ל-B ו-push ל-A מחדש (או node ממוחזר באותה כתובת). ה-CAS מצליח כי head שוב A, ומציב head = B – node שכבר שוחרר. פתרונות: tagged pointer עם מונה גרסה (double-width CAS), hazard pointers (כל thread מפרסם אילו nodes הוא קורא ואסור לשחרר אותם), או epoch-based reclamation."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: היפוך 1 → 2 → 3",
+          "body": "prev = null, cur = 1.\n\n- next = 2; 1->next = null; prev = 1; cur = 2. מצב: null ← 1, ו-2 → 3.\n- next = 3; 2->next = 1; prev = 2; cur = 3. מצב: null ← 1 ← 2, ו-3.\n- next = null; 3->next = 2; prev = 3; cur = null. מצב: null ← 1 ← 2 ← 3.\n\nמחזירים prev = 3. אם מוותרים על שמירת next, אחרי הצעד הראשון cur = 1->next = null והלולאה נגמרת – הרשימה מתקצרת ל-node אחד ו-2, 3 דולפים."
+        },
+        {
+          "title": "דוגמה: מחיקת ה-2 מהסוף ב-1 → 2 → 3 → 4 → 5",
+          "body": "dummy → 1 → 2 → 3 → 4 → 5. fast ו-slow מתחילים ב-dummy.\n\n- fast מתקדם n + 1 = 3 צעדים: 1, 2, 3.\n- שניהם יחד: fast = 4, slow = 1; fast = 5, slow = 2; fast = null, slow = 3.\n- slow->next = slow->next->next: 3 → 5.\n\nהתוצאה 1 → 2 → 3 → 5. הפער הקבוע של n + 1 בין המצביעים מבטיח ש-slow עוצר **לפני** ה-node שנמחק. בזכות ה-dummy, n = 5 (מחיקת ה-head) עובד בלי מקרה מיוחד."
+        },
+        {
+          "title": "דוגמה: Reorder List על 1 → 2 → 3 → 4 → 5",
+          "body": "- אמצע: slow עוצר על 3 (fast על 5).\n- ניתוק: 3->next = null. חצי ראשון 1 → 2 → 3, חצי שני 4 → 5.\n- היפוך החצי השני: 5 → 4.\n- מיזוג לסירוגין: 1 → 5 → 2 → 4 → 3.\n\nבלי הניתוק, 3 עדיין מצביע ל-4, ובמיזוג 4->next מקבל 3. התוצאה: 3 → 4 → 3 – מעגל. בכל פיצול של רשימה, לסגור את סוף החלק הראשון ב-null."
+        },
+        {
+          "title": "דוגמה: Add Two Numbers עם 99 + 1",
+          "body": "הספרות בסדר הפוך: 9 → 9 ו-1.\n\n- 9 + 1 + 0 = 10: ספרה 0, carry 1.\n- 9 + 0 + 1 = 10: ספרה 0, carry 1.\n- שתי הרשימות נגמרו, אבל carry = 1: ספרה 1, carry 0.\n\nהתוצאה 0 → 0 → 1, כלומר 100. תנאי הלולאה חייב לכלול את ה-carry, אחרת הספרה האחרונה אובדת."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Singly / doubly linked list",
+          "def": "nodes עם next בלבד, או עם next ו-prev. ב-doubly אפשר למחוק node ב-O(1) כשיש pointer אליו; ב-singly צריך את הקודם."
+        },
+        {
+          "term": "Dummy head (sentinel)",
+          "def": "node מזויף לפני ה-head שמבטל מקרי קצה של מחיקה או הכנסה ב-head. מחזירים dummy.next."
+        },
+        {
+          "term": "Iterative reversal",
+          "def": "שלושה pointers: prev, cur, next. שומרים next לפני שדורסים. O(n) זמן, O(1) זיכרון."
+        },
+        {
+          "term": "Fast/slow pointers",
+          "def": "slow צעד ו-fast שניים. מוצאים אמצע, מזהים מעגל, ומוצאים את ה-n-י מהסוף (עם פער קבוע)."
+        },
+        {
+          "term": "Floyd cycle detection",
+          "def": "fast ו-slow נפגשים אם יש מעגל; איפוס אחד ל-head והתקדמות משותפת מוצאת את כניסת המעגל. O(1) זיכרון."
+        },
+        {
+          "term": "Merge Two / k Sorted Lists",
+          "def": "מיזוג עם dummy ו-tail ב-O(m + n). ל-k רשימות: heap או מיזוג זוגי ב-O(N log k); אחת-אחת עולה O(N·k)."
+        },
+        {
+          "term": "Sort List (bottom-up merge sort)",
+          "def": "מיון רשימה ב-O(n log n) עם O(1) זיכרון: ממזגים תתי-רשימות באורך 1, 2, 4 וכן הלאה, בלי רקורסיה."
+        },
+        {
+          "term": "Add Two Numbers",
+          "def": "חיבור מספרים שהספרות שלהם ברשימות בסדר הפוך, עם carry. ממשיכים כל עוד נשארו ספרות או carry."
+        },
+        {
+          "term": "Reorder List",
+          "def": "L0 → Ln → L1 → Ln−1: אמצע, ניתוק, היפוך החצי השני ומיזוג לסירוגין. בלי ניתוק נוצר מעגל."
+        },
+        {
+          "term": "Palindrome Linked List",
+          "def": "בדיקה ב-O(1) זיכרון: היפוך החצי השני והשוואה. רקורסיה או stack עולים O(n)."
+        },
+        {
+          "term": "Reverse Nodes in k-Group",
+          "def": "היפוך כל k nodes; בודקים שיש k לפני היפוך, וקבוצה אחרונה קצרה נשארת."
+        },
+        {
+          "term": "Rotate List",
+          "def": "סיבוב ימינה ב-k: k %= n, סגירת מעגל, וחיתוך אחרי n − k nodes."
+        },
+        {
+          "term": "Intersection of Two Lists",
+          "def": "שני מצביעים שמחליפים רשימה בסוף עוברים אותו מרחק ונפגשים בחיתוך או ב-nullptr. O(1) זיכרון."
+        },
+        {
+          "term": "Copy List with Random Pointer",
+          "def": "deep copy ב-O(1) זיכרון נוסף: שילוב עותקים בין המקור, הצבת random דרך X->next, והפרדה."
+        },
+        {
+          "term": "LRU / LFU Cache",
+          "def": "LRU: hash map + רשימה דו-כיוונית לפי שימוש אחרון. LFU: גם map מ-frequency לרשימה ומשתנה minFreq. כל הפעולות O(1)."
+        },
+        {
+          "term": "std::list::splice",
+          "def": "העברת nodes בין רשימות או בתוך רשימה בלי הקצאה. O(1), חוץ מטווח מרשימה אחרת – לינארי, כי size() חייב להיות O(1) מ-C++11."
+        },
+        {
+          "term": "Intrusive list",
+          "def": "ה-next וה-prev בתוך האובייקט עצמו (list_head בקרנל, boost::intrusive). בלי הקצאה נוספת, ואובייקט יכול להיות בכמה רשימות."
+        },
+        {
+          "term": "Pointer chasing ו-cache misses",
+          "def": "מעבר על רשימה קורא כתובות מפוזרות, ולכן כמעט כל node הוא cache miss. זו הסיבה ש-vector מהיר יותר ברוב המקרים."
+        },
+        {
+          "term": "Skip list",
+          "def": "רשימה ממוינת עם רמות אקראיות של קיצורי דרך. חיפוש, הכנסה ומחיקה ב-O(log n) בתוחלת; נוחה למקביליות."
+        },
+        {
+          "term": "unique_ptr destructor רקורסיבי",
+          "def": "שרשרת של unique_ptr משתחררת ברקורסיה ועלולה לגרום ל-stack overflow. פותרים ב-destructor איטרטיבי."
+        },
+        {
+          "term": "Treiber stack ו-CAS",
+          "def": "stack lock-free שבו push ו-pop מעדכנים את head עם compare-and-swap, שמצליח רק אם הערך לא השתנה."
+        },
+        {
+          "term": "ABA problem",
+          "def": "ערך שחזר לאותה כתובת (A → B → A) גורם ל-CAS להצליח למרות שהמבנה השתנה. פתרונות: tagged pointers, hazard pointers, epoch-based reclamation."
+        }
+      ]
     }
   ],
   "questions": [
@@ -73,7 +207,11 @@
       "level": 1,
       "type": "short",
       "prompt": "מה ה-space complexity של היפוך איטרטיבי של singly linked list in-place? (כתוב בצורת O(...))",
-      "accept": ["O(1)", "1", "קבוע"],
+      "accept": [
+        "O(1)",
+        "1",
+        "קבוע"
+      ],
       "explanation": "רק שלושה pointers (prev, cur, next), בלי קשר לאורך הרשימה. היפוך רקורסיבי עולה O(n) ב-call stack.",
       "lesson": "alg.linked-lists"
     },
@@ -84,7 +222,12 @@
       "lang": "cpp",
       "code": "// list: 1 -> 2 -> 3 -> 4 -> nullptr\nNode* slow = head;\nNode* fast = head;\nwhile (fast && fast->next) {\n    slow = slow->next;\n    fast = fast->next->next;\n}\nstd::cout << slow->val;",
       "prompt": "מה יודפס?",
-      "choices": ["2", "1", "4", "3"],
+      "choices": [
+        "2",
+        "1",
+        "4",
+        "3"
+      ],
       "answer": 3,
       "explanation": "צעד 1: slow = 2, fast = 3. ל-3 יש next, אז צעד 2: slow = 3, fast = nullptr. ברשימה באורך זוגי הלולאה הזו מחזירה את האמצע השני. כדי לקבל את האמצע הראשון (למשל לפני פיצול ב-merge sort) משתמשים ב-while (fast->next && fast->next->next).",
       "lesson": "alg.linked-lists"
@@ -114,7 +257,12 @@
       "lang": "python",
       "code": "class Node:\n    def __init__(self, v, nxt=None):\n        self.v, self.next = v, nxt\n\ndef remove_nth(head, n):\n    dummy = Node(0, head)\n    fast = slow = dummy\n    for _ in range(n + 1):\n        fast = fast.next\n    while fast:\n        fast, slow = fast.next, slow.next\n    slow.next = slow.next.next\n    return dummy.next\n\nh = remove_nth(Node(1, Node(2, Node(3, Node(4, Node(5))))), 2)\nout = []\nwhile h:\n    out.append(h.v)\n    h = h.next\nprint(out)",
       "prompt": "מה יודפס?",
-      "choices": ["[1, 2, 4, 5]", "[1, 2, 3, 4]", "[1, 2, 3, 5]", "[2, 3, 4, 5]"],
+      "choices": [
+        "[1, 2, 4, 5]",
+        "[1, 2, 3, 4]",
+        "[1, 2, 3, 5]",
+        "[2, 3, 4, 5]"
+      ],
       "answer": 2,
       "explanation": "fast מקדים ב-n + 1 צעדים, ולכן כש-fast מגיע ל-None, slow עומד על ה-node שלפני ה-n-י מהסוף (3), ומוחקים את 4. אם fast היה מקדים רק ב-n צעדים, slow היה עוצר על 4 ומוחק את 5 – off-by-one נפוץ. ה-dummy מאפשר למחוק גם את ה-head (n = 5) בלי מקרה מיוחד.",
       "lesson": "alg.linked-lists"
@@ -148,7 +296,9 @@
       "answer": 1,
       "explanation": "pA עובר a + c ואז b, ו-pB עובר b + c ואז a: אחרי a + b + c צעדים, אם c > 0 שניהם בנקודת החיתוך. אם c = 0, אחרי a + b צעדים שניהם nullptr והלולאה נגמרת. hash set עובד אבל עולה O(m) זיכרון. אין צורך שהאורכים יהיו שווים – זה בדיוק מה שההחלפה מאזנת.",
       "lesson": "alg.linked-lists",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.linked-lists.q09",
@@ -182,7 +332,9 @@
       "answer": 3,
       "explanation": "וקטור ו-stack הם O(n) זיכרון. הרקורסיה נראית 'בלי זיכרון' אבל צורכת O(n) ב-call stack. היפוך החצי השני הוא O(1) זיכרון; מראיין סניור יצפה שתחזיר את הרשימה למצבה (או לפחות תציין שהפונקציה משנה את הקלט).",
       "lesson": "alg.linked-lists",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.linked-lists.q11",
@@ -197,7 +349,11 @@
         "גישה לאיבר האמצעי",
         "binary search על רשימה ממוינת"
       ],
-      "answer": [0, 1, 2],
+      "answer": [
+        0,
+        1,
+        2
+      ],
       "explanation": "ב-doubly linked list ל-node יש prev ו-next, ולכן אפשר לעדכן את שני השכנים בלי לחפש. עם tail pointer, הוספה לסוף היא O(1). חיפוש וגישה לאמצע דורשים מעבר לינארי, ו-binary search לא עוזר בלי גישה אקראית – כל קפיצה לאמצע עולה O(n).",
       "lesson": "alg.linked-lists"
     },
@@ -218,7 +374,9 @@
       ],
       "explanation": "אחת השאלות הנפוצות ביותר במיקרוסופט. הנקודות שמפילות: לשכוח למחוק מה-map ב-eviction, ול-evict בטעות כשמעדכנים key קיים.",
       "lesson": "alg.linked-lists",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.linked-lists.q13",
@@ -234,7 +392,9 @@
       "answer": 2,
       "explanation": "השילוב משתמש ברשימה עצמה כ-'hash map': העותק של X הוא תמיד X->next. שלושה מעברים, O(n) זמן. hash map עובד אבל עולה O(n) זיכרון. copy.random = orig.random הוא shallow copy – העותק מצביע לתוך הרשימה הישנה. ספירת אינדקסים נכונה אבל O(n²).",
       "lesson": "alg.linked-lists",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.linked-lists.q14",
@@ -265,7 +425,9 @@
       ],
       "explanation": "שאלה שבודקת שיפוט הנדסי. 'list עדיף כי הכנסה O(1)' היא תשובה של ג'וניור; סניור מדבר על זיכרון, cache ויציבות.",
       "lesson": "alg.linked-lists",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.linked-lists.q16",
@@ -281,7 +443,9 @@
       "answer": 3,
       "explanation": "מ-C++11 התקן מחייב ש-size() יהיה O(1), ולכן הרשימה שומרת מונה. בהעברת טווח בין שתי רשימות שונות צריך לדעת כמה איברים עברו כדי לעדכן את שני המונים – std::distance(first, last), שהוא לינארי. בתוך אותה רשימה הגודל לא משתנה, ובהעברת כל other או איבר בודד הכמות ידועה. לפני C++11 היה trade-off הפוך: splice תמיד O(1) ו-size() מותר להיות O(n).",
       "lesson": "alg.linked-lists",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.linked-lists.q17",
@@ -312,7 +476,9 @@
       "answer": 1,
       "explanation": "CAS משווה ערכי pointers, לא 'זהות היסטורית'. כשכתובת חוזרת לשימוש, ה-CAS לא מזהה שהמבנה השתנה, וה-next שנקרא מקודם כבר לא תקף – use-after-free ושחיתות של המבנה. lock-free לא יכול לגרום ל-deadlock, ו-contention הוא בעיה אמיתית אבל לא הבאג כאן. מונה הגרסה הופך כל push ל-'ערך חדש'; hazard pointers ו-epochs מונעים מיחזור של node שמישהו עוד קורא.",
       "lesson": "alg.linked-lists",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.linked-lists.q19",
@@ -328,7 +494,189 @@
       "answer": 0,
       "explanation": "השחרור האוטומטי רקורסיבי, ואין TCO מובטח (ממילא יש עבודה אחרי הקריאה הפנימית). בלולאה האיטרטיבית, ההשמה מעבירה את הבעלות על node הבא ל-head ורק אז מוחקת את ה-node הישן, שה-next שלו כבר ריק – ולכן אין רקורסיה. אין double free או leak, ומעגלי בעלות אפשריים רק ב-shared_ptr.",
       "lesson": "alg.linked-lists",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "alg.linked-lists.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה היתרון המרכזי של doubly linked list על פני singly linked list?",
+      "choices": [
+        "גישה לאיבר ה-k ב-O(1)",
+        "חיפוש ערך ב-O(log n)",
+        "צריכת זיכרון נמוכה יותר",
+        "מחיקת node ב-O(1) כשיש pointer רק אליו, כי prev נותן את השכן הקודם"
+      ],
+      "answer": 3,
+      "explanation": "ב-singly list, כדי למחוק node צריך לעדכן את ה-next של הקודם לו, ולמצוא אותו עולה O(n). ב-doubly prev זמין מיד. גישה לפי אינדקס וחיפוש נשארים לינאריים בשתיהן, והזיכרון גדל (pointer נוסף לכל node).",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איך מזהים אם יש מעגל ב-singly linked list בזיכרון נוסף O(1)?",
+      "choices": [
+        "hash set של כל ה-nodes שבוקרו",
+        "fast/slow pointers: אם הם נפגשים יש מעגל, ואם fast מגיע ל-nullptr אין",
+        "סופרים nodes עד שמגיעים ל-nullptr",
+        "הופכים את הרשימה ובודקים אם חזרנו ל-head"
+      ],
+      "answer": 1,
+      "explanation": "Floyd: בתוך מעגל fast מתקרב ל-slow בצעד אחד בכל איטרציה, ולכן הם נפגשים. hash set עובד אבל עולה O(n) זיכרון. ספירה עד nullptr לא נגמרת אם יש מעגל. טריק ההיפוך אמנם מזהה מעגל, אבל משנה את הרשימה ושביר – לא התשובה הסטנדרטית.",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "ברשימה 1 → 2 → 3 → 4 → 5, מה הערך של ה-node השני מהסוף?",
+      "accept": [
+        "4"
+      ],
+      "explanation": "האחרון הוא 5 (הראשון מהסוף), והשני מהסוף הוא 4. עם שני מצביעים: מקדמים את fast ב-2, ואז מזיזים את שניהם עד ש-fast הוא null – slow עומד על 4.",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "code": "class Node:\n    def __init__(self, v, nxt=None):\n        self.v, self.next = v, nxt\n\ndef remove_val(head, val):\n    dummy = Node(0, head)\n    cur = dummy\n    while cur.next:\n        if cur.next.v == val:\n            cur.next = cur.next.next\n        else:\n            cur = cur.next\n    return dummy.next\n\nh = remove_val(Node(2, Node(1, Node(2, Node(2, Node(3))))), 2)\nout = []\nwhile h:\n    out.append(h.v)\n    h = h.next\nprint(out)",
+      "prompt": "מה יודפס?",
+      "choices": [
+        "[1, 2, 3]",
+        "[1, 3]",
+        "[2, 1, 3]",
+        "[1]"
+      ],
+      "answer": 1,
+      "explanation": "ה-dummy מאפשר למחוק את ה-2 שב-head. כשמוחקים, cur לא מתקדם, ולכן גם שני ה-2 הרצופים נמחקים. אם cur היה מתקדם אחרי כל מחיקה, אחד מה-2 הרצופים היה נשאר ([1, 2, 3]). בלי dummy, ה-2 הראשון היה נשאר ([2, 1, 3]).",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "code": "bool hasCycle(Node* head) {\n    Node* slow = head;\n    Node* fast = head;\n    while (fast != nullptr) {\n        slow = slow->next;\n        fast = fast->next->next;\n        if (slow == fast) return true;\n    }\n    return false;\n}",
+      "bugLine": 4,
+      "prompt": "הפונקציה קורסת על רשימה בלי מעגל עם מספר אי-זוגי של nodes (למשל node אחד). מה הבאג?",
+      "choices": [
+        "צריך להתחיל את fast ב-head->next",
+        "slow == fast צריך להיבדק לפני ההזזה",
+        "התנאי בודק רק את fast; כש-fast->next הוא nullptr, הגישה fast->next->next היא dereference של nullptr. צריך while (fast && fast->next)",
+        "צריך להחזיר true כש-fast הוא nullptr"
+      ],
+      "answer": 2,
+      "explanation": "fast קופץ שני צעדים, ולכן צריך לוודא ששניהם קיימים. ברשימה באורך זוגי fast מגיע בדיוק ל-nullptr ולכן הבאג מסתתר; באורך אי-זוגי fast נוחת על האחרון, ו-fast->next->next קורס. אתחול fast ל-head->next משנה רק את נקודת המפגש. בדיקה לפני ההזזה הייתה מחזירה true מיד, כי בהתחלה שניהם head.",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "code": "def add(a, b):\n    dummy = tail = Node(0)\n    carry = 0\n    while a or b or carry:\n        s = carry + (a.v if a else 0) + (b.v if b else 0)\n        carry, d = divmod(s, 10)\n        tail.next = Node(d)\n        tail = tail.next\n        a = a and a.next\n        b = b and b.next\n    return dummy.next\n\nh = add(Node(9, Node(9)), Node(1))\nout = []\nwhile h:\n    out.append(h.v)\n    h = h.next\nprint(out)",
+      "prompt": "Add Two Numbers: הספרות שמורות בסדר הפוך (ה-head הוא ספרת האחדות), ו-Node(v, next) הוא node פשוט עם השדות v ו-next. מה יודפס?",
+      "choices": [
+        "[0, 0]",
+        "[1, 0, 0]",
+        "[0, 0, 1]",
+        "[0, 1]"
+      ],
+      "answer": 2,
+      "explanation": "99 + 1 = 100, ובסדר הפוך 0 → 0 → 1. התנאי or carry מבטיח שה-carry האחרון יוצר node חדש; בלעדיו התוצאה הייתה [0, 0]. [1, 0, 0] הוא הייצוג בסדר רגיל, לא בסדר שבו הרשימה שמורה.",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Merge k Sorted Lists עם N nodes בסך הכול (כל רשימה באורך N/k). מה הסיבוכיות של מיזוג **אחת-אחת**: ממזגים את הראשונה עם השנייה, את התוצאה עם השלישית, וכן הלאה?",
+      "choices": [
+        "O(N log k), כמו heap",
+        "O(N·k), כי התוצאה המצטברת נסרקת שוב בכל מיזוג",
+        "O(N), כי כל node מוזז פעם אחת",
+        "O(N log N)"
+      ],
+      "answer": 1,
+      "explanation": "המיזוג ה-i עולה בערך i·N/k, והסכום על k מיזוגים הוא N/k · k²/2 = Θ(N·k). כל node כן מוזז יותר מפעם אחת – הוא עובר בכל מיזוג שאחרי שנכנס. min-heap של k ה-heads או מיזוג זוגי (סיבובים שבהם ממזגים זוגות) נותנים O(N log k), כי כל node משתתף ב-log k מיזוגים בלבד.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Rotate List: לסובב רשימה באורך n ימינה ב-k מקומות, כאשר k יכול להגיע ל-2·10⁹ ו-n ל-500. מה הגישה הנכונה?",
+      "choices": [
+        "לבצע k פעמים: להעביר את האחרון להתחלה – O(k·n)",
+        "להעתיק לוקטור, לסובב עם std::rotate ולבנות רשימה חדשה",
+        "לחשב את האורך n ואת ה-tail; k %= n (אם 0 – להחזיר כמו שהוא); לחבר tail ל-head וללכת n − k צעדים מה-head כדי למצוא את ה-tail החדש, ולנתק אחריו",
+        "לחשב k %= n ולהפוך את כל הרשימה פעם אחת"
+      ],
+      "answer": 2,
+      "explanation": "סיבוב ב-n הוא הזהות, ולכן רק k mod n משנה, ו-k ענק לא עולה כלום. אחרי סגירת המעגל, ה-node ה-(n − k) הוא ה-tail החדש והבא אחריו ה-head. O(n) זמן ו-O(1) זיכרון. k פעמים בלי מודולו הוא 10⁹ צעדים. וקטור עובד אבל O(n) זיכרון. היפוך בודד לא מסובב; צריך שלושה היפוכים (כמו במערך), וזה מסורבל ברשימה.",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Reverse Nodes in k-Group (איטרטיבי, O(1) זיכרון). מה הדרישה שקל לפספס?",
+      "choices": [
+        "לפני שהופכים קבוצה, לוודא שנשארו לפחות k nodes; קבוצה אחרונה קצרה מ-k נשארת בסדר המקורי. ואחרי ההיפוך לחבר את ה-tail של הקבוצה הקודמת ל-head החדש של הנוכחית",
+        "להפוך גם את הקבוצה האחרונה אם היא קצרה מ-k",
+        "להשתמש ברקורסיה, כי איטרציה לא יכולה לחבר קבוצות",
+        "לשמור את כל ה-nodes במערך ואז לבנות מחדש"
+      ],
+      "answer": 0,
+      "explanation": "בבעיה הסטנדרטית השארית נשארת כמו שהיא, ולכן היפוך 'אופטימי' שמגלה באמצע שאין k nodes צריך לבטל את עצמו – קל יותר לבדוק מראש. החיבור בין קבוצות דורש לזכור את ה-tail הקודם (שהיה ה-head של הקבוצה לפני ההיפוך). רקורסיה עובדת אבל עולה O(n/k) ב-stack; מערך עולה O(n) זיכרון.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q29",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "code": "void reorder(Node* head) {\n    if (!head || !head->next) return;\n    Node *slow = head, *fast = head;\n    while (fast->next && fast->next->next) {\n        slow = slow->next;\n        fast = fast->next->next;\n    }\n    Node *prev = nullptr, *cur = slow->next;\n    while (cur) {\n        Node* nxt = cur->next;\n        cur->next = prev; prev = cur; cur = nxt;\n    }\n    Node *a = head, *b = prev;\n    while (b) {\n        Node *an = a->next, *bn = b->next;\n        a->next = b; b->next = an;\n        a = an; b = bn;\n    }\n}",
+      "bugLine": 8,
+      "prompt": "Reorder List (L0 → Ln → L1 → Ln−1 ...). על 1 → 2 → 3 → 4 מעבר על התוצאה לא מסתיים. מה הבאג?",
+      "choices": [
+        "לולאת האמצע צריכה להיות while (fast && fast->next)",
+        "החצי הראשון לא נותק: slow->next עדיין מצביע ל-node שהיה ראשון בחצי השני ועכשיו הוא האחרון בו, ולכן המיזוג יוצר מעגל. צריך slow->next = nullptr אחרי שלוקחים את cur",
+        "לולאת המיזוג צריכה לרוץ כל עוד a ולא כל עוד b",
+        "ההיפוך צריך להתחיל מ-slow ולא מ-slow->next"
+      ],
+      "answer": 1,
+      "explanation": "ב-1 → 2 → 3 → 4, slow = 2 והחצי השני 3 → 4 הופך ל-4 → 3. אבל 2->next עדיין 3. במיזוג: 1 → 4 → 2, ואז a = 2, an = 2->next = 3, ו-3->next = an = 3 – לולאה עצמית. הניתוק הוא שלב חובה בכל פיצול רשימה. while (fast && fast->next) נותן אמצע אחר אבל לא פותר את הניתוק. מיזוג עד ש-a נגמר היה ניגש ל-b ריק.",
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Skip list כמבנה ממוין (למשל ב-memtable של LevelDB או ב-Java ConcurrentSkipListMap). כל node מקבל גובה h בהסתברות 2^(−h). איזו טענה נכונה?",
+      "choices": [
+        "חיפוש הוא O(log n) worst-case, כמו red-black tree",
+        "החיסרון העיקרי מול עץ מאוזן הוא O(n log n) זיכרון",
+        "skip list דורש rebalancing מפורש אחרי כל הכנסה",
+        "חיפוש, הכנסה ומחיקה הם O(log n) בתוחלת (על פני ההגרלות, לכל קלט), והזיכרון O(n) בתוחלת (בערך 2 pointers לכל node). אין rotations, ולכן קל יותר לממש אותו lock-free מעץ מאוזן"
+      ],
+      "answer": 3,
+      "explanation": "הגבהים אקראיים, ולכן ההבטחות הן בתוחלת ובהסתברות גבוהה, לא worst-case (בהגרלה גרועה מאוד הוא מתנוון לרשימה). מספר ה-pointers הצפוי הוא Σ n/2^h = 2n, כלומר O(n). אין rebalancing – המבנה 'מאוזן' בזכות האקראיות – ולכן הכנסה משנה רק pointers מקומיים, מה שמאפשר CAS לכל רמה. זו הסיבה לשימוש בו במערכות מקביליות.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.linked-lists"
     }
   ]
 }

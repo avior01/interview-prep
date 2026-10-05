@@ -34,7 +34,201 @@
         "heterogeneous lookup עם std::less<> (ו-is_transparent ב-hash ב-C++20) חוסך יצירת std::string זמני",
         "custom allocators ו-pmr (monotonic_buffer_resource) לביטול הקצאות בזמן-אמת"
       ],
-      "diagram": "vector:  [a][b][c][d][ ][ ]  contiguous\nlist:    [a]<->[b]<->[c]      nodes\nmap:         [c]\n           [a]   [d]         RB-tree\numap:  b0->[x]->[y]\n       b1->[z]               buckets"
+      "diagram": "vector:  [a][b][c][d][ ][ ]  contiguous\nlist:    [a]<->[b]<->[c]      nodes\nmap:         [c]\n           [a]   [d]         RB-tree\numap:  b0->[x]->[y]\n       b1->[z]               buckets",
+      "details": [
+        {
+          "title": "vector מבפנים: size, capacity וגדילה גאומטרית",
+          "body": "ל-`std::vector` יש שלושה pointers: תחילת ה-buffer, סוף האיברים הקיימים (`size()`) וסוף הזיכרון שהוקצה (`capacity()`). כל עוד size < capacity, `push_back` רק בונה איבר במקום הפנוי, ב-O(1) אמיתי.\n\nכש-size == capacity מתבצע reallocation: מקצים buffer חדש גדול פי קבוע (libstdc++ ו-libc++ מכפילים פי 2, MSVC פי 1.5), מעבירים אליו את כל האיברים ומשחררים את הישן. הקריאה הזו עולה O(n), אבל מכיוון שהגדילה גאומטרית, סך ההעתקות על n הכנסות הוא פחות מ-2n. לכן העלות ה-amortized היא O(1). בזמן-אמת חשוב לזכור שקריאה בודדת עדיין יכולה לעלות O(n) ולכלול malloc.\n\n`reserve(n)` מקצה מראש capacity של לפחות n בלי לשנות את size, ולכן אחריו אין reallocation עד שעוברים את n. `resize(n)` לעומתו משנה את size ובונה איברים. `shrink_to_fit` הוא בקשה לא מחייבת להקטין את ה-capacity.\n\nבזמן reallocation, ה-vector מעביר איברים עם `std::move_if_noexcept`: אם ה-move constructor של T מסומן `noexcept` (או שאין copy constructor), משתמשים ב-move. אחרת משתמשים ב-copy, כדי לשמור על strong exception guarantee: אם copy זורק באמצע, ה-buffer הישן עדיין שלם. לכן move constructor בלי `noexcept` הופך כל גדילה של vector להעתקה מלאה.\n\n`std::vector<bool>` הוא specialization מיוחד: כל איבר הוא bit, `operator[]` מחזיר proxy object ולא `bool&`, ואין `data()` שמחזיר `bool*`. הוא לא עומד בדרישות של container רגיל."
+        },
+        {
+          "title": "iterator invalidation: מה נשבר ומתי",
+          "body": "iterator, pointer ו-reference לאיבר הם 'invalid' כשהם כבר לא מצביעים על האיבר שהם הצביעו עליו. שימוש בהם הוא undefined behavior. הכללים נובעים ישירות מהמבנה הפנימי:\n\n- vector ו-string: reallocation מבטל הכל. בלי reallocation, insert ו-erase מבטלים את כל מה שמנקודת השינוי והלאה (כולל `end()`). `push_back` בלי reallocation מבטל רק את `end()`.\n- deque: הכנסה בקצוות מבטלת את כל ה-iterators (המערך הפנימי של pointers לבלוקים יכול לגדול), אבל references ו-pointers לאיברים נשארים תקינים, כי הבלוקים עצמם לא זזים. הכנסה או מחיקה באמצע מבטלת הכל.\n- list, forward_list, map, set ודומיהם (node-based): כל איבר הוא node נפרד. הכנסה לא מבטלת כלום, ומחיקה מבטלת רק את ה-node שנמחק.\n- unordered_map ו-unordered_set: rehash מבטל את כל ה-iterators, אבל pointers ו-references לאיברים נשארים תקינים (ה-nodes לא זזים, רק השרשראות מסודרות מחדש). erase מבטל רק את האיבר שנמחק.\n\nבלולאה שמוחקת: `erase` מחזיר iterator לאיבר שאחרי המחוק, ולכן כותבים `it = c.erase(it)` ומקדמים את it רק כשלא מחקנו. ב-vector עדיף בכלל erase-remove (או `std::erase_if` מ-C++20), שהוא O(n) כולל במקום O(n²)."
+        },
+        {
+          "title": "map ו-set: עץ מאוזן, equivalence וממשק ההכנסה",
+          "body": "`std::map` ו-`std::set` ממומשים בפועל כעץ red-black: עץ חיפוש בינארי שבו כל מסלול מהשורש לעלה ארוך לכל היותר פי 2 מהקצר, ולכן הגובה O(log n). find, insert ו-erase הם O(log n) במקרה הגרוע, והאיטרציה היא בסדר ממוין. `multimap` ו-`multiset` מרשים מפתחות כפולים.\n\nהשוואת מפתחות נעשית רק עם ה-comparator (ברירת מחדל `std::less`), אף פעם לא עם `==`. שני מפתחות 'שקולים' (equivalent) אם `!(a<b) && !(b<a)`. לכן comparator שלא מבחין בין 'Key' ל-'KEY' הופך אותם לאותו מפתח, והמפתח שנשמר הוא זה מההכנסה הראשונה.\n\nממשק ההכנסה, ומה כל פעולה עושה כשהמפתח כבר קיים:\n- `m[k]`: אם חסר, מכניס איבר עם value-initialized value (0 ל-int) ומחזיר reference. דורש value type עם default constructor, ולא קיים על map שהוא const.\n- `insert({k,v})` ו-`emplace(k,v)`: לא דורסים ערך קיים. מחזירים `pair<iterator,bool>`. emplace עלול לבנות את ה-node לפני שגילה שהמפתח קיים.\n- `try_emplace(k, args...)` (C++17): כמו emplace, אבל לא בונה ולא 'גונב' (move) את args אם המפתח קיים.\n- `insert_or_assign(k, v)` (C++17): מכניס או דורס.\n\nבדיקת קיום: `find`, `count` או `contains` (C++20). insert עם hint, כלומר `insert(pos, value)`, הוא amortized O(1) אם האיבר נכנס בדיוק לפני pos, ולכן בנייה מקלט ממוין עם `insert(m.end(), x)` היא O(n). גם ה-constructor מטווח שכבר ממוין הוא ליניארי.\n\nheterogeneous lookup: `std::map<std::string, int, std::less<>>` מקבל ב-find כל טיפוס שאפשר להשוות, למשל `std::string_view`, בלי ליצור `std::string` זמני. זה עובד כי `std::less<>` מגדיר `is_transparent`."
+        },
+        {
+          "title": "unordered_map: buckets, load factor ולמה הוא איטי",
+          "body": "`std::unordered_map` הוא מערך של buckets, וכל bucket הוא שרשרת של nodes (separate chaining). המפתח עובר hash, ה-hash ממופה ל-bucket, ושם סורקים את השרשרת ומשווים עם `key_equal`.\n\nload factor = מספר איברים חלקי מספר buckets. ברירת המחדל של `max_load_factor()` היא 1.0. כשהכנסה תעבור אותו, מתבצע rehash: מקצים יותר buckets ומשייכים מחדש את כל ה-nodes, O(n). `reserve(n)` קובע מספיק buckets כדי ש-n איברים ייכנסו בלי rehash. סדר האיטרציה לא מוגדר ויכול להשתנות אחרי rehash.\n\nסיבוכיות: O(1) בממוצע ו-O(n) במקרה הגרוע, כשהרבה מפתחות נופלים לאותו bucket. זה קורה עם hash גרוע או עם hash flooding: תוקף ששולח מפתחות שנבחרו כך שיתנגשו.\n\nלמה הוא איטי לעומת absl::flat_hash_map: התקן מחייב שה-references לאיברים יישארו תקינים אחרי rehash, ומחייב bucket interface (`bucket()`, `begin(n)`). זה כמעט מכריח מימוש node-based: malloc לכל איבר, וחיפוש שעובר bucket array ואז node, כלומר pointer chasing ולפחות שני cache misses. open addressing שומר את האיברים ישירות במערך אחד ומחפש מקום פנוי בסריקה. Swiss tables מוסיפות byte של metadata לכל slot ובודקות 16 slots בפקודת SIMD אחת. המחיר: אין יציבות של pointers."
+        },
+        {
+          "title": "אלגוריתמים: remove, unique, sort וחברים",
+          "body": "האלגוריתמים עובדים על טווח iterators ולא מכירים את ה-container, ולכן אינם יכולים לשנות את הגודל שלו.\n\n- `remove` ו-`remove_if` מזיזים את האיברים שנשארים לתחילת הטווח ומחזירים את הסוף הלוגי החדש. מה שאחריו במצב valid but unspecified. `erase(newEnd, end())` מקצר בפועל. זה erase-remove idiom.\n- `unique` מסיר רק כפילויות סמוכות (רצף של ערכים שווים הופך לאחד), באותה שיטה: מחזיר סוף חדש ולא משנה גודל. להסרת כל הכפילויות עושים sort, אחר כך unique, ואז erase.\n- `sort`: מ-C++11 הוא O(N log N) במקרה הגרוע. המימושים משתמשים ב-introsort: quicksort, מעבר ל-heapsort כשהרקורסיה עמוקה מדי, ו-insertion sort לטווחים קטנים. לא יציב (stable): איברים שקולים יכולים לשנות סדר. דורש random-access iterators, ולכן ל-list יש `list::sort` משלו (merge sort יציב).\n- `stable_sort`: שומר את הסדר היחסי של שקולים. O(N log N) עם buffer נוסף, ו-O(N log² N) אם אין זיכרון.\n- `nth_element` (introselect): O(N) בממוצע. אחריו האיבר במקום n הוא זה שהיה שם במיון מלא, הקטנים לפניו והגדולים אחריו (בלי סדר).\n- `partial_sort(first, middle, last)`: ממיין רק את K הקטנים לתחילת הטווח, בערך N log K השוואות, עם heap בגודל K.\n- `lower_bound` (ראשון שאינו קטן מ-x), `upper_bound` (ראשון שגדול מ-x) ו-`equal_range` (שניהם יחד) דורשים טווח ממוין. על iterators של map הם O(n) כי קידום iterator של עץ הוא צעד אחד בכל פעם, ולכן משתמשים ב-member `m.lower_bound`.\n\nstrict weak ordering: comparator חייב לקיים comp(a,a)==false, אנטי-סימטריה, טרנזיטיביות, וטרנזיטיביות של 'שקילות'. `<=` שובר את הכלל הראשון. ב-introsort יש unguarded partition שמניח שתמיד יימצא איבר שעוצר את הסריקה (sentinel), ועם `<=` הסריקה יכולה לצאת מגבולות המערך. זה UB, לא רק סדר שגוי."
+        },
+        {
+          "title": "containers ותכנות מקבילי וזמן-אמת",
+          "body": "התקן מבטיח שאין data race כששני threads משנים איברים שונים של אותו container (בלי לשנות את המבנה), כי כל איבר הוא memory location נפרד. החריג המפורש הוא `vector<bool>`: כמה איברים חולקים byte אחד, וכל כתיבה היא read-modify-write על אותה מילה. שני chars סמוכים ב-`std::array<char,2>` הם memory locations נפרדים: אין race, אבל יש false sharing, כלומר שני cores מתחרים על אותה cache line, וזו בעיית ביצועים בלבד. כל שינוי מבני (push_back, insert) במקביל לכל גישה אחרת הוא data race.\n\nבזמן-אמת המטרה היא אפס הקצאות בנתיב הקריטי: `reserve` מראש, pmr allocators (למשל `std::pmr::monotonic_buffer_resource` שמחלק זיכרון מ-buffer קבוע), והעדפת מבנים רציפים. sorted vector, או `std::flat_map` (C++23), מנצחים map כשהקריאות רבות והעדכונים נדירים: חיפוש בינארי על זיכרון רציף, ותוצאה שהיא טווח רציף. SoA (Structure of Arrays) שומר כל שדה במערך נפרד, כך שסריקה על שדה אחד קוראת רק אותו ומתאימה ל-SIMD.\n\nכשעדכונים מגיעים מ-thread אחר, double buffering או RCU מאפשרים לבנות עותק חדש בצד ולהחליף pointer אטומית, כך שה-thread הקורא לא נחסם."
+        },
+        {
+          "title": "בעלות בתוך containers: emplace מול push_back",
+          "body": "`push_back(x)` מקבל אובייקט מוכן ומעתיק או מזיז אותו. `emplace_back(args...)` בונה את האיבר במקום מתוך args, עם direct-initialization. ההבדל המעשי: direct-initialization מאפשר לקרוא ל-constructor שהוא `explicit`.\n\nזה מסוכן עם `unique_ptr`: `v.emplace_back(new Job)` מתקמפל, כי ה-constructor של unique_ptr מ-raw pointer הוא explicit ו-emplace מותר לו. אבל אם ה-vector צריך reallocation וההקצאה זורקת `std::bad_alloc` לפני שה-unique_ptr נבנה, ה-raw pointer אבוד ו-Job דולף. `v.push_back(std::make_unique<Job>())` יוצר את הבעלות לפני הקריאה, ולכן בטוח, ועולה בדיוק move אחד."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: 9 קריאות push_back עם גדילה פי 2",
+          "body": "מתחילים מ-vector ריק. נניח capacity מתחיל ב-1 ומוכפל.\n\n- איבר 1: capacity 0, מקצים 1. 0 העברות.\n- איבר 2: מלא, מקצים 2, מעבירים 1.\n- איבר 3: מלא, מקצים 4, מעבירים 2.\n- איבר 4: נכנס למקום פנוי.\n- איבר 5: מלא, מקצים 8, מעבירים 4.\n- איברים 6 עד 8: נכנסים בלי העברה.\n- איבר 9: מלא, מקצים 16, מעבירים 8.\n\nסך ההעברות: 1+2+4+8 = 15, פחות מ-2·9. זה ה-amortized O(1). אבל איבר 9 לבדו עלה 8 העברות ו-malloc. אם היינו קוראים קודם `reserve(9)`, לא הייתה אף העברה. ואם ה-move constructor של T לא noexcept, כל אחת מ-15 ההעברות היא copy."
+        },
+        {
+          "title": "דוגמה: erase-remove על {1, 2, 3, 2, 5} (מחיקת 2)",
+          "body": "`remove` מחזיק מיקום כתיבה w=0 וסורק עם r:\n\n- r=0, ערך 1: נשאר. כותב ל-w=0, w=1.\n- r=1, ערך 2: מדלג.\n- r=2, ערך 3: כותב ל-w=1, w=2.\n- r=3, ערך 2: מדלג.\n- r=4, ערך 5: כותב ל-w=2, w=3.\n\nהמערך עכשיו {1, 3, 5, ?, ?}, size עדיין 5, ו-remove מחזיר iterator לאינדקס 3. `erase(it, end())` מקצר ל-3. כל איבר הוזז לכל היותר פעם אחת: O(n). לולאה שקוראת ל-erase על כל 2 בנפרד הייתה מזיזה את הזנב בכל מחיקה: O(n²)."
+        },
+        {
+          "title": "דוגמה: lower_bound ו-upper_bound על {1, 3, 3, 3, 7, 9}",
+          "body": "אינדקסים 0 עד 5.\n\n- `lower_bound(3)`: האיבר הראשון שאינו קטן מ-3 הוא באינדקס 1.\n- `upper_bound(3)`: האיבר הראשון שגדול מ-3 הוא 7, באינדקס 4.\n- מספר המופעים של 3: 4-1 = 3. `equal_range(3)` מחזיר את שני ה-iterators יחד.\n- `lower_bound(4)`: אין 4, הראשון שאינו קטן מ-4 הוא 7, אינדקס 4. זה גם מקום ההכנסה ששומר על המיון.\n- `lower_bound(10)`: אין כזה, מוחזר `end()` (אינדקס 6).\n\nכל חיפוש הוא כ-log₂6, כלומר 3 השוואות."
+        },
+        {
+          "title": "דוגמה: LRU cache בקיבולת 2",
+          "body": "המבנה: `std::list` של זוגות (key, value), כשהראש הוא השימוש האחרון, ו-`unordered_map` ממפתח ל-iterator בתוך ה-list. ה-iterators של list לא נשברים בהכנסות ובהזזות, ולכן מותר לשמור אותם.\n\n- put(1,A): list = [1], map = {1}.\n- put(2,B): list = [2,1].\n- get(1): נמצא ב-map. `splice` מזיז את ה-node של 1 לראש בלי העתקה ובלי לבטל את ה-iterator: list = [1,2].\n- put(3,C): הקיבולת מלאה. הזנב הוא 2: מוחקים אותו מה-map ואז `pop_back`. מכניסים 3 לראש: list = [3,1].\n- get(2): לא נמצא.\n\nכל פעולה היא O(1) בממוצע. החיסרון: הקצאה לכל node ב-list וב-map."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "contiguous storage",
+          "def": "האיברים יושבים ברצף אחד בזיכרון (vector, array, string). מאפשר `data()` שמועבר ל-C API, וגישה ידידותית ל-cache ול-prefetcher."
+        },
+        {
+          "term": "size מול capacity",
+          "def": "size הוא מספר האיברים הקיימים. capacity הוא כמה איברים נכנסים לזיכרון שכבר הוקצה. `reserve` משנה רק capacity, `resize` משנה size."
+        },
+        {
+          "term": "amortized O(1)",
+          "def": "עלות ממוצעת לפעולה על פני רצף ארוך של פעולות. ב-push_back רוב הקריאות זולות ומדי פעם אחת עולה O(n), אבל הסכום על n קריאות הוא O(n)."
+        },
+        {
+          "term": "geometric growth",
+          "def": "הגדלת capacity פי קבוע (1.5 או 2) ולא בתוספת קבועה. זה מה שהופך את push_back ל-amortized O(1). תוספת קבועה הייתה נותנת O(n²) כולל."
+        },
+        {
+          "term": "reallocation",
+          "def": "הקצאת buffer חדש, העברת כל האיברים ושחרור הישן. מבטל כל iterator, pointer ו-reference לאיברים."
+        },
+        {
+          "term": "move_if_noexcept",
+          "def": "בזמן reallocation ה-vector מזיז איברים רק אם ה-move constructor הוא `noexcept`, אחרת מעתיק, כדי לשמור על strong exception guarantee."
+        },
+        {
+          "term": "iterator invalidation",
+          "def": "מצב שבו iterator, pointer או reference כבר לא מצביע על האיבר המקורי. שימוש בהם הוא UB. הכללים תלויים במבנה הפנימי של כל container."
+        },
+        {
+          "term": "node-based container",
+          "def": "container שכל איבר בו מוקצה בנפרד (list, map, set, unordered_map). האיברים לא זזים בזיכרון, אבל יש הקצאה לכל איבר ו-cache misses."
+        },
+        {
+          "term": "deque",
+          "def": "רצף של בלוקים בגודל קבוע ומערך של pointers אליהם. push ו-pop בשני הקצוות ב-O(1), גישה אקראית ב-O(1). לא רציף כולו בזיכרון."
+        },
+        {
+          "term": "red-black tree",
+          "def": "עץ חיפוש בינארי מאוזן שבו הגובה O(log n). המימוש הנפוץ של map ו-set. כל פעולה O(log n) במקרה הגרוע."
+        },
+        {
+          "term": "equivalence",
+          "def": "בקונטיינרים ממוינים שני מפתחות שקולים אם `!(a<b) && !(b<a)` לפי ה-comparator. `==` לא משמש בכלל."
+        },
+        {
+          "term": "value-initialization",
+          "def": "בניית ערך 'ריק': 0 ל-int, nullptr ל-pointer, default constructor למחלקה. זה מה ש-`m[k]` מכניס כשהמפתח חסר."
+        },
+        {
+          "term": "try_emplace ו-insert_or_assign",
+          "def": "פונקציות C++17 של map. try_emplace מכניס רק אם המפתח חסר ולא נוגע ב-args אחרת. insert_or_assign מכניס או דורס. insert ו-emplace לא דורסים."
+        },
+        {
+          "term": "contains",
+          "def": "member function מ-C++20 ב-map, set ו-unordered: מחזיר bool אם המפתח קיים, בלי להכניס."
+        },
+        {
+          "term": "hint insert",
+          "def": "`insert(pos, value)` עם רמז למיקום. amortized O(1) אם האיבר נכנס בדיוק לפני pos, ולכן בנייה מקלט ממוין היא ליניארית."
+        },
+        {
+          "term": "separate chaining",
+          "def": "פתרון התנגשויות ב-hash table שבו כל bucket מחזיק רשימה של nodes. זה המימוש של std::unordered_map."
+        },
+        {
+          "term": "load factor ו-rehash",
+          "def": "load factor הוא איברים חלקי buckets. כשהוא עובר את `max_load_factor()` (ברירת מחדל 1.0) מתבצע rehash: יותר buckets ושיוך מחדש, O(n)."
+        },
+        {
+          "term": "hash flooding",
+          "def": "התקפה שבה שולחים מפתחות שכולם מתנגשים באותו bucket, וכך כל פעולה נהיית O(n). מתגוננים עם hash עם seed אקראי."
+        },
+        {
+          "term": "open addressing ו-Swiss tables",
+          "def": "hash table שבו האיברים במערך אחד, ובהתנגשות מחפשים slot אחר. Swiss tables (absl::flat_hash_map) מוסיפות metadata לכל slot ובודקות 16 בבת אחת עם SIMD. מהיר, אבל pointers לאיברים לא יציבים."
+        },
+        {
+          "term": "erase-remove idiom",
+          "def": "`v.erase(std::remove(...), v.end())`: remove דוחס את מה שנשאר ומחזיר סוף חדש, erase מקצר. ב-C++20 `std::erase` ו-`std::erase_if` עושים את שניהם."
+        },
+        {
+          "term": "unique",
+          "def": "אלגוריתם שמשאיר איבר אחד מכל רצף של ערכים שווים סמוכים ומחזיר סוף חדש. לא מסיר כפילויות שאינן סמוכות, ולכן לרוב קודם ממיינים."
+        },
+        {
+          "term": "strict weak ordering",
+          "def": "החוזה של comparator: comp(a,a) false, אם comp(a,b) אז לא comp(b,a), טרנזיטיביות, וטרנזיטיביות של שקילות. הפרה היא UB ב-sort ובקונטיינרים ממוינים."
+        },
+        {
+          "term": "introsort",
+          "def": "quicksort שעובר ל-heapsort כשעומק הרקורסיה עובר בערך 2·log n, ול-insertion sort לטווחים קטנים. מבטיח O(n log n) במקרה הגרוע, ומשתמש ב-unguarded partition שמסתמך על comparator תקין."
+        },
+        {
+          "term": "stable sort",
+          "def": "מיון ששומר את הסדר היחסי של איברים שקולים. `std::stable_sort` ו-`list::sort` יציבים. `std::sort` לא."
+        },
+        {
+          "term": "nth_element ו-introselect",
+          "def": "מציב במקום n את האיבר שהיה שם במיון מלא, ב-O(n) בממוצע. מתאים לחציון ול-k-th בלי למיין הכל."
+        },
+        {
+          "term": "partial_sort",
+          "def": "ממיין את K האיברים הקטנים לתחילת הטווח בעזרת heap בגודל K. בערך N log K השוואות. מתאים ל-top-K ממוין."
+        },
+        {
+          "term": "lower_bound, upper_bound, equal_range",
+          "def": "חיפוש בינארי על טווח ממוין: הראשון שאינו קטן מ-x, הראשון שגדול מ-x, ושני הגבולות יחד. על map משתמשים ב-member function, כי על iterators של עץ הגרסה הכללית ליניארית."
+        },
+        {
+          "term": "heterogeneous lookup",
+          "def": "חיפוש עם טיפוס שונה מ-key_type (למשל string_view ב-map של string) בלי ליצור מפתח זמני. דורש comparator שקוף כמו `std::less<>` (עם `is_transparent`), וב-unordered גם hash ו-key_equal שקופים (C++20)."
+        },
+        {
+          "term": "vector<bool>",
+          "def": "specialization שאורז bit לכל איבר. `operator[]` מחזיר proxy, אין `bool*`, וכתיבה מקבילה לאיברים שונים היא data race."
+        },
+        {
+          "term": "memory location ו-false sharing",
+          "def": "memory location הוא אובייקט סקלרי (או רצף bit-fields). שני threads על locations שונים לא יוצרים data race. false sharing: locations שונים באותה cache line, ולכן ה-line קופצת בין cores. ביצועים, לא נכונות."
+        },
+        {
+          "term": "splice",
+          "def": "פעולה של list שמעבירה nodes ממקום למקום (או מרשימה אחרת) בלי העתקה ובלי לבטל iterators. node בודד ב-O(1), רשימה שלמה ב-O(1), טווח מרשימה אחרת ב-O(n) כי צריך לעדכן את size."
+        },
+        {
+          "term": "flat_map ו-sorted vector",
+          "def": "map שמחזיק את המפתחות במערך ממוין (C++23 `std::flat_map`). חיפוש בינארי רציף ב-cache, אבל הכנסה O(n)."
+        },
+        {
+          "term": "pmr allocator",
+          "def": "polymorphic memory resource (C++17): containers מ-`std::pmr` מקבלים memory_resource בזמן ריצה, למשל monotonic_buffer_resource שמקצה מ-buffer קבוע בלי malloc."
+        },
+        {
+          "term": "SoA",
+          "def": "Structure of Arrays: כל שדה במערך משלו במקום מערך של structs. סריקה על שדה אחד רציפה ומתאימה ל-SIMD."
+        },
+        {
+          "term": "RCU ו-double buffering",
+          "def": "דרכים לעדכן מבנה נתונים בלי לחסום קוראים: בונים עותק חדש בצד ומחליפים pointer אטומית. את הישן משחררים אחרי שאף קורא לא משתמש בו."
+        },
+        {
+          "term": "direct-initialization",
+          "def": "אתחול בסגנון `T x(args)`. מאפשר לקרוא ל-constructor שהוא `explicit`. emplace משתמש בו, ולכן `emplace_back(new T)` מתקמפל ל-vector של unique_ptr."
+        }
+      ]
     }
   ],
   "questions": [
@@ -363,6 +557,198 @@
         "מציין reserve, אפס הקצאות בנתיב הקריטי ומדידה"
       ],
       "explanation": "מראיינים סניורים בודקים אם אתה בוחר container לפי דפוס הגישה והחומרה, ולא רק לפי טבלת Big-O.",
+      "lesson": "cpp.stl",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.stl.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המצב של `std::vector<int> v;` אחרי `v.reserve(100);`?",
+      "choices": [
+        "size() == 100 וכל האיברים 0",
+        "size() == 100 והאיברים לא מאותחלים",
+        "size() == 0 ו-capacity() >= 100",
+        "size() == 0 ו-capacity() == 0 עד ה-push_back הראשון"
+      ],
+      "answer": 2,
+      "explanation": "reserve מקצה זיכרון בלבד ולא בונה איברים, ולכן size נשאר 0 וגישה ל-v[0] היא UB. capacity הוא לפחות 100 (מותר יותר). מי שבונה 100 איברים עם ערך 0 הוא `resize(100)` או ה-constructor `vector<int>(100)`.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה container שומר מפתחות ייחודיים ומאפשר לעבור עליהם בסדר ממוין?",
+      "choices": [
+        "std::set",
+        "std::unordered_set",
+        "std::multiset",
+        "std::deque"
+      ],
+      "answer": 0,
+      "explanation": "set הוא עץ חיפוש מאוזן, ולכן האיטרציה ממוינת לפי ה-comparator, וכל מפתח מופיע פעם אחת. unordered_set שומר מפתחות ייחודיים אבל בסדר לא מוגדר. multiset ממוין אבל מרשה כפילויות. deque הוא רצף לפי סדר הכנסה, בלי ייחודיות.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה שם ה-member function מ-C++20 שבודקת אם מפתח קיים ב-std::map ומחזירה bool, בלי להכניס איבר?",
+      "accept": [
+        "contains",
+        "contains()",
+        "m.contains"
+      ],
+      "explanation": "`m.contains(k)` מחזיר bool. לפני C++20 השתמשו ב-`find(k) != end()` או ב-`count(k)`. `m[k]` לא מתאים לבדיקה, כי הוא מכניס איבר עם ערך default כשהמפתח חסר.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::set<int> s{3, 1, 3, 2};\nstd::cout << s.size() << ' ' << *s.begin();",
+      "choices": [
+        "4 3",
+        "3 3",
+        "4 1",
+        "3 1"
+      ],
+      "answer": 3,
+      "explanation": "set שומר כל מפתח פעם אחת, ולכן ה-3 הכפול נזרק וה-size הוא 3. האיטרציה ממוינת, ולכן begin מצביע על הקטן ביותר, 1, ולא על הראשון שהוכנס. multiset היה נותן size 4.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מדפיס לפעמים ערך זבל. איפה הבאג?",
+      "code": "std::vector<int> v{10, 20, 30};\nint& first = v[0];\nfor (int i = 0; i < 100; ++i)\n  v.push_back(i);\nstd::cout << first;",
+      "bugLine": 5,
+      "choices": [
+        "v[0] מחזיר עותק ולא reference, ולכן first לא מתעדכן",
+        "first נוצר מ-v[0] לפני שה-vector גדל. push_back שגורם ל-reallocation מעביר את האיברים ל-buffer חדש, ו-first מצביע לזיכרון ששוחרר (dangling reference)",
+        "push_back בתוך לולאה הוא UB",
+        "צריך `const int&` כדי שה-reference יאריך את חיי האיבר"
+      ],
+      "answer": 1,
+      "explanation": "ה-reference נשמר לכתובת ב-buffer הישן. אחרי reallocation הזיכרון הזה שוחרר, וקריאה ממנו היא UB. השורה שמשתמשת ב-first היא השגויה. הפתרונות: לשמור אינדקס במקום reference, או לקרוא ל-`reserve(103)` לפני הלולאה. const reference מאריך חיים רק ל-temporary, לא לאיבר של container.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::vector<int> v{1, 1, 2, 2, 2, 3, 1};\nauto it = std::unique(v.begin(), v.end());\nstd::cout << (it - v.begin()) << ' ' << v.size();",
+      "choices": [
+        "3 3",
+        "4 7",
+        "3 7",
+        "4 4"
+      ],
+      "answer": 1,
+      "explanation": "unique משאיר איבר אחד מכל רצף של ערכים שווים סמוכים: 1, 2, 3, 1. ה-1 האחרון לא סמוך לראשון, ולכן נשאר, והסוף הלוגי באינדקס 4. כמו remove, unique לא משנה את size, ולכן הוא 7. להסרת כל הכפילויות: sort, unique ואז erase.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::map<int, int> m{{1, 10}};\nm.insert({1, 20});\nm.emplace(1, 30);\nstd::cout << m[1] << ' ';\nm.insert_or_assign(1, 40);\nstd::cout << m[1];",
+      "choices": [
+        "30 40",
+        "20 40",
+        "10 40",
+        "10 10"
+      ],
+      "answer": 2,
+      "explanation": "insert ו-emplace לא דורסים ערך של מפתח קיים: הם מחזירים pair עם false ו-iterator לאיבר הקיים. לכן הערך נשאר 10. insert_or_assign (C++17) דורס ונותן 40. מי שרוצה להכניס רק אם חסר, בלי לבנות או להזיז את הארגומנטים לשווא, משתמש ב-try_emplace.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q27",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct S {\n  S() {}\n  S(const S&) { std::cout << 'C'; }\n  S(S&&) { std::cout << 'M'; }\n};\nint main() {\n  std::vector<S> v;\n  v.reserve(1);\n  v.emplace_back();\n  v.emplace_back();\n}",
+      "choices": [
+        "M",
+        "C",
+        "MM",
+        "לא מודפס כלום"
+      ],
+      "answer": 1,
+      "explanation": "ה-emplace_back השני גורם ל-reallocation. האיבר החדש נבנה ב-default constructor (בלי הדפסה), ואת האיבר הישן צריך להעביר ל-buffer החדש. ה-vector משתמש ב-move_if_noexcept: ה-move constructor לא מסומן noexcept ויש copy constructor, ולכן הוא מעתיק כדי לשמור על strong exception guarantee. עם `S(S&&) noexcept` הפלט היה M. זו הסיבה שמסמנים move constructors כ-noexcept.",
+      "lesson": "cpp.stl",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.stl.q28",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו פעולות על std::list הן O(1) לפי התקן (C++11 ואילך)?",
+      "choices": [
+        "size()",
+        "splice(pos, other) של רשימה שלמה אחרת",
+        "splice(pos, other, first, last) של טווח מרשימה אחרת",
+        "std::advance(it, k) על iterator של list",
+        "push_front",
+        "splice(pos, other, it) של איבר בודד"
+      ],
+      "answer": [
+        0,
+        1,
+        4,
+        5
+      ],
+      "explanation": "מ-C++11 התקן דורש ש-size() יהיה O(1) לכל container, ולכן list שומרת מונה. הזזת רשימה שלמה או node בודד מעדכנת כמה pointers ואת שני המונים. טווח מרשימה אחרת הוא ליניארי, כי צריך לספור כמה איברים עברו כדי לעדכן את size. זה המחיר של size() ב-O(1). list היא bidirectional, ולכן advance הוא k צעדים.",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "יש vector ממוין של n מפתחות שונים, ובונים ממנו `std::map` בלולאה של `m.insert(m.end(), x)`. מה הסיבוכיות הכוללת לפי התקן?",
+      "choices": [
+        "O(n log n), כי כל insert ב-map הוא O(log n)",
+        "O(n²), כי ה-hint m.end() מחייב לסרוק מהסוף",
+        "O(n log n) בממוצע ו-O(n²) במקרה הגרוע",
+        "O(n): insert עם hint הוא amortized O(1) כשהאיבר נכנס מיד לפני ה-hint, וזה המצב כאן בכל צעד"
+      ],
+      "answer": 3,
+      "explanation": "התקן מגדיר ל-insert עם hint סיבוכיות logarithmic באופן כללי, ו-amortized constant אם האיבר נכנס מיד לפני ה-hint. בקלט עולה, כל מפתח חדש גדול מכולם ולכן נכנס מיד לפני end(). גם ה-constructor של map מטווח שכבר ממוין מחויב להיות ליניארי. בלי hint (או עם hint שגוי) כל הכנסה עולה O(log n).",
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות על std::unordered_map נכונות לפי התקן?",
+      "choices": [
+        "ברירת המחדל של max_load_factor() היא 1.0",
+        "erase(it) מבטל iterators לאיברים אחרים אם הוא מקטין את מספר ה-buckets",
+        "reserve(n) מקצה מספיק buckets כדי ש-n איברים ייכנסו בלי לעבור את max_load_factor",
+        "rehash מבטל pointers ו-references לאיברים",
+        "סדר האיטרציה לא מוגדר ויכול להשתנות אחרי rehash"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "max_load_factor מתחיל ב-1.0. reserve(n) שקול ל-rehash(ceil(n / max_load_factor())). erase מבטל רק את האיבר שנמחק ולעולם לא מקטין את מספר ה-buckets. rehash מבטל iterators אבל לא pointers או references, כי ה-nodes לא זזים. הסדר תלוי ב-bucket שבו כל node נמצא, ולכן משתנה אחרי rehash.",
       "lesson": "cpp.stl",
       "tags": [
         "nvidia"

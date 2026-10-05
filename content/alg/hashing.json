@@ -35,7 +35,169 @@
         "rolling hash: בחירת modulus (ראשוני גדול כמו 2⁶¹ − 1) ו-base אקראי, ולמה mod 2⁶⁴ ניתן לשבירה",
         "חזקת 2 מול מספר ראשוני כגודל הטבלה, ומה זה דורש מה-hash function"
       ],
-      "diagram": "key --hash--> h --mod B--> bucket\n\nbucket 0: [k1] -> [k7]\nbucket 1: []\nbucket 2: [k3]\nload factor = n / B"
+      "diagram": "key --hash--> h --mod B--> bucket\n\nbucket 0: [k1] -> [k7]\nbucket 1: []\nbucket 2: [k3]\nload factor = n / B",
+      "details": [
+        {
+          "title": "המנגנון: hash, buckets, load factor ו-rehash",
+          "body": "hash table מחזיק מערך של B תאים (buckets). **hash function** ממירה מפתח למספר h, והאינדקס הוא h mod B, או h & (B − 1) כש-B חזקה של 2. **Collision** היא מצב שבו שני מפתחות שונים מקבלים אותו אינדקס; היא בלתי נמנעת (יש יותר מפתחות אפשריים מתאים), ולכן כל טבלה צריכה מדיניות לטיפול בה.\n\n**Load factor** α = n / B הוא מספר האיברים הממוצע לתא. כל עוד α חסום והפיזור טוב, חיפוש, הכנסה ומחיקה הם O(1) **בתוחלת**. במקרה הגרוע – כל המפתחות באותו bucket – הם O(n). Java 8 הופכת buckets ארוכים לעצים ומקבלת O(log n) worst-case, אבל זה לא הכלל.\n\nכש-α עובר סף (ב-std::unordered_map, max_load_factor = 1.0 כברירת מחדל), מבצעים **rehash**: מקצים מערך גדול בערך פי 2 ומכניסים מחדש את כל האיברים. פעולה בודדת עולה O(n), אבל בגלל הגדילה הגאומטרית זה O(1) amortized. כשיודעים מראש את מספר האיברים, reserve מונע rehashes לגמרי.\n\n**Universal hashing**: בוחרים את פונקציית ה-hash באקראי ממשפחה, למשל h(x) = ((a·x + b) mod p) mod B עם a, b אקראיים ו-p ראשוני גדול. אז לכל זוג מפתחות שונים קבוע מראש, הסתברות ההתנגשות ≤ 1/B, ולכן אורך השרשרת הצפוי הוא O(1 + α) **לכל קלט** – האקראיות היא בפונקציה ולא בקלט, ותוקף שלא יודע את a, b לא יכול לבנות קלט רע."
+        },
+        {
+          "title": "Chaining מול open addressing",
+          "body": "**Chaining**: כל bucket מחזיק רשימה של האיברים שנפלו אליו. α יכול לעבור 1 (פשוט שרשראות ארוכות), מחיקה פשוטה, ו-pointers לאיברים נשארים יציבים. החיסרון: הקצאה לכל איבר ו-pointer chasing – cache misses.\n\n**Open addressing**: האיברים נמצאים במערך עצמו. בהתנגשות מחפשים תא פנוי לפי סדר probe:\n- **Linear probing**: התא הבא, ואחריו הבא. מעולה ל-cache, אבל סובל מ-**primary clustering**: רצפים תפוסים מתמזגים וגדלים. מספר ה-probes הצפוי בחיפוש כושל הוא בערך ½(1 + 1/(1 − α)²), ולכן ב-α = 0.9 כבר כ-50. שומרים α ≤ ~0.7.\n- **Robin Hood**: בהכנסה, איבר שרחוק יותר מהבית שלו 'גונב' את התא מאיבר שקרוב יותר. מצמצם את השונות של אורך ה-probe.\n- **Swiss table** (abseil): מערך metadata של byte לכל תא עם 7 ביטים מה-hash; משווים 16 תאים בבת אחת ב-SIMD, ולכן α של 0.875 עדיין מהיר.\n- **מחיקה**: אי אפשר פשוט לרוקן תא – זה שובר שרשראות probe של איברים שעברו דרכו. משתמשים ב-**tombstone** (סימון 'נמחק', שמדלגים עליו בחיפוש וממלאים בהכנסה) או ב-**backward-shift deletion** ב-linear probing.\n\n**Cuckoo hashing**: לכל מפתח שני מקומות אפשריים (שתי פונקציות hash). חיפוש בודק רק את שניהם – O(1) **worst-case**. הכנסה שמוצאת את שני המקומות תפוסים מעיפה את הדייר, שעובר למקום השני שלו, וכן הלאה; אם נוצר מעגל עושים rehash. הכנסה O(1) amortized בתוחלת, כל עוד α נמוך (פחות מ-50% בגרסה של שתי טבלאות עם תא אחד לכל bucket)."
+        },
+        {
+          "title": "C++: std::unordered_map והמלכודות שלו",
+          "body": "- **operator[]** מכניס את המפתח עם ערך value-initialized (0 ל-int) אם הוא לא קיים, ומחזיר reference. לכן בדיקת קיום עם m[key] מנפחת את ה-map. בודקים עם find, count או contains (C++20).\n- **insert / emplace** לא דורסים ערך קיים: הם מחזירים pair של iterator ו-bool שאומר אם ההכנסה קרתה. כדי לדרוס: m[key] = v או insert_or_assign.\n- **מחיקה בזמן איטרציה**: erase(it) מבטל את it; כותבים it = m.erase(it) ומקדמים רק כשלא מוחקים, או std::erase_if ב-C++20.\n- **Invalidation**: unordered_map הוא node-based. rehash מבטל **iterators** אבל לא **pointers ו-references** לאיברים, כי ה-nodes לא זזים בזיכרון. הדרישה הזו (יחד עם ה-bucket API) היא הסיבה שהתקן כמעט מחייב chaining, ולכן הוא איטי יחסית ל-flat maps.\n- **אין std::hash ל-pair או tuple** – שגיאת קומפילציה. כותבים hasher שמשלב את שני ה-hashes עם mixer טוב. std::map עם pair עובד כי יש operator<.\n- **Hash של מספרים שלמים ב-libstdc++ הוא identity**, ומספר ה-buckets הוא ראשוני מרשימה ידועה. תוקף יכול לבחור מפתחות שכולם שקולים מודולו הראשוני ולהפוך כל פעולה ל-O(n). התיקון: hasher עם seed אקראי בזמן ריצה, למשל splitmix64.\n- **ראשוני מול חזקת 2**: חזקה של 2 מאפשרת AND במקום modulo (חילוק ב-64 ביט עולה עשרות cycles), אבל משתמשת רק בביטים הנמוכים, ולכן דורשת hash מערבב – עם identity, כתובות מיושרות (כפולות של 16) ייפלו לאותם buckets. ראשוני סלחני ל-hash חלש."
+        },
+        {
+          "title": "Python: dict, set ו-hashability",
+          "body": "מפתח ב-dict ואיבר ב-set חייבים להיות **hashable**: ה-hash שלהם לא משתנה כל חייהם, ובפועל הם immutable. int, str, tuple (של איברים hashable) ו-frozenset תקינים. list, dict ו-set רגיל אינם hashable. tuple שמכיל list נכשל ב-hash() כי ה-hash שלו מחושב מה-hash של האיברים. sorted(w) מחזיר list, ולכן כמפתח צריך tuple(sorted(w)) או ''.join(sorted(w)).\n\ncollections.Counter סופר תדירויות, ו-defaultdict(list) מקבץ בלי בדיקות קיום. ה-hash של str ו-bytes ב-Python מקבל seed אקראי בכל הרצה (SipHash), כהגנה מפני hash flooding."
+        },
+        {
+          "title": "דפוסי ראיון עם hash",
+          "body": "- **'ראיתי כבר?'**: Two Sum על קלט לא ממוין – לכל x בודקים אם target − x כבר ב-map, ורק אז מכניסים את x (כך x לא מזדווג עם עצמו). Contains Duplicate עם hash set.\n- **'איפה ראיתי לאחרונה?'**: Contains Duplicate II (כפילות במרחק ≤ k) – dict של האינדקס האחרון של כל ערך.\n- **ספירה**: First Unique Character – מעבר אחד שסופר ומעבר שני שמוצא את הראשון עם מונה 1. O(n).\n- **מפתח קנוני**: Group Anagrams – מקבצים לפי המחרוזת הממוינת (O(k log k)) או לפי מונה 26 תווים כ-tuple (O(k)).\n- **Bijection**: Isomorphic Strings ו-Word Pattern – צריך **שני** מיפויים (s → t ו-t → s), אחרת שני תווים שונים ב-s יכולים להתמפות לאותו תו ב-t.\n- **Longest Consecutive Sequence**: מכניסים ל-hash set, ומתחילים לספור רק מ-x שעבורו x − 1 לא קיים. כל איבר נבדק לכל היותר פעמיים: O(n). איטרציה על ה-set ולא על המערך (כפילויות), וזהירות מ-overflow ב-x ± 1.\n- **Meet in the middle**: 4Sum II – map של כל סכומי A + B עם מונים, ואז לכל C + D מחפשים את ההופכי. O(n²) במקום O(n⁴).\n- **LRU Cache**: hash map ממפתח ל-node ברשימה דו-כיוונית שמסודרת לפי שימוש אחרון. get מזיז את ה-node לראש, put מוסיף לראש ומוציא מהזנב. ה-map נותן גישה ב-O(1) ל-node, והרשימה הדו-כיוונית נותנת הוצאה של node שרירותי ב-O(1)."
+        },
+        {
+          "title": "Hash של מחרוזות: rolling hash ו-collisions",
+          "body": "**Polynomial rolling hash**: H(s) = s[0]·b^(m−1) + s[1]·b^(m−2) + ... + s[m−1] mod p. את ה-hash של החלון הבא מחשבים ב-O(1): מחסירים את התו שיוצא כפול b^(m−1), מכפילים ב-b ומוסיפים את התו שנכנס. כך משווים את כל ה-substrings באורך m ב-O(n).\n\n**Rabin-Karp**: מחפשים pattern באורך m. כל התאמת hash מחייבת וידוא תו-תו (O(m)), ולכן ה-worst-case הוא O(n·m) – למשל pattern 'aaa' בטקסט של 'a'. בתוחלת, עם p ראשוני גדול ו-b אקראי, זה O(n + m + occ·m). בלי וידוא האלגוריתם הוא **Monte Carlo** (מהיר, עלול לטעות); עם וידוא הוא **Las Vegas** (תמיד נכון, הזמן אקראי). KMP ו-Z-algorithm נותנים O(n + m) דטרמיניסטי.\n\n**בחירת modulus**: מודולו ראשוני p ועם b אקראי, ההסתברות ששתי מחרוזות שונות באורך n יתנגשו היא ≤ n/p (פולינום ההפרש ממעלה n − 1 מתאפס בלכל היותר n − 1 ערכי b). 2⁶¹ − 1 הוא בחירה נפוצה (ראשוני Mersenne, כפל מהיר). **mod 2⁶⁴** (overflow טבעי) נשבר: מחרוזת Thue–Morse באורך 2048 וה-complement שלה מתנגשות לכל b אי-זוגי. double hashing (שני moduli) מקטין עוד את הסיכוי.\n\n**Birthday paradox**: עם hash של k ביטים, התנגשות צפויה כבר סביב 2^(k/2) פריטים, כי מספר הזוגות גדל ריבועית: תוחלת ההתנגשויות היא C(n, 2) / 2^k. עם 32 ביט ומיליון מחרוזות זה כ-116 התנגשויות; לכן hash כמזהה (בלי השוואת תוכן) דורש 64 ביט לפחות, ולרוב 128."
+        },
+        {
+          "title": "מבנים הסתברותיים ו-perfect hashing",
+          "body": "**Bloom filter**: מערך של m ביטים ו-k פונקציות hash. הכנסה מדליקה k ביטים; שאילתה בודקת אם כולם דולקים. התשובה 'לא' תמיד נכונה (אין false negatives), והתשובה 'כן' עלולה להיות שגויה (false positive), בהסתברות של בערך (1 − e^(−kn/m))^k. לא תומך במחיקה (Counting Bloom filter כן). משתמשים בו כמסנן זול לפני גישה יקרה לדיסק או לרשת.\n\n**HyperLogLog**: הערכת מספר האיברים השונים ב-stream ענק בזיכרון קטן מאוד, לפי מספר האפסים המובילים ב-hash, עם שגיאה יחסית של כ-1.04/√m.\n\n**Perfect hashing**: לקבוצת מפתחות **סטטית** אפשר לבנות פונקציה בלי התנגשויות בכלל (למשל FKS – שתי רמות), ולקבל חיפוש O(1) worst-case."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: Two Sum על [3, 2, 4] עם target = 6",
+          "body": "מעבר אחד, בודקים לפני שמכניסים:\n\n- i = 0, x = 3: מחפשים 3 – ה-map ריק. מכניסים {3: 0}.\n- i = 1, x = 2: מחפשים 4 – אין. מכניסים {3: 0, 2: 1}.\n- i = 2, x = 4: מחפשים 2 – נמצא באינדקס 1. מחזירים (1, 2).\n\nאילו היינו מכניסים לפני שבודקים, ב-i = 0 היינו מכניסים 3 ומיד מוצאים 6 − 3 = 3 – אותו איבר פעמיים, תשובה (0, 0) שגויה."
+        },
+        {
+          "title": "דוגמה: Longest Consecutive על [100, 4, 200, 1, 3, 2]",
+          "body": "set = {100, 4, 200, 1, 3, 2}.\n\n- 100: 99 לא קיים → התחלת רצף. 101 לא קיים → אורך 1.\n- 4: 3 קיים → לא התחלה, מדלגים.\n- 200: 199 לא קיים → אורך 1.\n- 1: 0 לא קיים → התחלה. 2, 3, 4 קיימים, 5 לא → אורך 4.\n- 3, 2: יש להם קודם → מדלגים.\n\nהתשובה 4. כל איבר נבדק פעם כ-'האם יש לי קודם' ופעם כחלק מסריקה של רצף – לכל היותר 2n בדיקות."
+        },
+        {
+          "title": "דוגמה: linear probing ו-tombstone",
+          "body": "טבלה בגודל 7, h(k) = k mod 7. מכניסים 10, 17, 24, 3 (כולם שקולים ל-3 מודולו 7):\n\n- 10 → תא 3.\n- 17 → 3 תפוס → תא 4.\n- 24 → 3, 4 תפוסים → תא 5.\n- 3 → 3, 4, 5 תפוסים → תא 6.\n\nזה primary clustering: ארבעה איברים, רצף תפוס של 4, וכל הכנסה ארוכה מהקודמת.\n\nמוחקים את 17. אם מרוקנים את תא 4, חיפוש של 24 יתחיל ב-3, יגיע ל-4 הריק ויעצור – 'לא נמצא', למרות ש-24 בתא 5. לכן מסמנים את תא 4 כ-tombstone: החיפוש ממשיך דרכו, והכנסה עתידית יכולה למלא אותו."
+        },
+        {
+          "title": "דוגמה: rolling hash בבסיס 10",
+          "body": "כדי לראות את המנגנון בלי מודולו, ניקח b = 10 והמחרוזת \"31415\" עם חלון m = 3:\n\n- החלון הראשון \"314\": H = 3·100 + 1·10 + 4 = 314.\n- מזיזים: מחסירים 3·100 → 14, מכפילים ב-10 → 140, מוסיפים 1 → 141 (\"141\").\n- מזיזים: מחסירים 1·100 → 41, מכפילים → 410, מוסיפים 5 → 415 (\"415\").\n\nכל הזזה עלתה שלוש פעולות, בלי קשר ל-m. בפועל עובדים מודולו p ראשוני גדול, ו-b אקראי כדי שתוקף לא יוכל לבנות התנגשויות מראש."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Hash function",
+          "def": "פונקציה שממירה מפתח למספר. צריכה להיות דטרמיניסטית לאותו מפתח, מהירה, ולפזר טוב. עם seed אקראי היא מגינה מפני קלט עוין."
+        },
+        {
+          "term": "Bucket ו-collision",
+          "def": "bucket הוא תא בטבלה. collision היא שני מפתחות שונים שמקבלים אותו bucket – בלתי נמנעת, ולכן צריך chaining או open addressing."
+        },
+        {
+          "term": "Load factor (α)",
+          "def": "n / B: מספר האיברים חלקי מספר ה-buckets. קובע את אורך השרשרת או מספר ה-probes. כשהוא עובר סף מתבצע rehash."
+        },
+        {
+          "term": "Rehash",
+          "def": "הקצאת מערך גדול יותר והכנסת כל האיברים מחדש. O(n) לפעולה בודדת, O(1) amortized. reserve מונע אותו כשהגודל ידוע."
+        },
+        {
+          "term": "Universal hashing",
+          "def": "בחירה אקראית של פונקציה ממשפחה כך שלכל זוג מפתחות, הסתברות ההתנגשות ≤ 1/B. נותן O(1 + α) בתוחלת לכל קלט."
+        },
+        {
+          "term": "Chaining",
+          "def": "כל bucket מחזיק רשימה. פשוט, α יכול לעבור 1, pointers יציבים, אבל pointer chasing ו-cache misses. std::unordered_map בפועל."
+        },
+        {
+          "term": "Open addressing / linear probing",
+          "def": "האיברים במערך עצמו, ובהתנגשות מחפשים תא פנוי לפי סדר probe. linear probing מהיר ל-cache אבל סובל מ-primary clustering כש-α גבוה."
+        },
+        {
+          "term": "Tombstone / backward-shift deletion",
+          "def": "דרכים למחוק ב-open addressing בלי לשבור שרשראות probe: סימון 'נמחק', או הזזת האיברים שאחרי התא אחורה."
+        },
+        {
+          "term": "Robin Hood hashing",
+          "def": "וריאנט של linear probing שבו איבר רחוק מהבית שלו מחליף איבר קרוב יותר. מצמצם את השונות של אורך ה-probe."
+        },
+        {
+          "term": "Swiss table",
+          "def": "hash table של abseil עם metadata של byte לתא והשוואת 16 תאים ב-SIMD. מהיר גם ב-load factor של 0.875."
+        },
+        {
+          "term": "Cuckoo hashing",
+          "def": "שני מקומות אפשריים לכל מפתח; חיפוש O(1) worst-case. הכנסה מעיפה דיירים למקומם החלופי, ובמעגל עושים rehash. דורש load factor נמוך."
+        },
+        {
+          "term": "operator[] / insert / find ב-unordered_map",
+          "def": "operator[] מכניס ערך default אם המפתח חסר; insert לא דורס ערך קיים; find, count ו-contains בודקים קיום בלי להכניס."
+        },
+        {
+          "term": "Iterator מול pointer invalidation",
+          "def": "ב-unordered_map, rehash מבטל iterators אבל לא pointers ו-references לאיברים, כי ה-nodes לא זזים. erase מבטל רק את האיבר שנמחק."
+        },
+        {
+          "term": "std::hash ו-hasher משלך",
+          "def": "התקן לא מגדיר hash ל-pair או tuple. כותבים struct עם operator() שמשלב hashes עם mixer (למשל splitmix64)."
+        },
+        {
+          "term": "Hash flooding",
+          "def": "התקפה שבה תוקף שמכיר את פונקציית ה-hash בוחר מפתחות שכולם מתנגשים, והופך כל פעולה ל-O(n). ההגנה: seed אקראי (SipHash ב-Python ו-Rust)."
+        },
+        {
+          "term": "Prime vs power-of-2 table size",
+          "def": "חזקת 2 מאפשרת AND מהיר אבל דורשת hash מערבב; ראשוני מפזר טוב גם hash חלש במחיר חילוק. libstdc++ משתמש בראשוני."
+        },
+        {
+          "term": "Hashable (Python)",
+          "def": "אובייקט שה-hash שלו קבוע ושאפשר להשוות. int, str, tuple של hashables ו-frozenset כן; list, dict ו-set לא."
+        },
+        {
+          "term": "Canonical key",
+          "def": "ייצוג אחיד לאובייקטים 'שקולים', כמו מחרוזת ממוינת או מונה תווים ל-anagrams, כדי לקבץ אותם ב-hash map."
+        },
+        {
+          "term": "Isomorphic Strings",
+          "def": "שתי מחרוזות שבין התווים שלהן יש bijection. צריך מיפוי לשני הכיוונים, אחרת שני תווים יכולים להתמפות לאותו יעד."
+        },
+        {
+          "term": "Longest Consecutive Sequence",
+          "def": "האורך של הרצף הארוך ביותר של מספרים עוקבים. hash set, וסופרים רק מתחילת רצף (x − 1 לא קיים). O(n)."
+        },
+        {
+          "term": "Meet in the middle",
+          "def": "פיצול חיפוש לשני חצאים, שמירת תוצאות חצי אחד ב-hash, וחיפוש ההשלמה מהחצי השני. 4Sum II: O(n²) במקום O(n⁴)."
+        },
+        {
+          "term": "LRU Cache",
+          "def": "cache שמוציא את הפריט שהשתמשו בו לפני הכי הרבה זמן. hash map + רשימה דו-כיוונית נותנים get ו-put ב-O(1)."
+        },
+        {
+          "term": "Rolling hash / Rabin-Karp",
+          "def": "hash פולינומי של חלון שמתעדכן ב-O(1) בהזזה. Rabin-Karp משתמש בו לחיפוש pattern: O(n + m) בתוחלת, O(n·m) worst-case עם וידוא."
+        },
+        {
+          "term": "Monte Carlo מול Las Vegas",
+          "def": "Monte Carlo: זמן חסום אבל עלול לטעות (hash בלי וידוא). Las Vegas: תמיד נכון אבל הזמן אקראי (hash עם וידוא)."
+        },
+        {
+          "term": "Thue–Morse ו-mod 2⁶⁴",
+          "def": "Thue–Morse והמשלים שלה באורך 2048 מתנגשים ב-polynomial hash מודולו 2⁶⁴ לכל base אי-זוגי. לכן משתמשים במודולו ראשוני כמו 2⁶¹ − 1."
+        },
+        {
+          "term": "Birthday paradox",
+          "def": "עם hash של k ביטים, התנגשות צפויה סביב 2^(k/2) פריטים, כי מספר הזוגות גדל ריבועית."
+        },
+        {
+          "term": "Bloom filter",
+          "def": "מערך ביטים עם k פונקציות hash לבדיקת שייכות. בלי false negatives, עם false positives בהסתברות נשלטת. לא תומך במחיקה."
+        },
+        {
+          "term": "Perfect hashing",
+          "def": "פונקציית hash בלי התנגשויות לקבוצת מפתחות סטטית, שנותנת חיפוש O(1) worst-case."
+        }
+      ]
     }
   ],
   "questions": [
@@ -68,14 +230,20 @@
       "answer": 3,
       "explanation": "מעבר אחד עם חיפוש והכנסה של O(1) בתוחלת, וה-map מחזיק עד n איברים. O(n log n) הוא פתרון המיון. בדיקה לפני הכנסה חשובה: כך x לא מזדווג עם עצמו כש-target = 2x.",
       "lesson": "alg.hashing",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.hashing.q03",
       "level": 1,
       "type": "short",
       "prompt": "איך נקרא היחס בין מספר האיברים ב-hash table לבין מספר ה-buckets? (באנגלית)",
-      "accept": ["load factor", "loadfactor", "load-factor"],
+      "accept": [
+        "load factor",
+        "loadfactor",
+        "load-factor"
+      ],
       "explanation": "load factor (α = n / B) קובע את האורך הממוצע של שרשרת ב-chaining ואת מספר ה-probes ב-open addressing. כשהוא עובר סף (ב-std::unordered_map ברירת המחדל היא max_load_factor = 1.0) מתבצע rehash.",
       "lesson": "alg.hashing"
     },
@@ -86,7 +254,12 @@
       "lang": "cpp",
       "code": "std::unordered_map<std::string, int> m;\nif (m[\"a\"] == 0)\n    std::cout << \"zero \";\nstd::cout << m.size();",
       "prompt": "מה יודפס?",
-      "choices": ["zero 0", "zero 1", "1", "שגיאת קומפילציה"],
+      "choices": [
+        "zero 0",
+        "zero 1",
+        "1",
+        "שגיאת קומפילציה"
+      ],
       "answer": 1,
       "explanation": "operator[] מכניס את \"a\" עם value-initialized int (0) אם המפתח לא קיים, ומחזיר reference אליו. לכן התנאי מתקיים והגודל הוא 1. זו מלכודת נפוצה: בדיקת קיום עם [] מנפחת את ה-map. משתמשים ב-find, count, או contains (C++20).",
       "lesson": "alg.hashing"
@@ -98,7 +271,12 @@
       "lang": "python",
       "code": "from collections import defaultdict\ng = defaultdict(list)\nfor w in [\"eat\", \"tea\", \"tan\", \"ate\", \"nat\", \"bat\"]:\n    g[\"\".join(sorted(w))].append(w)\nprint(len(g), max(len(v) for v in g.values()))",
       "prompt": "מה יודפס?",
-      "choices": ["3 3", "6 1", "3 2", "4 3"],
+      "choices": [
+        "3 3",
+        "6 1",
+        "3 2",
+        "4 3"
+      ],
       "answer": 0,
       "explanation": "המפתח הקנוני הוא המחרוזת הממוינת: 'aet' ← eat, tea, ate; 'ant' ← tan, nat; 'abt' ← bat. שלוש קבוצות, הגדולה בגודל 3. זה Group Anagrams. מיון כל מילה עולה O(k log k); מונה של 26 תווים כמפתח (tuple) נותן O(k).",
       "lesson": "alg.hashing"
@@ -108,8 +286,19 @@
       "level": 2,
       "type": "multi",
       "prompt": "אילו מהערכים הבאים יכולים לשמש מפתח ב-dict של Python?",
-      "choices": ["(1, 2)", "frozenset({1, 2})", "[1, 2]", "\"abc\"", "{1: 2}", "(1, [2])"],
-      "answer": [0, 1, 3],
+      "choices": [
+        "(1, 2)",
+        "frozenset({1, 2})",
+        "[1, 2]",
+        "\"abc\"",
+        "{1: 2}",
+        "(1, [2])"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
       "explanation": "מפתח חייב להיות hashable, ובפועל immutable. tuple של ערכים hashable, frozenset ו-str תקינים. list ו-dict הם mutable ולכן לא hashable. tuple שמכיל list נכשל ב-hash(), כי ה-hash של tuple מחושב מה-hash של האיברים שלו – מלכודת נפוצה.",
       "lesson": "alg.hashing"
     },
@@ -127,7 +316,9 @@
       "answer": 2,
       "explanation": "התקן מגדיר std::hash לטיפוסים בסיסיים, string ו-smart pointers, אבל לא ל-pair או tuple. פתרון: struct עם operator() שמשלב את שני ה-hashes (למשל ((uint64_t)a << 32) | (uint32_t)b, דרך mixer טוב). std::map<pair<int,int>, int> עובד ישירות כי ל-pair יש operator<.",
       "lesson": "alg.hashing",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.hashing.q08",
@@ -143,7 +334,9 @@
       "answer": 2,
       "explanation": "הבדיקה 'x − 1 לא קיים' מבטיחה שכל רצף נסרק פעם אחת בלבד, מההתחלה שלו. בלי הבדיקה, רצף באורך n נסרק מכל אחת מנקודות ההתחלה שלו – O(n²). מיון נכון אבל לא עומד בדרישה. עדכון של השכנים המיידיים בלבד לא נכון; בגרסת ה-map צריך לעדכן את שני קצוות הרצף.",
       "lesson": "alg.hashing",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.hashing.q09",
@@ -176,7 +369,9 @@
       "answer": 1,
       "explanation": "ב-open addressing מספר ה-probes הצפוי ב-linear probing גדל בערך כמו 1/(1 − α)², ולכן שומרים α ≤ ~0.7–0.875. מחיקה פשוטה שוברת שרשראות probe, ולכן צריך tombstones. ב-chaining α יכול להיות כל מספר (פשוט שרשראות ארוכות). std::unordered_map הוא chaining בפועל, בגלל ה-bucket interface ויציבות ה-references שהתקן דורש.",
       "lesson": "alg.hashing",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.hashing.q11",
@@ -240,7 +435,9 @@
       "answer": 3,
       "explanation": "std::unordered_map הוא node-based: rehash מחלק מחדש את ה-nodes ל-buckets אבל לא מזיז אותם בזיכרון. לכן pointers ו-references לאיברים נשארים תקפים עד שהאיבר נמחק, אבל iterators (שתלויים במבנה ה-buckets) מתבטלים. זו בדיוק הדרישה שמונעת מהתקן לאפשר open addressing, ומה שמאפשר ל-absl::node_hash_map לשמור על אותה התנהגות בעוד flat_hash_map לא.",
       "lesson": "alg.hashing",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.hashing.q15",
@@ -256,7 +453,9 @@
       "answer": 0,
       "explanation": "meet in the middle: מפצלים את הבעיה לשני חצאים של n² סכומים כל אחד. 250,000 סכומים ב-map ו-250,000 חיפושים – מהיר מאוד. hash set של D בלבד נותן O(n³) = 1.25·10⁸. החסם התחתון אינו O(n⁴) כי סופרים בבת אחת עם מונה, לא מונים כל רביעייה בנפרד.",
       "lesson": "alg.hashing",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.hashing.q16",
@@ -303,7 +502,9 @@
       ],
       "explanation": "שאלת ביצועים טיפוסית ל-NVIDIA: היא בודקת אם המועמד מבין את החומרה (cache lines, SIMD) ולא רק את הסיבוכיות האסימפטוטית.",
       "lesson": "alg.hashing",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.hashing.q19",
@@ -319,7 +520,186 @@
       "answer": 1,
       "explanation": "עם identity hash ו-mask, מפתחות כמו כתובות מיושרות (כפולות של 16) או כפולות של 1024 ייפלו לאותם buckets – קטסטרופה. חילוק ב-64 ביט עולה עשרות cycles מול מחזור אחד ל-AND; יש טכניקות כמו fastmod או Lemire's reduction. גם ראשוני לא מבטיח היעדר התנגשויות – רק פיזור טוב יותר לדפוסים נפוצים, ותוקף שמכיר את הראשוני יכול עדיין לייצר התנגשויות.",
       "lesson": "alg.hashing",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "alg.hashing.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה collision ב-hash table?",
+      "choices": [
+        "שני מפתחות שונים שממופים לאותו bucket",
+        "הכנסה של אותו מפתח פעמיים",
+        "מצב שבו ה-load factor עובר 1",
+        "גישה לתא שנמחק"
+      ],
+      "answer": 0,
+      "explanation": "collision היא שני מפתחות **שונים** שמקבלים אותו אינדקס. היא בלתי נמנעת כי מרחב המפתחות גדול ממספר התאים, ולכן כל טבלה צריכה chaining או open addressing. הכנסה חוזרת של אותו מפתח היא עדכון, לא collision. load factor גבוה מגדיל את הסיכוי להתנגשויות אבל אינו ההגדרה.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "First Unique Character in a String: להחזיר את האינדקס של התו הראשון שמופיע פעם אחת בלבד. מה הפתרון היעיל?",
+      "choices": [
+        "לכל תו לסרוק את כל המחרוזת ולספור – O(n²)",
+        "למיין את המחרוזת ולחפש תו בלי שכנים זהים – O(n log n)",
+        "מעבר ראשון שסופר תדירויות ב-hash map (או מערך 26), ומעבר שני שמחזיר את האינדקס הראשון עם מונה 1 – O(n)",
+        "hash set של תווים שנראו, ולהחזיר את הראשון שלא היה בו – O(n)"
+      ],
+      "answer": 2,
+      "explanation": "צריך לדעת את התדירות הכוללת של כל תו לפני שמחליטים, ולכן שני מעברים. מיון הורס את המיקומים המקוריים. hash set של 'נראו' מזהה רק אם תו כבר הופיע **לפניו**, אבל תו שמופיע שוב בהמשך ייחשב בטעות ייחודי.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "ב-Python, מה מחזיר len({3, 1, 3, 2, 1})?",
+      "accept": [
+        "3"
+      ],
+      "explanation": "set מחזיק כל ערך פעם אחת: {1, 2, 3}. זו הדרך המהירה לספור ערכים שונים – O(n) בתוחלת.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "code": "std::unordered_map<int, int> m;\nm.insert({1, 10});\nm.insert({1, 20});\nm[2] = 5;\nm[2] = 7;\nstd::cout << m[1] << ' ' << m[2] << ' ' << m.size();",
+      "prompt": "מה יודפס?",
+      "choices": [
+        "20 7 2",
+        "10 5 2",
+        "10 7 2",
+        "20 7 4"
+      ],
+      "answer": 2,
+      "explanation": "insert לא דורס ערך קיים: ההכנסה השנייה של 1 נכשלת (ה-bool בתוצאה הוא false), ו-m[1] נשאר 10. operator[] מחזיר reference ולכן ההשמה השנייה ל-m[2] דורסת ל-7. יש שני מפתחות. לדריסה עם insert משתמשים ב-insert_or_assign.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "python",
+      "code": "from collections import defaultdict\n\ndef group_anagrams(words):\n    g = defaultdict(list)\n    for w in words:\n        g[sorted(w)].append(w)\n    return list(g.values())",
+      "bugLine": 6,
+      "prompt": "הפונקציה זורקת שגיאה כבר במילה הראשונה. מה הבעיה?",
+      "choices": [
+        "defaultdict לא תומך ב-append",
+        "sorted על מחרוזת מחזיר מחרוזת ממוינת, ולכן כל המילים נכנסות לאותה קבוצה",
+        "צריך לבדוק אם המפתח קיים לפני append",
+        "sorted מחזיר list, ו-list אינו hashable ולא יכול לשמש מפתח (TypeError). צריך tuple(sorted(w)) או ''.join(sorted(w))"
+      ],
+      "answer": 3,
+      "explanation": "מפתחות ב-dict חייבים להיות hashable, ו-list הוא mutable. sorted('eat') מחזיר ['a', 'e', 't'], לא מחרוזת. defaultdict יוצר רשימה ריקה אוטומטית, ולכן אין צורך בבדיקת קיום, ו-append עליה תקין.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Isomorphic Strings: האם אפשר להחליף תווים ב-s (כל תו תמיד באותו תו, ושני תווים שונים לא באותו תו) כדי לקבל את t? מימוש עם map אחד s → t בלבד מחזיר true על s = \"badc\", t = \"baba\". מה חסר?",
+      "choices": [
+        "צריך גם מיפוי t → s (או set של תווי t שכבר נלקחו), אחרת 'b' ו-'d' ממופים שניהם ל-'b' – המיפוי לא חח\"ע",
+        "צריך למיין את שתי המחרוזות קודם",
+        "צריך לבדוק שהאורכים שווים – זו הבעיה היחידה",
+        "צריך להשוות את מספר התווים השונים בלבד"
+      ],
+      "answer": 0,
+      "explanation": "map אחד מבטיח שכל תו ב-s הולך ליעד אחד, אבל לא שאין שני תווים שהולכים לאותו יעד. ב-\"badc\" → \"baba\": b→b, a→a, d→b, c→a – עקבי מצד s, אבל d ו-b מתנגשים. מיון הורס את המיקומים. השוואת מספר התווים השונים היא תנאי הכרחי אבל לא מספיק: ב-'abab' וב-'abba' יש שני תווים שונים, אבל הן אינן איזומורפיות. אורכים שונים הם בדיקה מקדימה, לא הבעיה כאן.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "code": "def near_dup(nums, k):\n    last = {}\n    for i, x in enumerate(nums):\n        if x in last and i - last[x] <= k:\n            return True\n        last[x] = i\n    return False\n\nprint(near_dup([1, 2, 3, 1, 2, 3], 2), near_dup([1, 0, 1, 1], 1))",
+      "prompt": "מה יודפס?",
+      "choices": [
+        "True True",
+        "False False",
+        "True False",
+        "False True"
+      ],
+      "answer": 3,
+      "explanation": "הפונקציה בודקת אם יש שני אינדקסים עם אותו ערך במרחק ≤ k. ברשימה הראשונה כל כפילות במרחק 3 > 2, ולכן False. בשנייה, ה-1 באינדקסים 2 ו-3 במרחק 1, ולכן True. שמירת האינדקס **האחרון** מספיקה, כי הוא הקרוב ביותר לכל אינדקס עתידי.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "LRU Cache עם get ו-put ב-O(1): hash map ממפתח ל-node ברשימה מקושרת שמסודרת לפי שימוש אחרון. למה הרשימה חייבת להיות דו-כיוונית?",
+      "choices": [
+        "כדי לעבור על הרשימה מהסוף להתחלה בזמן eviction",
+        "כי ב-get צריך להוציא node מאמצע הרשימה ולהעביר לראש; ב-singly linked list הוצאה דורשת את ה-node הקודם, שמציאתו O(n)",
+        "כי רשימה חד-כיוונית לא יכולה להחזיק pointer לזנב",
+        "אין צורך; רשימה חד-כיוונית עם pointer לזנב מספיקה ל-O(1)"
+      ],
+      "answer": 1,
+      "explanation": "ה-map נותן את ה-node ב-O(1), אבל כדי לנתק אותו צריך לעדכן את ה-next של הקודם לו. עם prev pointer זה O(1). רשימה חד-כיוונית יכולה להחזיק tail, אבל זה לא עוזר להוציא node מהאמצע. (יש טריק של map למחזיק הקודם, אבל הוא מסובך ושביר.) ב-C++ משתמשים ב-std::list ו-splice, וב-Python ב-OrderedDict עם move_to_end.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שירות בודק אם URL נמצא ברשימה שחורה של מיליארד URLs לפני גישה יקרה לדיסק. שמים מולו Bloom filter בזיכרון. איזו טענה נכונה?",
+      "choices": [
+        "אם ה-filter אומר 'לא קיים', ה-URL בוודאות לא ברשימה; אם הוא אומר 'קיים', צריך לבדוק בדיסק כי ייתכן false positive",
+        "אם ה-filter אומר 'קיים', ה-URL בוודאות ברשימה; 'לא קיים' עלול להיות שגוי",
+        "ה-filter מדויק לגמרי כל עוד מספר הביטים גדול ממספר ה-URLs",
+        "אפשר למחוק URL מהרשימה על ידי כיבוי k הביטים שלו"
+      ],
+      "answer": 0,
+      "explanation": "הכנסה מדליקה k ביטים, ואף פעם לא מכבים, ולכן איבר שהוכנס תמיד יימצא – אין false negatives. ביטים יכולים להידלק על ידי איברים אחרים, ולכן 'קיים' עלול להיות שגוי בהסתברות ≈ (1 − e^(−kn/m))^k. כיבוי ביטים ימחק גם איברים אחרים שחולקים אותם; למחיקה צריך Counting Bloom filter. גם עם הרבה ביטים ההסתברות קטנה אבל לא אפס.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "בוחרים h(x) = ((a·x + b) mod p) mod B, כאשר p ראשוני גדול מכל מפתח, ו-a ≠ 0, b נבחרים באקראי פעם אחת כשהטבלה נוצרת. מה בדיוק מובטח?",
+      "choices": [
+        "שאין התנגשויות כלל, כי p ראשוני",
+        "שלכל קלט, ובכל ריצה, כל bucket מכיל O(1) איברים",
+        "שלכל זוג מפתחות שונים x ≠ y שנקבע מראש, ההסתברות (על פני הבחירה של a, b) ש-h(x) = h(y) היא בערך ≤ 1/B; לכן אורך השרשרת הצפוי הוא O(1 + α) לכל קלט שלא תלוי ב-a, b",
+        "שה-hash עמיד בפני תוקף שרואה את ערכי ה-hash ומתאים את הקלט בהתאם"
+      ],
+      "answer": 2,
+      "explanation": "זה universal hashing: ההבטחה היא הסתברותית, על פני הבחירה האקראית של הפונקציה, ולכל קלט קבוע מראש – בניגוד ל-average case שמניח קלט אקראי. אין הבטחה נגד התנגשויות בכלל, ואין הבטחה worst-case לריצה ספציפית. תוקף אדפטיבי שרואה תוצאות (למשל דרך זמני תגובה) יכול ללמוד את a, b; לשם כך צריך hash קריפטוגרפי עם מפתח כמו SipHash.",
+      "lesson": "alg.hashing"
+    },
+    {
+      "id": "alg.hashing.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Cuckoo hashing עם שתי טבלאות ושתי פונקציות hash. איזו טענה נכונה?",
+      "choices": [
+        "גם חיפוש וגם הכנסה הם O(1) worst-case",
+        "חיפוש הוא O(1) worst-case (בודקים בדיוק שני תאים); הכנסה מעיפה דיירים למקומם החלופי, ואם נוצר מעגל עושים rehash עם פונקציות חדשות – O(1) amortized בתוחלת, כל עוד ה-load factor מתחת לכ-50%",
+        "חיפוש הוא O(log n) כי צריך לעקוב אחרי שרשרת ההעפות",
+        "cuckoo hashing עובד היטב גם ב-load factor של 95% עם שתי טבלאות של תא בודד"
+      ],
+      "answer": 1,
+      "explanation": "היתרון המרכזי הוא lookup חסום – שני תאים, בלי שרשראות – וזה מתאים לחומרה ולמערכות עם latency קשיח. ההכנסה היא החלק ההסתברותי: מסלול ההעפות יכול להיתקע במעגל, ואז rehash. מעל ~50% (בגרסה הבסיסית) ההסתברות למעגלים קופצת. גרסאות עם buckets של 4 תאים מגיעות ל-~95%, אבל לא עם תא בודד.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.hashing"
     }
   ]
 }

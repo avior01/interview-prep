@@ -26,7 +26,11 @@
         "a[idx] += 1 עם אינדקסים חוזרים: כל אינדקס מתעדכן פעם אחת בלבד; צריך np.add.at או np.bincount",
         "overflow שקט ב-int16/int8, למשל בחישובי phase או בהכפלת samples",
         "לולאת Python על עמודות של מערך C-order: גישה מפוזרת ל-cache",
-        "הצטברות ב-float32 באופן סדרתי (cumsum או לולאה) מאבדת דיוק הרבה מעבר למה שמצפים"
+        "הצטברות ב-float32 באופן סדרתי (cumsum או לולאה) מאבדת דיוק הרבה מעבר למה שמצפים",
+        "פעולה in-place שמשנה dtype (`x /= 32768` על int16) נכשלת עם UFuncTypeError",
+        "`a - a.mean(axis=1)` על (2,3) נכשל ב-broadcasting; צריך `keepdims=True`",
+        "'וקטוריזציה' של נוסחה רקורסיבית (`p[1:] = p[:-1] + d`) לא מחשבת הצטברות, כי צד ימין מחושב כולו לפני ההשמה",
+        "`sliding_window_view` הוא view זול, אבל כל פעולה עליו מייצרת מערך מלא בגודל של כל החלונות"
       ],
       "senior": [
         "להסביר strides ו-contiguity, ומתי reshape מחזיר view ומתי copy",
@@ -34,7 +38,221 @@
         "להכיר את חוקי ה-promotion של NumPy 2 (NEP 50) ואת השלכותיהם על dtypes קטנים",
         "לדעת מתי לעבור ל-Numba, Cython, CuPy או C++ כשהבעיה לא וקטורית (תלות בין איטרציות)"
       ],
-      "diagram": "shape (3,1) + shape (4,)\n  (3,1)\n  (1,4)   <- pad left, stretch 1s\n= (3,4)"
+      "diagram": "shape (3,1) + shape (4,)\n  (3,1)\n  (1,4)   <- pad left, stretch 1s\n= (3,4)",
+      "details": [
+        {
+          "title": "ndarray בזיכרון: dtype, shape ו-strides",
+          "body": "ndarray הוא מצביע לבלוק זיכרון אחד, ועוד metadata: `dtype` (סוג וגודל כל איבר), `shape` (אורך כל ציר) ו-`strides` (כמה bytes לקפוץ כדי להתקדם באחד בכל ציר). הכתובת של `a[i, j]` היא offset + i·strides[0] + j·strides[1]. מערך int32 בצורה (2,3) ב-C-order הוא בעל strides (12, 4).\n\n**C-contiguous** (row-major) אומר שהציר האחרון רציף בזיכרון; **F-contiguous** (column-major, כמו Fortran ו-MATLAB) אומר שהראשון רציף. transpose לא מזיז נתונים, רק מחליף את ה-strides, ולכן `a.T` של מערך C-order הוא F-contiguous.\n\nלמה זה משנה: מעבר על שורה במערך C-order הוא גישה רציפה שמנצלת cache lines ו-prefetch. מעבר על עמודה קופץ בכל צעד שורה שלמה, ובמערך גדול כל גישה היא cache line אחרת ולעתים עמוד אחר (TLB miss). ההבדל יכול להיות סדר גודל."
+        },
+        {
+          "title": "broadcasting",
+          "body": "broadcasting מאפשר פעולה בין מערכים בצורות שונות בלי להעתיק. החוקים: מיישרים את הצורות מימין; ממד חסר משמאל נחשב 1; בכל ציר הממדים חייבים להיות שווים, או שאחד מהם 1 ואז הוא 'נמתח'. המתיחה נעשית עם stride 0, כלומר בלי העתקה.\n\nכלים: `None` (או `np.newaxis`) מוסיף ציר באורך 1, למשל `x[:, None] - x[None, :]` נותן מטריצת (n,n) של כל ההפרשים. `keepdims=True` ב-reduction שומר את הציר שהוקרס באורך 1, כדי שהתוצאה תעבור broadcasting חזרה מול המקור: `a - a.mean(axis=1, keepdims=True)` מנרמל כל שורה. `reshape(3, -1)` נותן ל-NumPy לחשב את הממד החסר.\n\nמלכודת קלאסית: (2,3) מול (2,) מתיישרים מימין, כלומר 3 מול 2, וזה ValueError. מי שחושב 'מימין לשמאל' לא נופל בזה. מלכודת שנייה: x של 1D הוא לא וקטור עמודה, ו-`x.T` עליו לא עושה כלום."
+        },
+        {
+          "title": "view מול copy",
+          "body": "**view** הוא ndarray חדש שמצביע לאותו זיכרון עם shape/strides/offset אחרים. שינוי דרכו משנה את המקור. **copy** הוא זיכרון חדש.\n\n- תמיד view: basic slicing (`a[1:3]`, `a[::2]`), `a.T`, `a[:, None]`, `sliding_window_view`\n- view אם אפשר: `reshape` ו-`ravel`. אם אי אפשר לבטא את הצורה החדשה עם strides (למשל `a.T.reshape(6)`), מתקבל copy בשקט\n- תמיד copy: fancy indexing (`a[[1,2]]`), boolean mask (`a[a > 0]`), `flatten`, `astype` (ברירת מחדל)\n\nאבל השמה דרך fancy index (`a[[1,2]] = 0`) כן כותבת למקור, כי זו השמה ולא יצירת מערך. בודקים עם `np.shares_memory`. `np.frombuffer` מחזיר view על bytes, והוא read-only אם האובייקט המקורי לא ניתן לשינוי, ולכן לפעמים צריך `.copy()`.\n\n`a[idx] += 1` עם אינדקסים חוזרים מתבצע כ-`a[idx] = a[idx] + 1`: קורא, מחשב וכותב, ולכן כל אינדקס עולה פעם אחת. `np.add.at` הוא unbuffered ומצטבר, ו-`np.bincount` סופר מופעים של כל מספר שלם בין 0 למקסימום. כשמקור ויעד של השמה חופפים (`a[1:] = a[:-1]`), NumPy מזהה ומעתיק קודם, ולכן התוצאה כאילו צד ימין חושב במלואו לפני הכתיבה."
+        },
+        {
+          "title": "dtypes, overflow ו-promotion (NEP 50)",
+          "body": "פעולות על מערכים שלמים עוטפות בשקט (int16: 30000+30000 = -5536), בלי שגיאה ובלי saturation. `/` תמיד מחזיר float (true division), ו-`//` מחזיר שלם (floor division). פעולה in-place חייבת לשמור את ה-dtype של היעד: `x /= 2` על מערך int נכשל עם UFuncTypeError, כי כלל ה-casting הוא same_kind ו-float לא נכנס ל-int.\n\n**NEP 50** (NumPy 2): Python int/float הם 'weak', כלומר מקבלים את ה-dtype של המערך. `int8 + 100` נשאר int8 ועוטף, `int8 + 300` זורק OverflowError כי 300 לא נכנס ב-int8, ו-`float32 + 1.0` נשאר float32. סקלר של NumPy (`np.float64(1.0)`) הוא 'strong' ומקדם את התוצאה ל-float64. ב-NumPy 1 ההחלטה הייתה תלויה בערך (value-based casting), ולכן קוד ישן יכול לשנות התנהגות.\n\n**float32** מחזיק 24 ביטים של mantissa. מעל 2^24 = 16,777,216, הוספת 1 כבר לא משנה את הערך. הצטברות סדרתית (`cumsum`, לולאה) נתקעת שם, ואילו `np.sum` משתמש ב-pairwise summation שבה השגיאה גדלה כ-O(log n). מצטברים ב-float64 (`dtype=np.float64`) כשהאורך גדול. ב-DSP שומרים complex64 לאורך ה-pipeline: window ב-float64 יקדם הכל ל-complex128."
+        },
+        {
+          "title": "ביצועים: interpreter, temporaries ורוחב פס",
+          "body": "ufunc (כמו `np.multiply`) מריץ לולאה מהודרת ב-C, לעתים עם SIMD, על כל המערך. לולאת Python עולה עשרות ns לאיבר בגלל dispatch דינמי ואובייקטים; ufunc עולה ns בודדות או פחות, ועוד כמה µs תקורה קבועה לקריאה. לכן וקטוריזציה משתלמת על מערכים, לא על איברים בודדים.\n\nכל פעולה בביטוי יוצרת **temporary** מלא. ביטויים כמו `a*b + c*d` על מערכים גדולים חסומים ברוחב פס זיכרון, לא בחישוב. עוזר: `out=` ופעולות in-place, chunks שנכנסים ל-cache, float32, או כלים שמאחדים את הלולאה (numexpr, Numba). `np.vectorize` הוא לולאת Python בתחפושת ולא מאיץ.\n\n**GIL**: רוב ה-ufuncs משחררים את ה-GIL בלולאה הפנימית, ולכן threads של Python יכולים לעבד chunks שונים במקביל. אבל פעולה חסומת-זיכרון מקבלת האצה מוגבלת ברוחב הפס של ה-DRAM, ועל chunks קטנים התקורה שולטת.\n\n**תלות בין איטרציות** (loop-carried dependency), כמו phase מצטבר של NCO או IIR, לא מתאימה לביטוי איבר-איבר. פותרים עם פונקציה מוכנה (`np.cumsum`, `scipy.signal.lfilter`), נוסחה סגורה (`dphi * np.arange(n)`), או Numba/C++/CuPy."
+        },
+        {
+          "title": "תבניות DSP נפוצות",
+          "body": "- **framing**: `x[:m*n].reshape(m, n)` נותן frames לא חופפים כ-view. לחפיפה: `sliding_window_view(x, n)[::hop]`. חשוב לדגום כל hop שורות לפני כל חישוב, אחרת מקבלים מערך בגודל (len-n+1)×n\n- **Welch / power spectrum**: מכפילים כל frame ב-Hann (broadcasting של (n,) על (m,n)), `np.fft.fft(..., axis=1)`, ומחשבים `X.real**2 + X.imag**2` (בלי sqrt), ממוצע ב-axis=0\n- **FFT מהיר**: גדלים עם גורמים קטנים (`scipy.fft.next_fast_len`), `scipy.fft` עם `workers=-1`, או pyFFTW עם plans\n- **moving average ב-O(n)**: הפרש של cumsum, `(c[k:] - c[:-k]) / k`, עם צבירה ב-float64. ב-float32 ועל אות ארוך, ה-cumsum גדל וההפרש של שני מספרים גדולים מאבד דיוק (cancellation)\n- **בחירת dtype**: המרה מ-int16 עם `astype(np.float32)` ואז כפל ב-`1/32768`, ולא חלוקה in-place\n\nלפני כל אופטימיזציה מודדים: cProfile או py-spy למציאת הפונקציה, line_profiler לשורה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: strides ו-transpose",
+          "body": "a = `np.arange(6, dtype=np.int32).reshape(2, 3)`, כלומר [[0,1,2],[3,4,5]]. כל איבר 4 bytes, ושורה היא 3 איברים, ולכן strides = (12, 4).\n\n- `a[1, 2]` נמצא ב-1·12 + 2·4 = 20 bytes, האיבר החמישי בזיכרון, ערכו 5\n- `a.T` הוא בצורה (3,2) עם strides (4, 12). `a.T[2, 1]` נמצא ב-2·4 + 1·12 = 20, אותו איבר בדיוק\n- `a.T` אינו C-contiguous: מעבר על השורה שלו קופץ 12 bytes בכל צעד\n- `a.T.reshape(6)` צריך את הסדר 0,3,1,4,2,5, ואין stride אחד שנותן אותו, ולכן מתקבל copy\n\nהמסקנה: transpose הוא חינמי, אבל הפעולה הבאה שדורשת רציפות משלמת על העתקה."
+        },
+        {
+          "title": "דוגמה: מעקב broadcasting",
+          "body": "(5,1,4) מול (3,1):\n\n- מיישרים מימין: (5,1,4) מול (1,3,1)\n- ציר אחרון: 4 מול 1, נמתח ל-4\n- אמצעי: 1 מול 3, נמתח ל-3\n- ראשון: 5 מול 1, נמתח ל-5\n- תוצאה (5,3,4)\n\n(2,3) מול (2,): מיישרים ל-(2,3) מול (1,2). ציר אחרון 3 מול 2, אף אחד מהם לא 1, ולכן ValueError. זה מה שקורה ב-`a - a.mean(axis=1)`. עם `keepdims=True` הממוצע בצורה (2,1), מול (2,3) נותן (2,3), וכל שורה מנורמלת לממוצע שלה."
+        },
+        {
+          "title": "דוגמה: חשבון dtypes",
+          "body": "- int16: 30000 + 30000 = 60000, מחוץ לטווח (עד 32767), עוטף ל-60000 - 65536 = -5536\n- int8 + 100 (Python int): 100 נכנס ב-int8, התוצאה int8: 200 - 256 = -56\n- int8 + 300: 300 לא נכנס ב-int8, ולכן OverflowError ב-NumPy 2\n- float32 + 1.0: נשאר float32 (Python float הוא weak)\n- float32 + np.float64(1.0): float64 (סקלר NumPy הוא strong)\n- int16 / 32768: float64 (true division). `x /= 32768` על int16: UFuncTypeError\n- סכימת 2^25 אחדות ב-float32: cumsum נעצר ב-16,777,216, ו-`np.sum` מגיע ל-33,554,432 בזכות pairwise"
+        },
+        {
+          "title": "דוגמה: תעבורת זיכרון של a*b + c*d",
+          "body": "ארבעה מערכי float64 של 10^8 איברים, 800 MB כל אחד.\n\n- `t1 = a*b`: קורא 1.6 GB, כותב 0.8 GB\n- `t2 = c*d`: קורא 1.6 GB, כותב 0.8 GB\n- `y = t1 + t2`: קורא 1.6 GB, כותב 0.8 GB\n- סך הכל 7.2 GB, ועוד 1.6 GB של temporaries בזיכרון\n\nבלולאה מאוחדת (Numba, numexpr) קוראים פעם אחת 3.2 GB וכותבים 0.8 GB: 4.0 GB, כמעט פי 2 פחות תעבורה. ברוחב פס של כ-20 GB/s זה 0.36 s מול 0.2 s. החישוב עצמו (שלוש פעולות לאיבר) זניח לעומת זה."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "ndarray",
+          "def": "המערך של NumPy: מצביע לבלוק זיכרון אחד, ועוד dtype, shape, strides ו-offset."
+        },
+        {
+          "term": "dtype",
+          "def": "הסוג והגודל של כל איבר (int16, float32, complex64 וכו'). אחיד לכל המערך, וזה מה שמאפשר לולאה מהודרת."
+        },
+        {
+          "term": "shape ו-reshape(-1)",
+          "def": "shape הוא tuple של אורכי הצירים. ב-reshape, -1 אומר ל-NumPy לחשב את הממד החסר, למשל (12,) ל-(3,-1) נותן (3,4)."
+        },
+        {
+          "term": "strides",
+          "def": "כמה bytes לקפוץ כדי להתקדם באחד בכל ציר. transpose, slicing עם step ו-broadcasting הם רק שינוי strides."
+        },
+        {
+          "term": "C-contiguous / F-contiguous",
+          "def": "C: הציר האחרון רציף (row-major). F: הציר הראשון רציף (column-major). `flags` מראה זאת, ו-`np.ascontiguousarray` מעתיק כשצריך."
+        },
+        {
+          "term": "view",
+          "def": "מערך שחולק זיכרון עם מערך אחר. שינוי דרכו משנה את המקור. `a.base` מצביע על הבעלים."
+        },
+        {
+          "term": "copy",
+          "def": "מערך עם זיכרון חדש ועצמאי. נוצר ב-fancy indexing, boolean mask, flatten, astype ו-`.copy()`."
+        },
+        {
+          "term": "basic slicing",
+          "def": "אינדוקס עם `start:stop:step` ו-`None`. תמיד מחזיר view."
+        },
+        {
+          "term": "fancy indexing",
+          "def": "אינדוקס עם רשימה או מערך של אינדקסים. מחזיר copy, אבל השמה דרכו כותבת למקור."
+        },
+        {
+          "term": "boolean mask",
+          "def": "אינדוקס עם מערך bool באותה צורה, כמו `a[a > 0]`. מחזיר copy חד-ממדי של האיברים שנבחרו."
+        },
+        {
+          "term": "np.where",
+          "def": "`np.where(cond, x, y)` בוחר איבר-איבר מ-x או מ-y ושומר על הצורה. עם ארגומנט אחד מחזיר את האינדקסים שבהם התנאי מתקיים."
+        },
+        {
+          "term": "broadcasting",
+          "def": "חוקים לפעולה בין צורות שונות: יישור מימין, ממד חסר = 1, ובכל ציר שווים או שאחד מהם 1. נעשה עם stride 0 בלי העתקה."
+        },
+        {
+          "term": "np.newaxis / None",
+          "def": "מוסיף ציר באורך 1: `x[:, None]` הופך (n,) ל-(n,1). הדרך לבנות outer operations."
+        },
+        {
+          "term": "keepdims",
+          "def": "פרמטר של reductions ששומר את הציר שהוקרס באורך 1, כדי שהתוצאה תעבור broadcasting מול המקור."
+        },
+        {
+          "term": "reduction ו-axis",
+          "def": "פעולה שמקריסה ציר (sum, mean, max). `axis=0` מקריס את ציר השורות ומשאיר תוצאה לכל עמודה."
+        },
+        {
+          "term": "ravel / flatten",
+          "def": "שניהם מחזירים 1D. ravel מחזיר view כשאפשר, flatten תמיד copy."
+        },
+        {
+          "term": "np.shares_memory",
+          "def": "בודק אם שני מערכים חולקים זיכרון. הדרך הבטוחה לדעת אם קיבלת view."
+        },
+        {
+          "term": "ufunc",
+          "def": "פונקציה איבר-איבר מהודרת (add, multiply, exp). תומכת ב-broadcasting, `out=`, ו-methods כמו `.at` ו-`.reduce`."
+        },
+        {
+          "term": "temporary ו-out=",
+          "def": "כל פעולה בביטוי יוצרת מערך ביניים מלא. `out=` ופעולות in-place כותבים ליעד קיים וחוסכים הקצאה ותעבורה."
+        },
+        {
+          "term": "in-place ו-same_kind casting",
+          "def": "`x op= y` חייב לכתוב בחזרה ל-dtype של x. אם התוצאה מסוג 'גבוה' יותר (float ל-int), נזרק UFuncTypeError."
+        },
+        {
+          "term": "integer overflow במערכים",
+          "def": "חשבון שלמים ב-NumPy עוטף בשקט מודולו 2^bits, בלי שגיאה ובלי saturation."
+        },
+        {
+          "term": "true division / floor division",
+          "def": "`/` תמיד מחזיר float. `//` מעגל כלפי מטה ושומר על שלם."
+        },
+        {
+          "term": "NEP 50 (weak scalars)",
+          "def": "חוקי promotion של NumPy 2: Python int/float מקבלים את ה-dtype של המערך, וערך שלא נכנס זורק OverflowError. סקלרים של NumPy הם strong ומקדמים."
+        },
+        {
+          "term": "value-based casting",
+          "def": "ההתנהגות של NumPy 1: ה-dtype של התוצאה עם סקלר היה תלוי בערך שלו. הוחלף ב-NEP 50."
+        },
+        {
+          "term": "float32 precision",
+          "def": "24 ביטים של mantissa, כ-7 ספרות. מעל 2^24 המרווח בין מספרים סמוכים גדול מ-1."
+        },
+        {
+          "term": "pairwise summation",
+          "def": "סכימה בעץ: סוכמים זוגות של סכומים חלקיים בגודל דומה. השגיאה גדלה כ-O(log n) במקום O(n). `np.sum` משתמש בה, `cumsum` לא."
+        },
+        {
+          "term": "np.add.at",
+          "def": "גרסה unbuffered של `a[idx] += v` שמצטברת נכון גם כשאינדקס חוזר."
+        },
+        {
+          "term": "np.bincount",
+          "def": "סופר כמה פעמים מופיע כל שלם אי-שלילי, ומחזיר מערך באורך max+1. מהיר יותר מ-add.at לבניית histogram."
+        },
+        {
+          "term": "חפיפה בהשמה (overlap)",
+          "def": "כשמקור ויעד חולקים זיכרון, NumPy מעתיק קודם, ולכן `a[1:] = a[:-1]` מזיז ולא מפיץ. כך גם רקורסיה לא 'מתגלגלת'."
+        },
+        {
+          "term": "loop-carried dependency",
+          "def": "איבר שתלוי בתוצאה של האיבר הקודם (phase מצטבר, IIR). לא מתבטא כפעולה איבר-איבר; צריך cumsum, lfilter, נוסחה סגורה או קוד מהודר."
+        },
+        {
+          "term": "np.vectorize",
+          "def": "עטיפה נוחה שמריצה פונקציית Python על כל איבר. זו לולאת Python, בלי האצה."
+        },
+        {
+          "term": "numexpr / Numba / CuPy",
+          "def": "numexpr מאחד ביטוי ללולאה אחת ב-chunks; Numba מהדר פונקציית Python עם לולאות ל-machine code; CuPy הוא API דמוי NumPy על GPU."
+        },
+        {
+          "term": "GIL",
+          "def": "Global Interpreter Lock: רק thread אחד מריץ bytecode של Python. ufuncs משחררים אותו בלולאה הפנימית, ולכן threads יכולים לעבד chunks במקביל."
+        },
+        {
+          "term": "memory-bandwidth bound",
+          "def": "פעולה שבה זמן העברת הנתונים מהזיכרון גדול מזמן החישוב. מוסיפים ליבות ולא מקבלים האצה ליניארית."
+        },
+        {
+          "term": "cache line ו-TLB",
+          "def": "cache line (64 bytes) היא יחידת ההעברה מהזיכרון. TLB הוא cache של תרגומי כתובות; קפיצות של עמוד בכל גישה גורמות ל-TLB misses."
+        },
+        {
+          "term": "sliding_window_view / as_strided",
+          "def": "יוצרים view של חלונות חופפים עם strides חוזרים, בלי העתקה. כל חישוב עליו מייצר מערך מלא בגודל כל החלונות, ולכן דוגמים כל hop קודם."
+        },
+        {
+          "term": "np.frombuffer",
+          "def": "יוצר ndarray על גבי bytes קיימים בלי העתקה. read-only אם המקור לא ניתן לשינוי."
+        },
+        {
+          "term": "Hann window ו-Welch",
+          "def": "Hann מקטין דליפה ספקטרלית. Welch ממצע את |X|^2 על פני frames (לרוב חופפים) כדי להקטין את השונות של הערכת ה-PSD."
+        },
+        {
+          "term": "next_fast_len / workers / pyFFTW",
+          "def": "`scipy.fft.next_fast_len` נותן אורך עם גורמים קטנים ל-FFT מהיר; `workers=-1` מריץ על כל הליבות; pyFFTW עוטף את FFTW עם plans."
+        },
+        {
+          "term": "moving average עם cumsum",
+          "def": "y[i] = (c[i+k] - c[i]) / k עם c = cumsum עם 0 בהתחלה. O(n) במקום O(nk), אבל דורש צבירה ב-float64 נגד cancellation."
+        },
+        {
+          "term": "ctypes / pybind11 ו-contiguity",
+          "def": "העברת מערך לקוד C/C++ דורשת בדרך כלל זיכרון C-contiguous, dtype תואם (complex64 = std::complex<float>) ומערך שחי כל עוד הקוד משתמש במצביע."
+        },
+        {
+          "term": "profiling",
+          "def": "cProfile ו-py-spy מראים באיזו פונקציה הזמן; line_profiler מראה איזו שורה. מודדים לפני ואחרי כל שינוי."
+        }
+      ]
     }
   ],
   "questions": [
@@ -355,6 +573,302 @@
         "מתי לעבור ל-Numba, C++ או GPU, ושימוש ב-threads כי GIL משוחרר"
       ],
       "explanation": "תשובה סניורית מתחילה במדידה ומבינה ש-NumPy איטי בדרך כלל בגלל memory traffic, dtypes ולולאות שנשארו, לא בגלל החישוב עצמו.",
+      "lesson": "py.numpy",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.numpy.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין view ל-copy ב-NumPy?",
+      "choices": [
+        "view הוא עותק לקריאה בלבד, ו-copy אפשר לשנות",
+        "view חולק את אותו זיכרון עם המערך המקורי, ולכן שינוי באחד נראה בשני; copy הוא זיכרון חדש ועצמאי",
+        "view נוצר רק בקריאה מפורשת ל-`.view()`, וכל שאר הפעולות מחזירות copy",
+        "ב-NumPy 2 אין הבדל מעשי, כי הכל copy-on-write"
+      ],
+      "answer": 1,
+      "explanation": "view הוא ndarray חדש עם metadata משלו (shape, strides, offset) שמצביע לאותו buffer, ולכן כתיבה דרכו משנה את המקור. view ניתן לכתיבה, ונוצר אוטומטית מ-slicing, transpose ו-reshape, לא רק מ-`.view()`. copy-on-write הוא מנגנון של pandas, לא של NumPy.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q20",
+      "level": 1,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nprint(np.array([1, 2.5, 3]).dtype)",
+      "choices": [
+        "int64",
+        "object",
+        "float32",
+        "float64"
+      ],
+      "answer": 3,
+      "explanation": "NumPy בוחר dtype אחד שמתאים לכל האיברים. שילוב של int ו-float נותן float64. object מתקבל רק כשיש איברים שאינם מספרים (או רשימות באורכים שונים עם `dtype=object`). float32 לא נבחר מעצמו: ברירת המחדל של float היא float64.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה ה-shape של `np.arange(12).reshape(3, -1)`? (כתוב כ-tuple)",
+      "accept": [
+        "(3,4)",
+        "3,4",
+        "(3, 4)"
+      ],
+      "explanation": "-1 אומר ל-NumPy לחשב את הממד החסר: 12 איברים חלקי 3 שורות = 4 עמודות, כלומר (3, 4). אם 12 לא היה מתחלק ב-3 היה נזרק ValueError. אפשר -1 אחד בלבד.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q22",
+      "level": 1,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\na = np.array([3, -1, 4, -2])\nprint(np.where(a > 0, a, 0))",
+      "choices": [
+        "[3 4]",
+        "[0 2]",
+        "[ True False  True False]",
+        "[3 0 4 0]"
+      ],
+      "answer": 3,
+      "explanation": "`np.where(cond, x, y)` בוחר איבר-איבר: איפה שהתנאי מתקיים לוקחים מ-a, ואחרת 0. הצורה נשמרת: ארבעה איברים. `a[a > 0]` היה נותן [3 4] (copy של הנבחרים בלבד), ו-`np.where(a > 0)` עם ארגומנט אחד היה מחזיר את האינדקסים 0 ו-2. המערך הבוליאני עצמו הוא `a > 0`.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q23",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\na = np.array([1, 2, 3])\nprint(a // 2, a / 2)",
+      "choices": [
+        "[0 1 1] [0.5 1.  1.5]",
+        "[0 1 1] [0 1 1]",
+        "[0.5 1.  1.5] [0.5 1.  1.5]",
+        "[0 1 2] [0.5 1.  1.5]"
+      ],
+      "answer": 0,
+      "explanation": "`//` הוא floor division ושומר על dtype שלם: 1//2=0, 2//2=1, 3//2=1. `/` הוא true division ותמיד מחזיר float, גם כששני הצדדים שלמים. NumPy לא מעגל לקרוב (3//2 הוא 1 ולא 2), ו-`/` לא נשאר שלם כמו ב-C.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q24",
+      "level": 2,
+      "type": "output",
+      "prompt": "רוצים להחסיר מכל שורה את הממוצע שלה. מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\na = np.arange(6).reshape(2, 3)\nprint((a - a.mean(axis=1)).shape)",
+      "choices": [
+        "(2, 3)",
+        "ValueError",
+        "(2,)",
+        "(3, 2)"
+      ],
+      "answer": 1,
+      "explanation": "`a.mean(axis=1)` בצורה (2,). מול (2,3) מיישרים מימין: 3 מול 2, ואף אחד מהם לא 1, ולכן ValueError. NumPy לא 'מנחש' שהתכוונת לשורות. התיקון: `a.mean(axis=1, keepdims=True)` בצורה (2,1), או `a.mean(axis=1)[:, None]`. אם a היה ריבועי, זה היה עובד בשקט ומחסיר את הממוצעים לפי עמודות, וזה באג גרוע יותר.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q25",
+      "level": 2,
+      "type": "bug",
+      "prompt": "המרה של samples גולמיים מ-int16 ל-float בטווח [-1, 1). הפונקציה זורקת שגיאה. מה הבאג?",
+      "lang": "python",
+      "code": "import numpy as np\n\ndef to_float(raw: bytes) -> np.ndarray:\n    x = np.frombuffer(raw, dtype=np.int16).copy()\n    x /= 32768          # scale to [-1, 1)\n    return x",
+      "bugLine": 5,
+      "choices": [
+        "`.copy()` מיותר ושובר את ה-view",
+        "32768 לא נכנס ב-int16, ולכן נזרק OverflowError",
+        "frombuffer צריך `dtype='<i2'` אחרת ה-endianness שגוי",
+        "`/=` הוא in-place ולכן חייב לשמור int16, אבל חלוקה נותנת float: UFuncTypeError. צריך `astype(np.float32)` לפני הסקאלה"
+      ],
+      "answer": 3,
+      "explanation": "פעולה in-place כותבת בחזרה ל-dtype של x, שהוא int16. חלוקה נותנת float, וכלל ה-casting של in-place הוא same_kind, ולכן נזרק UFuncTypeError. התיקון: `np.frombuffer(raw, np.int16).astype(np.float32) * (1 / 32768)`. 32768 עצמו לא בעייתי, כי ב-true division התוצאה float64 ולא int16. ה-copy נחוץ דווקא, כי frombuffer על bytes מחזיר מערך read-only.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q26",
+      "level": 2,
+      "type": "short",
+      "prompt": "מה ה-shape של `np.zeros((4, 5))[:, None, :]`? (כתוב כ-tuple)",
+      "accept": [
+        "(4,1,5)",
+        "4,1,5",
+        "(4, 1, 5)"
+      ],
+      "explanation": "`None` (np.newaxis) מוסיף ציר באורך 1 במקום שבו הוא מופיע, ולכן (4,5) הופך ל-(4,1,5). זה view, בלי העתקה. השימוש הטיפוסי: להכין מערך ל-broadcasting מול מערך אחר בצורה (k,5) כדי לקבל (4,k,5).",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q27",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "x הוא מערך 1D באורך n. איזה ביטוי מחזיר מטריצת (n, n) של כל ההפרשים `x[i] - x[j]`?",
+      "choices": [
+        "`x - x.T`",
+        "`np.outer(x, x)`",
+        "`x[None, :] - x`",
+        "`x[:, None] - x[None, :]`"
+      ],
+      "answer": 3,
+      "explanation": "`x[:, None]` בצורה (n,1) ו-`x[None, :]` בצורה (1,n), ו-broadcasting נותן (n,n) עם x[i] - x[j]. על מערך 1D, `x.T` לא עושה כלום, ולכן `x - x.T` הוא וקטור אפסים באורך n. `np.outer` מחשב מכפלה ולא הפרש (`np.subtract.outer(x, x)` כן היה נכון). `x[None, :] - x` הוא (1,n) מול (n,), כלומר (1,n) של אפסים.",
+      "lesson": "py.numpy",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "py.numpy.q28",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nprint(np.bincount([0, 2, 2, 5]))",
+      "choices": [
+        "[1 2 1]",
+        "[1 0 2 0 0 1]",
+        "[0 2 2 5]",
+        "[1 0 2 0 1]"
+      ],
+      "answer": 1,
+      "explanation": "`np.bincount` מחזיר מערך באורך max+1 = 6, שבו מקום k הוא מספר המופעים של k: 0 פעם אחת, 2 פעמיים, 5 פעם אחת, ושאר האינדקסים 0. ספירה רק של הערכים שמופיעים (כמו `np.unique(..., return_counts=True)`) הייתה נותנת [1 2 1]. אורך 5 הוא off-by-one: צריך מקום גם ל-5 עצמו.",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q29",
+      "level": 3,
+      "type": "bug",
+      "prompt": "חישוב phase של NCO בלי לולאה: phase[k] = phase[k-1] + dphi. עבור dphi=0.5, n=5 מתקבל [0. 0.5 0.5 0.5 0.5]. מה הבאג?",
+      "lang": "python",
+      "code": "import numpy as np\n\ndef nco_phase(dphi, n):\n    phase = np.zeros(n)\n    phase[1:] = phase[:-1] + dphi   # phase[k] = phase[k-1] + dphi\n    return phase",
+      "bugLine": 5,
+      "choices": [
+        "צד ימין מחושב במלואו לפני ההשמה, מהערכים הישנים (אפסים), ולכן כל איבר מקבל רק dphi אחד; זו תלות בין איטרציות, וצריך `dphi * np.arange(n)` או `np.cumsum`",
+        "`np.zeros` יוצר מערך int ולכן 0.5 נקטם",
+        "`phase[1:]` ו-`phase[:-1]` בצורות שונות",
+        "הקוד נכון, רק איטי, ו-NumPy פשוט לא מעדכן את התצוגה"
+      ],
+      "answer": 0,
+      "explanation": "NumPy מחשב קודם את כל צד ימין (`phase[:-1] + dphi`, כשכל phase עדיין אפסים) ורק אז כותב, כולל טיפול בחפיפה בין מקור ליעד. לכן אין 'גלגול' של הרקורסיה. התיקון: `dphi * np.arange(n)` או `np.cumsum`, ובאות ארוך כדאי לעטוף עם `np.mod(..., 2*np.pi)` כדי לשמור דיוק. np.zeros הוא float64 כברירת מחדל, ואורכי שני ה-slices שווים (n-1).",
+      "lesson": "py.numpy"
+    },
+    {
+      "id": "py.numpy.q30",
+      "level": 4,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\na = np.arange(6).reshape(2, 3)\nb = a.T.reshape(6)\nb[0] = 99\nprint(a[0, 0], np.shares_memory(a, b))",
+      "choices": [
+        "99 True",
+        "0 False",
+        "99 False",
+        "0 True"
+      ],
+      "answer": 1,
+      "explanation": "`a.T` הוא view עם strides (8, 24), והסדר הלוגי שלו בזיכרון הוא 0,3,1,4,2,5. אין stride יחיד שנותן את הסדר הזה מתוך ה-buffer של a, ולכן `reshape` מחזיר copy בשקט. b[0] משנה את העותק, a[0,0] נשאר 0, ו-shares_memory הוא False. מי שמניח ש-reshape תמיד view יענה 99 True. reshape של a עצמו (רציף) היה כן view.",
+      "lesson": "py.numpy",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.numpy.q31",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "x הוא float32 באורך 10^6. `w = sliding_window_view(x, 1024)` ואחר כך `y = w * hann` (hann בצורה (1024,)). מה קורה?",
+      "choices": [
+        "sliding_window_view כבר מעתיק את כל החלונות, ולכן ה-4 GB מוקצים כבר בשורה הראשונה",
+        "ValueError, כי (998977, 1024) ו-(1024,) לא עוברים broadcasting",
+        "y הוא גם view, ולכן הכל זול",
+        "w הוא view זול (strides (4, 4)), אבל הכפל מייצר מערך מלא של כ-4.1 GB; צריך לדגום `w[::hop]` לפני החישוב"
+      ],
+      "answer": 3,
+      "explanation": "w הוא view בצורה (998977, 1024) עם strides (4, 4): כל שורה מתחילה איבר אחד אחרי הקודמת, בלי העתקה. אבל הכפל יוצר מערך חדש מלא: 998,977 × 1024 × 4 bytes ≈ 4.1 GB. broadcasting של (1024,) מול (998977,1024) תקין, ותוצאת ufunc היא תמיד מערך חדש ולא view. הפתרון ל-STFT: `w[::hop]` קודם, למשל hop=512 נותן 1,952 שורות, כ-8 MB.",
+      "lesson": "py.numpy",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.numpy.q32",
+      "level": 4,
+      "type": "oral",
+      "prompt": "הסבר איך ndarray מיוצג בזיכרון, מתי פעולות מחזירות view ומתי copy, ומה צריך לבדוק כשמעבירים מערך NumPy לקוד C++ (למשל עם pybind11 או ctypes).",
+      "modelAnswer": "ndarray הוא buffer אחד ועוד metadata: dtype, shape, strides ו-offset. הכתובת של איבר היא offset ועוד סכום של אינדקס כפול stride לכל ציר. כל פעולה שאפשר לבטא כשינוי של strides ו-offset מחזירה view: basic slicing, transpose, newaxis, broadcasting (stride 0), sliding_window_view. reshape ו-ravel מחזירים view רק אם הצורה החדשה ניתנת לביטוי עם strides, אחרת copy בשקט (למשל reshape של מערך transposed). fancy indexing, boolean mask, flatten ו-astype מחזירים copy. בודקים עם np.shares_memory ו-a.base. בממשק ל-C++: קוד C מצפה בדרך כלל למצביע ולזיכרון רציף, ולכן בודקים flags['C_CONTIGUOUS'] או קוראים ל-np.ascontiguousarray (שמעתיק רק אם צריך) ומעבירים את ה-strides אם הקוד יודע לטפל בהם. dtype חייב להתאים בדיוק: complex64 הוא std::complex<float>, int16 הוא int16_t, ו-endianness native. ב-pybind11, py::array_t<T, py::array::c_style | py::array::forcecast> יבצע המרה והעתקה אוטומטית, וזה עלול להסתיר copy יקר או לגרום לכך שכתיבה של C++ לא תגיע למערך המקורי. read-only: מערך מ-frombuffer על bytes לא ניתן לכתיבה, וצריך לבדוק flags['WRITEABLE']. lifetime: אם C++ שומר את המצביע (למשל ב-thread אחר), המערך חייב לחיות, ולכן מחזיקים reference ל-Python object או מעתיקים. alignment: NumPy מבטיח רק יישור לגודל ה-dtype (בפועל לרוב 16 bytes), לא 64 bytes של AVX-512, ולכן loads מיושרים דורשים בדיקה. לבסוף, GIL: לשחרר אותו בקוד C++ ארוך כדי ש-threads אחרים ירוצו.",
+      "rubric": [
+        "מסביר buffer + dtype + shape + strides + offset ואיך מחושבת כתובת",
+        "מבחין בין view תמיד, view-אם-אפשר (reshape/ravel) ו-copy תמיד, עם דוגמה",
+        "בממשק ל-C++: contiguity ו-ascontiguousarray, התאמת dtype, ו-copy נסתר של forcecast",
+        "read-only, lifetime של המצביע ו-alignment",
+        "מזכיר שחרור GIL בקוד ארוך"
+      ],
+      "explanation": "המראיין בודק הבנה של המודל (buffer + dtype + shape + strides), ושאתה מתרגם אותו לבעיות אמיתיות בממשק ל-C++: רציפות, dtype, read-only ו-lifetime.",
+      "lesson": "py.numpy",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.numpy.q33",
+      "level": 5,
+      "type": "output",
+      "prompt": "NumPy 2 (חוקי NEP 50). מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nx = np.ones(1, np.float32)\nprint((x + 1.0).dtype, (x + np.float64(1.0)).dtype)",
+      "choices": [
+        "float32 float64",
+        "float64 float64",
+        "float32 float32",
+        "float64 float32"
+      ],
+      "answer": 0,
+      "explanation": "ב-NEP 50 Python float הוא weak: הוא מקבל את ה-dtype של המערך, ולכן float32 + 1.0 נשאר float32. סקלר של NumPy (`np.float64`) הוא strong ומשתתף ב-promotion רגיל, ולכן התוצאה float64. ב-NumPy 1, value-based casting היה נותן float32 בשני המקרים, כי לסקלרים לא הייתה השפעה על dtype של מערך מאותו kind. ההבדל הזה הוא מקור נפוץ ל-pipeline שעובר בשקט ל-complex128 ומאט פי 2.",
+      "lesson": "py.numpy",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.numpy.q34",
+      "level": 5,
+      "type": "code",
+      "prompt": "כתוב `moving_avg(x, k)` וקטורי ב-O(n) (בלי לולאת Python ובלי O(nk) של convolve): ממוצע נע של k דגימות, מצב 'valid' (אורך התוצאה len(x)-k+1). שמור על float32 אם הקלט float32, וטפל בדיוק ובקלט לא תקין.",
+      "lang": "python",
+      "starter": "import numpy as np\n\ndef moving_avg(x: np.ndarray, k: int) -> np.ndarray:\n    ...",
+      "modelAnswer": "import numpy as np\n\ndef moving_avg(x, k):\n    x = np.asarray(x)\n    if not 1 <= k <= len(x):\n        raise ValueError('need 1 <= k <= len(x)')\n    c = np.empty(len(x) + 1, dtype=np.float64)\n    c[0] = 0.0\n    np.cumsum(x, dtype=np.float64, out=c[1:])   # accumulate in float64\n    y = (c[k:] - c[:-k]) / k                       # window sums, O(n)\n    out_dtype = x.dtype if x.dtype.kind == 'f' else np.float64\n    return y.astype(out_dtype, copy=False)",
+      "rubric": [
+        "cumsum עם 0 בהתחלה והפרש `c[k:] - c[:-k]`: O(n) זמן ו-O(n) זיכרון",
+        "צבירה ב-float64 ומודעות ל-cancellation ולתקרה של float32",
+        "החזרה ב-dtype של הקלט (float32 נשאר float32)",
+        "בדיקת k לא חוקי ואורך תוצאה נכון (n-k+1)",
+        "מזכיר חלופות: convolve ב-O(nk), lfilter, או צבירה בבלוקים לאות ארוך"
+      ],
+      "explanation": "הפרש של cumsum נותן כל סכום חלון ב-O(1), כלומר O(n) כולל. הצבירה חייבת להיות ב-float64: ב-float32 ה-cumsum של אות ארוך גדל, וההפרש של שני מספרים גדולים וקרובים מאבד ספרות (cancellation), ואפילו נתקע מעל 2^24. ה-0 בתחילת c מטפל בחלון הראשון בלי מקרה מיוחד. לאותות ארוכים מאוד מאפסים את הצבירה בבלוקים או משתמשים ב-`scipy.signal.lfilter`.",
+      "lesson": "py.numpy",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.numpy.q35",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מכונה עם 8 ליבות. 4 threads של Python, כל אחד מריץ `np.multiply(a_i, b_i, out=c_i)` על chunk נפרד של 25 מיליון float32. מה צפוי לעומת thread יחיד שמעבד את כל 100 מיליון?",
+      "choices": [
+        "אין האצה בכלל, כי ה-GIL מאפשר רק ל-thread אחד לרוץ בכל רגע",
+        "יש האצה, כי ה-GIL משוחרר בלולאה הפנימית, אבל בדרך כלל פחות מפי 4, כי הפעולה חסומה ברוחב הפס של הזיכרון",
+        "בדיוק פי 4, כי אין נתונים משותפים",
+        "האטה, בגלל false sharing בין ה-chunks"
+      ],
+      "answer": 1,
+      "explanation": "ufuncs משחררים את ה-GIL בלולאה הפנימית, ולכן ה-threads באמת רצים במקביל, והטענה ש-GIL מסדר הכל היא מיתוס. אבל כפל הוא פעולה של שני loads ו-store אחד לכל איבר, כלומר חסום ברוחב פס של ה-DRAM, ותוך כמה ליבות הוא נגמר. לכן ההאצה בדרך כלל ניכרת אבל רחוקה מ-4. false sharing קורה רק בגבולות של chunks, שורה אחת לכל זוג, וזניח.",
       "lesson": "py.numpy",
       "tags": [
         "nvidia"

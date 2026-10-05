@@ -35,7 +35,67 @@
         "Testing: unit tests, השוואה למודל ייחוס ב-Python עם tolerance, וה-interlock של --arm כ-safety by default.",
         "כנות לגבי מה נמדד ומה חושב מבדילה סניור מג'וניור. כשאין מספר נמדד, אומרים את זה ומיד מתארים איך היית מודד."
       ],
-      "diagram": "UHD RX -> [RX thread] -> queue\n          8192 smp / 163.84 us\nqueue -> [avg x4 -> FFT 2048]\n      -> [decision] -> [TX path]\n                      (needs --arm)\nconfig.json --poll mtime--> params"
+      "diagram": "UHD RX -> [RX thread] -> queue\n          8192 smp / 163.84 us\nqueue -> [avg x4 -> FFT 2048]\n      -> [decision] -> [TX path]\n                      (needs --arm)\nconfig.json --poll mtime--> params",
+      "details": [
+        {
+          "title": "Data flow ותקציב הזמן לכל buffer",
+          "body": "ה-pipeline הוא producer-consumer קלאסי. ה-**RX streaming thread** קורא מ-UHD לתוך buffer מוקצה-מראש של 8192 דגימות complex, מעביר אותו דרך תור לשלב העיבוד, וחוזר לקרוא את ה-buffer הבא.\n\nהמספר המעגן: ב-50 MS/s, buffer מתמלא כל `8192 / 50e6 = 163.84 µs`. זה **תקציב הזמן** לעבד buffer אחד אם רוצים לעמוד בקצב באופן מתמשך. אם שלב העיבוד (צמצום, FFT, החלטה) חורג מהתקציב הזה לאורך זמן, התור מתמלא ובסוף UHD מדווח overflow ודגימות אובדות.\n\nחשוב להבחין: תקציב של 163.84 µs הוא על ה-**throughput הממוצע**. ספייק בודד ארוך יותר נספג אם יש תור עם עומק מספיק; מה שקובע הוא ה-tail (p99.9 ו-max), לא הממוצע."
+        },
+        {
+          "title": "קצב ה-FFT: 6,103.5 ולמה לא 24,414",
+          "body": "כל buffer של 8192 דגימות עובר צמצום (averaging) פי 4 ל-FFT **יחיד** של 2048 נקודות. לכן קצב ה-FFT נגזר ממספר ה-buffers לשנייה: `50e6 / 8192 ≈ 6,103.5 FFT/s`.\n\nהטעות הנפוצה היא `50e6 / 2048 = 24,414 FFT/s`. חישוב זה מניח 2048 דגימות חדשות לכל FFT, אבל ה-pipeline מזין 8192 דגימות חדשות לכל FFT (עם צמצום פי 4), ולכן הקצב קטן פי 4. זהו מספר **מחושב**, לא נמדד: לא היה timing instrumentation בפרויקט.\n\nעומס החישוב של FFT בודד: בקירוב `5·N·log2(N) = 5·2048·11 ≈ 112,640 flops`. בקצב 6,103.5 זה כ-0.69 GFLOP/s, עומס זניח לליבה אחת. המסקנה: צוואר הבקבוק אינו ה-compute אלא ה-I/O ורוחב פס הזיכרון."
+        },
+        {
+          "title": "רוחב פס: sc16, fc32 והקישור",
+          "body": "יש להבחין בין פורמט **על החוט** (over-the-wire) לבין פורמט **בזיכרון ה-host**.\n- `sc16`: שני int16 (I ו-Q) = 4 bytes לדגימה. ב-50 MS/s: `50e6 × 4 = 200 MB/s = 1.6 Gb/s`. זה הפורמט הנפוץ על הקישור.\n- `sc8`: 2 bytes לדגימה, חצי מרוחב הפס, במחיר dynamic range.\n- `fc32`: שני float = 8 bytes לדגימה. זהו הפורמט שבו ה-host מעבד, לא מה שעובר על החוט.\n\nהשלכה מעשית: 1.6 Gb/s לא נכנס ב-1 GbE (שנושא נטו פחות מ-1 Gb/s). לכן בפועל sc16 על 1 GbE מוגבל לכ-25 עד 30 MS/s, ולקצב 50 MS/s מלא צריך 10 GbE (שה-X310 תומך בו). הערות המעבדה אכן מזכירות underruns בקצב הזה על 1 GbE, מה שמתיישב עם החשבון."
+        },
+        {
+          "title": "Real-time hygiene: מה אסור ב-hot path",
+          "body": "ה-hot path (RX + עיבוד) חייב זמן ריצה **צפוי**, לא רק מהיר בממוצע. דברים שמכניסים jitter לא חסום:\n- **הקצאת זיכרון** (`new`/`malloc`) לכל buffer: ה-allocator עלול לקחת lock פנימי, לבצע syscall להגדלת ה-heap, ולהחזיר זיכרון שהמגע הראשון בו גורם ל-page faults. הפתרון: **pool** של buffers מוקצים-מראש ותור של מצביעים/אינדקסים.\n- **I/O חוסם** (logging ל-stdout לכל buffer, כ-6,100 פעמים בשנייה): כתיבה עלולה לחסום ולייצר jitter.\n- **mutex משותף עם thread בעדיפות נמוכה** (כמו thread ה-config reload): מאפשר **priority inversion**, שבו thread איטי חוסם את ה-hot path.\n\nהפרקטיקות הנכונות: buffers מוקצים-מראש, counters אטומיים ל-overflow/drop ש-thread אחר קורא ומדווח פעם בשנייה, snapshot של ה-config פעם אחת בתחילת כל buffer, thread priority (SCHED_FIFO) ו-CPU pinning, ומבנה SPSC lock-free בין RX לעיבוד."
+        },
+        {
+          "title": "מחושב מול נמדד, ו-observation time",
+          "body": "עמוד תווך של ראיון אמין: הבחנה בין מה ש**חושב** למה ש**נמדד**. בפרויקט הזה כל מספרי הביצועים מחושבים, כי לא הותקן timing instrumentation. כשאין מספר נמדד, אומרים זאת מיד ומתארים איך היו מודדים (timestamps מ-`steady_clock`, histogram ו-percentiles, counters מה-metadata של UHD, loopback עם time_spec).\n\n**Observation time** קטן מ-100%: כשמסלול ה-TX פעיל, ה-RX לא צופה בספקטרום. לכן 6,103.5 FFT/s הוא חסם עליון שמושג רק כשה-TX כבוי; אם ה-TX פעיל חלק מהזמן, קצב ה-FFT בפועל יורד באותו יחס. ה-decision stage חייב לדעת לאילו buffers אפשר לסמוך, לפי timestamps ודגלי validity, ולא להניח רצף רציף."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: ספייק עיבוד מול תקציב ה-buffer",
+          "body": "נניח שעיבוד buffer לוקח בממוצע 60 µs, הרבה מתחת לתקציב 163.84 µs. פתאום buffer אחד לוקח 300 µs (page fault, cache miss, או ה-thread של ה-reload).\n\nבלי תור: ה-RX thread עצמו מתעכב, buffers ב-UHD/NIC מתמלאים, ומתקבל overflow. עם תור בעומק מספיק: ה-RX ממשיך לקרוא ולדחוף, והעיבוד מדביק את הפער באיטרציות הבאות (60 µs << 163.84 µs משאיר headroom). ספייק של 300 µs דורש לפחות 2 slots נוספים כדי להיספג; בפועל נותנים מרווח, נניח 8 עד 16 slots של 64 KiB. אם התור בכל זאת מלא, עדיף drop מבוקר עם counter על פני חסימה, שרק מעבירה את ה-overflow חזרה ל-UHD."
+        },
+        {
+          "title": "דוגמה: חישוב רוחב פס ל-50 ול-200 MS/s",
+          "body": "ב-50 MS/s, sc16: `50e6 × 4 B = 200 MB/s = 1.6 Gb/s`. buffer כל 163.84 µs. 1 GbE לא מספיק (צריך 10 GbE).\n\nמעלים ל-200 MS/s, אותו buffer של 8192: הוא מתמלא כל `8192 / 200e6 = 40.96 µs`, פי 4 מהר יותר. רוחב הפס: `200e6 × 4 B = 800 MB/s = 6.4 Gb/s`, שנכנס ב-10 GbE אחד אבל בלי הרבה מרווח. קצב ה-FFT עולה פי 4 ל-24,414 בשנייה. אותה ארכיטקטורה, מספרים אחרים: כל הקצבים גדלים ליניארית בקצב הדגימה, ותקציב הזמן לכל buffer קטן באותו יחס."
+        },
+        {
+          "title": "דוגמה: observation time והקצב בפועל",
+          "body": "מסלול ה-TX פעיל 20% מהזמן, וכל עוד הוא פעיל ה-RX לא צופה. קצב ה-FFT התיאורטי (TX כבוי) הוא 6,103.5 בשנייה.\n\nבפועל: `6,103.5 × 0.8 ≈ 4,883 FFT/s`, ו-observation time של 80%. טעויות נפוצות: 6,103 (התעלמות מזמן העיוורון), 1,221 (חישוב 20% במקום 80%), או הכפלת החישוב הנאיבי 24,414 ב-0.8. הלקח: תמיד לציין את ה-observation time כשמציגים קצב, אחרת המספר נשמע גבוה ממה שהמערכת באמת משיגה."
+        }
+      ],
+      "glossary": [
+        { "term": "UHD (USRP Hardware Driver)", "def": "ה-driver וה-API ב-host ל-USRP: יצירת rx/tx streamers, הגדרת תדר/gain/rate, וקבלת metadata (timestamps, error codes). ה-FFT רץ בקוד ה-host, לא ב-UHD." },
+        { "term": "USRP X310", "def": "התקן SDR עם FPGA ושני ערוצי RF, המחובר ל-host ברשת (1/10 GbE). תומך ב-10 GbE הנדרש לקצב 50 MS/s מלא ב-sc16." },
+        { "term": "Sample rate 50 MS/s", "def": "קצב הדגימה שאליו ה-pipeline מוגדר. ממנו נגזרים זמן מילוי ה-buffer, קצב ה-FFT ורוחב הפס. קצב מתמשך על החומרה לא אומת." },
+        { "term": "Buffer 8192", "def": "יחידת הקריאה של ה-RX: 8192 דגימות complex. מתמלא כל 163.84 µs ב-50 MS/s, תופס 64 KiB ב-fc32, ומצומצם פי 4 ל-FFT אחד." },
+        { "term": "FFT rate 6,103.5/s", "def": "`50e6/8192`: FFT אחד (2048 נקודות) לכל buffer. מספר מחושב. הטעות הנפוצה 24,414 מניחה בטעות 2048 דגימות חדשות לכל FFT." },
+        { "term": "sc16 / sc8 / fc32", "def": "פורמטי דגימה: sc16 = 4 B (על החוט), sc8 = 2 B, fc32 = 8 B (בזיכרון ה-host). sc16 ב-50 MS/s = 1.6 Gb/s." },
+        { "term": "1 GbE / 10 GbE", "def": "קישורי רשת בין host למכשיר. 1 GbE נושא <1 Gb/s נטו ולכן מגביל sc16 לכ-25-30 MS/s; 50 MS/s מלא דורש 10 GbE." },
+        { "term": "Overflow (RX)", "def": "ה-host (צרכן) איטי מהמכשיר (יצרן); buffers מתמלאים ודגימות אובדות, עם פער ברצף הדגימות. UHD מסמן 'O' ומחזיר error_code במטא-דאטה." },
+        { "term": "Underflow (TX)", "def": "המכשיר רעב לדגימות שה-host לא סיפק בזמן; UHD מסמן 'U'. נפתר בכלי ה-playback על ידי streaming בחלקים (chunked)." },
+        { "term": "time_spec / metadata", "def": "חותמת זמן בשעון המכשיר לכל RX buffer. קפיצה ב-time_spec בין buffers עוקבים מסגירה overflow; אפשר לשדר TX עם time_spec ידוע למדידת latency." },
+        { "term": "Backpressure", "def": "מה שקורה כשהצרכן איטי: תור מתמלא. ההחלטה היא היכן המידע נזרק (drop מבוקר עם counter) ולא אם הוא נזרק; חסימה רק מעבירה את ה-overflow ל-UHD." },
+        { "term": "SPSC ring buffer", "def": "תור single-producer single-consumer lock-free עם slots מוקצים-מראש, בין ה-RX thread לשלב העיבוד. מונע הקצאה ו-mutex ב-hot path." },
+        { "term": "Buffer pool / preallocation", "def": "הקצאת כל ה-buffers פעם אחת באתחול ומיחזורם, כדי למנוע new/malloc ב-hot path (זמן לא חסום בגלל locks פנימיים ו-page faults)." },
+        { "term": "Priority inversion", "def": "thread בעדיפות נמוכה (כמו config reload) מחזיק mutex שה-hot path בעדיפות גבוהה צריך, וחוסם אותו. נמנע עם מבנה lock-free או snapshot." },
+        { "term": "SCHED_FIFO / CPU pinning", "def": "מדיניות תזמון real-time וקיבוע thread לליבה, להקטנת jitter. רצוי לקבע את worker העיבוד לליבה על אותו NUMA node כמו ה-NIC." },
+        { "term": "Observation time", "def": "אחוז הזמן שבו ה-RX צופה בספקטרום. קטן מ-100% כי כשה-TX פעיל ה-RX לא צופה, ולכן קצב ה-FFT בפועל נמוך מ-6,103.5." },
+        { "term": "Latency מול throughput", "def": "throughput = האם עומדים ב-6,103.5 buffers/s; latency = מקליטה ועד תגובה. שניהם לא נמדדו; latency מתפרק למילוי buffer, transport, תור, עיבוד ו-settling של ה-LO." },
+        { "term": "Percentiles (p99/p99.9/max)", "def": "מדדי tail לזמן עיבוד. ב-real-time ה-tail קובע אם עומדים בתקציב, לא הממוצע; מודדים עם histogram של timestamps." },
+        { "term": "Config hot reload (polling mtime)", "def": "thread בודק את זמן השינוי (mtime) של קובץ ה-JSON ב-polling וטוען מחדש כשהוא משתנה. gain ברירת מחדל 0 dB. ה-hot path קורא snapshot עקבי." },
+        { "term": "--arm interlock", "def": "דגל שמפעיל את מסלול ה-TX; ברירת המחדל כבויה (safety by default). בלי --arm, מסלול ה-TX מנוטרל לגמרי ולא נוצר TX streamer." },
+        { "term": "Retune / LO settling", "def": "שינוי תדר ב-main נעשה ב-retune של ה-LO, שכולל settling time שבו הדגימות אינן תקינות וכדאי לזרוק אותן. (ה-NCO התוכנתי קיים רק בכלי ה-file playback.)" },
+        { "term": "FFTW plan_many / cuFFT batched", "def": "עיבוד כמה FFT יחד (batching) להגדלת throughput. GPU (cuFFT עם pinned memory וכמה streams) משתלם ל-throughput, פחות ל-latency נמוך בגלל העתקה ו-batching." }
+      ]
     }
   ],
   "questions": [
@@ -316,6 +376,185 @@
       ],
       "explanation": "שאלת design תחת אילוצים: לא מחפשים פתרון קסם אלא סולם פתרונות לפי עלות, עם הבנה של מה שובר נכונות. ההתחלה במדידה וה-validity flags מראים חשיבה של מערכת ולא רק של אלגוריתם.",
       "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איך ה-pipeline טוען מחדש את הקונפיגורציה בזמן ריצה?",
+      "choices": [
+        "המערכת מופעלת מחדש בכל שינוי קונפיגורציה",
+        "thread בודק את ה-mtime (זמן השינוי) של קובץ ה-JSON ב-polling, וכשהוא משתנה טוען מחדש את הפרמטרים",
+        "הקונפיגורציה נשלחת ל-X310 דרך UHD ונטענת ב-FPGA",
+        "signal handler קורא את הקובץ כש-UHD מדווח overflow"
+      ],
+      "answer": 1,
+      "explanation": "ה-config ב-JSON (gain ברירת מחדל 0 dB) נטען מחדש כשה-mtime של הקובץ משתנה, בבדיקת polling מ-thread ייעודי. אין restart ואין קשר ל-UHD או ל-FPGA. ה-hot path קורא snapshot עקבי של הפרמטרים כדי לא להיחשף לטעינה באמצע buffer.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה ערך ברירת המחדל של ה-gain בקובץ הקונפיגורציה? (כתוב את המספר ב-dB)",
+      "accept": ["0", "0 dB", "0dB", "0 db"],
+      "explanation": "ברירת המחדל של ה-gain היא 0 dB. ערך מעוגן כזה שימושי בראיון כי הוא נקודת התחלה שאפשר לנמק ממנה (למשל: איזון בין רוויית ה-ADC לבין רעש), ומראה שאתה מכיר את הפרמטרים בפועל ולא רק את הכותרת.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד של דגל ה---arm במערכת?",
+      "choices": [
+        "מגדיל את עומק התור כדי לספוג ספייקים בעיבוד",
+        "interlock בטיחות: מסלול ה-TX מנוטרל לגמרי אלא אם הועבר --arm במפורש, וברירת המחדל כבויה",
+        "מפעיל את מצב ה-10 GbE במקום 1 GbE",
+        "מכריח את ה-FFT לרוץ ב-2048 נקודות במקום 8192"
+      ],
+      "answer": 1,
+      "explanation": "--arm הוא safety by default: בלי הדגל מסלול ה-TX כבוי לחלוטין (ואף לא נוצר TX streamer). זה מפריד בכוונה בין הרצת מסלול הניטור (RX + FFT + decision) שבטוח להריץ, לבין הפעלת מסלול השידור שדורש אישור מפורש. אין לדגל קשר לתור, לקישור הרשת או לגודל ה-FFT.",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "כל buffer של 8192 דגימות מצומצם פי 4 ל-FFT יחיד של 2048 נקודות. ב-50 MS/s, בכמה FFT בשנייה מדובר (מחושב)?",
+      "choices": [
+        "כ-24,414",
+        "כ-6,103.5",
+        "כ-50,000",
+        "כ-2,048"
+      ],
+      "answer": 1,
+      "explanation": "קצב ה-FFT נקבע ממספר ה-buffers לשנייה: 50e6 / 8192 ≈ 6,103.5, כי יש FFT אחד לכל buffer. 24,414 = 50e6/2048 הוא הטעות הנפוצה שמניחה 2048 דגימות חדשות לכל FFT, אבל ה-pipeline מזין 8192 דגימות (עם צמצום פי 4) לכל FFT. זהו מספר מחושב, לא נמדד.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q23",
+      "level": 2,
+      "type": "short",
+      "prompt": "כמה זיכרון תופס buffer של 8192 דגימות complex בפורמט fc32 (שני float לדגימה)? ענה ב-KiB.",
+      "accept": ["64", "64 KiB", "64KiB", "64 KB", "65536"],
+      "explanation": "fc32 הוא 2 × 4 bytes = 8 bytes לדגימה. 8192 × 8 = 65,536 bytes = 64 KiB לכל buffer. זהו הגודל של כל slot ב-pool או בתור, ומכאן אפשר לגזור את צריכת הזיכרון הכוללת לפי עומק התור (למשל 16 slots = 1 MiB).",
+      "lesson": "cv.jammer"
+    },
+    {
+      "id": "cv.jammer.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין fc32 ל-sc16 בהקשר של ה-pipeline?",
+      "choices": [
+        "fc32 ו-sc16 זהים, רק שמות שונים לאותו פורמט",
+        "fc32 (8 bytes/דגימה) הוא פורמט העיבוד בזיכרון ה-host; sc16 (4 bytes/דגימה) הוא הפורמט על החוט בין ה-host למכשיר",
+        "sc16 הוא פורמט ה-host ו-fc32 הוא הפורמט על החוט",
+        "fc32 משמש ל-RX ו-sc16 ל-TX בלבד"
+      ],
+      "answer": 1,
+      "explanation": "sc16 (שני int16) הוא 4 bytes לדגימה ונפוץ על הקישור כי הוא חוסך רוחב פס; fc32 (שני float) הוא 8 bytes לדגימה ונוח לעיבוד ב-host (אין צורך בהמרת fixed-point ידנית). UHD יכול להמיר ביניהם. הבחירה בפורמט החוט משפיעה ישירות על רוחב הפס: 1.6 Gb/s ב-sc16 מול 3.2 Gb/s ב-fc32 ל-50 MS/s.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ה-hot path וה-thread של ה-config reload חולקים mutex אחד שננעל לכל משך עיבוד ה-buffer. מהי הסכנה העיקרית בזמן-אמת?",
+      "choices": [
+        "data race, כי mutex לא מספיק כדי להגן על הקונפיגורציה",
+        "priority inversion: thread ה-reload בעדיפות נמוכה מחזיק את ה-mutex ויכול לחסום את ה-hot path בעדיפות גבוהה לזמן לא חסום",
+        "ה-mutex מאט את ה-FFT כי הוא מוסיף flops",
+        "deadlock ודאי בכל טעינת config"
+      ],
+      "answer": 1,
+      "explanation": "נעילה משותפת עם thread איטי חושפת את ה-hot path ל-priority inversion: אם ה-thread בעדיפות נמוכה מוחזק (preempted) בזמן שהוא מחזיק את ה-mutex, ה-hot path תקוע עד שישוחרר. mutex אכן מונע data race, אך המחיר הוא ה-blocking. אין כאן deadlock ודאי (אין נעילה הדדית), וה-mutex לא מוסיף flops ל-FFT. הפתרון: snapshot של config לכל buffer, או פרסום אטומי של מבנה config חדש (double buffering) בלי נעילה ב-hot path.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "FFT של 2048 נקודות עולה בקירוב 5·N·log2(N) ≈ 112,640 flops, ובקצב 6,103.5 FFT/s זה כ-0.69 GFLOP/s. מה המסקנה הנכונה לגבי צוואר הבקבוק?",
+      "choices": [
+        "ה-compute של ה-FFT הוא צוואר הבקבוק, ולכן צריך GPU כבר ב-50 MS/s",
+        "העומס החישובי זניח לליבה אחת; צוואר הבקבוק הצפוי הוא ה-I/O ורוחב פס הזיכרון/רשת, לא ה-flops",
+        "צריך להקטין את ה-FFT ל-1024 נקודות כדי לעמוד בקצב",
+        "0.69 GFLOP/s חורג מיכולת של ליבת CPU מודרנית"
+      ],
+      "answer": 1,
+      "explanation": "0.69 GFLOP/s הוא עומס קטן מאוד לליבת CPU מודרנית (שמסוגלת לעשרות GFLOP/s עם SIMD), ולכן ה-FFT עצמו אינו הבעיה. מה שכן מאתגר הוא להזרים 1.6 Gb/s בלי לאבד דגימות ולשמור על hot path צפוי: רוחב פס הרשת/זיכרון וה-jitter. קפיצה ל-GPU ב-50 MS/s לא מוצדקת מבחינת compute ורק מוסיפה latency של העתקות.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "על 1 GbE (נושא נטו פחות מ-1 Gb/s), מהו בקירוב קצב הדגימה המרבי שאפשר להזרים ברציפות ב-sc16, ומדוע?",
+      "choices": [
+        "50 MS/s, כי 1 GbE נושא 1 Gb/s ו-sc16 דחוס מספיק",
+        "כ-25 עד 30 MS/s, כי sc16 הוא 4 bytes/דגימה ו-~0.94 Gb/s / 32 bit ≈ 29 MS/s",
+        "כ-12.5 MS/s, כי צריך פי 4 מרווח",
+        "כ-100 MS/s, כי הצמצום פי 4 מקטין את הנתונים על החוט",
+        "כ-62 MS/s, כי 1 GbE נושא 2 Gb/s דו-כיווני"
+      ],
+      "answer": 1,
+      "explanation": "קצב הדגימה המרבי ב-sc16 הוא (רוחב פס נטו) / (32 bit לדגימה). עם ~0.94 Gb/s נטו: 0.94e9 / 32 ≈ 29 MS/s, כלומר כ-25 עד 30 MS/s בפועל אחרי overhead. הצמצום פי 4 קורה ב-host **אחרי** שהדגימות עברו על החוט, ולכן לא מפחית את עומס הקישור. רוחב פס דו-כיווני לא עוזר לזרם RX חד-כיווני. מכאן שקצב 50 MS/s מלא דורש 10 GbE.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-SPSC ring buffer בין ה-RX thread לבין worker העיבוד, מדדי ה-head וה-tail (אינדקסים אטומיים) מוגדרים כשני שדות סמוכים באותו struct. איזו בעיית ביצועים זה יוצר, ומה התיקון?",
+      "choices": [
+        "data race על האינדקסים; צריך mutex סביב כל גישה",
+        "false sharing: head (שהצרכן כותב) ו-tail (שהיצרן כותב) נופלים על אותו cache line, וכל כתיבה מבטלת את העותק אצל הליבה השנייה; מפרידים אותם ל-cache lines שונים עם padding/alignas",
+        "האינדקסים חייבים להיות signed אחרת העטיפה שגויה",
+        "אין בעיה: אטומיות מבטיחה גם ביצועים טובים"
+      ],
+      "answer": 1,
+      "explanation": "זו תבנית SPSC תקינה מבחינת נכונות (יצרן יחיד כותב tail, צרכן יחיד כותב head), ולכן אין data race וה-mutex מיותר. הבעיה היא **false sharing**: שני האינדקסים על אותו cache line, וכל כתיבה של thread אחד מבטלת (invalidate) את ה-line אצל השני, מה שמכריח תעבורת cache-coherency מיותרת ב-hot path. התיקון: למקם את head ו-tail ב-cache lines נפרדים (למשל `alignas(64)` או padding), כך שהיצרן והצרכן לא מתנגשים.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q29",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'תתכנן את התור ה-lock-free בין ה-RX thread לבין worker העיבוד. מה הדרישות, ואיזה memory ordering אתה צריך?'",
+      "modelAnswer": "הדרישות מתאימות ל-SPSC: יצרן יחיד (RX thread) וצרכן יחיד (worker), ולכן אפשר תור lock-free פשוט ומהיר בלי CAS, רק load/store אטומיים על שני אינדקסים. מבנה: מערך מעגלי של slots מוקצים-מראש בגודל חזקת-2 (כדי ש-% יהיה AND זול), כל slot מכיל buffer של 64 KiB או מצביע אליו מה-pool. היצרן כותב את הדגימות ל-slot ה-tail, ואז מקדם את tail עם store **release**; הצרכן קורא את head, ואם head != tail הוא קורא את ה-slot ואז מקדם head עם store release, אחרי load **acquire** של tail. ה-release/acquire יוצרים happens-before: הצרכן שרואה את ה-tail המעודכן רואה גם את כתיבת הדגימות שקדמה לו, בלי torn read. head ו-tail חייבים לשבת ב-cache lines נפרדים (alignas 64) כדי להימנע מ-false sharing. מדיניות מלא: אם (tail+1)==head התור מלא; במערכת ניטור עדיף drop-oldest (לקדם head) או drop-newest עם counter, אבל לא לחסום את ה-RX. על X86 ה-ordering כמעט חינם (TSO), אבל כותבים acquire/release במפורש כדי שהקוד יהיה נכון גם על ARM, ושהקומפיילר לא יסדר מחדש. לבסוף: לא מקצים ולא נועלים ב-hot path, ואם צריך לחכות כשריק, עדיף להחזיר שליטה בצורה מבוקרת ולא busy-spin אינסופי שמבזבז ליבה.",
+      "rubric": [
+        "מזהה SPSC ומסביר שאפשר בלי CAS/mutex, רק load/store אטומיים",
+        "מתאר ring buffer מוקצה-מראש בגודל חזקת-2 עם index arithmetic",
+        "מסביר נכון release על קידום האינדקס ו-acquire על הקריאה, ולמה (happens-before, בלי torn read)",
+        "מזכיר false sharing והפרדת head/tail ל-cache lines",
+        "מגדיר מדיניות מלא (drop עם counter, לא חסימה) ומתייחס ל-X86 מול ARM"
+      ],
+      "explanation": "שאלת lock-free קלאסית בעטיפת הפרויקט. סניור חזק מחבר נכונות (acquire/release ו-happens-before) עם ביצועים (false sharing, חזקת-2, בלי הקצאה) ועם מדיניות backpressure מכוונת.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.jammer.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "המראיין: 'ה-config נטען מ-thread אחר תוך כדי ריצה. איך אתה מבטיח שה-hot path תמיד רואה קונפיגורציה עקבית, בלי mutex ב-hot path?'",
+      "modelAnswer": "הבעיה היא torn read: אם ה-hot path קורא שדות בודדים של ה-config בזמן ש-thread ה-reload מעדכן אותם, הוא עלול לראות חצי ישן וחצי חדש, שזה מצב לא חוקי (למשל תדר חדש עם gain ישן). הפתרון שאני מעדיף הוא פרסום אטומי של snapshot שלם: ה-config הוא struct immutable; thread ה-reload בונה מופע **חדש** ומלא מהקובץ, ואז מפרסם אותו בהחלפת `std::atomic<std::shared_ptr<const Config>>` (או atomic pointer) עם store release. ה-hot path עושה load acquire פעם אחת בתחילת כל buffer, מקבל shared_ptr לגרסה עקבית, ומשתמש בו עד סוף ה-buffer גם אם בינתיים פורסמה גרסה חדשה. ה-acquire/release מבטיחים שהשדות שנכתבו לפני הפרסום נראים במלואם. יתרון: אפס נעילה ב-hot path, ואין priority inversion. עלות: רפרנס-count אטומי של shared_ptr (אפשר לצמצם עם hazard pointers או RCU אם זה מופיע בפרופיל), והגרסה הישנה משוחררת כשה-buffer האחרון שמחזיק אותה מסיים. חלופה פשוטה יותר: double buffering עם שני מבני config ו-atomic index שמצביע על הפעיל. בכל מקרה, snapshot פעם אחת לכל buffer גם שומר על עקביות סמנטית: הפרמטרים לא משתנים באמצע עיבוד buffer.",
+      "rubric": [
+        "מזהה את הסכנה: torn read / קונפיגורציה חצי-מעודכנת",
+        "מציע פרסום אטומי של snapshot שלם ו-immutable (atomic pointer / shared_ptr swap), לא עדכון שדה-שדה",
+        "מסביר store release בפרסום ו-load acquire בקריאה ולמה (ראות מלאה של השדות)",
+        "מדגיש אפס נעילה ב-hot path ו-snapshot פעם אחת לכל buffer (עקביות סמנטית)",
+        "מזכיר עלות/חלופות: ref-count אטומי, double buffering, RCU/hazard pointers, ושחרור הגרסה הישנה"
+      ],
+      "explanation": "זו שאלת publication pattern: לא מספיק אטומיות על שדה בודד, צריך לפרסם מצב עקבי שלם. התשובה החזקה מחברת memory ordering עם ניהול תוחלת-חיים (מי משחרר את הגרסה הישנה) ועם הימנעות מ-priority inversion.",
+      "lesson": "cv.jammer",
+      "tags": ["nvidia", "microsoft"]
     }
   ]
 }

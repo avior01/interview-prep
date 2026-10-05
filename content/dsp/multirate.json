@@ -34,7 +34,157 @@
         "להכיר את ה-trade-off של critically sampled מול oversampled channelizer",
         "לדעת מתי resampler רציונלי ומתי Farrow"
       ],
-      "diagram": "decimate M=4, polyphase:\nx: 0 1 2 3 4 5 6 7 8 9\nE0: 0 . . . 4 . . . 8\nE1: . 1 . . . 5 . . . 9\nonly kept outputs are computed"
+      "diagram": "decimate M=4, polyphase:\nx: 0 1 2 3 4 5 6 7 8 9\nE0: 0 . . . 4 . . . 8\nE1: . 1 . . . 5 . . . 9\nonly kept outputs are computed",
+      "details": [
+        {
+          "title": "שקילות ה-polyphase: הלב של multirate",
+          "body": "הרעיון המרכזי בכל עיבוד multirate הוא לא לבזבז חישוב על דגימות שזורקים (decimation) ולא על כפל באפסים (interpolation). ב-decimation נאיבי מסננים FIR באורך `L` בקצב הקלט המלא ואז לוקחים כל דגימה M-ית, כלומר זורקים M-1 מכל M פלטים. ב-polyphase מחשבים רק את הפלטים שנשמרים: העלות יורדת מ-`L` לדגימת קלט ל-`L/M` לדגימת קלט, בלי לשנות את תגובת התדר בכלל.\n\nהמנגנון: מפצלים את המסנן `h[0..L-1]` ל-M תת-מסננים (פאזות) לפי שארית האינדקס מודולו M: פאזה `p` מכילה את `h[p], h[p+M], h[p+2M], ...`. את הקלט מפצלים באותו אופן ל-M זרמים (`x[p::M]`). כל פאזה מסננת את הזרם שלה בקצב הנמוך `fs/M`, ומחברים את התוצאות. זה מחשב בדיוק את אותה קונבולוציה, רק בסדר שמנצל את העובדה שרוב הפלטים לא נחוצים.\n\n- ב-interpolation התמונה מראה: אחרי הכנסת L-1 אפסים, בכל חלון של המסנן רק אחת מכל L דגימות שונה מאפס. כל דגימת פלט נבחרת מפאזה אחת בלבד, ולכן העלות לדגימת פלט היא `L_taps/L`.\n- ה-commutator הוא התיאור הפיזי: מתג מסתובב שמנתב דגימות נכנסות לפאזות (decimation) או דגימות יוצאות מהפאזות (interpolation), בדרך כלל בסדר הפוך."
+        },
+        {
+          "title": "Multistage: למה אורך המסנן נקבע לפי ה-transition",
+          "body": "אורך FIR הוא בקירוב פרופורציונלי ל-`fs/Δf`, היחס בין קצב הדגימה לרוחב ה-transition band (וגם לוגריתמי בדחייה הנדרשת, לפי נוסחת Harris `N ≈ fs/Δf · atten_dB/22`). לכן decimation גדול בשלב אחד דורש מסנן ארוך מאוד: ה-transition צר מאוד ביחס ל-`fs` המקורי.\n\nהפתרון: לפרק את ה-decimation לכמה שלבים, למשל 64 = 4·4·4 או כסדרת halfbands. בשלבים המוקדמים ה-transition יכול להיות רחב מאוד, כי רק חלק מהספקטרום יתקפל לפס הסופי, ולכן המסננים קצרים. המסנן החד והיקר ביותר רץ אחרון, בקצב הנמוך ביותר, ולכן זול. בפועל multistage חוסך פי כמה וכמה ב-MACs/s לעומת שלב יחיד.\n\n- noble identities הן הכלי הפורמלי: `(↓M) ואז H(z)` שקול ל-`H(z^M) ואז (↓M)`, ו-`H(z) ואז (↑L)` שקול ל-`(↑L) ואז H(z^L)`. מהן נגזרת שקילות ה-polyphase.\n- כל שלב מונע את ה-aliasing שלו עצמו; שלב לא 'מתקן' aliasing של שלב קודם, כי aliasing הוא בלתי הפיך."
+        },
+        {
+          "title": "CIC ו-halfband: מסננים זולים במיוחד",
+          "body": "CIC (Cascaded Integrator-Comb) הוא decimator בלי אף כפל: `N` integrators בקצב הגבוה, downsample ב-R, ו-`N` combs בקצב הנמוך. תגובתו היא `sinc^N`, עם droop (נפילה) בתוך הפס שצריך לפצות עליו ב-FIR קצר (compensation filter) בקצב הנמוך. היתרון הענק ב-FPGA: אפס מכפלות (DSP slices יקרים), תמיכה ב-decimation גדול ומשתנה, וקצב גבוה עם adders בלבד. החיסרון: bit growth של `N·log2(R·M_d)` ביטים שמחייב רגיסטרים רחבים, ו-aliasing לא אידיאלי בגלל ה-sinc. ב-CPU, שבו FMA זול כמו חיבור, היתרון נעלם ו-polyphase FIR עדיף.\n\nמסנן halfband הוא FIR שבו נקודת ה-6 dB- נמצאת בדיוק ב-`fs/4` והתגובה אנטי-סימטרית סביבה, ומכאן נובע שכמעט כל מקדם שני הוא אפס (חוץ מהמקדם המרכזי ששווה 0.5). לכן הוא אידיאלי לחלוקה ב-2: כמעט חצי מה-taps אפסים, והעלות האפקטיבית נמוכה מאוד. שרשרת של halfbands היא דרך נפוצה וזולה ל-decimation בחזקה של 2."
+        },
+        {
+          "title": "PFB channelizer: הרבה ערוצים בבת אחת",
+          "body": "channelizer מפרק stream רחב ל-K ערוצים צרים במקביל. המימוש הנאיבי: לכל ערוץ mixing לבסיס-פס ואז polyphase decimator ב-K עם מסנן באורך `K·T`, כלומר `T` MACs לדגימת קלט לכל ערוץ, ובסך הכול `K·T` לדגימה ועוד K mixings. זה O(K·T) לדגימה.\n\nה-PFB (Polyphase Filter Bank) עושה זאת פי K בערך זול יותר: מסנן prototype יחיד באורך `K·T` מפוצל ל-K ענפים של `T` taps, הענפים מסננים פעם אחת (T לדגימה), ואז FFT באורך K מבצע את כל ה-mixings של כל הערוצים בבת אחת. העלות: `T` MACs ועוד בערך `5·log2(K)` FLOPs לדגימת קלט. כל bin של ה-FFT הוא דגימה אחת של ערוץ אחד.\n\n- מרווח הערוצים הוא `fs/K`, וכל ערוץ יוצא בקצב `fs/K` (critically sampled) או `2fs/K` (oversampled פי 2).\n- המסנן prototype הוא lowpass רגיל; ה-FFT דואג למרכוז כל ערוץ בתדר שלו דרך ה-mixing הגלום בו."
+        },
+        {
+          "title": "Critically sampled מול oversampled ותיקון הפאזה",
+          "body": "ב-channelizer critically sampled קצב הפלט של כל ערוץ שווה בדיוק למרווח הערוצים (`fs/K`), ואין מקום ל-transition band: המסנן של כל ערוץ חייב להגיע לדחייה מלאה בתוך `±fs/(2K)`, אחרת מה שמעבר לכך מתקפל (aliasing) בתוך הערוץ. התוצאה: אותות על גבול בין שני ערוצים מוחלשים או פגומים.\n\nהפתרון המקובל: oversampled PFB, למשל פי 2. ה-hop (מספר דגימות הקלט לבלוק) הוא `K/2` במקום K, קצב הפלט של כל ערוץ מוכפל, ולכל ערוץ יש מרווח ל-transition, כך שאות על גבול נמצא שלם לפחות באחד הערוצים.\n\n- תופעה חשובה: ב-oversampled עם hop של K/2, כל בלוק שני מוזז ב-K/2 ביחס להנחת ה-FFT (שהבלוק מתחיל בכפולה של K). לפי תכונת ההזזה של DFT זה כפל ב-`e^(j2πk(K/2)/K) = (-1)^k`, שמצטבר על פני בלוקים ל-`(-1)^(k·m)` בבלוק m. התוצאה נראית כמו היפוך סימן לסירוגין בערוצים האי-זוגיים. התיקון הזול, בלי אף כפל: circular shift של K/2 בכניסה ל-FFT בבלוקים האי-זוגיים."
+        },
+        {
+          "title": "Rational resampling ו-Farrow",
+          "body": "כדי לשנות קצב ביחס רציונלי `L/M` (למשל 48 kHz ל-44.1 kHz, או 100 MS/s ל-61.44 MS/s): קודם מצמצמים את השבר ב-gcd, אחרת טבלת הפאזות מתנפחת ללא צורך. ה-resampler הוא polyphase עם L פאזות: מושגית מבצעים interpolation ב-L ואז decimation ב-M, אבל מחשבים רק את הפלטים הנשמרים. המצביע לקלט מתקדם ב-`M/L` פאזות בממוצע לכל פלט, וכל פלט מחושב מפאזה אחת בלבד, כך שהעלות לכל פלט היא רק `taps_per_phase` MACs.\n\n- 48000/44100 מצטמצם ב-gcd=300 ל-160/147; 61.44/100 = 6144/10000 מצטמצם ב-gcd=16 ל-384/625.\n- כשהיחס אי-רציונלי, או משתנה בזמן (תיקון clock drift, sample-rate offset), אין טבלת פאזות סופית. אז משתמשים ב-Farrow interpolator: אינטרפולציה פולינומית (לרוב cubic/Lagrange) עם מקדם שבר `μ` רציף בין 0 ל-1, שמאפשר כל יחס ושינוי חלק של היחס תוך כדי ריצה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: decimation ב-M=4 עם polyphase, מעקב מספרי",
+          "body": "נניח קלט `x = [x0, x1, x2, ...]` ומסנן באורך L=8, `h[0..7]`. ב-decimation ב-4 נשמרים רק הפלטים ב-n=0,4,8,.... כל פלט הוא `y[n] = Σ h[k]·x[n-k]`.\n\nמפצלים את h ל-4 פאזות: E0={h0,h4}, E1={h1,h5}, E2={h2,h6}, E3={h3,h7}. ואת הקלט ל-4 זרמים: x[::4]={x0,x4,x8}, x[1::4]={x1,x5,x9}, x[2::4]={x2,...}, x[3::4]={x3,...}.\n\nהפלט הראשון שנשמר: `y[4] = h0·x4 + h1·x3 + h2·x2 + ... + h7·x(-3)`. בפירוק הפאזות כל פאזה מסננת זרם בקצב רבע, וסכום ארבע הפאזות נותן בדיוק את `y[4]`. המסקנה: במקום 8 MACs לכל אחת מ-4 דגימות (32 MACs לקבל פלט אחד שימושי), מחשבים 8 MACs לפלט אחד. חיסכון פי 4 בדיוק, בלי שינוי בתוצאה."
+        },
+        {
+          "title": "דוגמה: חשבון MACs/s, נאיבי מול polyphase מול multistage",
+          "body": "קלט ממשי 100 MS/s, decimation ב-8, FIR באורך 128.\n\n- נאיבי: לסנן בקצב מלא ואז לזרוק: 128 × 100e6 = 12.8 GMAC/s.\n- polyphase חד-שלבי: קצב הפלט 12.5 MS/s, 128 MACs לפלט: 128 × 12.5e6 = 1.6 GMAC/s. פי 8 פחות.\n- multistage, נניח 2×2×2 עם halfbands: השלב הראשון (↓2 מ-100 ל-50 MS/s) עם halfband של 23 taps עולה בערך 23 × 50e6 / 2 (חצי אפסים) ≈ 0.58 GMAC/s; השלבים הבאים רצים בקצב נמוך יותר ומוסיפים מעט. סך הכול לרוב מתחת ל-1 GMAC/s, פחות מהחד-שלבי, כי ה-transition בכל שלב רחב.\n\nלקח למראיין: תמיד לחשב MACs/s לפי קצב הפלט, לא קצב הקלט, ולהשוות ארכיטקטורות במספרים."
+        },
+        {
+          "title": "דוגמה: PFB channelizer עם K=8, קצבים ותיקון oversampling",
+          "body": "stream מרוכב 16 MS/s, K=8 ערוצים, prototype באורך K·T=8·6=48 (T=6 taps לענף).\n\n- critically sampled: מרווח ערוצים = 16e6/8 = 2 MHz; כל ערוץ יוצא ב-16e6/8 = 2 MS/s; לכל בלוק מכניסים 8 דגימות קלט חדשות (hop=8), מסננים 8 ענפים של 6 taps, ועושים FFT-8. ערוץ k ממורכז על k·2 MHz.\n- oversampled פי 2: hop=4 (מכניסים 4 דגימות חדשות לבלוק), כל ערוץ ב-4 MS/s, יש transition ולכן אות על גבול (למשל 1 MHz, בין ערוץ 0 ל-1) שורד.\n- תיקון הפאזה: בבלוק m=1 (אי-זוגי) הקלט מוזז ב-K/2=4. ערוץ k=1 מקבל כפל `(-1)^(1·1) = -1`, ערוץ k=3 גם, וכן הלאה בערוצים האי-זוגיים. מתקנים ב-circular shift של 4 על וקטור הקלט ל-FFT בבלוקים האי-זוגיים, בלי אף כפל."
+        },
+        {
+          "title": "דוגמה: resampling 100 MS/s ל-61.44 MS/s",
+          "body": "היחס הגולמי 61.44/100 = 6144/10000. מצמצמים: gcd(6144,10000)=16, ולכן L/M = 384/625.\n\nמשמעות: resampler polyphase עם L=384 פאזות. אם בוחרים 24 taps לפאזה, ה-prototype באורך 384×24 = 9216 taps (מאוחסן, אבל לא מורץ כולו). לכל דגימת פלט בוחרים פאזה אחת ומחשבים 24 MACs בלבד. המצביע לקלט מתקדם ב-M/L = 625/384 ≈ 1.6276 דגימות קלט לכל פלט.\n\nאם במקום יחס קבוע צריך לתקן drift של שעון (למשל 61.44 MS/s תאורטי אבל השעון סוטה ב-ppm בודדים), היחס לא רציונלי-נקי ומשתנה: אז Farrow interpolator עם μ רציף עדיף על טבלת פאזות קבועה."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Decimation (↓M)",
+          "def": "הורדת קצב דגימה בפקטור שלם M: מסננים lowpass אנטי-aliasing ואז לוקחים כל דגימה M-ית. הקצב החדש fs/M."
+        },
+        {
+          "term": "Interpolation (↑L)",
+          "def": "העלאת קצב בפקטור שלם L: מכניסים L-1 אפסים בין דגימות ואז מסננים lowpass שמסיר את ה-images. הקצב החדש L·fs."
+        },
+        {
+          "term": "Resampling רציונלי L/M",
+          "def": "שינוי קצב ביחס רציונלי: interpolation ב-L ואז decimation ב-M, ממומש כ-polyphase אחד שמחשב רק פלטים נשמרים. מצמצמים את השבר ב-gcd."
+        },
+        {
+          "term": "Polyphase",
+          "def": "פירוק מסנן FIR לתת-מסננים (פאזות) לפי שארית האינדקס מודולו הפקטור, כדי לא לחשב דגימות שנזרקות ולא להכפיל באפסים. חוסך פי M/L."
+        },
+        {
+          "term": "Commutator",
+          "def": "המתג המסתובב שמנתב דגימות בין הפאזות: מפזר קלט לענפים ב-decimation, או אוסף פלט מהענפים ב-interpolation, בדרך כלל בסדר הפוך."
+        },
+        {
+          "term": "Aliasing",
+          "def": "קיפול של רכיבי תדר שמעל fs/2 (אחרי הורדת קצב) לתוך הפס השימושי. בלתי הפיך; מונעים אותו במסנן anti-alias לפני ה-decimation."
+        },
+        {
+          "term": "Images",
+          "def": "עותקים ספקטרליים שנוצרים סביב כפולות של קצב הקלט כשמכניסים אפסים ב-interpolation. מסנן ה-interpolation מסיר אותם."
+        },
+        {
+          "term": "Transition band (Δf)",
+          "def": "רוחב התחום בין קצה ה-passband לקצה ה-stopband של מסנן. אורך FIR פרופורציונלי בקירוב ל-fs/Δf; transition צר ⇒ מסנן ארוך."
+        },
+        {
+          "term": "Multistage decimation",
+          "def": "פירוק decimation גדול לכמה שלבים זה אחר זה. השלבים המוקדמים רחבים וקצרים, המסנן החד רץ אחרון בקצב הנמוך, וסך ה-MACs/s קטן בהרבה משלב יחיד."
+        },
+        {
+          "term": "Noble identities",
+          "def": "שקילויות שמזיזות מסנן דרך downsampler/upsampler: ↓M ואז H(z) = H(z^M) ואז ↓M; H(z) ואז ↑L = ↑L ואז H(z^L). בסיס לגזירת polyphase."
+        },
+        {
+          "term": "Halfband filter",
+          "def": "FIR עם נקודת 6dB- ב-fs/4 שבו כמעט כל מקדם שני אפס (חוץ מהמרכזי 0.5). זול במיוחד לחלוקה/הכפלה ב-2."
+        },
+        {
+          "term": "CIC filter",
+          "def": "Cascaded Integrator-Comb: decimator/interpolator בלי כפלים (integrators + combs). תגובת sinc^N עם droop. נפוץ ב-FPGA ל-decimation גדול ומשתנה."
+        },
+        {
+          "term": "Droop",
+          "def": "הנפילה ההדרגתית בתוך ה-passband של מסנן CIC (בגלל צורת sinc^N). מפצים עליה ב-FIR compensation קצר בקצב הנמוך."
+        },
+        {
+          "term": "Bit growth",
+          "def": "הרחבת רוחב הרגיסטרים הנדרשת ב-CIC: בערך N·log2(R·M_d) ביטים מעבר לרוחב הקלט, בגלל האינטגרטורים שצוברים."
+        },
+        {
+          "term": "Channelizer",
+          "def": "בלוק שמפרק stream רחב להרבה ערוצים צרים במקביל. מרווח ערוצים fs/K. ממומש ביעילות כ-PFB."
+        },
+        {
+          "term": "PFB (Polyphase Filter Bank)",
+          "def": "channelizer שמשלב polyphase עם FFT: prototype יחיד מפוצל ל-K ענפים ואחריהם FFT-K. עלות ~T MACs + 5·log2(K) FLOPs לדגימה, פי K זול מ-K מסננים נפרדים."
+        },
+        {
+          "term": "Prototype filter",
+          "def": "המסנן ה-lowpass היחיד באורך K·T שממנו נגזרים כל ענפי ה-PFB. תוכנן לפי מרווח הערוצים והדחייה הנדרשת."
+        },
+        {
+          "term": "Critically sampled",
+          "def": "channelizer שבו קצב הפלט של כל ערוץ שווה למרווח (fs/K, decimation ב-K). חסכוני, אבל אין מקום ל-transition ואותות על גבולות נפגעים."
+        },
+        {
+          "term": "Oversampled PFB",
+          "def": "channelizer עם hop קטן מ-K (למשל K/2), קצב פלט גבוה יותר לכל ערוץ ומרווח ל-transition, כך שאותות על גבולות שורדים. דורש תיקון פאזה בין בלוקים."
+        },
+        {
+          "term": "Hop size",
+          "def": "מספר דגימות הקלט החדשות שמעבדים בכל בלוק PFB. hop=K ⇒ critically sampled; hop=K/2 ⇒ oversampled פי 2."
+        },
+        {
+          "term": "Circular shift",
+          "def": "הזזה מחזורית של וקטור. ב-PFB oversampled משמש לתיקון פאזת ה-FFT בבלוקים האי-זוגיים, בלי אף כפל."
+        },
+        {
+          "term": "Farrow interpolator",
+          "def": "אינטרפולטור פולינומי (לרוב cubic/Lagrange) עם מקדם שבר μ רציף. מאפשר יחס resampling שרירותי או משתנה בזמן (תיקון drift), בלי טבלת פאזות סופית."
+        },
+        {
+          "term": "MACs/s",
+          "def": "Multiply-Accumulate operations לשנייה, מדד העלות החישובית של סינון. מחשבים לפי קצב הפלט × taps אפקטיביים, לא לפי קצב הקלט."
+        },
+        {
+          "term": "DDC (Digital Down-Conversion)",
+          "def": "הזזת אות לבסיס-פס (mixing ב-NCO) ואז decimation לרוחב הסרט שלו. אבן יסוד ב-SDR; ממומש לרוב כ-CIC+FIR או polyphase."
+        },
+        {
+          "term": "DSP slice",
+          "def": "משאב כפל ייעודי וחסכוני ב-FPGA. מכפלות יקרות יחסית, ולכן CIC (בלי כפלים) מועדף ב-FPGA בעוד שב-CPU (FMA זול) עדיף FIR."
+        },
+        {
+          "term": "sliding_window_view",
+          "def": "פונקציית NumPy שמחזירה מטריצת חלונות גולשים כ-view בלי העתקה. שימושית למימוש וקטורי של FIR/decimator."
+        }
+      ]
     }
   ],
   "questions": [
@@ -73,7 +223,12 @@
       "level": 1,
       "type": "short",
       "prompt": "stream של 100 MS/s עובר decimation ב-8. מה הקצב החדש ב-MS/s?",
-      "accept": ["12.5", "12.5MS/s", "12.5 MS/s", "12.5e6"],
+      "accept": [
+        "12.5",
+        "12.5MS/s",
+        "12.5 MS/s",
+        "12.5e6"
+      ],
       "explanation": "100/8 = 12.5 MS/s. במרוכב זה רוחב סרט שימושי של עד 12.5 MHz (פחות בפועל, בגלל ה-transition של המסנן).",
       "lesson": "dsp.multirate"
     },
@@ -114,7 +269,12 @@
       "level": 2,
       "type": "mcq",
       "prompt": "FIR באורך 128 taps ו-decimation ב-8, קלט ממשי ב-100 MS/s. כמה MACs בשנייה במימוש polyphase?",
-      "choices": ["12.8 GMAC/s", "1.6 GMAC/s", "0.2 GMAC/s", "16 GMAC/s"],
+      "choices": [
+        "12.8 GMAC/s",
+        "1.6 GMAC/s",
+        "0.2 GMAC/s",
+        "16 GMAC/s"
+      ],
       "answer": 1,
       "explanation": "קצב הפלט 12.5 MS/s, ולכל פלט 128 MACs: 1.6e9. הדרך הנאיבית, לסנן בקצב המלא, הייתה 128 × 100e6 = 12.8 GMAC/s, פי 8 יותר. 0.2 הוא 16 taps (128/8) כפול 12.5 MS/s, טעות של חלוקה כפולה.",
       "lesson": "dsp.multirate"
@@ -192,7 +352,9 @@
       "answer": 3,
       "explanation": "ב-critically sampled, המסנן של כל ערוץ חייב להגיע לדחייה מלאה בתוך ±fs/(2K), אחרת מה שמעבר לזה מתקפל; לכן הקצוות או מוחלשים או מקופלים. oversampling פי 2 מכפיל את קצב הפלט (וחלק מהחישוב) ומשאיר מקום ל-transition. הגדלת K רק מזיזה את הגבולות. חלון Hann מתאים לספקטרוגרמה, לא ל-PFB, שבו ה-prototype הוא המסנן.",
       "lesson": "dsp.multirate",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "dsp.multirate.q12",
@@ -242,7 +404,9 @@
       ],
       "explanation": "מראיין מצפה לראות את הקפיצה מ'64 מסננים' ל-PFB, עם מספרים שמראים למה.",
       "lesson": "dsp.multirate",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "dsp.multirate.q15",
@@ -258,7 +422,9 @@
       "answer": 1,
       "explanation": "polyphase decimator ב-K עם מסנן K·T עולה K·T לכל פלט, כלומר T לכל דגימת קלט, לכל ערוץ: K·T לכל הערוצים, ועוד K mixings לדגימה. ב-PFB הסינון נעשה פעם אחת (T לדגימה), וה-FFT מחליף את כל ה-mixings: 5·K·log2K FLOPs לכל K דגימות, כלומר O(log K) לדגימה. ב-K=1024 ו-T=8 זה בערך 8 MACs ועוד 50 FLOPs, לעומת כ-8,000 MACs.",
       "lesson": "dsp.multirate",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "dsp.multirate.q16",
@@ -289,7 +455,227 @@
       "answer": 2,
       "explanation": "ה-FFT מניח שהבלוק מתחיל באינדקס זמן שהוא כפולה של K. עם hop של K/2, כל בלוק שני מוזז ב-K/2, ולפי תכונת ההזזה של DFT זה כפל ב-e^(j2πk(K/2)/K) = (1-)^k. מצטבר על פני בלוקים: (1-)^(km). זה נראה כמו modulation של fs_out/2 בערוצים האי-זוגיים. התיקון הזול: circular shift של הקלט ל-FFT (בלי כפלים בכלל). אין כאן שינוי amplitude או היפוך ספקטרלי.",
       "lesson": "dsp.multirate",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.multirate.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מהי interpolation (↑L) בעיבוד multirate?",
+      "choices": [
+        "לקחת כל דגימה L-ית מהאות",
+        "לחשב ממוצע נע באורך L",
+        "להכפיל את כל הדגימות ב-L",
+        "להכניס L-1 אפסים בין כל שתי דגימות ואז לסנן lowpass כדי להסיר את ה-images, מה שמעלה את קצב הדגימה פי L"
+      ],
+      "answer": 3,
+      "explanation": "interpolation מעלה קצב: מכניסים L-1 אפסים (zero-stuffing) ואז מסננים כדי להסיר את ה-images שנוצרו. לקחת כל דגימה L-ית זה decimation, ההיפך. הכפלה בקבוע או ממוצע נע הם משהו אחר לגמרי.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q19",
+      "level": 1,
+      "type": "short",
+      "prompt": "אות ב-10 MS/s עובר interpolation ב-5. מה הקצב החדש ב-MS/s?",
+      "accept": [
+        "50",
+        "50MS/s",
+        "50 MS/s",
+        "50e6"
+      ],
+      "explanation": "interpolation ב-L מכפיל את הקצב פי L: 10 × 5 = 50 MS/s. בניגוד ל-decimation שמחלק, כאן הקצב עולה.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה עושה channelizer?",
+      "choices": [
+        "מפרק stream רחב להרבה ערוצים צרים במקביל, כל אחד בקצב נמוך יותר",
+        "מגביר את ה-SNR של ערוץ יחיד",
+        "ממיר אות אנלוגי לדיגיטלי",
+        "מצפין את הערוצים לפני שידור"
+      ],
+      "answer": 0,
+      "explanation": "channelizer מחלק רוחב-סרט גדול להרבה ערוצים צרים בו-זמנית, עם מרווח fs/K וקצב פלט נמוך לכל ערוץ, לרוב כ-PFB. הוא לא ADC, לא מגביר SNR ולא קשור להצפנה.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q21",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "אחרי interpolation ב-L (הכנסת אפסים) ולפני הסינון, מה רואים בספקטרום?",
+      "choices": [
+        "רק את האות המקורי, ללא שינוי",
+        "רעש לבן שנוסף על פני כל הפס",
+        "האות מוחלש ב-L dB",
+        "images: עותקים של הספקטרום המקורי סביב כפולות של קצב הקלט, שהמסנן אמור להסיר"
+      ],
+      "answer": 3,
+      "explanation": "zero-stuffing יוצר images, עותקים ספקטרליים סביב כפולות של fs הישן, בתוך הפס הרחב החדש. מסנן ה-interpolation (lowpass) מסיר אותם ומשאיר רק את האות הבסיסי. אין כאן תוספת רעש או היחלשות אחידה.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q22",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\nx = np.array([1, 2, 3])\ny = np.zeros(6, dtype=int)\ny[::2] = x\nprint(y)",
+      "choices": [
+        "[1 2 3 0 0 0]",
+        "[0 1 0 2 0 3]",
+        "[1 2 3 1 2 3]",
+        "[1 0 2 0 3 0]"
+      ],
+      "answer": 3,
+      "explanation": "`y[::2]` מתייחס לאינדקסים 0,2,4 ומציב בהם 1,2,3; האינדקסים האי-זוגיים נשארים 0. זה בדיוק zero-stuffing של interpolation ב-2: דגימה, אפס, דגימה, אפס.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מייחד מסנן CIC לעומת FIR רגיל?",
+      "choices": [
+        "הוא לא מבצע אף כפל: רק integrators ו-combs (חיבורים וחיסורים)",
+        "הוא תמיד linear phase מדויק יותר מ-FIR",
+        "אין לו aliasing בכלל",
+        "הוא עובד רק על אותות ממשיים"
+      ],
+      "answer": 0,
+      "explanation": "CIC בנוי מ-integrators ו-combs בלבד, בלי מכפלות, ולכן זול מאוד ב-FPGA. מחירו: תגובת sinc^N עם droop ו-aliasing לא אידיאלי, ו-bit growth שמחייב רגיסטרים רחבים. הוא עובד גם על אותות מרוכבים.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q24",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך resampler רציונלי מ-48 kHz ל-44.1 kHz. מה היחס L/M המצומצם?",
+      "choices": [
+        "147/160",
+        "441/480",
+        "160/147",
+        "44100/48000 ללא צמצום"
+      ],
+      "answer": 0,
+      "explanation": "היחס החדש/ישן הוא 44100/48000. gcd(44100,48000)=300, ולכן L/M = 147/160. מכיוון שמורידים קצב (44.1 < 48), L<M, לכן 147/160 ולא 160/147. 441/480 לא מצומצם עד הסוף (עדיין מתחלק ב-3).",
+      "lesson": "dsp.multirate",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "dsp.multirate.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "interpolation ב-4 על אות 10 MS/s עם FIR באורך 96 taps, במימוש polyphase. כמה MACs בשנייה?",
+      "choices": [
+        "3.84 GMAC/s",
+        "0.96 GMAC/s",
+        "0.24 GMAC/s",
+        "0.96 MMAC/s"
+      ],
+      "answer": 1,
+      "explanation": "קצב הפלט 40 MS/s, אבל כל דגימת פלט נבחרת מפאזה אחת בת 96/4 = 24 taps: 40e6 × 24 = 0.96 GMAC/s. 3.84 הוא החישוב הנאיבי (40e6 × 96) שמכפיל באפסים. 0.24 מחלק פעמיים בטעות.",
+      "lesson": "dsp.multirate"
+    },
+    {
+      "id": "dsp.multirate.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מתי עדיף Farrow interpolator על פני resampler polyphase עם טבלת פאזות קבועה?",
+      "choices": [
+        "תמיד, Farrow מדויק יותר מכל polyphase",
+        "כשהיחס L/M קטן מ-1",
+        "רק כשהאות ממשי",
+        "כשהיחס אי-רציונלי או משתנה בזמן ריצה (למשל תיקון clock drift / sample-rate offset), ואין טבלת פאזות סופית שמתאימה"
+      ],
+      "answer": 3,
+      "explanation": "polyphase עם L פאזות עובד מצוין ליחס רציונלי קבוע. כשהיחס אי-רציונלי או זז תוך כדי ריצה (drift), אין מספר פאזות סופי שמתאים, ו-Farrow עם מקדם שבר μ רציף נותן כל יחס ושינוי חלק. Farrow לא בהכרח מדויק יותר ליחס קבוע, ואינו קשור לסימן של היחס או לממשיות האות.",
+      "lesson": "dsp.multirate",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.multirate.q27",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש ב-C++ decimator FIR יעיל `decimate_fir(x, h, M)` שמחזיר בדיוק את תוצאת הקונבולוציה המלאה (עם היסטוריה של אפסים לפני x[0]) שנדגמת כל M, אבל מחשב רק את הפלטים הנשמרים (ceil(N/M) פלטים).",
+      "starter": "std::vector<float> decimate_fir(const std::vector<float>& x,\n                                const std::vector<float>& h, int M);",
+      "modelAnswer": "#include <vector>\n#include <cstddef>\n\nstd::vector<float> decimate_fir(const std::vector<float>& x,\n                                const std::vector<float>& h, int M) {\n    const int L = (int)h.size();\n    const size_t N = x.size();\n    const size_t outN = (N + M - 1) / M;          // ceil(N/M)\n    std::vector<float> y(outN, 0.0f);\n    for (size_t n = 0; n < outN; ++n) {\n        long base = (long)n * M;                  // y[n] aligned to x[n*M]\n        float acc = 0.0f;\n        for (int k = 0; k < L; ++k) {\n            long idx = base - k;                  // y[n]=sum h[k]*x[nM-k]\n            if (idx >= 0 && idx < (long)N)\n                acc += h[k] * x[idx];\n        }\n        y[n] = acc;\n    }\n    return y;\n}",
+      "rubric": [
+        "נוסחה נכונה y[n] = sum_k h[k]*x[n*M - k] עם אפסים לפני x[0]",
+        "מחשב בדיוק ceil(N/M) פלטים ולא יותר, ומטפל בקצה (N שאינו כפולה של M)",
+        "בודק גבולות idx>=0 && idx<N במקום קריאה מחוץ לווקטור",
+        "סיבוכיות O(outN · L) = O(N·L/M), כלומר L/M לדגימת קלט; מזכיר polyphase כאופטימיזציה שקולה",
+        "מציין שב-stream צריך לשמור state: L-1 דגימות אחרונות ואת phase ה-decimation בין blocks"
+      ],
+      "explanation": "מחשבים רק פלטים ב-n·M, כל אחד הוא סכום של L מכפלות עם קלט מוסט, עם בדיקות גבול למקום של היסטוריית האפסים ולקצה. העלות L לפלט = L/M לדגימת קלט, בלי להכפיל דגימות שנזרקות.",
+      "lesson": "dsp.multirate",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.multirate.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "CIC עם N=4 שלבים, decimation R=64 ו-differential delay M_d=1. בכמה ביטים גדל רוחב הנתונים הפנימי מעבר לרוחב הקלט?",
+      "choices": [
+        "6 ביטים",
+        "16 ביטים",
+        "24 ביטים",
+        "64 ביטים"
+      ],
+      "answer": 2,
+      "explanation": "bit growth ב-CIC הוא N·log2(R·M_d) = 4·log2(64·1) = 4·6 = 24 ביטים. בגלל האינטגרטורים שצוברים, חייבים רגיסטרים רחבים כדי שלא יהיה overflow. 6 הוא log2(64) בלבד (שלב אחד), 16 ו-64 לא נובעים מהנוסחה.",
+      "lesson": "dsp.multirate",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.multirate.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "לפי noble identity ראשון, הביטוי `(↓M) ואז H(z)` שקול למה?",
+      "choices": [
+        "`H(z^M) ואז (↓M)`",
+        "`H(z^(1/M)) ואז (↓M)`",
+        "`(↓M) ואז H(z^M)`",
+        "`(↑M) ואז H(z)`"
+      ],
+      "answer": 0,
+      "explanation": "ה-noble identity מאפשר להזיז את המסנן לפני ה-downsampler על ידי החלפת z ב-z^M: הורדת קצב ואז H(z) שקולה ל-H(z^M) ואז הורדת קצב. זו בדיוק השקילות שממנה נגזר ה-polyphase decimator, שמאפשר להריץ את הסינון בקצב הנמוך. z^(1/M) אינו causal/תקין כאן, והאפשרויות האחרות לא שומרות על השקילות.",
+      "lesson": "dsp.multirate",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "dsp.multirate.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "אתה צריך DDC: להוריד ערוץ צר ברוחב 200 kHz מתוך stream מרוכב של 100 MS/s סביב תדר נתון, ולהוציא אותו ב-250 kS/s, על CPU. תאר את הארכיטקטורה, סדר השלבים והחשבון.",
+      "modelAnswer": "שלב 1 — mixing: NCO מכפיל את ה-stream ב-e^(-j2π f0 n / fs) כדי להביא את הערוץ לבסיס-פס. שלב 2 — decimation מ-100 MS/s ל-250 kS/s, פקטור כולל 400. לא בשלב אחד: אעשה multistage. אפשרות יעילה: CIC/halfband גס ראשון (למשל ↓50 ל-2 MS/s) ואז polyphase FIR חד אחרון ל-250 kS/s (↓8), או שרשרת halfbands אם 400 היה חזקת 2. מכיוון ש-400=16·25, היחס אינו חזקת 2; אפשר ↓25 ב-CIC (שתומך ב-R שרירותי) ואז ↓16 בשלבי halfband, או resampler רציונלי אם קצב היעד לא מתחלק יפה. ה-transition: המסנן החד האחרון מגדיר את רוחב הפס (200 kHz) והדחייה, ורץ בקצב הנמוך ביותר ולכן זול. חשבון עלות: המסנן החד האחרון, נניח 128 taps ב-250 kS/s = 32 MMAC/s; השלבים המוקדמים זולים (CIC בלי כפלים, או halfbands עם חצי אפסים בקצב יורד). סך הכול בודדי MMAC/s—MMAC/s נמוך, ליבה אחת בקלות. פיצוי droop של CIC ב-FIR האחרון. מימוש: block processing, שמירת state בין blocks (NCO phase, היסטוריית taps, phase של כל decimator), SIMD על ה-FIR. בדיקות: טון במרכז הערוץ, טון מחוץ לפס לבדיקת דחייה, ומדידת aliasing.",
+      "rubric": [
+        "mixing ב-NCO לבסיס-פס כשלב ראשון, ואז decimation",
+        "בחירת multistage ולא שלב יחיד, עם נימוק אורך המסנן/transition",
+        "חשבון decimation כולל (400) ופירוק לשלבים הגיוניים (CIC/halfband גס + FIR חד אחרון)",
+        "חשבון MACs/s לפי קצב הפלט, והמסקנה שהשלב החד האחרון רץ בקצב הנמוך",
+        "פרטי מימוש ובדיקות: state בין blocks, droop compensation, טונים לבדיקת דחייה"
+      ],
+      "explanation": "מראיין מצפה לראות את רצף mixing→multistage decimation, הבנה שאורך המסנן נקבע לפי ה-transition יחסית לקצב, וחשבון עלות לפי קצב הפלט.",
+      "lesson": "dsp.multirate",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

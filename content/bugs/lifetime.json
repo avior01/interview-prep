@@ -35,7 +35,157 @@
         "להציע אסטרטגיה ל-use-after-free שקורה רק ב-production: ASan ב-staging, GWP-ASan, core dumps, rr record/replay",
         "להבין שהקוד 'עובד' כי ה-allocator לא החזיר את הזיכרון עדיין, ולכן בדיקה ידנית לא מוכיחה כלום"
       ],
-      "diagram": "owner:  [ obj ]---destroyed\nview:     |------------> use\n                      ^ dangling"
+      "diagram": "owner:  [ obj ]---destroyed\nview:     |------------> use\n                      ^ dangling",
+      "details": [
+        {
+          "title": "מה זה lifetime, ומה בדיוק נהיה dangling",
+          "body": "לכל אובייקט ב-C++ יש **lifetime**: קטע זמן שמתחיל כשה-constructor מסתיים ונגמר כשה-destructor מתחיל (או כשהזיכרון משוחרר). משך החיים נקבע לפי סוג האחסון:\n- **automatic** (משתנה מקומי על ה-stack): נהרס ביציאה מה-scope שבו הוגדר, כולל יציאה מפונקציה.\n- **dynamic** (heap, `new`/`make_unique`/בתוך container): נהרס ב-`delete`, כשה-smart pointer האחרון משתחרר, או כשה-container מקצה מחדש או נהרס.\n- **temporary** (זמני, למשל ערך החזרה by value שלא נשמר במשתנה): נהרס בסוף ה-full-expression, כלומר בסוף המשפט שבו נוצר, אלא אם חלה lifetime extension.\n- **static**: חי עד סוף התוכנית.\n\n**Dangling** הוא כל דבר שמפנה לאובייקט בלי להחזיק אותו: raw pointer, reference, iterator, `string_view`, `span`, מצביע מ-`c_str()`/`data()`, או `this` שנלכד ב-lambda. אם ה-lifetime של האובייקט נגמר לפני השימוש האחרון בהפניה, ההפניה dangling וכל גישה דרכה היא undefined behavior.\n\nחשוב להבחין בין שלושה מצבים: **wild pointer** הוא מצביע שמעולם לא אותחל; **nullptr** הוא ערך תקין שאפשר לבדוק; **dangling** היה תקין פעם, ואין שום דרך לבדוק אותו בזמן ריצה, כי הכתובת עצמה נראית רגילה לגמרי.\n\nלמה זה 'עובד' לפעמים? כי שחרור זיכרון לא מוחק אותו. ה-allocator רק מסמן את הבלוק כפנוי, ו-stack frame שהסתיים נשאר כמו שהוא עד שקריאה אחרת דורסת אותו. לכן הקריאה מחזירה את הערך הישן עד שמישהו משתמש מחדש בזיכרון, ואז מופיע זבל או קריסה במקום אחר לגמרי. כתיבה דרך הפניה dangling גרועה עוד יותר: היא משבשת אובייקט חי אחר או את ה-metadata של ה-allocator (heap corruption), והקריסה מגיעה הרבה אחר כך בתוך malloc/free.\n\nהמקרים הבסיסיים: **use-after-free** (גישה לזיכרון heap אחרי שחרור), **החזרת reference או pointer למשתנה מקומי** (הפונקציה חוזרת וה-frame שלה מת), ו-**use-after-scope** (שמירת כתובת של משתנה מבלוק פנימי ושימוש בה אחרי סוף הבלוק). מקרה עדין יותר הוא **member שהוא reference** (כמו `Logger& log_`): המחלקה לא מחזיקה בעלות, ואם האובייקט שלה חי יותר מהאובייקט שעליו היא מפנה, נוצר dangling. התיקון הכללי הוא להחזיר ולשמור **by value**: בזכות RVO ו-move semantics זה כמעט תמיד זול."
+        },
+        {
+          "title": "זמניים ו-lifetime extension: מתי const& מציל ומתי לא",
+          "body": "זמני (temporary) נהרס בסוף ה-full-expression. יש חריג אחד: כש-`const T&` (או `T&&`) נקשר **ישירות** לזמני, חיי הזמני מוארכים לחיי ה-reference. לכן `const std::string& r = std::string(\"abc\");` ו-`const auto& v = makeVector();` (פונקציה שמחזירה by value) תקינים לגמרי.\n\nההרחבה **לא עוברת דרך פונקציה**. אם הזמני נשלח לפונקציה שמחזירה reference, ה-reference שמתקבל לא 'יודע' שמקורו בזמני:\n- `const int& r = std::max(x, 1);`: `std::max` מחזיר `const int&` לאחד הארגומנטים. אם זה ה-`1` הזמני, הוא מת בסוף השורה.\n- `const T& b = pick(make(2));` כש-`pick` מחזיר את הפרמטר שלו: dangling מיד.\n- `int& r = std::vector<int>{1, 2}[0];`: `operator[]` הוא קריאה לפונקציה, וה-vector הזמני נהרס.\n\nלעומת זאת, **גישה ישירה ל-member של prvalue** (`const int& c = make(3).v;`) כן מאריכה, ואת חיי **כל** האובייקט הזמני, כי ה-reference נקשר ל-subobject של הזמני עצמו ולא לתוצאה של פונקציה.\n\n`string_view` ו-`span` אינם references, הם מחלקות רגילות שמחזיקות מצביע ואורך. לכן `std::string_view sv = makeName();` לא מאריך כלום: ה-std::string הזמני מת בסוף השורה, ו-`sv` מצביע לזיכרון מת. אותו דבר `const char* p = (base + \".txt\").c_str();`: המצביע שמחזיר `c_str()` או `data()` תקין רק כל עוד המחרוזת הזמנית חיה, כלומר עד ה-`;`. שימוש באותו ביטוי בתוך הקריאה עצמה, כמו `fopen((base + \".txt\").c_str(), \"w\")`, תקין, כי הזמני חי עד סוף ה-full-expression.\n\n**range-for** הוא המלכודת הידועה ביותר: `for (x : expr)` מתורגם ל-`auto&& __range = expr;` ולולאה עליו. אם `expr` הוא `recv().items()` ו-`items()` מחזיר reference ל-member, ההרחבה חלה רק על התוצאה הסופית (reference), וה-Packet הזמני נהרס לפני שהלולאה מתחילה. C++23 (הצעה P2718) שינה את הכלל כך שכל הזמניים ב-range initializer חיים עד סוף הלולאה. עד C++20 צריך לשמור את האובייקט במשתנה קודם.\n\nקומפיילרים עוזרים חלקית: GCC 13 ומעלה מזהיר `-Wdangling-reference` על קשירת reference לתוצאה של פונקציה שקיבלה זמני, GCC מזהיר `-Wreturn-local-addr` על החזרת כתובת מקומית, ו-Clang מזהיר `-Wreturn-stack-address` ו-`-Wdangling-gsl` (למשל string_view מזמני). האזהרות האלה מקומיות ולא תופסות מקרים שעוברים דרך כמה פונקציות."
+        },
+        {
+          "title": "Iterator invalidation: כשה-container זז מתחת לרגליים",
+          "body": "iterator, reference או pointer לאיבר בתוך container הם הפניות שאינן בעלות, ופעולות מסוימות על ה-container מבטלות אותן (**iterator invalidation**). הכללים החשובים:\n- **std::vector**: כשהגודל עובר את ה-capacity (push_back, emplace_back, insert, resize), נוצר buffer חדש, האיברים מועברים אליו, והישן משוחרר. **כל** ה-iterators, ה-references וה-pointers מתבטלים. גם `reserve` עם capacity גדול יותר מקצה מחדש. בלי הקצאה מחדש, insert ו-erase מבטלים הפניות מנקודת השינוי והלאה.\n- **std::deque**: push_back/push_front מבטלים את כל ה-iterators אבל **לא** references ו-pointers לאיברים קיימים (הבלוקים לא זזים).\n- **std::unordered_map / unordered_set**: insert שגורם ל-**rehash** מבטל iterators, אבל references ו-pointers לאיברים נשארים תקינים, כי כל איבר חי ב-node משלו.\n- **std::list, std::map, std::set**: הוספה לא מבטלת כלום; erase מבטל רק את האיבר שנמחק.\n\nהדפוס הקלאסי הוא לולאה שמוחקת: `v.erase(it)` ואחריו `++it` פועל על iterator מבוטל. הנכון הוא `it = v.erase(it)` (erase מחזיר iterator לאיבר הבא), או טוב יותר `std::erase_if` ב-C++20 (או erase-remove idiom), שהוא O(n) במקום O(n^2).\n\nכשמחלקה צריכה 'לזכור' איבר בתוך vector שממשיך לגדול, עדיף לשמור **אינדקס** ולא pointer: אינדקס נשאר תקף גם אחרי הקצאה מחדש (כל עוד לא מוחקים איברים לפניו). חלופות: container שלא מזיז איברים (deque, list), או `std::vector<std::unique_ptr<T>>`.\n\nגם ב-Python יש גרסה לזה. שינוי list בזמן `for` עליה לא קורס אבל מדלג על איברים, כי ה-iterator הפנימי מחזיק אינדקס בזמן שהאיברים זזים שמאלה. dict ו-set זורקים `RuntimeError` אם הגודל השתנה בזמן איטרציה. ו-`bytearray` שיש עליו `memoryview` פעיל מסרב לשנות גודל (`BufferError`), בדיוק כדי למנוע dangling view אחרי הקצאה מחדש."
+        },
+        {
+          "title": "Views ללא בעלות: string_view, span, c_str ו-data",
+          "body": "**`std::string_view`** (C++17) ו-**`std::span`** (C++20) הם views: זוג של מצביע ואורך, בלי בעלות ובלי העתקה. הם מצוינים כ**פרמטרים** של פונקציה, כי הקורא מחזיק את הנתונים לאורך כל הקריאה. הם מסוכנים כשהם **נשמרים** או **מוחזרים**: כ-member, כמפתח ב-map, כערך החזרה, או בתוך lambda.\n\nכלל אצבע: view חייב לחיות פחות מהבעלים. החזרת `std::string_view` ל-member של אובייקט שחי זמן רב (למשל `name()` של מחלקה) תקינה, אבל הקורא חייב לדעת שה-view מת כשהאובייקט מת או כשהמחרוזת משתנה. החזרת view למשהו מקומי, או בניית view מזמני, היא dangling מיידי.\n\nמקרה עדין: `std::unordered_map<std::string_view, int>` שממולא בתוך לולאה מ-`std::string word` אחד שנקרא שוב ושוב. כל מפתח מצביע ל-buffer של `word`, שתוכנו נדרס בכל קריאה ונהרס בסוף הפונקציה. גרוע מזה: ה-hash חושב בזמן ההכנסה, ואחרי שהתוכן משתנה המפתחות כבר לא תואמים ל-bucket שלהם, כך שהמבנה עצמו נשבר עוד לפני ה-dangling. הפתרון: מפתח `std::string` (ואם רוצים חיפוש בלי הקצאה, heterogeneous lookup ב-C++20).\n\n**SSO** (small string optimization) מסביר למה באגים כאלה 'עובדים' לפעמים: מחרוזת קצרה (בערך עד 15 תווים ב-libstdc++) נשמרת בתוך אובייקט ה-std::string עצמו, על ה-stack, ולא ב-heap. view לזמני כזה מצביע ל-stack שעוד לא נדרס, ולכן לפעמים מדפיס נכון. מחרוזת ארוכה נשמרת ב-heap ומשוחררת, והתוצאה תלויה ב-allocator. זו הסיבה שאותו באג מתנהג אחרת בין build ל-build ובין מחרוזת קצרה לארוכה.\n\nגם `c_str()` ו-`data()` מחזירים view מובלע: מצביע לתוך ה-buffer של המחרוזת או ה-vector. הוא מתבטל כשהבעלים נהרס **או** משתנה (append שגורם להקצאה מחדש). ב-API מול C (fopen, ioctl, ספריות דרייבר) זה מקור קבוע לבאגים.\n\nבעיצוב API (למשל parser שמחזיר tokens כ-views לתוך הקלט) ה-trade-off הוא אפס הקצאות מול חוזה lifetime נסתר. חלופות: אובייקט שמחזיק גם את ה-buffer וגם את ה-views, offsets במקום views, או מחרוזות by value."
+        },
+        {
+          "title": "Lambdas, callbacks, threads ו-coroutines: lifetime שבורח מה-scope",
+          "body": "lambda שרץ מיד בתוך הפונקציה (למשל ב-`std::sort`) יכול ללכוד `[&]` בבטחה. הבעיה מתחילה כש-closure **שורד** את ה-scope: נשמר ב-`std::function`, מוחזר מפונקציה, נרשם כ-callback, או נשלח ל-thread.\n- **`[&]` / `[&x]`**: ה-closure מחזיק בפועל מצביע ל-`x`. אם `x` מקומי והפונקציה חזרה, כל קריאה ניגשת ל-stack frame מת. תיקון: לכידה by value (`[x]`, עם `mutable` אם משנים אותה), או **init-capture** שמעביר בעלות: `[s = std::move(samples)]`.\n- **`[this]`**: לכידה של raw pointer לאובייקט. אם האובייקט נהרס וה-callback עוד רשום (Bus, timer, event loop), הקריאה הבאה היא use-after-free.\n- **`[=]` בתוך member function**: נראה כמו 'הכל by value', אבל member כמו `freq_` הוא בעצם `this->freq_`, ולכן `[=]` לוכד את **`this`** ולא את ה-member. אם ה-closure שורד את האובייקט, הקריאה ניגשת לאובייקט מת. C++20 הוציא משימוש (deprecated) את הלכידה המובלעת של `this` דרך `[=]`. תיקון: `[freq = freq_]` או `[*this]` (C++17) שמעתיק את כל האובייקט.\n\n**threads**: `std::thread` עם `detach()` מנתק כל קשר בין זמן חיי ה-thread לבין ה-scope שיצר אותו. כל דבר שנלכד by reference יכול להיהרס כשה-thread עוד קורא ממנו, ו-mutex לא עוזר כי הבעיה היא lifetime ולא race על ערכים. עדיף `join` (או `std::jthread`), או העברת בעלות מלאה ל-thread.\n\n**callbacks עם weak_ptr**: כשמאזין נרשם ל-callback ואין unsubscribe, לוכדים `std::weak_ptr` ולא `this`. בכל קריאה `lock()` מחזיר shared_ptr: ריק אם האובייקט מת, ואחרת מחזיק אותו חי עד סוף הקריאה. לכידת shared_ptr במקום זה תחזיק את האובייקט לנצח (leak). לשם כך המחלקה יורשת מ-`std::enable_shared_from_this`, ו-`weak_from_this()` ריק בתוך ה-constructor, כי ה-shared_ptr עוד לא קיים. הפתרון הנקי יותר הוא subscribe שמחזיר token (RAII) שה-destructor משחרר.\n\n**coroutines**: הפרמטרים מועתקים ל-coroutine frame, אבל העתקה של `const std::string&` היא העתקה של ה-reference. אם ה-coroutine ממשיך אחרי ההשעיה הראשונה, הזמני של הקורא כבר מת. כלל אצבע: coroutine שחי יותר מהקריאה מקבל פרמטרים by value.\n\nב-**Python** יש באגי lifetime של משאבים ושל binding: generator שנוצר בתוך `with open(...)` ונצרך אחרי שהקובץ נסגר (`ValueError: I/O operation on closed file`), ו-closures שלוכדים את **המשתנה** ולא את הערך (late binding)."
+        },
+        {
+          "title": "Use-after-move",
+          "body": "`std::move` לא מזיז כלום בעצמו, הוא רק cast ל-rvalue שמאפשר ל-move constructor או ל-move assignment 'לגנוב' את המשאבים. אחרי זה האובייקט המקורי עדיין **חי** (ה-destructor שלו ירוץ), אבל במצב **valid but unspecified**: מותר להרוס אותו, להציב לו ערך חדש, ולקרוא לפונקציות בלי preconditions (כמו `size()` או `clear()`), אבל אסור להניח מה הערך שלו.\n\n**use-after-move** הוא שימוש בערך של אובייקט אחרי שהועבר, בהנחה שהוא עדיין מכיל את הנתונים, או בהנחה שהוא ריק. זה לרוב לא UB כמו use-after-free, אבל זה באג לוגי: std::string שהועבר יכול להיות ריק או (בתיאוריה) לא; ב-SSO, העברה של מחרוזת קצרה מעתיקה את התווים, והתקן לא מחייב לרוקן את המקור.\n\nיש טיפוסים שהתקן כן מבטיח את מצבם אחרי move: `std::unique_ptr` ו-`std::shared_ptr` הופכים ל-null, ולכן `if (p)` אחרי move הוא false. הוצאת ערך מ-null (`*p`) היא כבר UB.\n\nמניעה: לא לגעת במשתנה אחרי `std::move` חוץ מהשמה חדשה או `clear()`, ולהפעיל clang-tidy (`bugprone-use-after-move`)."
+        },
+        {
+          "title": "כלים: איך תופסים באגי lifetime",
+          "body": "- **AddressSanitizer (ASan)**, דגל `-fsanitize=address` (בקומפילציה ובלינק): מוסיף **shadow memory** שמסמן לכל 8 בתים אם מותר לגשת אליהם, ובודק כל גישה. זיכרון ששוחרר נכנס ל-**quarantine** ולא מוקצה מחדש מיד, כך שגישה אליו נתפסת אמינה. סוגי הדיווח: **heap-use-after-free** (גישה ל-heap ששוחרר, עם stack traces של ההקצאה, השחרור והגישה), **stack-use-after-return** (גישה למשתנה מקומי של פונקציה שכבר חזרה; ב-GCC ובגרסאות רבות של Clang צריך להפעיל זאת בזמן ריצה עם `ASAN_OPTIONS=detect_stack_use_after_return=1`, כי זה דורש להעביר frames ל-'fake stack'), ו-**stack-use-after-scope** (גישה למשתנה אחרי סוף הבלוק שלו, כולל זמני שנהרס). עלות: בערך פי 2 ב-CPU ויותר בזיכרון, ולכן מתאים ל-CI ול-staging.\n- **Valgrind memcheck**: מריץ את הבינארי באמולציה בלי קומפילציה מחדש, ומדווח `Invalid read`/`Invalid write` על heap ששוחרר. איטי פי 10 עד 50, ולא תופס stack-use-after-return.\n- **GWP-ASan**: גרסת production שדוגמת הקצאות מעטות ושמה אותן בין guard pages; עלות זניחה, תופס באגים נדירים לאורך זמן בצי גדול.\n- **אזהרות קומפיילר**: `-Wreturn-local-addr` (GCC), `-Wreturn-stack-address` ו-`-Wdangling-gsl` (Clang), `-Wdangling-reference` (GCC 13+). תופסות מקרים מקומיים בלבד.\n- **חקירה ב-production**: core dumps, `MALLOC_PERTURB_` (ממלא זיכרון משוחרר בתבנית מזוהה), ו-**rr** (record/replay) שמאפשר לחזור אחורה מהקריסה לכתיבה הרעה.\n\nהעיקרון: באג lifetime מתגלה רחוק מהמקום שבו נוצר, ובדיקה ידנית ש'עבר' לא מוכיחה כלום, כי ה-allocator פשוט עוד לא השתמש מחדש בזיכרון."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: reference לאיבר ב-vector ו-push_back",
+          "body": "מתחילים עם `v = {1, 2, 3}`. ב-libstdc++ ה-capacity הוא 3 בדיוק, ונניח שה-buffer בכתובת A. שומרים `int& first = v[0]`, כלומר בפועל מצביע לכתובת A.\n\nצעד 1: `v.push_back(4)`. size=3 שווה ל-capacity=3, לכן vector מקצה buffer חדש בכתובת B עם capacity 6 (הכפלה), מעביר אליו 1, 2, 3, כותב 4, ומשחרר את A.\n\nצעד 2: קריאה דרך `first` ניגשת ל-A, שכבר שוחרר. בלי sanitizer כנראה יודפס 1, כי איש עוד לא דרס את A, והטסט 'עובר'. עם ASan מתקבל heap-use-after-free עם שלושה stacks: ההקצאה של A, השחרור שלו בתוך push_back, והקריאה.\n\nמה לומדים: התיקון הוא לקרוא את `v[0]` מחדש אחרי השינוי, לשמור אינדקס 0 במקום reference, או לקרוא ל-`reserve` מראש אם הגודל הסופי ידוע. `reserve` הוא אופטימיזציה ולא חוזה: מי שמוסיף אחר כך איבר אחד יותר מדי מחזיר את הבאג."
+        },
+        {
+          "title": "דוגמה: string_view לזמני, קצר מול ארוך",
+          "body": "`std::string_view sv = makeName();` כש-makeName מחזיר std::string by value.\n\nצעד 1: makeName בונה זמני, נניח \"radio-7\" (7 תווים). זה פחות מ-15, ולכן ב-SSO התווים נמצאים בתוך אובייקט הזמני על ה-stack.\n\nצעד 2: `sv` נבנה מהזמני: data מצביע ל-buffer הפנימי, size=7.\n\nצעד 3: סוף ה-full-expression (ה-`;`): הזמני נהרס. string_view אינו reference ולכן אין lifetime extension.\n\nצעד 4: `std::cout << sv` קורא 7 בתים מה-stack. אם שום קריאה לא דרסה את האזור, יודפס \"radio-7\"; ב-build אחר (אופטימיזציה שונה, inlining) יודפס זבל. ASan מדווח stack-use-after-scope.\n\nאם השם היה באורך 40 תווים, הנתונים היו ב-heap, הזמני היה משחרר אותם, ו-ASan היה מדווח heap-use-after-free. אותו באג, שני דיווחים שונים, ושתי התנהגויות שונות בלי sanitizer. התיקון בשני המקרים: `std::string s = makeName();`."
+        },
+        {
+          "title": "דוגמה: range-for על recv().items() לפני C++23",
+          "body": "`Packet recv()` מחזיר by value, ו-`items()` מחזיר `const std::vector<int>&` ל-member `data`.\n\nהלולאה `for (int x : recv().items())` מתורגמת ל:\n- `auto&& __range = recv().items();`\n- לולאה מ-`__range.begin()` עד `__range.end()`.\n\nצעד 1: `recv()` יוצר Packet זמני P.\nצעד 2: `items()` מחזיר reference ל-`P.data`. `__range` נקשר ל-reference הזה, לא ל-P עצמו, ולכן אין הרחבה ל-P.\nצעד 3: סוף ההצהרה של `__range`: P נהרס, כולל ה-vector והזיכרון שלו ב-heap.\nצעד 4: הלולאה קוראת מ-`__range`: heap-use-after-free, והסכום יוצא שגוי או שהתוכנה קורסת.\n\nלעומת זאת `for (int x : recv().data)` תקין גם לפני C++23: גישה ישירה ל-member של prvalue קושרת את `__range` ל-subobject של הזמני ומאריכה את חיי P כולו. ב-C++23 (P2718) שתי הצורות תקינות. התיקון הנייד: `Packet p = recv(); for (int x : p.items()) ...`."
+        },
+        {
+          "title": "דוגמה: thread ב-detach ו-lambda עם [&]",
+          "body": "`startWorker` יוצר `std::vector<float> samples(4096)` (16KB ב-heap), יוצר thread עם lambda `[&]` שקורא `process(samples)`, ועושה `detach`.\n\nציר זמן במערכת שקטה: ה-thread מתחיל ב-t=5us ומסיים לקרוא לפני ש-startWorker חוזר ב-t=8us, והכל 'עובד'.\n\nציר זמן תחת עומס: t=0 ה-thread נוצר אבל ה-scheduler לא מריץ אותו; t=3us startWorker חוזר וה-vector משוחרר; t=200us ה-thread מתחיל וקורא heap ששוחרר, ואולי כבר הוקצה מחדש לאובייקט אחר. התוצאה: זבל בעיבוד, או קריסה נדירה שמופיעה דווקא תחת עומס.\n\nהתיקון: להעביר בעלות ל-closure עם init-capture, `[s = std::move(samples)] { process(s); }`, כך שה-vector חי בתוך ה-thread; או לשמור את ה-thread ולעשות join לפני שה-vector יוצא מה-scope. mutex לא היה עוזר כאן."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Lifetime",
+          "def": "קטע הזמן שבו אובייקט קיים: מסיום ה-constructor עד תחילת ה-destructor. נקבע לפי סוג האחסון: automatic, dynamic, temporary או static."
+        },
+        {
+          "term": "Dangling pointer / reference",
+          "def": "מצביע או reference שהיו תקינים, אבל האובייקט שאליו הם מפנים נהרס. גישה דרכם היא UB, ואין דרך לבדוק אותם בזמן ריצה. שונה מ-wild pointer (לא אותחל) ומ-nullptr (ערך תקין)."
+        },
+        {
+          "term": "Use-after-free",
+          "def": "גישה לזיכרון heap אחרי שחרורו (delete, הריסת container, הקצאה מחדש). לרוב 'עובד' עד שהזיכרון מוקצה מחדש, ואז זבל, קריסה או חולשת אבטחה."
+        },
+        {
+          "term": "heap-use-after-free (ASan)",
+          "def": "הדיווח של AddressSanitizer על גישה לבלוק heap ששוחרר. כולל stack traces של ההקצאה, השחרור והגישה. נשען על quarantine שמונע שימוש חוזר מיידי בזיכרון."
+        },
+        {
+          "term": "stack-use-after-return (ASan)",
+          "def": "גישה למשתנה מקומי של פונקציה שכבר חזרה, למשל דרך pointer מוחזר. דורש fake stack, ובחלק מהגרסאות צריך להפעיל עם `ASAN_OPTIONS=detect_stack_use_after_return=1`."
+        },
+        {
+          "term": "stack-use-after-scope (ASan)",
+          "def": "גישה למשתנה או לזמני אחרי שה-scope שלו הסתיים, גם בתוך אותה פונקציה. למשל string_view לזמני std::string קצר (SSO)."
+        },
+        {
+          "term": "-fsanitize=address",
+          "def": "דגל GCC/Clang להפעלת ASan, בקומפילציה ובלינק. עלות בערך פי 2 ב-CPU ויותר בזיכרון; מתאים ל-CI, טסטים ו-staging."
+        },
+        {
+          "term": "Valgrind memcheck",
+          "def": "כלי שמריץ בינארי רגיל באמולציה ומדווח Invalid read/write על heap ששוחרר ועל זיכרון לא מאותחל. לא דורש קומפילציה מחדש, איטי פי 10-50, ולא תופס באגי stack."
+        },
+        {
+          "term": "Temporary ו-full-expression",
+          "def": "זמני הוא אובייקט בלי שם (למשל ערך החזרה by value שלא נשמר). הוא נהרס בסוף ה-full-expression, כלומר בסוף המשפט שבו נוצר."
+        },
+        {
+          "term": "Lifetime extension",
+          "def": "כש-`const T&` או `T&&` נקשר ישירות לזמני, הזמני חי כמו ה-reference. לא חל כשה-reference מגיע מפונקציה (std::max, operator[], getter), ולא על string_view/span."
+        },
+        {
+          "term": "Range-for ו-P2718",
+          "def": "range-for מתורגם ל-`auto&& __range = expr;`. עד C++20 זמניים פנימיים ב-expr נהרסים לפני הלולאה; C++23 (P2718) מאריך את חיי כולם עד סוף הלולאה."
+        },
+        {
+          "term": "Iterator invalidation",
+          "def": "פעולה על container שהופכת iterators, references או pointers קיימים ללא תקינים. vector: הקצאה מחדש מבטלת הכל; deque push_back ו-rehash ב-unordered_map מבטלים iterators אבל לא references. iterator שהתבטל נקרא dangling iterator; למשל `it` אחרי `v.erase(it)`, שמתוקן ב-`it = v.erase(it)`."
+        },
+        {
+          "term": "std::string_view",
+          "def": "view של C++17 על רצף תווים: מצביע ואורך, בלי בעלות. מעולה כפרמטר; מסוכן כשמוחזר, נשמר כ-member או כמפתח, או נבנה מזמני."
+        },
+        {
+          "term": "std::span",
+          "def": "view של C++20 על רצף רציף של איברים (מערך, vector). כמו string_view: אין בעלות, ותקין רק כל עוד הבעלים חי ולא הקצה מחדש."
+        },
+        {
+          "term": "c_str() / data()",
+          "def": "מחזירים מצביע ל-buffer הפנימי של std::string או vector. המצביע מתבטל כשהבעלים נהרס או משנה גודל. על זמני הוא תקין רק עד סוף ה-full-expression."
+        },
+        {
+          "term": "SSO (small string optimization)",
+          "def": "מחרוזת קצרה (בערך עד 15 תווים ב-libstdc++) נשמרת בתוך אובייקט ה-std::string ולא ב-heap. מסביר למה dangling לזמני קצר 'עובד' לפעמים ומדווח כבאג stack."
+        },
+        {
+          "term": "RVO / copy elision",
+          "def": "הקומפיילר בונה את ערך ההחזרה ישר במקום של הקורא. ב-C++17 מובטח ל-prvalue. לכן החזרה by value זולה, ואין סיבה להחזיר reference למקומי."
+        },
+        {
+          "term": "Lambda capture: [&], [this], [=], [*this]",
+          "def": "`[&]` ו-`[this]` לוכדים הפניות בלי בעלות. `[=]` בתוך member function לוכד את `this` ולא את ה-members (deprecated ב-C++20). `[*this]` מעתיק את האובייקט, ו-init-capture (`[x = std::move(y)]`) מעביר בעלות."
+        },
+        {
+          "term": "std::thread::detach",
+          "def": "מנתק את ה-thread מהאובייקט שלו; אין יותר דרך לחכות לו. כל מה שנלכד by reference עלול להיהרס בזמן שה-thread עוד רץ."
+        },
+        {
+          "term": "weak_ptr, lock() ו-enable_shared_from_this",
+          "def": "weak_ptr מפנה לאובייקט של shared_ptr בלי להחזיק אותו. `lock()` מחזיר shared_ptr ריק אם האובייקט מת. `weak_from_this()` דורש ירושה מ-enable_shared_from_this ומחזיר ריק בתוך ה-constructor."
+        },
+        {
+          "term": "Use-after-move",
+          "def": "שימוש בערך של אובייקט אחרי `std::move` ממנו. האובייקט במצב valid but unspecified: מותר להרוס או להציב לו ערך, לא להניח את תוכנו. unique_ptr/shared_ptr מובטחים null אחרי move."
+        },
+        {
+          "term": "Late binding ב-Python closures",
+          "def": "closure ב-Python לוכד את המשתנה ולא את הערך שלו. lambdas שנוצרו בלולאה רואים את הערך האחרון. תיקון: default argument (`lambda i=i: i`)."
+        },
+        {
+          "term": "memoryview ו-BufferError",
+          "def": "ב-Python, memoryview הוא view ללא העתקה על buffer. כל עוד הוא פעיל, bytearray מסרב לשנות גודל (BufferError), כדי למנוע view dangling אחרי הקצאה מחדש. `mv.release()` משחרר."
+        },
+        {
+          "term": "weakref (Python)",
+          "def": "הפניה שלא מעלה את ה-refcount. `r()` מחזיר את האובייקט או None אם נאסף; ב-CPython האיסוף מיידי כשה-refcount מגיע ל-0."
+        },
+        {
+          "term": "אזהרות dangling בקומפיילר",
+          "def": "GCC: `-Wreturn-local-addr`, `-Wdangling-reference` (GCC 13+). Clang: `-Wreturn-stack-address`, `-Wdangling-gsl`. תופסות מקרים מקומיים בלבד, לא זרימה בין פונקציות."
+        }
+      ]
     }
   ],
   "questions": [
@@ -368,6 +518,281 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "bugs.lifetime.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה מחזיק אובייקט `std::string_view`?",
+      "choices": [
+        "העתקה של התווים, כמו std::string אבל בלי הקצאה דינמית",
+        "מצביע לתווים ואורך, בלי בעלות על הזיכרון",
+        "shared_ptr למחרוזת המקורית, כך שהיא נשארת חיה כל עוד ה-view קיים",
+        "reference ל-std::string המקורית, ולכן חלה עליו lifetime extension"
+      ],
+      "answer": 1,
+      "explanation": "string_view הוא רק זוג של pointer ו-size. הוא לא מעתיק ולא מחזיק בעלות, ולכן תקין רק כל עוד הבעלים חי. הוא גם אינו reference ב-C++, ולכן קשירה שלו לזמני לא מאריכה את חיי הזמני. אין בו spare buffer ואין בו ספירת הפניות.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "פונקציה מחזירה pointer למערך מקומי שלה, והקורא קורא דרכו. איזה דיווח צפוי מ-AddressSanitizer (כשהבדיקה המתאימה מופעלת)?",
+      "choices": [
+        "heap-use-after-free",
+        "heap-buffer-overflow",
+        "stack-use-after-return",
+        "double-free"
+      ],
+      "answer": 2,
+      "explanation": "המערך היה על ה-stack של פונקציה שכבר חזרה, ולכן זה stack-use-after-return. ASan מזהה זאת בעזרת fake stack, ובחלק מהגרסאות צריך `ASAN_OPTIONS=detect_stack_use_after_return=1`. heap-use-after-free נוגע לזיכרון heap ששוחרר, heap-buffer-overflow לחריגה מגבולות בלוק חי, ו-double-free לשחרור כפול.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "אחרי `std::string t = std::move(s);`, מה מובטח לגבי `s` לפי התקן?",
+      "choices": [
+        "`s` ריקה בוודאות",
+        "`s` הורסה, ואסור אפילו להציב לה ערך חדש",
+        "`s` עדיין מכילה את הערך המקורי, כי std::move רק מבצע cast",
+        "`s` במצב תקין אבל לא מוגדר: מותר להרוס אותה או להציב לה ערך, אסור להניח מה התוכן שלה"
+      ],
+      "answer": 3,
+      "explanation": "אובייקט שהועבר ממנו נמצא במצב valid but unspecified. בפועל std::string לרוב מתרוקנת, אבל התקן לא מבטיח זאת (למשל ב-SSO המימוש יכול להשאיר את התווים). האובייקט חי וה-destructor שלו ירוץ, ולכן מותר להציב לו ערך. נכון ש-std::move הוא רק cast, אבל ה-move constructor של `t` כבר רץ ולקח את המשאבים. use-after-move הוא שימוש בתוכן כאילו הוא ידוע.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q22",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "const char* channelName(int ch) {\n    char buf[16];\n    std::snprintf(buf, sizeof buf, \"ch-%d\", ch);\n    return buf;\n}",
+      "bugLine": 4,
+      "choices": [
+        "`buf` קטן מדי ו-snprintf יחרוג ממנו",
+        "חסר `'\\0'` בסוף buf",
+        "מוחזר pointer למערך מקומי; ה-stack frame מת כשהפונקציה חוזרת והקורא מקבל dangling pointer",
+        "צריך להחזיר `char*` ולא `const char*`"
+      ],
+      "answer": 2,
+      "explanation": "`buf` הוא automatic ונהרס ביציאה. GCC מזהיר כאן `-Wreturn-local-addr`, ו-ASan מדווח stack-use-after-return. snprintf מקבל את הגודל, חותך במידת הצורך ותמיד מוסיף '\\0'. תיקון: להחזיר `std::string`, או לקבל buffer מהקורא. `static char buf[16]` 'עובד' אבל אינו thread-safe ונדרס בקריאה הבאה.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "fs = [lambda: i for i in range(3)]\nprint([f() for f in fs])",
+      "choices": [
+        "[0, 1, 2]",
+        "[2, 2, 2]",
+        "NameError: name 'i' is not defined",
+        "[3, 3, 3]"
+      ],
+      "answer": 1,
+      "explanation": "ה-lambdas לוכדים את המשתנה `i` ולא את ערכו (late binding), בדומה ללכידה by reference ב-C++. כשהם נקראים, הלולאה כבר הסתיימה ו-`i` הוא 2, הערך האחרון של range(3), לא 3. אין NameError כי ה-comprehension שומר את `i` ב-closure שלו. תיקון: `lambda i=i: i`, שמקבע את הערך בזמן היצירה.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ה-fopen נכשל לפעמים או פותח קובץ עם שם משובש. מה הבאג?",
+      "code": "void openLog(const std::string& base) {\n    const char* path = (base + \".txt\").c_str();\n    std::FILE* f = std::fopen(path, \"w\");\n    if (f) std::fclose(f);\n}",
+      "bugLine": 2,
+      "choices": [
+        "`path` מצביע לתוך std::string זמני שנהרס בסוף השורה, ולכן fopen קורא זיכרון משוחרר",
+        "`c_str()` לא מוסיף null terminator",
+        "fopen דורש `std::string` ולא `const char*`",
+        "`base + \".txt\"` משנה את `base` שהתקבל כ-const"
+      ],
+      "answer": 0,
+      "explanation": "התוצאה של `base + \".txt\"` היא זמני, ו-`c_str()` מחזיר מצביע ל-buffer שלו. הזמני נהרס ב-`;`, ומצביע raw לא מאריך שום lifetime. `c_str()` דווקא מבטיח null terminator. תיקון: `std::string path = base + \".txt\";` ואז `path.c_str()`, או לקרוא `fopen((base + \".txt\").c_str(), \"w\")` באותו ביטוי, שם הזמני חי עד סוף ה-full-expression.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס?",
+      "code": "auto p = std::make_unique<int>(5);\nauto q = std::move(p);\nstd::cout << (p ? \"set\" : \"null\") << ' ' << *q;",
+      "choices": [
+        "set 5",
+        "null 5",
+        "התנהגות לא מוגדרת: אסור לבדוק את p אחרי move",
+        "null 0"
+      ],
+      "answer": 1,
+      "explanation": "בניגוד לרוב הטיפוסים, שאחרי move הם valid but unspecified, unique_ptr מובטח להיות null אחרי move. לכן `p` הוא false ו-`*q` הוא 5. בדיקת `p` חוקית לחלוטין; מה שהיה UB הוא `*p`. האובייקט עצמו (ה-int) לא זז, רק הבעלות עליו.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q26",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "המחלקה זוכרת את ה-Stage הנבחר כ-pointer לתוך vector:\n```cpp\nclass Pipeline {\n    std::vector<Stage> stages_;\n    Stage* current_ = nullptr;\npublic:\n    void add(Stage s) { stages_.push_back(std::move(s)); }\n    void select(std::size_t i) { current_ = &stages_[i]; }\n    Stage& current() { return *current_; }\n};\n```\nאחרי `select(0)` ואז `add(...)`, הקריאה ל-`current()` מחזירה זבל. תקן את המחלקה בלי לשנות את ה-API הציבורי.",
+      "starter": "class Pipeline {\n    std::vector<Stage> stages_;\n    // ...\npublic:\n    void add(Stage s);\n    void select(std::size_t i);\n    Stage& current();\n};",
+      "modelAnswer": "class Pipeline {\n    std::vector<Stage> stages_;\n    std::size_t current_ = 0;   // index survives reallocation\n    bool hasCurrent_ = false;\npublic:\n    void add(Stage s) { stages_.push_back(std::move(s)); }\n    void select(std::size_t i) {\n        if (i >= stages_.size()) throw std::out_of_range(\"stage\");\n        current_ = i;\n        hasCurrent_ = true;\n    }\n    Stage& current() {\n        if (!hasCurrent_) throw std::logic_error(\"no stage selected\");\n        return stages_[current_];\n    }\n};",
+      "rubric": [
+        "מזהה ש-push_back שחורג מה-capacity מקצה מחדש ומבטל את current_",
+        "שומר אינדקס במקום pointer, ומחשב את ה-reference מחדש בכל `current()`",
+        "מטפל בקצוות: אינדקס מחוץ לטווח ומצב שבו לא נבחר Stage",
+        "מזכיר חלופות ואת המחיר שלהן: deque או vector<unique_ptr<Stage>>, ושעם erase האינדקס עלול להצביע לאיבר אחר"
+      ],
+      "explanation": "אינדקס הוא הפניה יציבה ל-vector שרק גדל: אחרי הקצאה מחדש הוא עדיין מצביע לאותו איבר לוגי. `reserve` אינו תיקון אמיתי, כי מי שמוסיף יותר מהמתוכנן מחזיר את הבאג. deque או unique_ptr פותרים גם הם, במחיר של cache locality או הקצאה לכל Stage.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q27",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "xs = [-1, -2, 3]\nfor x in xs:\n    if x < 0:\n        xs.remove(x)\nprint(xs)",
+      "choices": [
+        "[3]",
+        "RuntimeError: list changed size during iteration",
+        "[-2, 3]",
+        "[-1, 3]"
+      ],
+      "answer": 2,
+      "explanation": "ה-iterator של list מחזיק אינדקס. באינדקס 0 הוא רואה -1 ומוחק אותו, ו-[-2, 3] זזים שמאלה. באיטרציה הבאה האינדקס הוא 1 ומצביע ל-3, כך ש--2 מדולג. זו הגרסה של Python ל-iterator invalidation: לא קריסה אלא דילוג שקט. RuntimeError נזרק רק ל-dict ו-set. תיקון: `xs = [x for x in xs if x >= 0]`.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q28",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "std::unordered_map<std::string_view, int>\ncountWords(std::istream& in) {\n    std::unordered_map<std::string_view, int> counts;\n    std::string word;\n    while (in >> word)\n        ++counts[word];\n    return counts;\n}",
+      "bugLine": 6,
+      "choices": [
+        "`operator[]` על unordered_map זורק אם המפתח לא קיים",
+        "צריך `counts.reserve()` מראש, אחרת rehash מבטל את המפתחות הקיימים",
+        "כל המפתחות הם views ל-buffer של `word`, שנדרס בכל קריאה ונהרס ביציאה; המפתחות משתנים אחרי שה-hash שלהם חושב, וה-map המוחזר dangling",
+        "`in >> word` לא מנקה את `word` לפני הקריאה"
+      ],
+      "answer": 2,
+      "explanation": "`counts[word]` בונה string_view שמצביע לתוכן הנוכחי של `word`. בקריאה הבאה התוכן נדרס, כך שמפתחות קיימים משנים ערך אחרי שה-hash שלהם חושב והמבנה נשבר; ובסוף הפונקציה `word` נהרס וכל המפתחות dangling. rehash מזיז nodes בין buckets אבל לא נוגע בנתונים שה-views מצביעים עליהם, ולכן reserve לא עוזר. `operator[]` מוסיף ערך ברירת מחדל ולא זורק. תיקון: מפתח `std::string`.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q29",
+      "level": 4,
+      "type": "multi",
+      "prompt": "יש `T& r` לאיבר קיים בכל אחד מה-containers. אחרי איזו פעולה `r` עלול להיות dangling? (בחר את כל הנכונים)",
+      "choices": [
+        "`std::vector::push_back` כש-`size() == capacity()`",
+        "`std::deque::push_back`",
+        "`std::unordered_map::insert` שגורם ל-rehash",
+        "`std::list::push_back`",
+        "`std::vector::reserve(capacity() * 2)`",
+        "`std::map::insert` של מפתח חדש"
+      ],
+      "answer": [
+        0,
+        4
+      ],
+      "explanation": "vector שמקצה מחדש (push_back מלא, או reserve שמגדיל capacity) מעביר את כל האיברים ל-buffer חדש, ולכן כל reference מתבטל. ב-deque, push_back בקצוות מבטל iterators אבל לא references, כי הבלוקים הקיימים לא זזים. ב-unordered_map, rehash מבטל iterators בלבד; כל איבר חי ב-node משלו. list ו-map הם node-based ולא מבטלים כלום בהוספה. ההבחנה בין iterator ל-reference היא בדיוק מה שמראיין סניור בודק.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q30",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס? (מתקמפל ב-C++17)",
+      "code": "struct T {\n    int v;\n    ~T() { std::cout << \"~T\" << v << ' '; }\n};\nT make(int v) { return T{v}; }\nconst T& pick(const T& t) { return t; }\n\nint main() {\n    const T& a = make(1);\n    const T& b = pick(make(2));\n    const int& c = make(3).v;\n    std::cout << \"body \";\n}",
+      "choices": [
+        "~T2 ~T3 body ~T1 ",
+        "body ~T3 ~T2 ~T1 ",
+        "~T2 body ~T3 ~T1 ",
+        "~T2 body ~T1 ~T3 "
+      ],
+      "answer": 2,
+      "explanation": "`a` נקשר ישירות לזמני ולכן T1 חי עד סוף main. ב-`b` הזמני T2 נקשר לפרמטר של pick, וה-reference שמוחזר אינו קשירה ישירה, לכן T2 נהרס בסוף השורה (ו-`b` dangling; GCC 13 מזהיר `-Wdangling-reference`). ב-`c`, גישה ל-member של prvalue קושרת ל-subobject ומאריכה את חיי T3 כולו. בסוף main ה-references המוארכים נהרסים בסדר הפוך ליצירה: T3 ואז T1.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q31",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ב-C++17 הקוד מתקמפל בלי אזהרות ונראה כמו לכידה by value. מה הבאג?",
+      "code": "class Tuner {\n    double freq_ = 100e6;\npublic:\n    std::function<double()> snapshot() const {\n        return [=] { return freq_; };\n    }\n};\n\nauto f = Tuner{}.snapshot();\ndouble x = f();",
+      "bugLine": 5,
+      "choices": [
+        "`[=]` לא יכול ללכוד members, ולכן freq_ נקרא כ-0",
+        "`[=]` לוכד את `this` ולא את `freq_`; ה-Tuner הזמני נהרס בסוף השורה, ו-`f()` קורא דרך this dangling",
+        "lambda בתוך פונקציית const חייב להיות mutable",
+        "std::function מעתיק את ה-lambda ולכן מעתיק גם את Tuner"
+      ],
+      "answer": 1,
+      "explanation": "בתוך member function, `freq_` הוא `this->freq_`, ולכן `[=]` לוכד את המצביע `this` ולא העתקה של ה-member. ה-Tuner הוא זמני שמת בסוף השורה של `auto f`, וה-closure נשאר עם this מת. C++20 הוציא משימוש את הלכידה המובלעת הזו (GCC מזהיר `-Wdeprecated`). העתקת ה-closure ל-std::function מעתיקה רק את המצביע. תיקון: `[freq = freq_]` או `[*this]`.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q32",
+      "level": 5,
+      "type": "oral",
+      "prompt": "ב-code review מוצג parser עם API: `std::vector<std::string_view> tokenize(std::string_view input);`. ה-tokens מצביעים לתוך ה-input, בלי העתקה. המחבר טוען שזה מהיר פי 3 מגרסה שמחזירה `std::vector<std::string>`. איך היית מגיב?",
+      "modelAnswer": "קודם להכיר ביתרון: אפס הקצאות לכל token, cache-friendly, וזה מוצדק בנתיב חם. אבל ה-API יוצר חוזה lifetime שהטיפוס לא מבטא: ה-tokens תקינים רק כל עוד ה-buffer של הקורא חי ולא משתנה. קל לשבור אותו: `tokenize(readLine())` עם זמני מחזיר מיד tokens dangling, append ל-std::string המקורי שגורם להקצאה מחדש מבטל את כולם, ושמירת tokens כ-members או כמפתחות ב-map (או העברה ל-thread אחר) מאריכה את השימוש מעבר לבעלים. אפשרויות: (1) להשאיר אבל לתעד, ולהוסיף overload מחוק ל-`std::string&&` כדי לחסום זמני; (2) להחזיר אובייקט TokenList שמחזיק גם את ה-buffer (std::string או shared buffer) וגם את ה-views, כך שה-lifetime קשור; (3) להחזיר offsets (begin, length) במקום views, שהם יציבים גם אם ה-buffer זז וקל לבדוק אותם; (4) גרסה owning לשימוש כללי וגרסת view לנתיב החם. בנוסף: למדוד שהפי 3 אמיתי בתרחיש אמיתי, להריץ ASan על הטסטים, להפעיל אזהרות כמו `-Wdangling-gsl` ו-lifetime annotations של Clang (`[[clang::lifetimebound]]`) על הפרמטר.",
+      "rubric": [
+        "מזהה את חוזה ה-lifetime הנסתר ונותן לפחות שני תרחישי שבירה קונקרטיים (זמני, הקצאה מחדש, שמירה מעבר לבעלים)",
+        "מציע חלופות עם trade-offs: אובייקט שמחזיק buffer ו-views, offsets, owning API",
+        "מזכיר כלים לאכיפה: overload מחוק ל-rvalue, lifetimebound, אזהרות, ASan בטסטים",
+        "לא פוסל אוטומטית: מבקש מדידה ומבחין בין נתיב חם ל-API כללי"
+      ],
+      "explanation": "מראיין סניור מצפה לאיזון: views הם כלי ביצועים לגיטימי, אבל API ציבורי צריך להפוך את חוזה ה-lifetime לקשה לשבירה, או לפחות למפורש ונבדק.",
+      "lesson": "bugs.lifetime",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "bugs.lifetime.q33",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "buf = bytearray(b'abcd')\nmv = memoryview(buf)\ntry:\n    buf.extend(b'ef')\nexcept BufferError:\n    print('blocked', end=' ')\nmv.release()\nbuf.extend(b'ef')\nprint(len(buf))",
+      "choices": [
+        "6",
+        "blocked 6",
+        "8",
+        "blocked 4"
+      ],
+      "answer": 1,
+      "explanation": "כל עוד יש memoryview פעיל, bytearray מסרב לשנות גודל וזורק BufferError, כי הגדלה עלולה להקצות מחדש את ה-buffer ולהשאיר את ה-view מצביע לזיכרון ששוחרר, בדיוק הבאג של reference ל-vector אחרי push_back. אחרי `mv.release()` אין exports, ה-extend מצליח והאורך 6. ההרחבה הראשונה לא בוצעה כלל, ולכן לא 8. ב-C++ אין הגנה כזו, ולכן צריך sanitizer.",
+      "lesson": "bugs.lifetime"
     }
   ]
 }

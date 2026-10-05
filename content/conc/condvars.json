@@ -33,7 +33,145 @@
         "במסלול זמן-אמת: latency ההתעוררות לא דטרמיניסטי, ולכן לעיתים busy-poll על core מבודד או eventfd/semaphore",
         "איך cv ממומש מעל futex עם sequence counter"
       ],
-      "diagram": "consumer              producer\nlock(m)\nwhile(!pred)\n  wait: unlock+sleep\n                      lock(m)\n                      pred=true\n                      unlock(m)\n                      notify\n  wake: lock(m)\nuse data, unlock(m)"
+      "diagram": "consumer              producer\nlock(m)\nwhile(!pred)\n  wait: unlock+sleep\n                      lock(m)\n                      pred=true\n                      unlock(m)\n                      notify\n  wake: lock(m)\nuse data, unlock(m)",
+      "details": [
+        {
+          "title": "למה צריך condition variable, ומה אין לו",
+          "body": "thread שמחכה לתנאי (יש נתונים בתור, האתחול הסתיים, ביקשו לעצור) יכול לבדוק אותו בלולאה, אבל זה busy-wait: core שלם נשרף על בדיקות. condition variable (cv) מאפשר לו **לישון** עד שמישהו מודיע שאולי משהו השתנה, בלי לצרוך CPU.\n\nהנקודה החשובה ביותר: **ל-cv אין זיכרון**. notify שנשלח כשאף אחד לא מחכה פשוט נעלם. לכן המידע 'האם התנאי מתקיים' לא נמצא ב-cv אלא במצב משותף שנקרא **predicate**: q.empty(), ready, stop. ה-cv הוא רק ערוץ השכמה, וה-predicate הוא האמת. ה-predicate מוגן על ידי **mutex**, ואותו mutex עובר ל-wait.\n\nזה ההבדל מ-**semaphore**: semaphore הוא מונה, ו-release שקורה לפני acquire נשמר במונה. ב-C++20 יש std::counting_semaphore ו-binary_semaphore. cv עם predicate הוא כלי כללי יותר: התנאי יכול להיות כל ביטוי על המצב המשותף."
+        },
+        {
+          "title": "מה wait עושה בדיוק, ולמה תמיד בלולאה",
+          "body": "המחכה נועל **unique_lock** על ה-mutex (lock_guard לא מתאים, כי wait צריך לשחרר ולנעול בעצמו), בודק את ה-predicate, ואם הוא שקר קורא ל-wait. wait:\n\n1. משחרר את ה-mutex ונרדם, כפעולה אחת שאטומית ביחס ל-notify: אין חלון שבו ה-mutex משוחרר אבל ה-thread עוד לא רשום כממתין.\n2. מתעורר (מ-notify, או בלי סיבה).\n3. נועל את ה-mutex מחדש **לפני** שהוא חוזר. לכן כשה-wait חוזר מותר לגעת בנתונים.\n\n**spurious wakeup**: התקן מתיר ל-wait לחזור בלי שאף אחד קרא ל-notify. הסיבות במימוש: signal שקוטע את ה-syscall (EINTR), ומימושים שבהם wake אחד יכול לשחרר יותר מממתין אחד, כי מניעה מוחלטת הייתה מייקרת את המקרה הנפוץ. בנוסף יש **stolen wakeup**: ה-notify היה אמיתי, אבל בין ההתעוררות לנעילה מחדש thread אחר (צרכן אחר שלא ישן בכלל) נכנס ולקח את הפריט.\n\nבשני המקרים, אחרי שה-wait חוזר אין שום הבטחה שהתנאי מתקיים. לכן **while ולא if**: בודקים שוב אחרי כל התעוררות. הגרסה wait(lk, pred) היא בדיוק הלולאה הזו: כל עוד pred() שקר, wait. ה-predicate תמיד מוערך כשה-mutex מוחזק, ולכן אסור שהוא יקרא לפונקציה שנועלת את אותו mutex (נעילה חוזרת של std::mutex היא UB, בפועל deadlock). כשה-predicate כבר נכון בכניסה, אין המתנה בכלל."
+        },
+        {
+          "title": "lost wakeup ולמה ה-mutex מונע אותו",
+          "body": "**lost wakeup**: הממתין בדק את ה-predicate וראה שקר. **לפני שנרדם**, המודיע שינה את ה-predicate ושלח notify. אף אחד עוד לא ישן, אז ה-notify נעלם. עכשיו הממתין נרדם על תנאי שכבר מתקיים, ואולי לנצח.\n\nהמנגנון שמונע את זה: הממתין מחזיק את ה-mutex מהבדיקה ועד שה-wait משחרר אותו **ונרדם אטומית**. אם המודיע משנה את ה-predicate תחת אותו mutex, הוא לא יכול לעשות את זה בחלון שבין הבדיקה להירדמות. או שהשינוי קרה לפני הבדיקה (והממתין רואה אמת ולא ישן), או אחרי שהממתין כבר רשום כישן (וה-notify מעיר אותו).\n\nמכאן הכלל: **שינוי ה-predicate חייב להיות תחת ה-mutex, גם אם ה-predicate הוא std::atomic.** atomic פותר data race, לא את החלון של 'בדקתי ועוד לא נרדמתי'. מספיק לנעול ולשחרר: לכתוב ready = true תחת lock_guard קצר, ואז notify.\n\nה-**notify** עצמו לא חייב להיות תחת ה-lock. אחרי unlock ה-notify נכון, ולרוב אף יעיל יותר: notify תחת lock מעיר thread שמיד נחסם על ה-mutex שעדיין מוחזק (hurry up and wait). יש מקרה שבו notify תחת lock עדיף: כשהממתין עלול להרוס את האובייקט שמכיל את ה-cv מיד כשהוא רואה את התנאי. אם המודיע כבר שחרר את ה-mutex, הממתין יכול לראות את התנאי (בלי לישון או אחרי spurious wakeup), להרוס את האובייקט, והמודיע קורא ל-notify על זיכרון משוחרר.\n\n**מאיפה בא ה-happens-before**: לא מה-notify. notify לא מסנכרן זיכרון. הנראות מגיעה מה-mutex: המודיע כותב ומשחרר (release), והממתין נועל מחדש (acquire). לכן נתון שהמודיע כותב **אחרי** שחרור ה-mutex, גם אם לפני ה-notify, אינו מסונכרן עם הממתין והגישה אליו היא data race."
+        },
+        {
+          "title": "notify_one מול notify_all, וכמה cvs",
+          "body": "notify_one מעיר ממתין אחד (התקן לא מגדיר איזה, אין FIFO). notify_all מעיר את כולם.\n\n- כשכל הממתינים שקולים ונוסף פריט אחד: notify_one. notify_all היה מעיר N, ו-N-1 מהם מוצאים תור ריק וחוזרים לישון. זה **thundering herd**: הרבה context switches ותחרות על ה-mutex בשביל כלום.\n- כשהשינוי רלוונטי לכולם (shutdown, שינוי קונפיגורציה, barrier): notify_all.\n- כשממתינים **לתנאים שונים** על אותו cv: notify_one מסוכן. בתור חסום עם cv אחד, יצרן שמוסיף פריט יכול להעיר יצרן אחר (שמחכה ל-not full), שבודק, רואה שהתור עדיין מלא, וחוזר לישון. ההשכמה שהייתה צריכה להגיע לצרכן אבדה. התיקון: **שני cvs** (not_full ו-not_empty), כך שכל notify מגיע רק למי שמחכה לתנאי הרלוונטי. notify_all גם פותר, אבל ביוקר.\n\n**shutdown**: ה-predicate של ה-worker חייב לכלול את דגל העצירה (stop או תור לא ריק), וצריך תנאי יציאה מהלולאה. אחרת ה-workers מתעוררים מ-notify_all, רואים תור ריק, חוזרים לישון, ו-join נתקע לנצח."
+        },
+        {
+          "title": "timeouts ושעונים",
+          "body": "wait_for(lk, d) מחכה עד פרק זמן d, ו-wait_until(lk, t) עד נקודת זמן t. בלי predicate הן מחזירות cv_status::timeout או no_timeout. עם predicate הן מחזירות את ערך ה-predicate בסוף, כך שיודעים אם התנאי התקיים או שפג הזמן.\n\n**deadline אחד**: wait_for בלולאה מתחיל מדידה חדשה בכל התעוררות. אם ה-cv מקבל notify כל 90 ms בגלל תנאים אחרים, wait_for של 100 ms לא יגיע לעולם ל-timeout, וההמתנה הכוללת לא חסומה. הנכון: לחשב deadline פעם אחת ולהשתמש ב-wait_until עם predicate.\n\n**איזה שעון**: steady_clock מונוטוני ולא קופץ. system_clock הוא שעון הקיר, ויכול לקפוץ קדימה או אחורה בגלל NTP או שינוי ידני. deadline על system_clock, כשהשעון קופץ שעה אחורה, מאריך את ההמתנה בשעה. לכן deadlines מחשבים על steady_clock.\n\n**timer slack** (ספציפי ל-Linux): ה-kernel רשאי לאחר יקיצה של timer עד ערך slack, כדי לאחד יקיצות ולחסוך חשמל. ברירת המחדל ל-threads רגילים היא 50 מיקרו-שניות. אפשר להקטין עם prctl(PR_SET_TIMERSLACK), ו-threads עם מדיניות זמן-אמת (SCHED_FIFO, SCHED_RR) לא מקבלים slack."
+        },
+        {
+          "title": "המימוש מעל futex ו-latency של התעוררות",
+          "body": "ב-Linux cv בנוי מעל **futex**. גרסה פשוטה: מונה seq. הממתין קורא s = seq כשה-mutex מוחזק, משחרר את ה-mutex, וקורא futex_wait(&seq, s). המודיע מגדיל את seq וקורא futex_wake. השחרור וההירדמות הם שני צעדים נפרדים, אבל futex_wait בודק בתוך ה-kernel, תחת ה-lock של ה-bucket, ש-seq עדיין שווה ל-s לפני שהוא נרדם. אם notify קרה ביניהם, seq השתנה, ו-futex_wait חוזר מיד עם EAGAIN. ה-kernel לא שומר wakes: futex_wake מעיר רק מי שכבר בתור. (בתיאוריה seq יכול לגלוש ולחזור בדיוק ל-s, מקרה ABA שמימושים אמיתיים מטפלים בו. glibc משתמש היום באלגוריתם מורכב יותר עם קבוצות ממתינים.)\n\n**latency**: מ-notify ועד שהממתין באמת רץ עוברים: syscall של futex_wake, ה-scheduler צריך לבחור את ה-thread (אם הוא SCHED_OTHER ויש tasks אחרים על ה-core, הוא מחכה לתורו), אולי יציאה מ-C-state עמוק של ה-core (עשרות עד מאות מיקרו-שניות), אולי מעבר ל-core אחר עם cache קר, ואם ה-notify היה תחת lock, עוד חסימה על ה-mutex. בממוצע 5–50 מיקרו-שניות, אבל הזנב ארוך ולא דטרמיניסטי.\n\nבמסלול זמן-אמת החלופות הן: SCHED_FIFO ו-affinity ל-core מבודד, ביטול C-states עמוקים, **busy-poll** על SPSC queue (בלי syscall בכלל, הכי דטרמיניסטי אבל core שלם), **hybrid** (spin קצר ואז שינה), או **eventfd** שאפשר לשלב ב-epoll יחד עם sockets. מודדים היסטוגרמה ו-max, לא ממוצע, ובודקים עם ftrace או perf sched איפה הזמן הלך."
+        },
+        {
+          "title": "פרימיטיבים אחרים: semaphore, latch, barrier, future, stop_token",
+          "body": "לא כל המתנה צריכה cv ידני. ב-C++20:\n\n- **counting_semaphore / binary_semaphore**: מונה עם acquire (מחכה עד שהמונה חיובי ומוריד) ו-release (מגדיל). יש לו זיכרון. מתאים להגבלת מספר משתמשים במשאב (למשל 4 חיבורים) או לאות חד-כיווני. אין לו בעלים, ולכן אין לו priority inheritance ואינו תחליף ל-mutex בזמן-אמת.\n- **latch**: מונה חד-פעמי שיורד ל-0. מתאים ל'חכה ש-N workers יסיימו אתחול'.\n- **barrier**: כמו latch אבל מתאפס לשלב הבא. מתאים לאלגוריתמים בשלבים שבהם כל ה-threads מסתנכרנים בסוף כל שלב.\n- **promise / future**: העברת תוצאה (או exception) אחת מ-thread אחד לאחר.\n- **condition_variable_any**: עובד עם כל lock (למשל shared_mutex או lock משלך), במחיר mutex פנימי נוסף. ב-C++20 יש לו wait(lk, stop_token, pred): בקשת עצירה של **jthread** מעירה את ההמתנה בלי lost wakeup, כי ה-cv רושם stop_callback שמבצע notify בצורה מסונכרנת. std::condition_variable רגיל לא יכול לעשות את זה, כי בקשת העצירה לא עוברת דרך ה-mutex של המשתמש.\n\nכלל: כש-latch, semaphore או future מתארים את הבעיה במדויק, הם פשוטים ובטוחים יותר מ-cv עם predicate."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: lost wakeup עם predicate אטומי בלי mutex אצל המודיע",
+          "body": "ready = false. הצרכן נועל את m וקורא wait(lk, pred). היצרן כותב ready = true בלי לנעול, ואז notify_one.\n\n- t1: הצרכן (מחזיק m) בודק ready: false\n- t2: היצרן כותב ready = true (לא צריך את m)\n- t3: היצרן קורא notify_one. אף אחד לא רשום כישן, ה-notify נעלם\n- t4: הצרכן משחרר את m ונרדם\n- t5: אף אחד לא יעיר אותו לעולם\n\nעם נעילה אצל היצרן: ב-t2 היצרן מנסה לנעול את m ונחסם, כי הצרכן מחזיק אותו. ב-t4 הצרכן משחרר ונרדם אטומית. רק אז היצרן נועל, כותב, משחרר ושולח notify, והצרכן מתעורר. אם היצרן הקדים ונעל לפני t1, הצרכן ראה ready = true ולא ישן בכלל."
+        },
+        {
+          "title": "דוגמה: תור חסום עם cv אחד ו-notify_one",
+          "body": "קיבולת 1, התור מלא. P1 ו-P2 (יצרנים) מחכים ל-not full. C1 (צרכן) פעיל.\n\n- C1 מוציא את הפריט (התור ריק), notify_one: מעיר את P1\n- P1 מכניס פריט (מלא), notify_one: מתכוון לצרכן, אבל אין צרכן ישן, ומתעורר **P2**\n- P2 בודק: מלא, חוזר לישון\n- C1 חוזר לולאה ורוצה עוד פריט: יש פריט, לוקח אותו (ריק), notify_one: מעיר את P2\n\nכאן זה עדיין עבד. עכשיו נניח שגם C2 ישן על ה-cv. P1 מכניס ו-notify_one מעיר את P2 במקום את C2. P2 חוזר לישון. C2 ממשיך לישון למרות שיש פריט. אם C1 בדיוק סיים לעבוד, כולם ישנים: P2 מחכה למקום, C2 מחכה לפריט שכבר קיים. עם שני cvs: ה-notify של P1 הולך ל-not_empty, ומגיע ל-C2 בוודאות."
+        },
+        {
+          "title": "דוגמה: מחיקת האובייקט לפני ה-notify",
+          "body": "req מכיל m, cv ו-done. A הוא המודיע, B הממתין שמוחק.\n\n- t1: B נועל, done = false, נכנס ל-wait (משחרר ונרדם)\n- t2: A נועל, done = true, משחרר\n- t3: B מתעורר spuriously, נועל, רואה done = true, חוזר ומבצע delete req\n- t4: A קורא req->cv.notify_one() על זיכרון ששוחרר\n\nגם בלי spurious wakeup: אם B עוד לא הגיע ל-wait ב-t2, הוא בודק את ה-predicate, רואה true ומוחק. התיקון: notify כשה-mutex עוד מוחזק. אז B לא יכול לחזור מ-wait (הוא צריך לנעול את m) עד ש-A סיים את ה-notify ושחרר. חלופה: shared_ptr ל-req כך ש-A מחזיק אותו בחיים."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "condition variable",
+          "def": "פרימיטיב שמאפשר לישון עד notify. אין לו זיכרון, ולכן תמיד משולב עם predicate שמוגן ב-mutex."
+        },
+        {
+          "term": "predicate",
+          "def": "התנאי על המצב המשותף שהממתין מחכה לו (למשל תור לא ריק). הוא האמת, וה-cv רק ערוץ השכמה."
+        },
+        {
+          "term": "unique_lock",
+          "def": "עטיפת lock שמאפשרת שחרור ונעילה מחדש. std::condition_variable דורש unique_lock<std::mutex>."
+        },
+        {
+          "term": "spurious wakeup",
+          "def": "חזרה מ-wait בלי notify. מותרת בתקן (למשל בגלל signal או פרטי מימוש), ולכן בודקים את ה-predicate בלולאה."
+        },
+        {
+          "term": "stolen wakeup",
+          "def": "notify אמיתי, אבל thread אחר תפס את המשאב לפני שהמתעורר נעל מחדש. עוד סיבה ל-while ולא if."
+        },
+        {
+          "term": "lost wakeup",
+          "def": "notify שנשלח בחלון שבין בדיקת ה-predicate להירדמות, ונעלם. נמנע כששינוי ה-predicate נעשה תחת ה-mutex."
+        },
+        {
+          "term": "notify_one / notify_all",
+          "def": "מעיר ממתין אחד שרירותי, או את כולם. notify בלי ממתינים נעלם."
+        },
+        {
+          "term": "thundering herd",
+          "def": "השכמה של הרבה threads כשרק אחד יכול להתקדם. השאר חוזרים לישון אחרי context switch ותחרות על ה-mutex."
+        },
+        {
+          "term": "hurry up and wait",
+          "def": "notify תחת lock מעיר thread שמיד נחסם על ה-mutex שעדיין מוחזק."
+        },
+        {
+          "term": "wait_for / wait_until",
+          "def": "המתנה עם timeout יחסי או deadline מוחלט. עם predicate מחזירות את ערכו בסוף. ללולאות משתמשים ב-deadline אחד."
+        },
+        {
+          "term": "steady_clock / system_clock",
+          "def": "steady מונוטוני, מתאים ל-deadlines. system הוא שעון קיר שיכול לקפוץ (NTP), ואז ההמתנה מתארכת או מתקצרת."
+        },
+        {
+          "term": "cv_status",
+          "def": "ערך החזרה של wait_for ו-wait_until בלי predicate: timeout או no_timeout."
+        },
+        {
+          "term": "timer slack",
+          "def": "ב-Linux, איחור מותר ביקיצת timer לצורך איחוד יקיצות. 50 מיקרו-שניות כברירת מחדל ל-threads רגילים, אפס ל-RT. נשלט ב-prctl."
+        },
+        {
+          "term": "futex",
+          "def": "syscall שישן על כתובת רק אם הערך בה עדיין הצפוי (אחרת EAGAIN). הבסיס של cv ושל mutex ב-Linux."
+        },
+        {
+          "term": "EAGAIN",
+          "def": "ההחזרה של futex_wait כשהערך כבר שונה מהצפוי. כך notify שקרה בין שחרור ה-mutex להירדמות לא הולך לאיבוד."
+        },
+        {
+          "term": "C-state",
+          "def": "מצב חיסכון בחשמל של core. יציאה ממצב עמוק לוקחת עשרות עד מאות מיקרו-שניות ומוסיפה ל-latency של התעוררות."
+        },
+        {
+          "term": "busy-poll / hybrid / eventfd",
+          "def": "חלופות להמתנה: סיבוב על ה-CPU (דטרמיניסטי, שורף core), spin קצר ואז שינה, או eventfd שמשתלב ב-epoll."
+        },
+        {
+          "term": "semaphore",
+          "def": "מונה עם acquire ו-release. בניגוד ל-cv יש לו זיכרון. counting_semaphore ו-binary_semaphore ב-C++20. אין לו בעלים ולכן אין priority inheritance."
+        },
+        {
+          "term": "latch / barrier",
+          "def": "latch: מונה חד-פעמי שממתינים לו עד 0. barrier: נקודת סנכרון חוזרת לשלבים."
+        },
+        {
+          "term": "promise / future",
+          "def": "העברת תוצאה אחת (או exception) מ-thread אחד לאחר, עם המתנה ב-get."
+        },
+        {
+          "term": "condition_variable_any",
+          "def": "cv שעובד עם כל סוג lock. ב-C++20 תומך ב-stop_token של jthread כדי לקטוע המתנה בלי lost wakeup."
+        },
+        {
+          "term": "jthread / stop_token",
+          "def": "jthread (C++20) עושה join ב-destructor ונושא stop_source. stop_token מאפשר לבקש עצירה ולהגיב לה."
+        },
+        {
+          "term": "happens-before דרך cv",
+          "def": "notify עצמו לא מסנכרן זיכרון. הנראות מגיעה מ-unlock של המודיע ו-lock מחדש של הממתין על אותו mutex."
+        }
+      ]
     }
   ],
   "questions": [
@@ -330,6 +468,227 @@
       ],
       "explanation": "precondition של wait הוא שכל המחכים בו-זמנית משתמשים באותו mutex, אחרת UB. notify לא דורש את ה-lock. ה-predicate תמיד נבדק תחת ה-lock, לכן מותר לגשת בו לנתונים המוגנים. ל-cv אין זיכרון. std::condition_variable עובד רק עם `unique_lock<std::mutex>`, ולכל lock אחר צריך condition_variable_any.",
       "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה lost wakeup?",
+      "choices": [
+        "התעוררות של thread בלי שאף אחד קרא ל-notify",
+        "התעוררות של כל הממתינים כשרק אחד יכול להתקדם",
+        "thread שמת בזמן שהוא מחכה על cv",
+        "notify שנשלח בחלון שבין בדיקת התנאי על ידי הממתין לבין ההירדמות שלו, ולכן אף אחד לא שומע אותו והממתין ישן על תנאי שכבר מתקיים"
+      ],
+      "answer": 3,
+      "explanation": "ל-cv אין זיכרון, ולכן notify שקורה לפני שהממתין רשום כישן נעלם. המניעה: לשנות את ה-predicate תחת אותו mutex שהממתין מחזיק מהבדיקה ועד ההירדמות. התעוררות בלי notify היא spurious wakeup, והשכמת כולם היא thundering herd.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה היתרון של condition variable על פני לולאה שבודקת דגל שוב ושוב (busy-wait)?",
+      "choices": [
+        "ה-thread הממתין ישן ולא צורך CPU עד שמישהו מודיע שהמצב השתנה",
+        "latency ההתעוררות שלו תמיד נמוך יותר מ-busy-wait",
+        "הוא לא דורש mutex",
+        "הוא זוכר notify שנשלח לפני שהממתין התחיל לחכות"
+      ],
+      "answer": 0,
+      "explanation": "היתרון הוא CPU: busy-wait שורף core שלם. דווקא ה-latency של cv גבוה יותר ופחות צפוי (syscall, scheduler, אולי יציאה מ-C-state), ולכן במערכות RT לפעמים בוחרים busy-poll. cv תמיד משולב עם mutex, ואין לו זיכרון.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה פרימיטיב סנכרון של C++20, שבנוי כמונה עם acquire ו-release, **זוכר** release שקרה לפני שמישהו חיכה, בניגוד ל-condition variable?",
+      "accept": [
+        "semaphore",
+        "counting_semaphore",
+        "std::counting_semaphore",
+        "binary_semaphore",
+        "std::binary_semaphore"
+      ],
+      "explanation": "semaphore מחזיק מונה: release מגדיל אותו גם כשאין ממתינים, ו-acquire מאוחר יותר יראה את זה ויחזור מיד. ב-cv המידע הזה חייב לשבת ב-predicate נפרד.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q21",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את מה שקורה לצרכן שמבצע `cv.wait(lk, [&]{ return !q.empty(); })` כשהתור ריק בהתחלה:",
+      "items": [
+        "נועל את ה-mutex (unique_lock)",
+        "בודק את ה-predicate ומוצא שהתור ריק",
+        "משחרר את ה-mutex ונרדם, כפעולה אטומית ביחס ל-notify",
+        "מתעורר (מ-notify או spuriously)",
+        "נועל את ה-mutex מחדש",
+        "בודק שוב את ה-predicate, ומוצא שהתור לא ריק",
+        "חוזר מ-wait כשה-mutex מוחזק ומוציא את הפריט"
+      ],
+      "explanation": "הנעילה מחדש קורית לפני הבדיקה החוזרת, ולכן ה-predicate תמיד מוערך תחת ה-mutex. אם בבדיקה החוזרת התור עדיין ריק (spurious או stolen wakeup), הצרכן חוזר לשלב השחרור וההירדמות.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q22",
+      "level": 2,
+      "type": "output",
+      "prompt": "thread יחיד. מה קורה?",
+      "lang": "cpp",
+      "code": "std::binary_semaphore s{0};\ns.release();\ns.acquire();\nstd::cout << \"ok\";",
+      "choices": [
+        "נתקע לנצח, כי release קרה לפני ש-acquire התחיל לחכות",
+        "undefined behavior, כי release ו-acquire מאותו thread",
+        "שגיאת קומפילציה, כי binary_semaphore דורש mutex",
+        "מדפיס ok מיד"
+      ],
+      "answer": 3,
+      "explanation": "release מגדיל את המונה ל-1 גם כשאין ממתינים, ו-acquire רואה 1, מוריד ל-0 וחוזר מיד. זה ההבדל המהותי מ-cv: notify_one לפני wait בלי predicate היה נעלם, וה-wait היה ישן. ל-semaphore אין בעלים, ולכן מותר ל-release ול-acquire להיות באותו thread או בשונים.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה זה thundering herd בהקשר של condition variables?",
+      "choices": [
+        "notify שהולך לאיבוד כי אף אחד לא מחכה",
+        "רצף של spurious wakeups שגורם ל-100% CPU",
+        "notify_all שמעיר הרבה threads כשרק אחד מהם יכול להתקדם, והשאר נלחמים על ה-mutex וחוזרים לישון",
+        "מצב שבו יצרנים רבים מציפים את התור"
+      ],
+      "answer": 2,
+      "explanation": "כל thread שמתעורר עולה context switch ונעילה של ה-mutex, והוא מוצא את התנאי שקר וחוזר לישון. כשמתווסף פריט אחד והממתינים שקולים, notify_one מספיק. notify_all נכון כשהשינוי רלוונטי לכולם, כמו shutdown.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q24",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread מחכה עם `cv.wait_until(lk, std::chrono::system_clock::now() + 5s, pred)`. אחרי שנייה, NTP מזיז את שעון המערכת שעה אחורה. מה יקרה (בהנחה שאין notify)?",
+      "choices": [
+        "ה-wait יחזור אחרי 5 שניות בדיוק, כי wait_until מודד זמן שעבר",
+        "ה-wait יחכה עוד כשעה וארבע שניות, כי ה-deadline הוא נקודה על שעון הקיר, והשעון רחוק ממנה עכשיו בשעה נוספת",
+        "ה-wait יחזור מיד עם timeout, כי השעון השתנה",
+        "undefined behavior"
+      ],
+      "answer": 1,
+      "explanation": "deadline על system_clock הוא נקודה בשעון הקיר. כשהשעון קופץ אחורה, הנקודה מתרחקת. steady_clock מונוטוני ולא מושפע מ-NTP, ולכן deadlines של timeout מחשבים עליו. system_clock מתאים רק כשבאמת רוצים 'עד השעה 14:00'.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q25",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו התאמות בין בעיה לפרימיטיב של C++20 נכונות?",
+      "choices": [
+        "main צריך לחכות פעם אחת ש-8 workers יסיימו אתחול: std::latch",
+        "להגביל ל-4 את מספר ה-threads שמשתמשים בו-זמנית במאגר חיבורים: std::counting_semaphore",
+        "להעביר תוצאה אחת, או exception, מ-thread עבודה ל-thread שביקש אותה: std::promise ו-std::future",
+        "תור שממנו כמה צרכנים שולפים פריטים לאורך זמן: std::latch",
+        "binary_semaphore כתחליף ל-mutex ב-RT thread, כי הוא נותן priority inheritance"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "latch הוא מונה חד-פעמי, ולכן לא מתאים לתור מתמשך, שם מתאים cv עם predicate (או semaphore שסופר פריטים, עם mutex על התור עצמו). ל-semaphore אין בעלים, ולכן ה-kernel לא יודע את מי להעלות בעדיפות ואין priority inheritance.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q26",
+      "level": 4,
+      "type": "bug",
+      "prompt": "המחלקה מגנה על התור עם m. הצרכן נתקע כבר בקריאה הראשונה ל-pop. למה?",
+      "lang": "cpp",
+      "code": "size_t Queue::size() {\n  std::lock_guard<std::mutex> g(m);\n  return q.size();\n}\n\nint Queue::pop() {\n  std::unique_lock<std::mutex> lk(m);\n  cv.wait(lk, [&] { return size() > 0; });\n  int v = q.front(); q.pop();\n  return v;\n}",
+      "bugLine": 8,
+      "choices": [
+        "ה-predicate מוערך כש-m מוחזק, ו-size() מנסה לנעול את m שוב מאותו thread: UB, ובפועל deadlock עצמי. ה-predicate צריך לגשת ל-q ישירות",
+        "wait לא יכול לקבל lambda שתופסת this",
+        "חסר notify בתוך pop",
+        "size() צריכה להחזיר int"
+      ],
+      "answer": 0,
+      "explanation": "wait מעריך את ה-predicate תמיד תחת ה-lock: גם בכניסה וגם אחרי כל התעוררות. לכן בתוך ה-predicate כבר מחזיקים את m, ומותר לגשת לנתונים המוגנים ישירות. קריאה לפונקציה ציבורית שנועלת בעצמה היא נעילה חוזרת של std::mutex. התיקון המקובל: פונקציה פרטית שמניחה שה-lock מוחזק.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "למה C++20 הוסיף ל-`std::condition_variable_any` גרסה של wait שמקבלת `std::stop_token`, ולא ל-`std::condition_variable`?",
+      "choices": [
+        "כי condition_variable לא תומך ב-predicate",
+        "כי stop_token עובד רק עם shared_mutex",
+        "כי jthread לא יכול לקרוא ל-notify",
+        "כדי שבקשת עצירה של jthread תעיר את ההמתנה בלי lost wakeup, ה-cv צריך לסנכרן את ה-notify של ה-stop_callback מול ההירדמות. condition_variable_any מחזיק mutex פנימי משלו ויכול לעשות את זה, ו-condition_variable תלוי לגמרי ב-mutex של המשתמש"
+      ],
+      "answer": 3,
+      "explanation": "בקשת העצירה מגיעה מ-thread אחר דרך stop_source, ולא נועלת את ה-mutex של המשתמש. כדי שהיא לא תיפול לחלון שבין בדיקת stop_requested להירדמות, צריך נעילה שה-cv עצמו שולט בה. ל-condition_variable_any כבר יש mutex פנימי, ולכן ההרחבה טבעית שם. wait עם stop_token מחזיר את ערך ה-predicate, כך שיודעים אם יצאו בגלל התנאי או בגלל עצירה.",
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "data הוא int רגיל. יצרן: `{ std::lock_guard g(m); ready = true; } data = 42; cv.notify_one();`. צרכן: `std::unique_lock lk(m); cv.wait(lk, [&]{ return ready; }); use(data);`. מה נכון?",
+      "choices": [
+        "תקין: ה-notify קורה אחרי הכתיבה ל-data, ולכן הצרכן שהתעורר רואה 42",
+        "data race: הכתיבה ל-data קורית אחרי שחרור ה-mutex, ושום דבר לא מסנכרן אותה עם הצרכן. notify לא יוצר happens-before, והצרכן יכול לראות ready ולקרוא data לפני הכתיבה או במקביל לה",
+        "תקין, אבל רק אם notify_one נקרא כשה-mutex מוחזק",
+        "deadlock, כי ה-notify מחוץ ל-lock"
+      ],
+      "answer": 1,
+      "explanation": "הנראות בין היצרן לצרכן מגיעה רק מזוג unlock ו-lock על m. הכתיבה ל-data לא sequenced-before ה-unlock, ולכן היא לא happens-before הקריאה. בנוסף, הצרכן לא חייב לישון בכלל: אם הגיע אחרי ה-unlock, הוא רואה ready = true וקורא data מיד. התיקון: לכתוב את data לפני ה-unlock (בתוך הבלוק או לפניו).",
+      "lesson": "conc.condvars",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.condvars.q29",
+      "level": 5,
+      "type": "multi",
+      "prompt": "Linux. thread עם SCHED_OTHER משתמש ב-`wait_until` עם deadlines של 100 מיקרו-שניות על steady_clock, ומתעורר באופן עקבי כ-50 מיקרו-שניות אחרי ה-deadline (בלי notify). אילו טענות נכונות?",
+      "choices": [
+        "timer slack של ה-kernel (ברירת מחדל 50 מיקרו-שניות ל-threads רגילים) מתיר לאחר את היקיצה כדי לאחד timers",
+        "אפשר להקטין את ה-slack של ה-thread עם prctl(PR_SET_TIMERSLACK)",
+        "threads עם SCHED_FIFO או SCHED_RR לא מקבלים timer slack",
+        "steady_clock מוגבל ברזולוציה של 50 מיקרו-שניות, ולכן זה בלתי נמנע",
+        "מעבר ל-system_clock יבטל את האיחור"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "האיחור העקבי והקבוע הוא החתימה של timer slack, מנגנון ספציפי ל-Linux לחיסכון בחשמל. ל-steady_clock יש רזולוציה של ננו-שניות (CLOCK_MONOTONIC), ושעון אחר לא משנה את מנגנון היקיצה. ל-thread זמן-אמת ה-kernel לא מוסיף slack, וזו עוד סיבה להריץ threads קריטיים ב-SCHED_FIFO.",
+      "lesson": "conc.condvars",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.condvars.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "למה התקן מתיר spurious wakeups במקום לדרוש שהם לא יקרו? תן סיבות מימוש קונקרטיות, הבחן בינם לבין stolen wakeups, והסבר למה גם בלי spurious wakeups היה צריך לבדוק את ה-predicate בלולאה.",
+      "modelAnswer": "סיבות מימוש: (1) ה-syscall של ההמתנה (futex_wait) יכול לחזור בגלל signal (EINTR), ואם הספרייה תצטרך להבחין ולחזור לישון, היא צריכה לנהל מצב נוסף בכל wait. (2) כדי שה-cv יהיה זול, מימושים מאפשרים מצבים שבהם wake אחד משחרר יותר מממתין אחד, למשל כש-notify מגיע בדיוק כשממתין חדש מצטרף, או כשמונה sequence משתנה בזמן שכמה ממתינים קראו אותו. מניעה מוחלטת של זה מחייבת סנכרון נוסף ב-wait וב-notify, כלומר מייקרת את המקרה הנפוץ בשביל מקרה נדיר שהמשתמש ממילא צריך לטפל בו (הטיעון של Butenhof ו-POSIX). (3) אפשר לממש cv על מערכות בלי futex בצורה פשוטה יותר. stolen wakeup שונה: ה-notify אמיתי, אבל בין ההתעוררות לנעילה מחדש thread אחר, שלא ישן בכלל, נעל את ה-mutex ולקח את הפריט. זה קורה בכל מימוש, כי המתעורר צריך להתחרות על ה-mutex, ו-std::mutex לא הוגן. לכן גם cv מושלם בלי spurious wakeups לא מבטיח שהתנאי עדיין מתקיים כשה-wait חוזר. בנוסף, notify_all מעיר כמה ממתינים שרק אחד מהם יכול להתקדם, ו-cv אחד עם תנאים שונים מעיר ממתינים שהתנאי שלהם לא השתנה. המסקנה: ה-cv הוא רמז 'אולי משהו השתנה', וה-predicate הוא האמת. while או wait עם predicate הם חובה.",
+      "rubric": [
+        "סיבות מימוש: EINTR ו-signals, wake שמשחרר יותר מממתין אחד, מחיר המניעה במקרה הנפוץ",
+        "הבחנה ברורה בין spurious wakeup ל-stolen wakeup",
+        "notify_all ו-cv משותף לתנאים שונים כסיבות נוספות לבדיקה חוזרת",
+        "המסקנה: cv הוא רמז, ה-predicate הוא האמת, ולכן לולאה תמיד"
+      ],
+      "explanation": "תשובה חלשה אומרת 'כי ה-OS לפעמים מעיר'. תשובה חזקה מסבירה את ה-trade-off בתכנון ה-API ומראה שהלולאה נחוצה מסיבות שאינן spurious בכלל.",
+      "lesson": "conc.condvars",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

@@ -35,7 +35,161 @@
         "הקצאת עדיפויות במערכת שלמה כולל IRQ threads, ksoftirqd ו-RCU",
         "חישוב schedulability ו-response time analysis, ו-SCHED_DEADLINE כחלופה"
       ],
-      "diagram": "prio\n H        wait.......run\n M     run run run\n L  lock          ..unlock\n    -----------------------> t\nwithout PI: H waits for M too\nwith PI: L runs at H prio"
+      "diagram": "prio\n H        wait.......run\n M     run run run\n L  lock          ..unlock\n    -----------------------> t\nwithout PI: H waits for M too\nwith PI: L runs at H prio",
+      "details": [
+        {
+          "title": "מה זה זמן-אמת: deadlines, WCET ודטרמיניזם",
+          "body": "מערכת זמן-אמת לא נמדדת לפי כמה מהר היא בממוצע אלא לפי האם **כל** משימה מסיימת לפני ה-**deadline** שלה. מערכת שמגיבה ב-10 מיקרו-שניות ב-99.99% מהמקרים וב-5 מילי-שניות בשאר עלולה להיות פסולה, ומערכת שמגיבה תמיד ב-200 מיקרו-שניות יכולה להיות מצוינת.\n\n- **hard real-time**: פספוס deadline הוא כישלון של המערכת (בקרת טיסה, ABS).\n- **firm**: תוצאה מאוחרת חסרת ערך אבל לא מסוכנת (בלוק דגימות שהגיע מאוחר נזרק).\n- **soft**: איחור מוריד איכות בהדרגה (וידאו, audio עם glitch).\n\n**WCET** (worst-case execution time) הוא זמן הריצה הגרוע ביותר של משימה, כולל cache misses ו-branches גרועים. כל ניתוח schedulability מתחיל ממנו, ולכן מודדים אותו (או מחשבים) ומוסיפים מרווח. **jitter** הוא השונות בזמני התגובה, והוא האויב העיקרי: ממוצע לא מעניין, היסטוגרמה ו-max כן.\n\nלכן במערכות RT מעדיפים מנגנונים צפויים על פני מהירים בממוצע: עדיפויות קבועות, הקצאות מראש, מבנים wait-free, ו-cores מבודדים."
+        },
+        {
+          "title": "מדיניות התזמון ב-Linux",
+          "body": "ה-scheduler של Linux עובר על מחלקות לפי סדר קדימות קבוע: **deadline** (SCHED_DEADLINE), אחר כך **rt** (SCHED_FIFO ו-SCHED_RR), אחר כך **fair** (SCHED_OTHER, SCHED_BATCH), ואחר כך idle. thread ממחלקה גבוהה שמוכן לרוץ תמיד קודם.\n\n- **SCHED_OTHER**: ברירת המחדל. CFS, ומגרסה 6.6 EEVDF, מחלקים CPU בהוגנות לפי משקל שנגזר מ-**nice** (-20 עד 19, nice נמוך = משקל גבוה). nice -20 עדיין תמיד מפסיד לכל thread זמן-אמת.\n- **SCHED_FIFO**: עדיפות 1–99, **מספר גבוה = עדיפות גבוהה**. אין time slice: thread רץ עד שהוא נחסם, מוותר, או ש-thread בעדיפות גבוהה יותר מוכן. בין threads באותה עדיפות, מי שהגיע ראשון רץ עד שנחסם.\n- **SCHED_RR**: כמו FIFO, אבל threads **באותה עדיפות** מתחלפים כל quantum (ברירת מחדל 100ms, ב-/proc/sys/kernel/sched_rr_timeslice_ms). מול עדיפויות שונות אין הבדל.\n- **sched_yield** ב-FIFO מעביר את ה-thread לסוף התור של **אותה עדיפות** בלבד. אם אין אחר באותה עדיפות, הוא ממשיך לרוץ מיד. threads בעדיפות נמוכה יותר לא מקבלים CPU מזה.\n\n**הגדרה בקוד**: pthread_attr_setschedpolicy ו-setschedparam, ו**חובה** pthread_attr_setinheritsched עם PTHREAD_EXPLICIT_SCHED. בלי זה ברירת המחדל היא INHERIT, וה-thread יורש את מדיניות היוצר בשקט. pthread_create מחזיר קוד שגיאה ישירות (לא -1 ו-errno), ובלי הרשאה (CAP_SYS_NICE או RLIMIT_RTPRIO מספיק) מחזיר EPERM. הכלי chrt מציג ומשנה מדיניות ועדיפות של thread קיים.\n\n**RT throttling**: ברירת המחדל מגבילה את כל משימות ה-RT ל-950ms מכל שנייה (sched_rt_runtime_us מתוך sched_rt_period_us), כדי שבאג ב-thread RT שמסתובב לא יקפיא את המערכת לגמרי. ערך -1 מבטל את ההגבלה. בקרנלים חדשים המנגנון ממומש גם דרך fair server שמבטיח זמן ל-SCHED_OTHER. מלכודת קלאסית: thread ב-FIFO שעושה busy-wait על דגל ש-thread SCHED_OTHER על אותו core אמור להדליק. בלי throttling זו תקיעה מוחלטת, ועם throttling זו תקיעה של כשנייה."
+        },
+        {
+          "title": "SCHED_DEADLINE",
+          "body": "במקום עדיפות, כל משימה מצהירה על שלושה פרמטרים: **runtime** (כמה CPU היא צריכה בכל מחזור, לפי WCET), **deadline** (עד מתי מתחילת המחזור) ו-**period**. חובה ש-runtime <= deadline <= period. ה-scheduler מתזמן לפי **EDF** (earliest deadline first): המשימה שה-deadline שלה הכי קרוב רצה.\n\n**CBS** (constant bandwidth server): כל משימה מקבלת לכל היותר runtime בכל period. משימה שחורגת נעצרת (throttled) עד ה-period הבא, ומפספסת בעצמה, בלי לפגוע באחרות. אפשר לבקש signal על חריגה עם SCHED_FLAG_DL_OVERRUN.\n\n**admission control**: sched_setattr נכשל אם סך ה-bandwidth (סכום runtime/period) של כל משימות ה-deadline חורג מהמגבלה המותרת. כך המערכת מסרבת מראש לקבל עומס שהיא לא יכולה לעמוד בו, במקום לפספס deadlines בהמשך.\n\nמשימות deadline קודמות גם ל-SCHED_FIFO 99. הן מתאימות למשימות מחזוריות עם WCET ידוע, כמו עיבוד בלוק כל 10ms."
+        },
+        {
+          "title": "priority inversion, inheritance ו-ceiling",
+          "body": "**priority inversion**: L (נמוך) מחזיק mutex. H (גבוה) מתעורר ונחסם על ה-mutex. M (בינוני), שלא צריך את ה-mutex, מתעורר ומקבל את ה-CPU כי הוא גבוה מ-L. L לא רץ, לא משחרר, ו-H מחכה בפועל ל-M, לזמן לא חסום. זה לא deadlock: בסוף M מסיים, אבל ה-deadline של H כבר עבר.\n\n**Mars Pathfinder (1997)**: thread ה-bus בעדיפות גבוהה חיכה ל-mutex של thread מטאורולוגי נמוך, ו-thread תקשורת בינוני רץ באמצע. watchdog זיהה שה-bus thread לא סיים בזמן ועשה reset, שוב ושוב. VxWorks תמך ב-priority inheritance אבל הוא היה כבוי ב-mutex הזה, ו-JPL הפעילו אותו מרחוק.\n\n**priority inheritance (PI)**: כל עוד H חסום על ה-mutex, L רץ בעדיפות של H. M לא יכול לדחוק אותו, L מסיים ומשחרר מהר, ואז חוזר לעדיפות שלו. ב-Linux ה-PI **טרנזיטיבי**: אם H מחכה ל-m1 שמחזיק M1, ו-M1 מחכה ל-m2 שמחזיק L, ה-kernel מעלה גם את L (שרשרת PI ב-rt_mutex). PI עולה כסף רק כשיש תחרות. הוא **לא** מונע deadlock, ומאפשר **chained blocking**: H יכול להיחסם ברצף על כמה locks של כמה threads נמוכים.\n\n**priority ceiling** (PTHREAD_PRIO_PROTECT): לכל mutex מגדירים עדיפות תקרה, שהיא העדיפות הגבוהה ביותר של thread שעשוי לנעול אותו. מי שנועל עולה **מיד** לתקרה, גם בלי ממתינים. thread שהעדיפות שלו גבוהה מהתקרה ומנסה לנעול מקבל שגיאה (EINVAL). על מעבד יחיד עם עדיפויות קבועות, הפרוטוקול מונע deadlock ו-chained blocking. המחיר: שינוי עדיפות בכל נעילה, וצורך לדעת מראש מי ישתמש ב-lock.\n\n**מה לא מקבל PI**: std::mutex ב-Linux הוא pthread mutex עם PTHREAD_PRIO_NONE, ואי אפשר לשנות את הפרוטוקול אחרי האתחול. semaphore, condition variable והמתנה לאירוע **אין להם בעלים**: הקרנל לא יודע מי יבצע את ה-post, ולכן אין למי להוריש. ב-PI futex ה-TID של הבעלים נשמר במילת ה-futex, וזה מה שמאפשר לקרנל לדעת את מי להעלות.\n\nהפתרון הטוב ביותר ב-RT הוא לרוב לא להשתמש ב-lock משותף בכלל בין threads בעדיפויות שונות: SPSC queues, double buffers ו-atomics."
+        },
+        {
+          "title": "ניתוח schedulability: RM, EDF ו-response time analysis",
+          "body": "**ניצולת**: U = סכום C_i / T_i, כש-C הוא WCET ו-T ה-period. משימות (2,10), (3,15), (5,20) נותנות U = 0.2 + 0.2 + 0.25 = 0.65.\n\n**rate-monotonic (RM)**: עדיפויות קבועות לפי תדירות, period קצר = עדיפות גבוהה. RM אופטימלי בין שיטות העדיפות הקבועה (כש-deadline = period). **חסם Liu-Layland**: אם U <= n(2^(1/n) - 1), כל ה-deadlines מובטחים. החסם הוא 0.828 לשתי משימות, 0.780 לשלוש, ושואף ל-ln 2 ≈ 0.693. זה תנאי **מספיק** בלבד: מעליו ייתכן שהמערכת עדיין schedulable. כשה-periods **הרמוניים** (כל אחד מחלק את הבא, למשל 5, 10, 20), RM schedulable בדיוק כש-U <= 1.\n\n**response time analysis (RTA)**: מבחן מדויק לעדיפויות קבועות. זמן התגובה הגרוע של משימה i מתקבל באיטרציה: R = C_i ועוד, לכל משימה j בעדיפות גבוהה יותר, ceil(R / T_j) כפול C_j. מתחילים מ-R = C_i וחוזרים עד שהערך מתייצב. אם R <= D_i, המשימה בטוחה. הבסיס הוא ה-**critical instant**: המקרה הגרוע הוא כשכל המשימות משתחררות יחד.\n\n**EDF**: עדיפות דינמית לפי deadline קרוב. על core יחיד עם deadline = period, EDF schedulable **אם ורק אם** U <= 1. אבל ב-**עומס יתר** (U > 1, למשל WCET שנחרג) ההתנהגות שונה: ב-RM המשימות הנמוכות מפספסות והגבוהות מוגנות, בצורה צפויה. ב-EDF יכול לקרות **domino effect**: משימה מאחרת דוחפת את כולן, ומשימות רבות מפספסות. זו אחת הסיבות שמערכות קריטיות מעדיפות לעיתים עדיפויות קבועות, או EDF עם CBS שמבודד חריגות."
+        },
+        {
+          "title": "PREEMPT_RT",
+          "body": "PREEMPT_RT הוא סט שינויים שהופך את הקרנל כמעט כולו ל-preemptible, ומאז גרסה 6.12 הוא חלק מהקרנל הראשי (אפשרות קונפיגורציה).\n\n- **spinlock_t הופך ל-rt_mutex**: lock שיכול לישון ותומך ב-PI, כך ש-thread בעדיפות גבוהה יכול להפקיע את ה-CPU גם מקוד kernel שמחזיק lock. raw_spinlock_t נשאר spin אמיתי לקוד הקריטי ביותר (ה-scheduler עצמו, למשל).\n- **threaded IRQs**: רוב ה-interrupt handler רץ כ-kernel thread (שמות כמו irq/123-eth0) ב-SCHED_FIFO, בעדיפות 50 כברירת מחדל, ואפשר לשנות עם chrt.\n- **softirqs** (כולל עיבוד רשת, NAPI) רצים בהקשר של thread ולא בקצה ה-interrupt.\n- אפליקציות **לא** מקבלות SCHED_FIFO אוטומטית. צריך לבקש.\n\nההשלכה החשובה: ב-mainline רגיל, interrupt קוטע כל thread מיד. ב-PREEMPT_RT ה-handler הוא thread עם עדיפות. thread אפליקציה ב-FIFO 90 שמסתובב על core שאליו מנותב ה-IRQ של ה-NIC ירעיב את ה-IRQ thread (FIFO 50), והחבילות לא יעובדו עד שה-RT throttling ישחרר את ה-core. התיקון: IRQ affinity ל-core אחר, או העלאת העדיפות של ה-IRQ thread מעל ה-thread שמסתובב, או קריאה חוסמת במקום spin.\n\nגם threads אחרים של המערכת צריכים לרוץ: ksoftirqd, threads של RCU ו-kworker. לכן מבודדים cores עם isolcpus, nohz_full ו-rcu_nocbs, ומפנים IRQs. עם DPDK ה-NIC נקרא ישירות מ-user space ב-polling על core ייעודי, ואז ה-IRQ thread כבר לא בתמונה."
+        },
+        {
+          "title": "איך מודדים ומאבחנים",
+          "body": "- **cyclictest**: thread בעדיפות גבוהה שמתעורר מחזורית ומודד כמה איחר. נותן היסטוגרמה ו-max, הבסיס לכל הערכה של מערכת RT.\n- **rtla timerlat ו-rtla osnoise**: כלים מודרניים בקרנל שמודדים latency של timer ורעש מערכת (interrupts, threads אחרים) פר-core, ומסבירים מה גרם לחריגה.\n- **ftrace** עם האירועים sched_switch ו-sched_wakeup, דרך trace-cmd: מי רץ על ה-core ומתי, וכמה זמן עבר מ-wakeup ועד ריצה.\n- **perf sched latency**: סיכום זמני המתנה ל-CPU לכל task.\n\nתהליך טיפוסי כש-thread RT מפספס deadline לפעמים: לאמת שהמדיניות באמת FIFO (chrt -p, ולבדוק EXPLICIT_SCHED), לבדוק מי עוד בעדיפות גבוהה יותר על אותו core (IRQ threads, threads אחרים שלך), לבדוק locks משותפים בלי PI, page faults (mlockall), ו-RT throttling."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: priority inversion עם PI ובלעדיו, שרשרת אירועים",
+          "body": "L (FIFO 10), M (FIFO 50), H (FIFO 80), core אחד.\n\nבלי PI:\n- t=0: L נועל m. ה-critical section שלו צריך 1ms\n- t=0.3: H מתעורר, דוחק את L, מנסה לנעול m ונחסם\n- t=0.4: M מתעורר ורץ 20ms (L מוכן לרוץ, אבל 10 < 50)\n- t=20.4: L ממשיך, ב-t=21.1 משחרר\n- t=21.1: H רץ. זמן חסימה: כ-21ms\n\nעם PI:\n- t=0.3: H נחסם, ו-L עולה ל-80\n- t=0.4: M מתעורר, אבל 50 < 80, ולכן מחכה\n- t=1.0: L משחרר וחוזר ל-10. H נכנס מיד\n- זמן חסימה: 0.7ms, חסום באורך ה-critical section"
+        },
+        {
+          "title": "דוגמה: RTA כשמבחן Liu-Layland נכשל",
+          "body": "שלוש משימות RM: τ1 (C=1, T=4), τ2 (C=2, T=6), τ3 (C=3, T=12). U = 0.25 + 0.333 + 0.25 ≈ 0.833, מעל החסם לשלוש משימות (0.780). המבחן לא מבטיח כלום. RTA ל-τ3:\n\n- R = 3\n- R = 3 + ceil(3/4)·1 + ceil(3/6)·2 = 3 + 1 + 2 = 6\n- R = 3 + ceil(6/4)·1 + ceil(6/6)·2 = 3 + 2 + 2 = 7\n- R = 3 + ceil(7/4)·1 + ceil(7/6)·2 = 3 + 2 + 4 = 9\n- R = 3 + ceil(9/4)·1 + ceil(9/6)·2 = 3 + 3 + 4 = 10\n- R = 3 + ceil(10/4)·1 + ceil(10/6)·2 = 10, התייצב\n\nR3 = 10 <= 12, ולכן τ3 עומד ב-deadline. סימולציה מאשרת: τ3 רץ ב-3–4, 5–6 ו-9–10, ומסיים ב-10."
+        },
+        {
+          "title": "דוגמה: RM נכשל, EDF מצליח",
+          "body": "τ1 (C=2, T=5), τ2 (C=4, T=7). U = 0.4 + 0.571 ≈ 0.971.\n\nRM (τ1 גבוה):\n- 0–2: τ1. 2–5: τ2 (3 יחידות)\n- 5: τ1 משתחרר ודוחק. 5–7: τ1\n- 7: ה-deadline של τ2 מגיע, וחסרה לו יחידה. פספוס\n\nEDF:\n- 0–2: τ1 (deadline 5 לפני 7)\n- 2–6: τ2. ב-5 τ1 משתחרר עם deadline 10, אבל 7 קודם. τ2 מסיים ב-6\n- 6–8: τ1 (deadline 10). ב-7 τ2 משתחרר עם deadline 14\n- 8–12: τ2. 12–14: τ1 (deadline 15)\n\nכל ה-deadlines עד ה-hyperperiod (35) מתקיימים, כצפוי מ-U <= 1. זה מראה שהחסם של RM לא פורמליות: עדיפות קבועה מבזבזת קיבולת כשה-periods לא הרמוניים."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "deadline / hard / firm / soft",
+          "def": "deadline: הזמן שעד אליו התוצאה חייבת להיות מוכנה. hard: פספוס הוא כישלון. firm: תוצאה מאוחרת חסרת ערך. soft: איחור מוריד איכות."
+        },
+        {
+          "term": "WCET",
+          "def": "worst-case execution time: זמן הריצה הגרוע ביותר של משימה. הבסיס לכל ניתוח schedulability."
+        },
+        {
+          "term": "jitter",
+          "def": "שונות בזמני התגובה. במערכות RT חשובים ה-max וההיסטוגרמה, לא הממוצע."
+        },
+        {
+          "term": "SCHED_OTHER / nice / EEVDF",
+          "def": "מדיניות ההוגנות של Linux. nice בין -20 ל-19 קובע משקל. מ-6.6 ה-scheduler הוא EEVDF במקום CFS."
+        },
+        {
+          "term": "SCHED_FIFO",
+          "def": "עדיפות קבועה 1–99 (גבוה = חשוב). רץ עד שנחסם, מוותר או נדחק על ידי עדיפות גבוהה יותר. אין time slice."
+        },
+        {
+          "term": "SCHED_RR",
+          "def": "כמו FIFO, אבל threads באותה עדיפות מתחלפים כל quantum (ברירת מחדל 100ms)."
+        },
+        {
+          "term": "sched_yield",
+          "def": "ב-FIFO מעביר לסוף התור של אותה עדיפות. אם אין אחר באותה עדיפות, ה-thread ממשיך מיד."
+        },
+        {
+          "term": "SCHED_DEADLINE",
+          "def": "מדיניות עם runtime, deadline ו-period לכל משימה, תזמון EDF, CBS ו-admission control. קודמת ל-FIFO."
+        },
+        {
+          "term": "CBS / admission control",
+          "def": "CBS מגביל כל משימה ל-runtime בכל period וחוסם אותה בחריגה. admission control מסרב למשימה חדשה אם סך ה-bandwidth חורג."
+        },
+        {
+          "term": "RT throttling",
+          "def": "הגבלת משימות RT ל-950ms מכל שנייה כברירת מחדל (sched_rt_runtime_us), כדי ש-thread RT תקוע לא יקפיא את המערכת."
+        },
+        {
+          "term": "PTHREAD_EXPLICIT_SCHED / EPERM",
+          "def": "בלי EXPLICIT_SCHED ה-policy ב-attr מתעלמת. בלי CAP_SYS_NICE או RLIMIT_RTPRIO, pthread_create מחזיר EPERM."
+        },
+        {
+          "term": "chrt",
+          "def": "כלי להצגה ושינוי של מדיניות ועדיפות של process או thread, כולל IRQ threads."
+        },
+        {
+          "term": "priority inversion",
+          "def": "thread גבוה מחכה ל-lock של thread נמוך, שנדחק על ידי thread בינוני. ההמתנה לא חסומה."
+        },
+        {
+          "term": "priority inheritance",
+          "def": "המחזיק יורש את העדיפות של הממתין הגבוה ביותר. טרנזיטיבי ב-Linux. לא מונע deadlock ומאפשר chained blocking."
+        },
+        {
+          "term": "priority ceiling",
+          "def": "המחזיק עולה מיד לתקרה של ה-lock (העדיפות הגבוהה ביותר של מי שעשוי לנעול). על מעבד יחיד מונע deadlock ו-chained blocking."
+        },
+        {
+          "term": "chained blocking",
+          "def": "thread גבוה שנחסם ברצף על כמה locks שמחזיקים כמה threads נמוכים, ומצטבר זמן חסימה."
+        },
+        {
+          "term": "Mars Pathfinder",
+          "def": "המקרה הקלאסי מ-1997: priority inversion גרם ל-resets חוזרים, ונפתר בהפעלת priority inheritance מרחוק."
+        },
+        {
+          "term": "rt_mutex / PI futex",
+          "def": "ה-lock של הקרנל עם PI. ב-PI futex ה-TID של הבעלים נשמר במילה, כך שהקרנל יודע את מי להעלות."
+        },
+        {
+          "term": "rate-monotonic",
+          "def": "עדיפות קבועה לפי period: קצר יותר = גבוה יותר. אופטימלי בין שיטות עדיפות קבועה."
+        },
+        {
+          "term": "Liu-Layland bound",
+          "def": "U <= n(2^(1/n) - 1) מבטיח schedulability ב-RM. 0.828 לשתיים, 0.780 לשלוש, שואף ל-0.693. מספיק, לא הכרחי."
+        },
+        {
+          "term": "harmonic periods",
+          "def": "periods שכל אחד מחלק את הבא. אז RM schedulable בדיוק כש-U <= 1."
+        },
+        {
+          "term": "response time analysis / critical instant",
+          "def": "חישוב איטרטיבי של זמן התגובה הגרוע במקרה שכל המשימות משתחררות יחד. מבחן מדויק לעדיפויות קבועות."
+        },
+        {
+          "term": "EDF / domino effect",
+          "def": "EDF: עדיפות לפי deadline קרוב, schedulable אם ורק אם U <= 1 על core אחד. בעומס יתר יכול לגרום לשרשרת פספוסים."
+        },
+        {
+          "term": "PREEMPT_RT",
+          "def": "קרנל כמעט כולו preemptible: spinlocks הופכים ל-rt_mutex, IRQs ו-softirqs רצים כ-threads. ב-mainline מאז 6.12."
+        },
+        {
+          "term": "threaded IRQ / raw_spinlock_t",
+          "def": "interrupt handler שרץ כ-kernel thread ב-FIFO 50 כברירת מחדל. raw_spinlock_t נשאר spin אמיתי גם ב-PREEMPT_RT."
+        },
+        {
+          "term": "ksoftirqd / kworker / NAPI",
+          "def": "threads של הקרנל לעבודה נדחית ולעיבוד רשת. ב-cores קריטיים מבודדים אותם או נותנים להם עדיפות מתאימה."
+        },
+        {
+          "term": "cyclictest / rtla / ftrace",
+          "def": "כלי מדידה: cyclictest ל-latency היסטוגרמה, rtla timerlat/osnoise לרעש פר-core, ftrace ו-trace-cmd ל-sched_switch ו-sched_wakeup."
+        }
+      ]
     }
   ],
   "questions": [
@@ -320,6 +474,219 @@
       ],
       "answer": 3,
       "explanation": "חסם Liu-Layland הוא תנאי מספיק בלבד, והמקרה הגרוע שלו נובע מ-periods לא הרמוניים. כשה-periods הרמוניים, ה-critical instant לא יוצר זמן מבוזבז, ו-RM מגיע לניצול מלא. בפועל זה טיעון לבחור periods הרמוניים במערכות זמן-אמת (למשל בלוקי FFT בכפולות של 2). EDF היה עובד גם כאן, אבל הוא לא נדרש.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין hard real-time ל-soft real-time?",
+      "choices": [
+        "hard רץ על חומרה ייעודית, soft על Linux",
+        "hard מהיר יותר בממוצע",
+        "ב-hard פספוס deadline הוא כישלון של המערכת. ב-soft איחור מוריד את האיכות אבל המערכת ממשיכה לתפקד",
+        "ב-soft אין deadlines בכלל"
+      ],
+      "answer": 2,
+      "explanation": "ההבחנה היא בתוצאה של פספוס, לא במהירות או בחומרה. בקרת טיסה היא hard, הזרמת וידאו היא soft. יש גם firm: תוצאה מאוחרת חסרת ערך ונזרקת, אבל לא מסוכנת, כמו בלוק דגימות שהגיע אחרי שהחלון שלו עבר.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה WCET?",
+      "choices": [
+        "זמן הריצה הגרוע ביותר של משימה, שעליו מבוסס ניתוח ה-schedulability",
+        "זמן הריצה הממוצע של משימה",
+        "הזמן שה-scheduler מקצה לכל thread",
+        "מספר ה-cores שמשימה צריכה"
+      ],
+      "answer": 0,
+      "explanation": "worst-case execution time. ניתוח זמן-אמת שואל אם המערכת עומדת ב-deadlines במקרה הגרוע, ולכן הממוצע לא מספיק. ב-CPU מודרני עם caches קשה לחשב אותו במדויק, ולכן מודדים בתנאים גרועים ומוסיפים מרווח.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה כלי שורת פקודה ב-Linux מציג ומשנה את מדיניות התזמון והעדיפות של process או thread (למשל כדי לראות אם הוא ב-SCHED_FIFO)?",
+      "accept": [
+        "chrt"
+      ],
+      "explanation": "chrt -p PID מציג את המדיניות והעדיפות, ו-chrt -f -p 80 PID מעביר ל-FIFO 80. משתמשים בו גם כדי לשנות עדיפות של IRQ threads ב-PREEMPT_RT. מקבילות: ps עם עמודות cls ו-rtprio.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q21",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה Linux מגביל כברירת מחדל את כל משימות ה-RT ל-950ms מכל שנייה (sched_rt_runtime_us)?",
+      "choices": [
+        "כדי לחסוך חשמל",
+        "כדי ש-thread RT שנתקע בלולאה לא יקפיא את המערכת לגמרי: נשארים כ-50ms בשנייה ל-threads רגילים, כמו shell שיכול להרוג אותו",
+        "כדי שמשימות RT יעמדו ב-deadlines",
+        "כי החומרה לא יכולה להריץ thread אחד יותר משנייה"
+      ],
+      "answer": 1,
+      "explanation": "זו רשת ביטחון נגד באגים, לא מנגנון תזמון. המחיר: thread RT לגיטימי שמסתובב (busy-poll) נחתך ל-50ms בכל שנייה, ולכן במערכות זמן-אמת מקפידים לא לבנות עליו, או מבטלים אותו (ערך -1) כשיש core מבודד ויודעים מה עושים.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q22",
+      "level": 2,
+      "type": "order",
+      "prompt": "core אחד, L (נמוך), M (בינוני), H (גבוה), ו-mutex עם priority inheritance. סדר את האירועים:",
+      "items": [
+        "L נועל את ה-mutex",
+        "H מתעורר ודוחק את L",
+        "H מנסה לנעול ונחסם",
+        "L יורש את העדיפות של H וממשיך לרוץ",
+        "M מתעורר אבל לא יכול לדחוק את L",
+        "L משחרר את ה-mutex וחוזר לעדיפות המקורית שלו",
+        "H מקבל את ה-mutex ורץ"
+      ],
+      "explanation": "הירושה מתחילה רק כש-H נחסם בפועל, ומסתיימת עם השחרור. ההמתנה של H חסומה באורך ה-critical section של L, ו-M רץ רק אחרי ש-H (ו-L) סיימו. בלי PI, M היה רץ במקום L, ו-H היה מחכה גם לו.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q23",
+      "level": 2,
+      "type": "short",
+      "prompt": "שלוש משימות מחזוריות עם (C, T) = (2, 10), (3, 15), (5, 20) במילי-שניות. מה הניצולת U (כמספר עשרוני)?",
+      "accept": [
+        "0.65",
+        ".65",
+        "65%",
+        "0.650"
+      ],
+      "explanation": "U = 2/10 + 3/15 + 5/20 = 0.2 + 0.2 + 0.25 = 0.65. זה מתחת לחסם Liu-Layland לשלוש משימות (כ-0.780), ולכן עם RM כל ה-deadlines מובטחים. ה-periods לא הרמוניים (15 לא מחלק את 20), אז אי אפשר להשתמש בחסם U <= 1 של periods הרמוניים.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q24",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי SCHED_DEADLINE?",
+      "choices": [
+        "חייב להתקיים runtime <= deadline <= period",
+        "sched_setattr נכשל אם סך ה-bandwidth של משימות ה-deadline חורג מהמותר (admission control)",
+        "משימת deadline קודמת גם ל-thread ב-SCHED_FIFO 99",
+        "runtime הוא רק הערכה, והקרנל נותן למשימה להמשיך לרוץ כשהיא חורגת",
+        "SCHED_DEADLINE משתמש בעדיפויות קבועות 1–99"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "מחלקת ה-deadline נבדקת לפני מחלקת ה-rt. ה-CBS עוצר משימה שחרגה מה-runtime עד ה-period הבא, וזה מה שמגן על האחרות ומאפשר admission control. אין עדיפויות קבועות: התזמון לפי EDF, כלומר ה-deadline הקרוב ביותר.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "RM על core אחד: τ1 (C=1, T=4), τ2 (C=2, T=6), τ3 (C=3, T=12), deadline = period. U ≈ 0.833, מעל חסם Liu-Layland. מה זמן התגובה הגרוע של τ3 לפי response time analysis?",
+      "choices": [
+        "6",
+        "9",
+        "10",
+        "13, ולכן τ3 מפספס"
+      ],
+      "answer": 2,
+      "explanation": "איטרציה: R = 3, אחר כך 3 + ceil(3/4)·1 + ceil(3/6)·2 = 6, אחר כך 7, 9, 10, ו-10 מתייצב: 3 + ceil(10/4)·1 + ceil(10/6)·2 = 3 + 3 + 4. R = 10 <= 12, ולכן המערכת schedulable למרות שהיא מעל החסם. 6 ו-9 הם שלבי ביניים שעצרו מוקדם מדי. סימולציה מאשרת סיום ב-10.",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "id": "conc.rt-scheduling.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "mutex עם PTHREAD_PRIO_PROTECT משותף ל-threads בעדיפויות FIFO 20, 40 ו-70. מה צריכה להיות עדיפות התקרה (prioceiling), ומה קורה אם בהמשך מוסיפים thread ב-FIFO 85 שנועל אותו?",
+      "choices": [
+        "20, העדיפות הנמוכה ביותר. ה-thread החדש יעבוד כרגיל",
+        "99 תמיד, כדי להיות בטוחים",
+        "הממוצע, 43. ה-thread החדש יקבל אזהרה",
+        "70, העדיפות הגבוהה ביותר מבין המשתמשים. thread ב-85 שמנסה לנעול יקבל שגיאה (EINVAL), כי העדיפות שלו מעל התקרה"
+      ],
+      "answer": 3,
+      "explanation": "התקרה חייבת להיות לפחות העדיפות של כל מי שנועל, כדי שבזמן החזקה אף משתמש אחר של ה-lock לא ידחק את המחזיק. 99 עובד אבל מעלה את המחזיק מעל threads לא קשורים בעדיפות 71–99 ופוגע בהם. ההוספה של thread 85 דורשת לעדכן את התקרה, וזה החיסרון של ceiling: צריך לדעת מראש מי משתמש ב-lock.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Linux, mutexes עם PI. H (FIFO 80) מחכה ל-m1 שמחזיק M1 (FIFO 40). M1 עצמו חסום על m2 שמחזיק L (FIFO 10). thread X ב-FIFO 60 מוכן לרוץ. מה קורה?",
+      "choices": [
+        "רק M1 עולה ל-80. L נשאר ב-10, ו-X רץ לפניו",
+        "ה-PI טרנזיטיבי: M1 עולה ל-80, וכיוון שהוא חסום על m2, גם L עולה ל-80. X לא יכול לדחוק את L, ו-L משחרר את m2 מהר",
+        "PI לא עובד כשיש יותר מ-mutex אחד, ולכן אף אחד לא עולה",
+        "הקרנל מזהה deadlock ומחזיר EDEADLK"
+      ],
+      "answer": 1,
+      "explanation": "ה-rt_mutex של Linux עוקב אחרי שרשרת ההמתנה ומעלה את כל המחזיקים לאורכה. בלי טרנזיטיביות, X היה דוחק את L, ו-H היה מחכה גם ל-X. זה לא deadlock כי אין מעגל. עדיין זה chained blocking: זמן החסימה של H כולל את שני ה-critical sections.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "thread יחיד ב-SCHED_FIFO 70 על core 2 עובד בלולאה וקורא ל-`sched_yield()` בכל איטרציה, \"כדי לתת ל-logger לרוץ\". ה-logger ב-SCHED_OTHER מוצמד גם הוא ל-core 2, ולא מתקדם. למה?",
+      "choices": [
+        "sched_yield ב-FIFO מעביר את ה-thread רק לסוף התור של **אותה עדיפות**. אין עוד thread ב-FIFO 70, ולכן הוא חוזר לרוץ מיד, וה-logger מקבל CPU רק דרך RT throttling",
+        "sched_yield לא עובד ב-PREEMPT_RT",
+        "sched_yield משחרר את ה-CPU ל-1ms בדיוק, וזה לא מספיק ל-logger",
+        "ה-logger צריך nice -20 כדי לקבל את ה-CPU"
+      ],
+      "answer": 0,
+      "explanation": "yield לא מוריד עדיפות ולא מוותר לטובת מחלקה נמוכה יותר. thread RT שרוצה לתת ל-SCHED_OTHER לרוץ חייב באמת להיחסם (המתנה על אירוע, nanosleep) או לרוץ על core אחר. nice לא משנה כלום מול thread RT. הלקח: sched_yield כמעט אף פעם לא כלי סנכרון נכון.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מערכת עם U מתוכנן 0.9 על core אחד. בגלל באג, WCET של אחת המשימות מוכפל זמנית, ו-U עולה מעל 1. מה ההבדל בהתנהגות בין RM (עדיפויות קבועות) לבין EDF טהור (בלי CBS)?",
+      "choices": [
+        "אין הבדל: בשתיהן כל המשימות מפספסות באותה מידה",
+        "EDF מבודד את המשימה החורגת, ו-RM מפיל את כולן",
+        "ב-RM המשימות בעדיפות נמוכה מפספסות והגבוהות מוגנות, בצורה צפויה. ב-EDF יכול לקרות domino effect: המשימה המאחרת דוחפת את כל השאר, ומשימות רבות, כולל קריטיות, מפספסות",
+        "RM מפסיק להריץ את המשימה החורגת אוטומטית"
+      ],
+      "answer": 2,
+      "explanation": "ב-EDF משימה שה-deadline שלה עבר או קרוב מקבלת עדיפות עליונה, וכך מאחרת גוררת את כולן. בעדיפויות קבועות ברור מראש מי ייפגע. זו סיבה שמערכות קריטיות מעדיפות לפעמים RM, או EDF עם בידוד (CBS, כמו ב-SCHED_DEADLINE) שעוצר את החורגת. אף אחת מהן לא עוצרת משימה בלי מנגנון כזה.",
+      "lesson": "conc.rt-scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.rt-scheduling.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "thread RT במערכת שלך (FIFO 80, PREEMPT_RT) מפספס deadline של 500 מיקרו-שניות פעם בכמה דקות. עבור על הסיבות האפשריות שקשורות לתזמון ולעדיפויות, ואיך תאמת כל אחת עם כלים.",
+      "modelAnswer": "1. לוודא שהמדיניות באמת FIFO 80: chrt -p על ה-TID של ה-thread עצמו (לא ה-process), ולבדוק שהקוד השתמש ב-PTHREAD_EXPLICIT_SCHED. 2. מי עוד בעדיפות גבוהה יותר על אותו core: IRQ threads שהועלו, threads אחרים שלי, migration ו-watchdog threads של הקרנל. ftrace עם sched_switch ו-sched_wakeup (trace-cmd record) סביב הפספוס מראה מי רץ ומתי, ו-rtla timerlat עם אפשרות auto-analysis מצביע על המקור (IRQ, softirq, thread). 3. priority inversion: lock משותף עם thread נמוך בלי PI (std::mutex), או המתנה ל-semaphore או cv שאין להם בעלים. ב-trace רואים את ה-thread חסום על futex ומי מחזיק. 4. RT throttling: אם ה-thread או אחרים מסתובבים, החיתוך אחרי 950ms נראה כפער של כ-50ms. 5. ה-thread נחסם מסיבות לא קשורות לעדיפות: page fault (לבדוק mlockall, ספירת page faults ב-perf או /proc), syscall חוסם, הקצאת זיכרון. 6. רעש חומרה ו-firmware: SMIs (נראים כ-'זמן חסר' ש-osnoise או hwlatdetect מגלים), C-states ו-frequency scaling. 7. Migration: בלי affinity ה-thread עובר cores ומקבל cache קר. השיטה: cyclictest ו-rtla osnoise לבסיס המערכת, ואז tracing ממוקד עם trigger על חריגה (למשל rtla timerlat עם סף שעוצר את ה-trace), כדי לתפוס את האירוע הנדיר ולא לחפש מחט בערימה.",
+      "rubric": [
+        "אימות מדיניות בפועל (chrt על TID, EXPLICIT_SCHED)",
+        "מתחרים בעדיפות גבוהה יותר: IRQ threads, kernel threads, threads אחרים",
+        "priority inversion, כולל פרימיטיבים בלי בעלים, ו-RT throttling",
+        "סיבות שאינן עדיפות: page faults, SMI, C-states, migration",
+        "כלים: ftrace/trace-cmd, rtla timerlat/osnoise, cyclictest, ותפיסת אירוע נדיר עם trigger"
+      ],
+      "explanation": "מועמד חזק נותן מתודולוגיה עם כלי מדידה לכל השערה, ולא רק רשימת סיבות. תשובה חלשה: 'אעלה ל-FIFO 99'.",
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"

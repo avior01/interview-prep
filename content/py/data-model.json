@@ -34,7 +34,161 @@
         "לדעת את ההבדל בין __getattr__ ל-__getattribute__ ומתי כל אחד נקרא",
         "לדבר על __slots__, dataclasses ו-NamedTuple כבחירות עיצוב (זיכרון, immutability)"
       ],
-      "diagram": "a ──┐\n    ├──> [list obj: 1, 2]\nb ──┘\nnames -> objects (refs)"
+      "diagram": "a ──┐\n    ├──> [list obj: 1, 2]\nb ──┘\nnames -> objects (refs)",
+      "details": [
+        {
+          "title": "אובייקטים, שמות ו-aliasing",
+          "body": "ב-Python כל ערך הוא **אובייקט** עם שלושה דברים: **identity** (כתובת ייחודית, מוחזרת מ-`id()`), **type**, ו-**value**. משתנה אינו תיבה שמחזיקה ערך אלא **שם** שקשור לאובייקט. `b = a` לא מעתיק כלום — הוא נותן שם שני לאותו אובייקט (aliasing). לכן שינוי in-place דרך שם אחד (`b.append(3)`) נראה דרך השני.\n\n`is` בודק **identity** (האם זה בדיוק אותו אובייקט), `==` קורא ל-`__eq__` ובודק **שוויון ערך**. `[1] == [1]` הוא True אבל `[1] is [1]` הוא False. ה-idiom היחיד המקובל ל-`is` הוא מול singletons כמו `None`. אסור להסתמך על `is` למספרים או מחרוזות — ה-caching של ints קטנים ושל interned strings ב-CPython הוא פרט מימוש.\n\nהעתקה: `a.copy()` או `list(a)` נותנים **shallow copy** — רשימה חדשה שמצביעה לאותם אובייקטים פנימיים. אם הפנימיים mutable, שינוי שלהם נראה בשתי העותקות. ל-**deep copy** אמיתי יש `copy.deepcopy`.\n\n- mutable: list, dict, set, רוב האובייקטים המותאמים. immutable: int, float, str, bytes, tuple (של immutables), frozenset.\n- פרמטר שמקבל אובייקט mutable ומשנה אותו משנה את הגרסה של הקורא — תופעת side effect."
+        },
+        {
+          "title": "ברירות מחדל ומשתני מחלקה: המלכודת של mutable משותף",
+          "body": "ערך ברירת המחדל של פרמטר מחושב **פעם אחת**, כשהפונקציה מוגדרת, ונשמר ב-`func.__defaults__`. לכן `def f(x, acc=[])` משתף את *אותה רשימה* בין כל הקריאות שלא מספקות `acc` — היא גדלה מקריאה לקריאה. הדפוס הנכון: `acc=None`, ובגוף `if acc is None: acc = []`.\n\nאותה מלכודת חוזרת ב-**משתני מחלקה**: `class C: items = []`. ה-`items` שייך למחלקה ומשותף לכל המופעים. `self.items.append(x)` לא יוצר attribute חדש — הוא *קורא* את `items` (לא נמצא במופע, נמצא במחלקה) ו*משנה* את הרשימה המשותפת. לעומת זאת `self.items = [...]` היא **השמה**, שיוצרת attribute במופע ומסתירה את משתנה המחלקה עבור אותו מופע בלבד.\n\n`dataclasses` חוסמות את הבאג הזה במפורש: שדה עם ברירת מחדל mutable (`items: list = []`) זורק `ValueError` כבר בהגדרת המחלקה, ומכריח `field(default_factory=list)` שיוצר רשימה חדשה לכל מופע.\n\n- כלל אצבע: ברירת מחדל שאינה immutable כמעט תמיד באג.\n- הבחנה קריטית: גישה/mutation קוראת לאורך ה-MRO; השמה תמיד כותבת ל-`__dict__` של המופע."
+        },
+        {
+          "title": "חוזה eq/hash ו-hashability",
+          "body": "אובייקט הוא **hashable** אם יש לו `__hash__` שאינו None, וערך ה-hash קבוע לאורך חייו. רק אובייקטים hashable יכולים לשמש key ב-dict או איבר ב-set. ה-**חוזה**: אם `a == b` אז חייב `hash(a) == hash(b)`. ההפך לא נדרש (אפשר collisions).\n\nמכאן נובע כלל חשוב: אם מגדירים `__eq__` בגוף מחלקה **בלי** `__hash__`, Python קובע `__hash__ = None` באותה מחלקה, גם אם ההורה hashable. הסיבה: ה-hash שבירושה (לפי identity) כמעט בטוח לא עקבי עם ה-`__eq__` החדש. התוצאה: המחלקה הופכת ל-unhashable. התיקון: להגדיר `__hash__` שמבוסס על אותם שדות כמו `__eq__`, בדרך כלל `hash((self.x, self.y))`.\n\nבאג מסוכן במיוחד: `__hash__` שמבוסס על שדה **mutable**. אם משנים את השדה אחרי שהאובייקט נכנס ל-dict/set, ה-hash משתנה, וה-lookup מגיע ל-bucket אחר — האובייקט \"נעלם\" (KeyError). לכן keys צריכים להיות immutable בפועל.\n\n- `@dataclass(frozen=True)` מייצר `__hash__` ועושה את האובייקט immutable; `@dataclass` רגיל (eq=True, frozen=False) מקבל `__hash__ = None`.\n- `__eq__` לטיפוס לא מוכר צריך להחזיר `NotImplemented`, לא `False`."
+        },
+        {
+          "title": "אופרטורים ו-dunder: __add__, __radd__, NotImplemented",
+          "body": "`a + b` מנסה קודם `type(a).__add__(a, b)`. אם הוא מחזיר את ה-singleton `NotImplemented` (לא זורק, לא False!), Python מנסה את הפעולה המשתקפת `type(b).__radd__(b, a)`. אם גם זה NotImplemented, נזרק `TypeError`. לכן `sum([obj, ...])` עובד אם ל-obj יש `__radd__` — כי sum מתחיל מ-`0 + obj`, ו-`int.__add__` לא יודע לטפל ב-obj ומחזיר NotImplemented.\n\nיש כלל עדיפות עדין: אם `type(b)` הוא **תת-מחלקה אמיתית** של `type(a)` ו**דורס** את המתודה המשתקפת, Python מנסה את `b.__radd__` **קודם**, כדי שלתת-המחלקה תהיה מילה אחרונה.\n\n**Augmented assignment** (`+=`) הוא *שתי* פעולות: `a += b` מתורגם ל-`a = type(a).__iadd__(a, b)` אם קיים `__iadd__` (שמשנה in-place ומחזיר self), אחרת ל-`a = a + b`. על tuple זה מסוכן: `t[0] += [2]` משנה את הרשימה הפנימית in-place (מצליח) ואז מנסה להשים בחזרה ל-tuple (TypeError) — גם שינוי *וגם* שגיאה.\n\n- החזרת NotImplemented ולא False היא ההבדל בין אופרטור שמשתף פעולה לבין אחד ששובר את ה-dispatch.\n- `__iadd__` חוסך הקצאה לרשימות גדולות, אבל משנה את האובייקט המקורי — זהירות עם aliasing."
+        },
+        {
+          "title": "attribute lookup, descriptors ו-property",
+          "body": "`obj.name` קורא ל-`type(obj).__getattribute__(obj, 'name')`, שבמחלקה רגילה הוא `object.__getattribute__`. סדר החיפוש: (1) מחפשים את `name` ב-MRO של הטיפוס. (2) אם מצאנו שם **data descriptor** (לטיפוסו יש `__set__` או `__delete__`, כמו `property` או slot), הוא גובר — קוראים ל-`__get__` שלו. (3) אחרת, אם `name` ב-`__dict__` של המופע, מחזירים משם. (4) אחרת, **non-data descriptor** (רק `__get__`, כמו פונקציה רגילה) — קוראים ל-`__get__` ומקבלים bound method. (5) אחרת, משתנה מחלקה כמות שהוא. (6) אחרת `AttributeError`, ואז `__getattr__` נקרא כ-**fallback** אם הוגדר.\n\nזה מסביר למה `property` (data descriptor) גובר על `instance.__dict__`, בעוד מתודה (non-data) נדרסת על ידי ערך ב-`__dict__` של המופע. **descriptor** הוא כל אובייקט שמממש `__get__`/`__set__`/`__delete__`; עליו בנויים methods, `property`, `staticmethod`, `classmethod` ו-`__slots__`.\n\nההבדל `__getattr__` מול `__getattribute__`: הראשון הוא fallback זול שרץ רק כשהחיפוש נכשל (מתאים ל-proxies ו-lazy attrs); השני עוטף **כל** גישה וקל ליצור בו רקורסיה אינסופית (צריך לקרוא ל-`object.__getattribute__`). מתודות dunder שהאינטרפרטר קורא דרך syntax (`len()`, `+`, `==`) מחופשות ישירות על **הטיפוס** ועוקפות את המופע.\n\n- `__set_name__` מאפשר ל-descriptor לדעת את שם ה-attribute שאליו הוצמד.\n- method cache ב-CPython מאיץ את החיפוש לפי גרסת הטיפוס."
+        },
+        {
+          "title": "ירושה מרובה, MRO, __slots__ ו-dataclasses",
+          "body": "ב-**ירושה מרובה** סדר החיפוש נקבע על ידי ה-**MRO** (Method Resolution Order) שמחושב ב-**C3 linearization**. `super()` לא הולך להורה הישיר אלא ל-**הבא בתור ב-MRO של המופע** — מה שמאפשר **cooperative multiple inheritance**: ב-`class D(B, C)` עם MRO `D, B, C, A, object`, `super()` בתוך `B` מגיע ל-`C` (לא ל-`A`), כך שכל מחלקה נקראת בדיוק פעם אחת.\n\n`__slots__ = ('x', 'y')` מחליף את ה-`__dict__` של כל מופע ב**מערך קבוע** עם member descriptor לכל שם: חוסך זיכרון משמעותי לכל מופע ומונע הוספת attributes חדשים (`obj.z = 1` → AttributeError). אבל מחלקה יורשת שלא מגדירה `__slots__` משלה מקבלת `__dict__` בחזרה, מה שמבטל את החיסכון.\n\n`dataclasses` מייצרים `__init__`, `__repr__`, `__eq__` (ועם `frozen=True` גם `__hash__`) מהשדות. `NamedTuple` נותן tuple immutable עם שמות. אלה בחירות עיצוב: זיכרון מול גמישות, immutability מול נוחות.\n\n- MRO קיים גם בירושה פשוטה; הוא פשוט ליניארי שם.\n- `dataclass(frozen=True, slots=True)` משלב immutability, hashability וזיכרון נמוך."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: aliasing מול shallow copy",
+          "body": "נתחיל מ-`a = [[1], [2]]`. נעשה `b = a.copy()` — זה shallow copy: `b` הוא רשימה *חדשה* אבל האיברים הפנימיים (`[1]` ו-`[2]`) הם *אותם* אובייקטים ש-`a` מצביע אליהם.\n\n- `b[0].append(9)` משנה את הרשימה הפנימית הראשונה in-place. מכיוון ש-`a[0]` ו-`b[0]` הם אותו אובייקט, גם `a` רואה את השינוי: `a` הוא כעת `[[1, 9], [2]]`.\n- לעומת זאת `b.append([99])` היה משפיע רק על `b`, כי זה שינוי של הרשימה החיצונית (שהיא נפרדת).\n\nהלקח: shallow copy משכפל רק את הרמה החיצונית. אם צריך בידוד מלא בין מבנים מקוננים, משתמשים ב-`copy.deepcopy`. אם היינו עושים `b = a` (בלי copy), אפילו `b.append(...)` היה נראה ב-`a` כי זה אותו אובייקט בדיוק."
+        },
+        {
+          "title": "דוגמה: מעקב MRO של D(B, C)",
+          "body": "נתון `A.f` שמחזיר \"A\", ו-`B(A)`, `C(A)`, `D(B, C)` שכל אחד עושה `super().f()` ומוסיף אות. ה-MRO של `D` לפי C3 הוא `D -> B -> C -> A -> object`. נריץ `D().f()`:\n\n- `D.f`: מחזיר \"D\" + `super().f()`. super של D במופע מסוג D מצביע ל-**B** (הבא ב-MRO).\n- `B.f`: \"B\" + `super().f()`. כאן הטריק: super של B *במופע מסוג D* מצביע ל-**C**, לא ל-A!\n- `C.f`: \"C\" + `super().f()`. super של C מצביע ל-**A**.\n- `A.f`: מחזיר \"A\".\n\nמרכיבים לאחור: \"D\"+\"B\"+\"C\"+\"A\" = **DBCA**. שימו לב ש-A נקרא פעם אחת בלבד, למרות ש-B ו-C שניהם יורשים ממנו — זה היתרון של cooperative inheritance על פני קריאה ישירה ל-`A.f(self)`."
+        },
+        {
+          "title": "דוגמה: property מול instance __dict__",
+          "body": "מחלקה `C` עם `@property def x: return 1` ועם מתודה רגילה `f`. ניצור `c = C()` ונזריק ישירות ל-`c.__dict__`: `c.__dict__['x'] = 2` ו-`c.__dict__['f'] = lambda: 'inst'`.\n\n- `c.x`: `x` במחלקה הוא **data descriptor** (ל-property יש `__get__` וגם `__set__`). לפי סדר החיפוש, data descriptor גובר על ה-`__dict__` של המופע, ולכן מתעלמים מה-2 שהזרקנו ומקבלים **1**.\n- `c.f`: `f` במחלקה הוא **non-data descriptor** (פונקציה, רק `__get__`). כאן ה-`__dict__` של המופע גובר, ולכן `c.f` הוא ה-lambda, ו-`c.f()` מחזיר **'inst'**.\n\nהתוצאה `1 inst`. זה בדיוק ההבדל בין data ל-non-data descriptor, והסיבה שאי אפשר \"להסתיר\" property בטעות עם attribute של מופע, אבל כן אפשר להסתיר מתודה."
+        },
+        {
+          "title": "דוגמה: t[0] += [2] על tuple — שתי פעולות",
+          "body": "נתון `t = ([1],)` — tuple עם רשימה בודדת. נריץ `t[0] += [2]` בתוך try/except.\n\nהאינטרפרטר מתרגם זאת ל-שלושה שלבים: (1) `tmp = t[0]` (הרשימה `[1]`). (2) `tmp = tmp.__iadd__([2])` — `list.__iadd__` מרחיב את הרשימה **in-place** ל-`[1, 2]` ומחזיר את אותה רשימה. שלב זה **מצליח**. (3) `t[0] = tmp` — השמה לאיבר של tuple, שזורקת **TypeError** כי tuple אינו תומך בהשמה.\n\nהתוצאה: ה-except תופס את ה-TypeError ומדפיס `err ([1, 2],)` — כלומר הרשימה *כן* השתנתה (שלב 2 קרה), למרות שהפעולה \"נכשלה\". זו הוכחה ש-augmented assignment אינו אטומי אלא פעולת read-modify-write, וש-`+=` על איבר mutable בתוך container immutable הוא מלכוד קלאסי."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "identity",
+          "def": "הזהות הייחודית של אובייקט לאורך חייו, מוחזרת מ-id(). is משווה identity; ב-CPython זו כתובת הזיכרון."
+        },
+        {
+          "term": "is מול ==",
+          "def": "is בודק אם זה בדיוק אותו אובייקט (identity); == קורא ל-__eq__ ומשווה ערך. משתמשים ב-is רק מול singletons כמו None."
+        },
+        {
+          "term": "aliasing",
+          "def": "שני שמות שמצביעים לאותו אובייקט (b = a). שינוי in-place דרך שם אחד נראה דרך השני; השמה מחדש מנתקת."
+        },
+        {
+          "term": "mutable / immutable",
+          "def": "mutable (list, dict, set) ניתן לשינוי in-place; immutable (int, str, tuple, frozenset) לא. רק immutable בטוח כ-key."
+        },
+        {
+          "term": "shallow copy",
+          "def": "a.copy() או list(a): רשימה חדשה שמצביעה לאותם אובייקטים פנימיים. שינוי פנימי mutable נראה בשתי העותקות. deepcopy מעתיק לעומק."
+        },
+        {
+          "term": "__repr__",
+          "def": "ייצוג חד-משמעי למפתחים, משמש ב-REPL ובתוך containers. מקובל שייראה כמו ביטוי שבונה את האובייקט, למשל Point(1, 2)."
+        },
+        {
+          "term": "__str__",
+          "def": "ייצוג קריא למשתמש, משמש ב-print ו-str(). אם לא מוגדר, נופל ל-__repr__."
+        },
+        {
+          "term": "__eq__",
+          "def": "מגדיר את משמעות ==. לטיפוס לא מוכר צריך להחזיר NotImplemented (לא False), כדי לאפשר למשתקף לנסות."
+        },
+        {
+          "term": "__hash__",
+          "def": "מחזיר int קבוע לאובייקט. חובה ש-a==b גורר hash שווה. הגדרת __eq__ בלי __hash__ מציבה __hash__=None (unhashable)."
+        },
+        {
+          "term": "hashable",
+          "def": "אובייקט עם __hash__ שאינו None ו-hash קבוע לאורך חייו. רק hashable יכול להיות key ב-dict או איבר ב-set."
+        },
+        {
+          "term": "NotImplemented",
+          "def": "singleton שאופרטור dunder מחזיר כשאינו יודע לטפל באופרנד; גורם ל-Python לנסות את הפעולה המשתקפת. שונה מ-NotImplementedError."
+        },
+        {
+          "term": "__add__ / __radd__",
+          "def": "a+b מנסה a.__add__(b); אם NotImplemented, מנסה b.__radd__(a). __radd__ הוא מה שמאפשר ל-sum (שמתחיל מ-0) לעבוד."
+        },
+        {
+          "term": "augmented assignment",
+          "def": "a += b מתרגם ל-a = a.__iadd__(b) אם קיים (שינוי in-place), אחרת a = a + b. על איבר של tuple זה גם משנה וגם זורק TypeError."
+        },
+        {
+          "term": "mutable default",
+          "def": "ברירת מחדל mutable (def f(x, acc=[])) מחושבת פעם אחת ומשותפת לכל הקריאות. הדפוס הנכון: acc=None ואז יצירה בגוף."
+        },
+        {
+          "term": "class variable",
+          "def": "משתנה שמוגדר בגוף המחלקה ומשותף לכל המופעים. גישה/mutation דרכו משפיעה על כולם; השמה self.x= יוצרת attribute מקומי שמסתיר אותו."
+        },
+        {
+          "term": "dataclass",
+          "def": "דקורטור שמייצר __init__, __repr__, __eq__ מהשדות. frozen=True מוסיף __hash__ ועושה immutable; ברירת מחדל mutable זורקת ValueError."
+        },
+        {
+          "term": "field(default_factory=...)",
+          "def": "ב-dataclass, פונקציה שיוצרת ערך ברירת מחדל חדש לכל מופע (list, dict), במקום ברירת מחדל mutable משותפת."
+        },
+        {
+          "term": "__slots__",
+          "def": "מחליף את __dict__ של המופע במערך קבוע עם member descriptor לכל שם: חוסך זיכרון ומונע attributes חדשים. תת-מחלקה בלי slots מחזירה __dict__."
+        },
+        {
+          "term": "descriptor",
+          "def": "אובייקט שמממש __get__/__set__/__delete__. data descriptor (עם __set__/__delete__) גובר על instance __dict__; non-data (רק __get__) נדרס על ידו."
+        },
+        {
+          "term": "property",
+          "def": "data descriptor שעוטף getter/setter כך שגישה ל-attribute מפעילה פונקציה. גובר על ערך באותו שם ב-__dict__ של המופע."
+        },
+        {
+          "term": "bound method",
+          "def": "התוצאה של גישה למתודה דרך מופע: הפונקציה (non-data descriptor) מחזירה אובייקט שכורך את self. לכן c.f is c.f הוא False (נוצר כל פעם)."
+        },
+        {
+          "term": "__getattr__",
+          "def": "fallback שנקרא רק כשהחיפוש הרגיל נכשל (AttributeError). זול, מתאים ל-proxies ו-lazy attributes."
+        },
+        {
+          "term": "__getattribute__",
+          "def": "נקרא בכל גישה ל-attribute. קל ליצור בו רקורסיה אינסופית; צריך לקרוא ל-object.__getattribute__ בפנים."
+        },
+        {
+          "term": "MRO",
+          "def": "Method Resolution Order: סדר החיפוש לאורך המחלקות בירושה, מחושב ב-C3 linearization. super() הולך לבא בתור ב-MRO של המופע."
+        },
+        {
+          "term": "super()",
+          "def": "מפנה למחלקה הבאה ב-MRO של המופע, לא בהכרח להורה הישיר. מאפשר cooperative multiple inheritance שבו כל מחלקה נקראת פעם אחת."
+        },
+        {
+          "term": "C3 linearization",
+          "def": "האלגוריתם שמחשב את ה-MRO: משמר סדר מקומי ועדיפות של מחלקות בסיס, ונכשל אם אין סדר עקבי."
+        },
+        {
+          "term": "NaN identity",
+          "def": "float('nan') לא שווה לעצמו (x==x הוא False), אבל x in [x] הוא True כי containment בודק 'is או ==' וה-identity מתאימה."
+        }
+      ]
     }
   ],
   "questions": [
@@ -339,6 +493,231 @@
       ],
       "explanation": "זו שאלת 'עומק' שמבדילה בין מי שמשתמש ב-Python למי שמבין אותה. property, methods, classmethod ו-__slots__ כולם נבנים על אותו מנגנון.",
       "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו קבוצה מכילה רק טיפוסים immutable ב-Python?",
+      "choices": [
+        "list, dict, set",
+        "list, tuple, int",
+        "int, str, tuple (של immutables), frozenset",
+        "dict, str, bytes"
+      ],
+      "answer": 2,
+      "explanation": "int, str, bytes, tuple של immutables ו-frozenset אינם ניתנים לשינוי in-place. list, dict ו-set הם mutable. שימו לב ש-tuple נחשב immutable רק אם כל איבריו immutable — tuple שמכיל list אינו hashable.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו מתודת dunder מופעלת כשקוראים `len(obj)`? (כתוב את שם המתודה)",
+      "accept": [
+        "__len__"
+      ],
+      "explanation": "len(obj) קורא ל-type(obj).__len__. אם אין כזו, נזרק TypeError: object has no len(). truth testing (if obj) נופל ל-__len__ כש-__bool__ לא מוגדר.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה נדרש כדי שאובייקט יוכל לשמש key ב-dict או איבר ב-set?",
+      "choices": [
+        "שיהיה immutable — זה תנאי מספיק והכרחי בכל מקרה",
+        "שתהיה לו __len__",
+        "כל אובייקט יכול לשמש key, בלי שום תנאי",
+        "שיהיה hashable: __hash__ שאינו None ו-__eq__ עקבי איתו (שווים => hash שווה), וה-hash לא משתנה כל עוד הוא במבנה"
+      ],
+      "answer": 3,
+      "explanation": "הדרישה הפורמלית היא hashability ועקביות eq/hash, לא immutability כשלעצמה (אובייקט mutable עם hash לפי identity דווקא hashable). __len__ לא קשור. מפתח שה-hash שלו משתנה אחרי ההכנסה נעלם מה-dict.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q22",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "a = [[1], [2]]\nb = a.copy()\nb[0].append(9)\nprint(a)",
+      "choices": [
+        "[[1], [2]]",
+        "[[1, 9], [2, 9]]",
+        "[[1, 9], [2]]",
+        "TypeError"
+      ],
+      "answer": 2,
+      "explanation": "a.copy() הוא shallow copy: b רשימה חדשה, אבל b[0] ו-a[0] הם אותו אובייקט פנימי. append משנה אותו in-place, ולכן a רואה [[1, 9], [2]]. deepcopy היה מבודד לגמרי.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class P:\n    def __repr__(self):\n        return \"P!\"\n\nprint(str(P()), [P()])",
+      "choices": [
+        "P! P!",
+        "P! [<__main__.P object>]",
+        "TypeError",
+        "P! [P!]"
+      ],
+      "answer": 3,
+      "explanation": "כשאין __str__, str() נופל ל-__repr__, ולכן str(P()) הוא 'P!'. הצגת רשימה משתמשת תמיד ב-__repr__ של האיברים, ולכן [P()] מוצג כ-[P!]. אם היה גם __str__ שונה, str() היה משתמש בו אבל הרשימה עדיין ב-__repr__.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מחלקה לא מגדירה __bool__ ולא __len__. מתי מופע שלה נחשב False בבדיקת אמת (if obj)?",
+      "choices": [
+        "כשכל השדות שלו None",
+        "כשאין לו __dict__",
+        "אף פעם; בלי __bool__ ובלי __len__ המופע תמיד truthy",
+        "כשהוא ריק מבחינת שדות"
+      ],
+      "answer": 2,
+      "explanation": "truth testing מנסה __bool__, ואם אין — __len__ (אורך 0 => False). בלי שניהם, אין ל-Python דרך לדעת 'ריקנות', ולכן האובייקט תמיד True. ערכי השדות לא רלוונטיים אלא אם מגדירים __bool__ שבודק אותם.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class K:\n    def __init__(self, v):\n        self.v = v\n    def __eq__(self, o):\n        return self.v == o.v\n    def __hash__(self):\n        return hash(self.v)\n\nprint(len({K(1), K(1), K(2)}))",
+      "choices": [
+        "3",
+        "2",
+        "1",
+        "TypeError: unhashable"
+      ],
+      "answer": 1,
+      "explanation": "__eq__ ו-__hash__ עקביים ומבוססים על v. שני K(1) שווים ובעלי אותו hash, ולכן נחשבים כפילות ונשמר אחד; K(2) נפרד. גודל ה-set הוא 2. בלי __hash__ היה TypeError.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q26",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "אחרי השינוי, `d[k]` זורק KeyError למרות ש-k לא הוחלף. מה שורש הבאג?",
+      "code": "class Key:\n    def __init__(self, tags):\n        self.tags = tags\n    def __hash__(self):\n        return hash(tuple(self.tags))\n    def __eq__(self, o):\n        return self.tags == o.tags\n\nk = Key([1])\nd = {k: \"v\"}\nk.tags.append(2)\nprint(d[k])",
+      "bugLine": 11,
+      "choices": [
+        "__eq__ בלי __hash__ הופך את Key ל-unhashable",
+        "tuple לא ניתן ל-hash, ולכן ההכנסה ל-dict נכשלת",
+        "ה-hash מבוסס על שדה mutable (tags); שינוי tags אחרי ההכנסה משנה את ה-hash, וה-lookup מגיע ל-bucket אחר => KeyError",
+        "d[k] אמור תמיד להחזיר 'v' כי המפתח הוא אותו אובייקט"
+      ],
+      "answer": 2,
+      "explanation": "המפתח חייב hash קבוע. כאן ה-hash תלוי ב-tags שהשתנתה אחרי ההכנסה, ולכן החיפוש מחשב hash חדש ומגיע ל-bucket הלא נכון => KeyError. tuple כן hashable, ו-__hash__ מוגדר (לא unhashable). הפתרון: מפתח immutable, למשל tuple(tags).",
+      "lesson": "py.data-model",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "py.data-model.q27",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class C:\n    x = [1]\n\nc = C()\nc.x += [2]\nprint(C.x, c.x, 'x' in c.__dict__)",
+      "choices": [
+        "[1] [1, 2] True",
+        "[1, 2] [1, 2] False",
+        "[1] [1, 2] False",
+        "[1, 2] [1, 2] True"
+      ],
+      "answer": 3,
+      "explanation": "c.x += [2] הוא c.x = c.x.__iadd__([2]). c.x נקרא ממשתנה המחלקה (אותה רשימה), __iadd__ משנה אותה in-place ל-[1, 2], ולכן גם C.x הוא [1, 2]. ואז ההשמה כותבת את התוצאה ל-__dict__ של c, ולכן 'x' in c.__dict__ הוא True. מלכוד aliasing קלאסי.",
+      "lesson": "py.data-model",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.data-model.q28",
+      "level": 4,
+      "type": "oral",
+      "prompt": "הסבר את חוזה ה-eq/hash ב-Python: אילו כללים חייבים __eq__ ו-__hash__ לקיים, מה קורה כשמגדירים אחד בלי השני, ולמה @dataclass רגיל (לא frozen) אינו hashable?",
+      "modelAnswer": "החוזה: (1) אם a == b אז חובה hash(a) == hash(b); ההפך לא נדרש (collisions מותרים, סתם פוגעים בביצועים). (2) ה-hash חייב להיות קבוע כל עוד האובייקט חבר ב-set/dict, ולכן הוא צריך להתבסס רק על שדות immutable. (3) __eq__ צריך להיות reflexive/symmetric/transitive, ולהחזיר NotImplemented לטיפוס לא מוכר כדי לאפשר למשתקף לנסות, לא False. התנהגות ברירת מחדל: object מספק __eq__ לפי identity ו-__hash__ לפי id, והם עקביים. ברגע שמגדירים __eq__ בגוף מחלקה בלי __hash__, ה-type machinery מציב __hash__ = None באותה מחלקה (unhashable), כי ה-hash הישן לפי identity כמעט בטוח לא עקבי עם ה-__eq__ החדש. לכן צריך להגדיר __hash__ מפורש שמבוסס על אותם שדות, בדרך כלל hash של tuple של השדות. @dataclass עם eq=True (ברירת מחדל) ו-frozen=False מייצר __eq__ לפי השדות, ולכן אותו כלל מציב __hash__ = None — המחלקה mutable, ולשים key שאפשר לשנות אחרי ההכנסה זה באג, אז זה בטוח יותר. frozen=True הופך אותו immutable ומייצר __hash__; אפשר גם unsafe_hash=True אם יודעים מה עושים. מעשית, keys ב-dict/set צריכים להיות immutable, ולכן frozen dataclass, NamedTuple או tuple הם הבחירות הנכונות למפתחות.",
+      "rubric": [
+        "a==b גורר hash שווה; hash קבוע לאורך החברות ב-set/dict",
+        "__eq__ בלי __hash__ => __hash__=None (unhashable)",
+        "NotImplemented ולא False לטיפוס לא מוכר",
+        "dataclass לא frozen => __hash__=None כי mutable",
+        "frozen/NamedTuple/tuple כמפתחות immutable"
+      ],
+      "explanation": "השאלה בוחנת הבנה של הקשר בין mutability, שוויון ו-hashing — מקור נפוץ לבאגים שקטים עם set ו-dict.",
+      "lesson": "py.data-model"
+    },
+    {
+      "id": "py.data-model.q29",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class A:\n    def __add__(self, o):\n        return \"A.add\"\n    def __radd__(self, o):\n        return \"A.radd\"\n\nclass B(A):\n    def __radd__(self, o):\n        return \"B.radd\"\n\nprint(A() + B())",
+      "choices": [
+        "A.add",
+        "B.radd",
+        "A.radd",
+        "TypeError"
+      ],
+      "answer": 1,
+      "explanation": "בדרך כלל a+b מנסה a.__add__ קודם. אבל יש חריג: אם האופרנד הימני הוא תת-מחלקה אמיתית של השמאלי ו-מדריסה את המתודה המשתקפת, Python מנסה את b.__radd__ קודם. B יורש מ-A ומדריס __radd__, ולכן B().__radd__ נקרא ומחזיר 'B.radd'. בלי הדריסה היה A.add.",
+      "lesson": "py.data-model",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "py.data-model.q30",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "class C:\n    def f(self):\n        pass\n\nc = C()\nprint(c.f is c.f, C.f is C.f)",
+      "choices": [
+        "False True",
+        "True True",
+        "False False",
+        "True False"
+      ],
+      "answer": 0,
+      "explanation": "c.f יוצר bound method חדש בכל גישה (הפונקציה, שהיא non-data descriptor, מחזירה אובייקט method טרי שכורך את c), ולכן c.f is c.f הוא False — למרות ש-c.f == c.f יהיה True. C.f ניגש לפונקציה דרך המחלקה בלי כריכה, ומחזיר את אותו אובייקט פונקציה מ-__dict__ של המחלקה, ולכן C.f is C.f הוא True.",
+      "lesson": "py.data-model",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "py.data-model.q31",
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "prompt": "ממש descriptor בשם Positive שאפשר לשים על כמה attributes במחלקה, כך שהשמה של ערך <= 0 תזרוק ValueError, וקריאה תחזיר את הערך שנשמר. השתמש ב-__set_name__ כדי לתמוך בכמה שדות בלי לשכפל קוד.",
+      "starter": "class Positive:\n    ...\n\nclass Account:\n    balance = Positive()\n    limit = Positive()",
+      "modelAnswer": "class Positive:\n    def __set_name__(self, owner, name):\n        self._name = '_' + name\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return getattr(obj, self._name)\n\n    def __set__(self, obj, value):\n        if value <= 0:\n            raise ValueError(f'{self._name[1:]} must be > 0, got {value}')\n        setattr(obj, self._name, value)\n\nclass Account:\n    balance = Positive()\n    limit = Positive()\n    def __init__(self, balance, limit):\n        self.balance = balance\n        self.limit = limit",
+      "rubric": [
+        "__set_name__ שומר שם ייחודי לכל attribute => תמיכה בכמה שדות",
+        "data descriptor (__get__ ו-__set__) כדי לשלוט בגישה ולגבור על instance __dict__",
+        "ולידציה ב-__set__ שזורקת ValueError על ערך לא חוקי",
+        "טיפול ב-obj is None (גישה דרך המחלקה) והחזרת self",
+        "אחסון הערך על המופע (getattr/setattr) ולא על ה-descriptor המשותף"
+      ],
+      "explanation": "descriptor משותף לכל המופעים, ולכן אסור לשמור את הערך על ה-descriptor עצמו; שומרים אותו על המופע תחת שם פרטי. __set_name__ (3.6+) נותן ל-descriptor את שם ה-attribute אוטומטית, מה שמחליף את הצורך להעביר אותו ידנית.",
+      "lesson": "py.data-model",
+      "tags": [
+        "microsoft"
+      ]
     }
   ]
 }

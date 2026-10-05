@@ -34,7 +34,153 @@
         "deadlock שלא דורש שני locks: IRQ על אותו CPU, signal handler, join על עצמך, thread pool starvation",
         "upgrade מ-shared ל-exclusive כמקור deadlock"
       ],
-      "diagram": "T1: holds A ---wants---> B\n     ^                    |\n     |                 held by\n   wants                  |\n     |                    v\n     A <---holds--- T2"
+      "diagram": "T1: holds A ---wants---> B\n     ^                    |\n     |                 held by\n   wants                  |\n     |                    v\n     A <---holds--- T2",
+      "details": [
+        {
+          "title": "deadlock, livelock, starvation, priority inversion",
+          "body": "ארבעה מצבים שבהם 'משהו לא מתקדם', ושמראיינים אוהבים לבקש להבחין ביניהם:\n\n- **deadlock**: קבוצת threads שכל אחד מחכה למשאב שמחזיק אחר בקבוצה, במעגל. אף אחד לא יתקדם לעולם. ה-threads ישנים: process תקוע עם 0% CPU.\n- **livelock**: ה-threads ערים ופעילים, משנים מצב בתגובה זה לזה, אבל אף אחד לא מתקדם. למשל שניים שתופסים lock, נכשלים על השני, משחררים ומנסים שוב באותו קצב. 100% CPU בלי התקדמות.\n- **starvation**: thread אחד לא מקבל משאב לאורך זמן, בעוד שאחרים כן מתקדמים. למשל mutex לא הוגן שתמיד נתפס על ידי thread אחר, או thread בעדיפות נמוכה שאף פעם לא מקבל CPU.\n- **priority inversion**: thread גבוה מחכה ל-lock של thread נמוך, שנדחק על ידי thread בינוני. ההמתנה ארוכה ולא חסומה, אבל בסוף מסתיימת: זה לא deadlock.\n\nמשאב במעגל לא חייב להיות mutex. זה יכול להיות join על thread, future שמחכים לו, worker ב-thread pool, מקום בתור חסום, או ה-CPU עצמו כשמדובר ב-interrupt."
+        },
+        {
+          "title": "ארבעת תנאי Coffman, וגרף wait-for",
+          "body": "deadlock אפשרי רק אם **כל ארבעת** התנאים מתקיימים יחד:\n\n1. **mutual exclusion**: המשאב לא ניתן לשיתוף, רק אחד מחזיק.\n2. **hold and wait**: thread מחזיק משאב אחד בזמן שהוא מחכה לאחר.\n3. **no preemption**: אי אפשר לקחת משאב בכוח ממי שמחזיק אותו.\n4. **circular wait**: יש מעגל של threads שכל אחד מחכה למשאב של הבא.\n\nכל טכניקת מניעה שוברת אחד מהם. סדר נעילה גלובלי שובר circular wait. נעילת הכול בבת אחת (std::lock), או try_lock ושחרור כשנכשל, שוברים hold and wait. timeout שמבטל טרנזקציה הוא צורה של preemption. מבנים lock-free עוקפים mutual exclusion. busy waiting **אינו** תנאי: deadlock קורה גם עם mutex שמרדים.\n\n**גרף wait-for**: צומת לכל thread, וקשת מ-T1 ל-T2 אם T1 מחכה למשאב ש-T2 מחזיק. deadlock הוא מעגל בגרף, וגילוי הוא DFS ב-O(V+E). כך עובדים גלאי deadlock במסדי נתונים, וכך בונים את התמונה ידנית ב-gdb.\n\nשלוש אסטרטגיות: **מניעה** (prevention, לשבור תנאי בתכנון), **הימנעות** (avoidance, להחליט בזמן ריצה אם בקשה בטוחה, כמו אלגוריתם הבנקאי, נדיר בפועל), ו-**גילוי והתאוששות** (detection, לחפש מעגלים ולבטל קורבן, נפוץ במסדי נתונים)."
+        },
+        {
+          "title": "סדר נעילה ו-lock hierarchy",
+          "body": "אם כל הקוד נועל locks באותו סדר גלובלי, אין מעגל: thread שמחזיק lock בדרגה k מבקש רק locks בדרגה נמוכה יותר, ולכן אי אפשר לחזור 'למעלה' ולסגור מעגל.\n\n**lock hierarchy**: נותנים לכל mutex רמה לפי שכבה ארכיטקטונית (למשל: network 100, session 50, buffer 10), והכלל הוא שמותר לנעול רק רמה **נמוכה** ממה שכבר מוחזק. בגרסת debug אוכפים עם wrapper ששומר thread_local stack של הרמות המוחזקות ומבצע assert על הפרה. כך הפרת סדר נתפסת גם בריצה שלא נתקעה בפועל, וזה קריטי כי deadlocks הם נדירים ותלויי תזמון.\n\n**סדר לפי כתובת**, כשהאובייקטים מאותה רמה (שני חשבונות): נועלים קודם את זה עם הכתובת הנמוכה. אבל `<` על pointers לאובייקטים שאינם באותו מערך נותן לפי התקן תוצאה unspecified, בלי הבטחה לסדר כולל עקבי. **std::less** על pointers מובטח לתת strict total order, ולכן משתמשים בו. (בפועל על x86 `<` עובד, אבל זו שאלה של standard-lawyer.) עוד אפשרות: מזהה ייחודי (id) לכל אובייקט.\n\n**dining philosophers**: חמישה פילוסופים, חמישה מזלגות, כל אחד צריך את שני הסמוכים. אם כולם לוקחים קודם את השמאלי, יש מעגל. אם ממספרים את המזלגות וכל אחד לוקח קודם את בעל המספר הנמוך (כלומר אחד מהם לוקח קודם את הימני), זה סדר גלובלי ואין מעגל.\n\nכלים לאכיפה: **lockdep** ב-kernel של Linux מקבץ locks ל-lock classes, רושם כל זוג סדר שנצפה (A ואז B), ומדווח ברגע שנצפה הסדר ההפוך, גם אם בזמן אחר, ב-thread אחר, ובלי שנוצר deadlock. **Clang Thread Safety Analysis** מאפשר להצהיר בקוד GUARDED_BY (איזה mutex מגן על שדה), REQUIRES ו-ACQUIRED_BEFORE, והקומפיילר מתריע על גישה בלי lock או על סדר שגוי. **TSan** עם detect_deadlocks בונה גרף סדר בזמן ריצה."
+        },
+        {
+          "title": "נעילה בבת אחת, try_lock ו-livelock",
+          "body": "**std::lock ו-std::scoped_lock** עם כמה mutexes משתמשים באלגוריתם של נסיגה: נועלים אחד (בהמתנה), מנסים try_lock על השאר, ואם אחד נכשל, משחררים את כולם ומתחילים מחדש, הפעם מה-mutex שנכשל. כך thread אף פעם לא מחכה בזמן שהוא מחזיק משהו, ו-hold and wait נשבר. אין פעולת חומרה שנועלת שני mutexes אטומית. מלכודת: scoped_lock על אותו mutex פעמיים (transfer(a, a)) הוא נעילה חוזרת ו-UB, ולכן בודקים קודם שהאובייקטים שונים.\n\n**try_lock ידני**: נועלים את הראשון, try_lock על השני, ואם נכשל משחררים ומנסים שוב. אם שני threads עושים את זה סימטרית ובאותו קצב, נוצר **livelock**: שניהם תופסים, נכשלים, משחררים, ושוב. הפתרון: **backoff אקראי** (המתנה אקראית שגדלה) ששובר את הסימטריה, או פשוט סדר נעילה קבוע. מימושים מעשיים של std::lock מוסיפים yield ומסובבים את הסדר.\n\n**timeouts** (try_lock_for) הם רשת ביטחון ולא פתרון: הם הופכים deadlock לכישלון שאפשר לדווח עליו, אבל צריך לדעת מה עושים אחרי הכישלון."
+        },
+        {
+          "title": "deadlocks בלי שני mutexes",
+          "body": "- **נעילה חוזרת**: thread שנועל std::mutex שכבר אצלו. UB, בפועל תקיעה. קורה כשפונקציה ציבורית נועלת וקוראת לפונקציה ציבורית אחרת שנועלת, או כש-callback חוזר לאובייקט.\n- **join תחת lock**: main מחזיק m ועושה join ל-thread שצריך את m. ה-join הוא המשאב השני. גם שני threads שכל אחד עושה join לשני הם deadlock.\n- **std::async והעתיד הזמני**: ה-future שמוחזר מ-std::async עם launch::async חוסם ב-destructor עד שהמשימה מסתיימת. אם לא שומרים אותו, ה-temporary נהרס בסוף השורה, והקריאה הופכת לסינכרונית. אם הקורא מחזיק lock שהמשימה צריכה, זה deadlock. (GCC מסמן את std::async כ-nodiscard ומזהיר.)\n- **thread pool starvation deadlock**: כל ה-workers חסומים על futures של תת-משימות שיושבות בתור, ואין worker פנוי שיריץ אותן. פתרונות: לא לחכות בתוך משימה (continuations), work-stealing שבו worker שמחכה מריץ משימות מהתור בעצמו, או pool נפרד.\n- **callbacks תחת lock**: קוד זר יכול לנעול locks אחרים (הפרת סדר שלא ידעת עליה) או לחזור לאובייקט שלך. הכלל: מעתיקים תחת lock, משחררים, ורק אז קוראים.\n- **upgrade של shared lock**: שני קוראים שכל אחד רוצה לשדרג ל-exclusive בלי לשחרר: כל אחד מחכה שהשני ישחרר את ה-shared שלו. לכן std::shared_mutex לא מציע upgrade, ו-Boost מתיר רק upgradable owner אחד. הדרך: לשחרר, לנעול exclusive, **ולבדוק שוב**.\n- **signal handler**: handler רץ על ה-thread שנקטע, באמצע כל פונקציה. אם נקטע בתוך printf או malloc כשהן מחזיקות lock פנימי, וה-handler קורא להן, ה-thread מחכה לעצמו. ב-handler מותר רק פונקציות **async-signal-safe** (write, למשל), או לכתוב לדגל volatile sig_atomic_t, ל-self-pipe או להשתמש ב-signalfd.\n- **interrupt ב-kernel**: spinlock שנלקח גם ב-process context וגם ב-interrupt handler. אם ה-interrupt נוחת על ה-CPU של המחזיק, ה-handler מסתובב לנצח והמחזיק לא ירוץ. ביטול preemption לא חוסם interrupts, ולכן צריך spin_lock_irqsave.\n- **fork בתוכנית multi-threaded**: הילד מקבל עותק של כל הזיכרון אבל רק את ה-thread שקרא ל-fork. mutex שהיה מוחזק באותו רגע על ידי thread אחר נשאר נעול לנצח בילד. לכן POSIX מתיר בילד רק פונקציות async-signal-safe עד exec. glibc מגן על ה-malloc שלו עם handlers של pthread_atfork, אבל locks של הקוד שלך או של ספריות אחרות לא מוגנים."
+        },
+        {
+          "title": "אבחון deadlock ב-production",
+          "body": "1. **לאשר**: top מראה 0% CPU ל-process התקוע (ב-livelock זה 100%).\n2. **snapshot**: להתחבר עם gdb ל-process החי, או לקחת core עם gcore בלי להרוג אותו. SIGKILL לא מייצר core. SIGABRT כן (אם core dumps מופעלים).\n3. **thread apply all bt**: stack של כל ה-threads. threads שמחכים ל-mutex נראים ב-__lll_lock_wait או ב-futex_wait מתחת ל-pthread_mutex_lock.\n4. **מי הבעלים**: ב-glibc, ה-pthread_mutex_t מכיל שדה __owner עם ה-TID של המחזיק. מדפיסים אותו לכל mutex שמחכים לו.\n5. **בונים גרף wait-for**: מי מחכה למי, ומוצאים את המעגל.\n6. **ממפים לקוד**: איזה מסלולים נועלים באיזה סדר, ומתקנים: סדר אחיד, scoped_lock, או הוצאת callback מה-lock.\n\nכלים בזמן פיתוח: TSan (detect_deadlocks), Helgrind ו-DRD של valgrind (משנים תזמון ולא ישחזרו מצב קיים, אבל מוצאים הפרות סדר), ו-lockdep ב-kernel."
+        },
+        {
+          "title": "כשאי אפשר לקבוע סדר מראש: גישת מסדי הנתונים",
+          "body": "בטרנזקציות כלליות לא תמיד יודעים מראש אילו רשומות יינעלו. מסדי נתונים מתמודדים כך:\n\n- **גילוי והתאוששות**: thread רקע בונה גרף wait-for כל כמה זמן (או בכל המתנה), וכשיש מעגל בוחר **קורבן** (הטרנזקציה הצעירה, או זו שעשתה הכי מעט עבודה) ומבטל אותה (rollback). הלקוח מקבל שגיאה ומנסה שוב.\n- **timeouts**: פשוט, אבל מבטל גם המתנות ארוכות לגיטימיות, וקשה לכוון.\n- **wait-die ו-wound-wait**: לכל טרנזקציה חותמת זמן. ב-wait-die טרנזקציה ותיקה מחכה לצעירה, וצעירה שמבקשת משהו מוותיקה 'מתה' (מבוטלת ומתחילה מחדש עם אותה חותמת). ב-wound-wait ותיקה 'פוצעת' (מבטלת) צעירה שמחזיקה משהו שהיא צריכה, וצעירה מחכה לוותיקה. בשתיהן ההמתנות הולכות רק בכיוון אחד של גיל, ולכן אין מעגל, ושמירת החותמת בהתחלה מחדש מונעת starvation.\n- כשאפשר: למיין את המפתחות ולנעול לפי סדר, כמו בסדר לפי כתובת."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: transfer הפוך ב-interleaving",
+          "body": "חשבונות x ו-y. T1 מריץ transfer(x, y) ו-T2 מריץ transfer(y, x), כל אחד נועל קודם את from.\n\n- t1: T1 נועל את x.m\n- t2: T2 נועל את y.m\n- t3: T1 מבקש את y.m: מוחזק על ידי T2, נרדם\n- t4: T2 מבקש את x.m: מוחזק על ידי T1, נרדם\n\nגרף wait-for: T1 ל-T2 ל-T1, מעגל. עם scoped_lock: T2 נועל את y.m, ואז try_lock על x.m נכשל, אז הוא **משחרר** את y.m ומתחיל מחדש מ-x.m (ממתין לו). T1 מקבל את y.m, מסיים ומשחרר, ואז T2 ממשיך. עם סדר לפי std::less: שניהם נועלים קודם את אותו חשבון, והשני פשוט מחכה בלי להחזיק כלום."
+        },
+        {
+          "title": "דוגמה: livelock עם try_lock סימטרי",
+          "body": "T1 צריך A ואז B, T2 צריך B ואז A. כל אחד: lock על הראשון, try_lock על השני, ואם נכשל unlock ומיד שוב.\n\n- t1: T1 נועל A, T2 נועל B\n- t2: T1 מנסה B: נכשל. T2 מנסה A: נכשל\n- t3: שניהם משחררים\n- t4: T1 נועל A, T2 נועל B, וחוזר חלילה\n\nשניהם ב-100% CPU, ואף אחד לא נכנס. עם backoff אקראי: אחרי הכישלון T1 ממתין 3 מיקרו-שניות ו-T2 ממתין 11. T1 מנסה שוב כש-T2 עדיין ממתין, וכבר שחרר את B, ולכן T1 מקבל את שניהם."
+        },
+        {
+          "title": "דוגמה: thread pool starvation עם 2 workers",
+          "body": "pool עם W1 ו-W2. מגיעות שתי משימות, P1 ו-P2, וכל אחת שולחת תת-משימה ומחכה ל-future שלה.\n\n- W1 מריץ את P1. P1 שולח את C1 לתור, ומחכה ל-future של C1\n- W2 מריץ את P2. P2 שולח את C2 לתור, ומחכה ל-future של C2\n- התור: [C1, C2]. אין worker פנוי. W1 ו-W2 ישנים לנצח\n\nאין כאן אף mutex במעגל: המשאב הוא ה-workers עצמם. עם work-stealing: W1, במקום לישון על ה-future, שולף משימה מהתור (C1 או C2) ומריץ אותה בעצמו, וכך יש התקדמות."
+        },
+        {
+          "title": "דוגמה: std::async שהופך לסינכרוני תחת lock",
+          "body": "log_async נועל את m, ואז קורא ל-std::async(launch::async, task) בלי לשמור את ה-future. task נועל את m.\n\n- t1: הקורא נועל m\n- t2: std::async מפעיל thread חדש שמריץ את task, ומחזיר future זמני\n- t3: סוף השורה: ה-destructor של ה-future הזמני מחכה ש-task יסתיים\n- t4: task מבקש m, שמוחזק על ידי הקורא\n\nהקורא מחכה ל-task, ו-task מחכה ל-m של הקורא. מעגל, עם mutex אחד. נבדק בפועל: התוכנית נתקעת. התיקון: לא להחזיק lock בזמן הקריאה, או לשמור את ה-future במקום שחי מעבר ל-lock, או להשתמש ב-thread pool עם תור שלא מחכה למשימה."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "deadlock",
+          "def": "קבוצת threads שמחכים זה לזה במעגל ואף אחד לא יתקדם. סימפטום: 0% CPU."
+        },
+        {
+          "term": "livelock",
+          "def": "threads פעילים שמגיבים זה לזה בלי התקדמות, למשל try_lock סימטרי. סימפטום: 100% CPU."
+        },
+        {
+          "term": "starvation",
+          "def": "thread אחד שלא מקבל משאב לאורך זמן, בעוד אחרים מתקדמים."
+        },
+        {
+          "term": "priority inversion",
+          "def": "thread גבוה מחכה ל-lock של נמוך שנדחק על ידי בינוני. המתנה לא חסומה אבל לא מעגלית."
+        },
+        {
+          "term": "תנאי Coffman",
+          "def": "mutual exclusion, hold and wait, no preemption, circular wait. כולם נדרשים ל-deadlock, ושבירת אחד מונעת אותו."
+        },
+        {
+          "term": "wait-for graph",
+          "def": "גרף שבו קשת מ-T1 ל-T2 אם T1 מחכה למשאב של T2. deadlock הוא מעגל, וגילוי הוא DFS ב-O(V+E)."
+        },
+        {
+          "term": "lock ordering / lock hierarchy",
+          "def": "כל הקוד נועל locks באותו סדר גלובלי (לפי רמות), ולכן לא נוצר מעגל. נאכף ב-debug עם stack של רמות מוחזקות."
+        },
+        {
+          "term": "std::less על pointers",
+          "def": "מובטח לתת סדר כולל עקבי גם לאובייקטים לא קשורים, בניגוד ל-< מובנה שתוצאתו unspecified."
+        },
+        {
+          "term": "std::lock / scoped_lock",
+          "def": "נעילת כמה mutexes עם נסיגה: אם try_lock נכשל משחררים הכול ומתחילים מה-mutex שנכשל. שובר hold and wait."
+        },
+        {
+          "term": "backoff אקראי",
+          "def": "המתנה אקראית (לרוב גדלה) אחרי כישלון נעילה, ששוברת סימטריה ומונעת livelock."
+        },
+        {
+          "term": "dining philosophers",
+          "def": "בעיה קלאסית של חמישה פילוסופים וחמישה מזלגות. נפתרת בסדר גלובלי על המזלגות או במגביל של ארבעה סועדים."
+        },
+        {
+          "term": "lockdep",
+          "def": "מנגנון ב-kernel שרושם סדר בין lock classes ומדווח על מעגל אפשרי מיד כשנצפה סדר הפוך, גם בלי deadlock בפועל."
+        },
+        {
+          "term": "Clang Thread Safety Analysis",
+          "def": "annotations כמו GUARDED_BY, REQUIRES ו-ACQUIRED_BEFORE שהקומפיילר בודק: גישה בלי lock או סדר נעילה שגוי."
+        },
+        {
+          "term": "TSan detect_deadlocks / Helgrind",
+          "def": "כלים דינמיים שבונים גרף סדר נעילות בזמן ריצה ומדווחים על הפרות."
+        },
+        {
+          "term": "thread pool starvation deadlock",
+          "def": "כל ה-workers מחכים לתת-משימות שבתור ואין מי שיריץ אותן. פתרון: continuations, work-stealing, pool נפרד."
+        },
+        {
+          "term": "work-stealing",
+          "def": "worker שמחכה או מתבטל לוקח משימות מתורים (שלו או של אחרים) ומריץ אותן, במקום לישון."
+        },
+        {
+          "term": "std::async future destructor",
+          "def": "future של async עם launch::async חוסם ב-destructor עד סוף המשימה. temporary לא שמור הופך את הקריאה לסינכרונית."
+        },
+        {
+          "term": "lock upgrade",
+          "def": "מעבר מ-shared ל-exclusive בלי לשחרר. שני קוראים שמשדרגים יחד נתקעים. std::shared_mutex לא מציע את זה."
+        },
+        {
+          "term": "async-signal-safe",
+          "def": "פונקציות שמותר לקרוא להן מ-signal handler (למשל write). printf ו-malloc אינן, כי הן מחזיקות locks פנימיים."
+        },
+        {
+          "term": "self-pipe / signalfd / sig_atomic_t",
+          "def": "דרכים להעביר signal לטיפול מחוץ ל-handler: כתיבה ל-pipe, קריאת signals כ-fd, או דגל volatile sig_atomic_t."
+        },
+        {
+          "term": "spin_lock_irqsave",
+          "def": "נעילת spinlock ב-kernel עם חסימת interrupts מקומיים, כדי שה-interrupt handler לא ינסה לקחת את אותו lock על אותו CPU."
+        },
+        {
+          "term": "fork ב-multi-threaded",
+          "def": "הילד מקבל רק את ה-thread הקורא, ו-locks שהחזיקו threads אחרים נשארים נעולים. עד exec מותר רק async-signal-safe."
+        },
+        {
+          "term": "gdb / gcore / __owner",
+          "def": "thread apply all bt מראה איפה כל thread תקוע, gcore לוקח core בלי להרוג, ו-__owner ב-pthread_mutex_t של glibc מחזיק את ה-TID של הבעלים."
+        },
+        {
+          "term": "wait-die / wound-wait",
+          "def": "שיטות מסדי נתונים לפי חותמת זמן של טרנזקציה, שבהן המתנה מותרת רק בכיוון אחד של גיל, ולכן אין מעגל."
+        }
+      ]
     }
   ],
   "questions": [
@@ -322,6 +468,221 @@
       "answer": 2,
       "explanation": "upgrade לא יכול להצליח כל עוד קורא אחר מחזיק shared, ואם גם הקורא האחר מחכה ל-upgrade, אף אחד לא ישחרר. ספריות שמציעות upgrade (כמו upgrade_lock של Boost) מאפשרות רק upgradable owner אחד בכל רגע בדיוק בשביל זה. אחרי שחרור ונעילה מחדש חובה לבדוק שוב, כי thread אחר אולי כבר מילא את הערך.",
       "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה starvation?",
+      "choices": [
+        "thread אחד שלא מקבל משאב (lock או CPU) לאורך זמן, בזמן ש-threads אחרים כן מתקדמים",
+        "כל ה-threads מחכים זה לזה במעגל",
+        "threads שעובדים ב-100% CPU בלי התקדמות",
+        "process שנגמר לו הזיכרון"
+      ],
+      "answer": 0,
+      "explanation": "ב-starvation המערכת כן מתקדמת, רק לא ה-thread המסוים, למשל כי mutex לא הוגן או כי הוא בעדיפות נמוכה. מעגל המתנה הוא deadlock, ופעילות בלי התקדמות היא livelock.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "service מפסיק להגיב. top מראה שה-process שלו צורך 0% CPU. מה החשוד המרכזי?",
+      "choices": [
+        "livelock",
+        "busy-wait על spinlock",
+        "לולאה אינסופית",
+        "deadlock: threads ישנים ומחכים זה לזה"
+      ],
+      "answer": 3,
+      "explanation": "ב-deadlock ה-threads חסומים בשינה (למשל ב-futex_wait), ולכן לא צורכים CPU. livelock, spin ולולאה אינסופית כולם שורפים CPU. כמובן ש-0% CPU יכול להיות גם המתנה ל-I/O או לרשת, ולכן מאמתים עם stack traces.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקרא הגרף שבו קשת מ-T1 ל-T2 אומרת ש-T1 מחכה למשאב ש-T2 מחזיק, ו-deadlock הוא מעגל בו?",
+      "accept": [
+        "wait-for graph",
+        "wait for graph",
+        "waits-for graph",
+        "wait-for"
+      ],
+      "explanation": "גרף wait-for הוא הבסיס לגילוי deadlock: מספיק DFS כדי למצוא מעגל ב-O(V+E). מסדי נתונים בונים אותו כדי לבחור טרנזקציה לבטל, ובאבחון ידני בונים אותו מה-stack traces ומשדות הבעלים של ה-mutexes.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q21",
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו מהתרחישים הבאים יכולים להיתקע לנצח, גם בלי שני mutexes שננעלים בסדר הפוך?",
+      "choices": [
+        "thread שנועל std::mutex שהוא כבר מחזיק",
+        "main מחזיק mutex m ועושה join ל-thread שצריך לנעול את m",
+        "שני threads שכל אחד מהם קורא ל-join על השני",
+        "thread אחד שקורא atomic בלולאה עד שהוא מקבל ערך שמישהו אחר כותב",
+        "שני threads שנועלים שני mutexes תמיד באותו סדר גלובלי"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "המשאב במעגל לא חייב להיות mutex: join הוא המתנה לסיום של thread אחר, ונעילה חוזרת של std::mutex היא המתנה לעצמך (UB, בפועל תקיעה). קריאה של atomic תתקדם כשהכותב יכתוב, וסדר נעילה גלובלי מונע מעגל.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "`std::scoped_lock lk(a, b);` מונע deadlock. איזה מתנאי Coffman הוא שובר?",
+      "choices": [
+        "mutual exclusion",
+        "hold and wait: אם try_lock על אחד נכשל, הוא משחרר את מה שתפס לפני שהוא מחכה",
+        "no preemption",
+        "אף אחד, הוא פשוט מהיר מספיק"
+      ],
+      "answer": 1,
+      "explanation": "האלגוריתם של std::lock אף פעם לא מחכה בזמן שהוא מחזיק mutex אחר: הוא נועל אחד, מנסה את השאר, ובכישלון משחרר הכול ומתחיל מחדש מה-mutex שנכשל. ה-mutexes עדיין בלעדיים, ואף אחד לא לוקח lock בכוח ממחזיק.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה זה lock hierarchy?",
+      "choices": [
+        "mutex שמכיל בתוכו mutexes נוספים",
+        "מנגנון של ה-kernel שנותן עדיפות ל-thread שמחזיק יותר locks",
+        "כל mutex מקבל רמה, ו-thread שמחזיק lock ברמה מסוימת מותר לו לנעול רק locks ברמה נמוכה יותר. כך לא נוצר מעגל",
+        "recursive_mutex שמאפשר נעילה מקוננת"
+      ],
+      "answer": 2,
+      "explanation": "lock hierarchy הוא סדר נעילה גלובלי שמבוטא ברמות, לרוב לפי שכבות בארכיטקטורה. כיוון שנעילות הולכות רק 'למטה', אי אפשר לסגור מעגל. בגרסת debug אוכפים אותו עם wrapper שבודק את הרמות שה-thread כבר מחזיק.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q24",
+      "level": 3,
+      "type": "order",
+      "prompt": "service ב-production תקוע. סדר את שלבי האבחון:",
+      "items": [
+        "לוודא ב-top שה-process ב-0% CPU (ולא 100%, שמרמז על livelock)",
+        "לקחת snapshot בלי להרוג: gcore או gdb attach",
+        "להריץ thread apply all bt ולמצוא threads שתקועים ב-__lll_lock_wait או futex_wait",
+        "לקרוא את שדה __owner של כל mutex שמחכים לו כדי לדעת מי מחזיק אותו",
+        "לבנות גרף wait-for ולמצוא את המעגל",
+        "למפות את המסלולים בקוד ולתקן את סדר הנעילה"
+      ],
+      "explanation": "קודם מאשרים את סוג התקיעה, אחר כך שומרים ראיות לפני שמשהו משתנה, ורק אז מנתחים. ה-TID ב-__owner (ב-glibc) הוא מה שהופך רשימת stacks לגרף מי-מחכה-למי.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה נותן Clang Thread Safety Analysis (annotations כמו GUARDED_BY ו-ACQUIRED_BEFORE)?",
+      "choices": [
+        "בדיקה בזמן קומפילציה: אזהרה על גישה לשדה בלי להחזיק את ה-mutex שמגן עליו, ועל נעילה בסדר שסותר את מה שהוצהר",
+        "גילוי deadlocks בזמן ריצה עם overhead נמוך",
+        "החלפה אוטומטית של mutex ב-atomics",
+        "הוספה אוטומטית של lock_guard היכן שחסר"
+      ],
+      "answer": 0,
+      "explanation": "זה ניתוח סטטי: ה-annotations מתעדים את חוזה הנעילה בקוד, וה-compiler אוכף אותו (-Wthread-safety). הוא לא רואה הכול (למשל aliasing), אבל תופס טעויות לפני שהן מגיעות לבדיקות. גילוי בזמן ריצה הוא תפקידם של TSan ושל lockdep.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "dining philosophers: חמישה פילוסופים וחמישה מזלגות ממוספרים 0 עד 4. כל פילוסוף לוקח קודם את המזלג בעל המספר **הנמוך** מבין שני הסמוכים לו. למה אין deadlock?",
+      "choices": [
+        "כי אחד הפילוסופים תמיד מוותר",
+        "כי זה שובר את mutual exclusion",
+        "כי זה שובר את no preemption",
+        "כי זה סדר נעילה גלובלי: כל אחד מחזיק רק מזלגות שמספרם נמוך מזה שהוא מבקש, ולכן אי אפשר לסגור מעגל המתנה"
+      ],
+      "answer": 3,
+      "explanation": "בפועל ארבעה פילוסופים לוקחים קודם את השמאלי, והאחרון (בין מזלג 4 למזלג 0) לוקח קודם את 0. במעגל, מישהו היה צריך לחכות למזלג נמוך ממה שהוא כבר מחזיק, וזה אסור. זו שבירה של circular wait. פתרון חלופי: מגביל שמאפשר רק לארבעה לשבת יחד.",
+      "lesson": "conc.deadlock"
+    },
+    {
+      "id": "conc.deadlock.q27",
+      "level": 4,
+      "type": "bug",
+      "prompt": "log_async אמורה לכתוב ללוג ברקע ולחזור מיד. במקום זה התוכנית נתקעת בקריאה הראשונה. למה?",
+      "lang": "cpp",
+      "code": "std::mutex m;\n\nvoid log_async(std::string s) {\n  std::lock_guard<std::mutex> g(m);\n  std::async(std::launch::async, [s] {\n    std::lock_guard<std::mutex> g2(m);\n    write_log(s);\n  });\n}",
+      "bugLine": 5,
+      "choices": [
+        "lambda שתופסת string by value לא יכולה לרוץ ב-thread אחר",
+        "ה-future שמוחזר מ-std::async לא נשמר, וה-destructor שלו חוסם עד שהמשימה מסתיימת. המשימה צריכה את m, שהקורא מחזיק: deadlock עם mutex אחד",
+        "std::launch::async יכול לבחור להריץ את המשימה באותו thread",
+        "write_log לא thread-safe"
+      ],
+      "answer": 1,
+      "explanation": "future של std::async עם launch::async הוא מקרה מיוחד: ה-destructor שלו מחכה למשימה. ה-temporary נהרס בסוף השורה, בזמן שה-lock_guard עדיין מחזיק את m, והמשימה מחכה ל-m. נבדק: התוכנית נתקעת. GCC אף מזהיר כי std::async מסומן nodiscard. launch::async מחייב thread חדש, ולא באותו thread.",
+      "lesson": "conc.deadlock",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.deadlock.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "lockdep ב-kernel מדווח על 'possible circular locking dependency' בין A ל-B, למרות שבבדיקה לא נוצר שום deadlock, וה-threads שנעלו A ואז B ו-B ואז A רצו בזמנים שונים לגמרי. למה הדיווח מוצדק?",
+      "choices": [
+        "lockdep מדווח רק על deadlocks שקרו בפועל, ולכן כנראה היה deadlock קצר",
+        "lockdep רושם כל זוג סדר שנצפה בין lock classes. ברגע שנצפו גם A לפני B וגם B לפני A, יש תזמון אפשרי שבו שני המסלולים רצים יחד ונתקעים. הוא מוצא את הבאג בלי שהתזמון הרע קרה",
+        "lockdep מדווח על כל שני locks שננעלים באותה פונקציה",
+        "זה false positive, ואפשר להתעלם"
+      ],
+      "answer": 1,
+      "explanation": "זה הכוח של גישת הגרף: deadlock דורש תזמון ספציפי ונדיר, אבל הפרת סדר נצפית בכל ריצה שעוברת בשני המסלולים. lockdep עובד ברמת class (כל ה-locks שאותחלו באותה שורה), ולכן יש לפעמים false positives אמיתיים כש-locks מאותה class מקוננים בסדר בטוח, ואז מסמנים זאת במפורש (nesting annotations). אבל ברירת המחדל היא שהדיווח מצביע על באג.",
+      "lesson": "conc.deadlock",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.deadlock.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "תוכנית עם כמה threads, שבהם thread לוגים שמחזיק `std::mutex log_m` לעתים קרובות. thread אחר קורא ל-fork(), והילד קורא לפונקציית הלוג לפני exec. מדי פעם הילד נתקע לנצח. למה?",
+      "choices": [
+        "fork משכפל את כל ה-threads, והילד מתחרה עם עותק של thread הלוגים",
+        "std::mutex לא ניתן להעתקה ולכן fork מאפס אותו לערך לא חוקי",
+        "הילד מקבל רק את ה-thread שקרא ל-fork, אבל עותק של כל הזיכרון. אם thread הלוגים החזיק את log_m ברגע ה-fork, בילד ה-mutex נעול ואין thread שישחרר אותו. לכן עד exec מותר בילד רק async-signal-safe",
+        "ה-file descriptor של הלוג נסגר ב-fork"
+      ],
+      "answer": 2,
+      "explanation": "fork בתוכנית multi-threaded מעתיק תמונת זיכרון שבה locks יכולים להיות 'באמצע'. ה-owner שלהם לא קיים בילד. glibc מטפל ב-malloc שלו עם handlers של pthread_atfork, אבל locks של הקוד שלך ושל ספריות אחרות לא מוגנים. הפתרונות: exec מיד (או posix_spawn), או pthread_atfork לנעילה ושחרור סביב fork. file descriptors דווקא עוברים בירושה לילד.",
+      "lesson": "conc.deadlock",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.deadlock.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "אתה מתכנן מנוע טרנזקציות שבו כל טרנזקציה נועלת רשומות שמתגלות רק תוך כדי ריצה, ולכן אי אפשר לקבוע סדר נעילה מראש. איך תתמודד עם deadlocks? השווה בין גישות.",
+      "modelAnswer": "כיוון שסדר גלובלי לא אפשרי, צריך גילוי או מניעה דינמית. (1) גילוי: לשמור גרף wait-for (קשת כשטרנזקציה נחסמת על lock של אחרת) ולחפש מעגל, או בכל חסימה (זול כשהמעגלים קצרים) או מחזורית. כשנמצא מעגל, בוחרים קורבן לפי מדיניות: הצעירה, זו עם הכי מעט עבודה, או הכי מעט locks, ומבצעים rollback. הלקוח מקבל שגיאה ומנסה שוב. יתרון: לא מבטלים בלי סיבה. חיסרון: עלות התחזוקה, ובמערכת מבוזרת גרף גלובלי קשה. (2) timeouts: פשוט ועובד גם מבוזר, אבל מבטל המתנות ארוכות לגיטימיות, ו-timeout קצר מדי מייצר ביטולים ו-retries מיותרים. (3) מניעה לפי חותמת זמן: wait-die, שבו ותיקה מחכה לצעירה וצעירה שמבקשת משהו מוותיקה מתבטלת; ו-wound-wait, שבו ותיקה מבטלת צעירה שחוסמת אותה וצעירה מחכה לוותיקה. המתנה תמיד בכיוון אחד של גיל ולכן אין מעגל, ושמירת החותמת המקורית ב-restart מונעת starvation. wound-wait מבטל פחות בדרך כלל. חיסרון: ביטולים גם בלי deadlock אמיתי. (4) הפחתת הבעיה: לנעול מוקדם כשאפשר (לקבץ ולמיין מפתחות ידועים), להשתמש ב-MVCC כך שקוראים לא נועלים, ולהקטין את משך הטרנזקציות. מה לבחור: במערכת מקומית, גילוי עם בחירת קורבן (כמו InnoDB ו-PostgreSQL, שמפעיל בדיקה אחרי deadlock_timeout) ועוד timeout כרשת ביטחון. במבוזר, wound-wait או timeouts. בכל מקרה לנטר את קצב ה-deadlocks וה-retries כמדד.",
+      "rubric": [
+        "גילוי עם גרף wait-for ובחירת קורבן, כולל מדיניות בחירה ו-retry",
+        "timeouts והחסרונות שלהם",
+        "wait-die ו-wound-wait: למה אין מעגל, ומניעת starvation בשמירת החותמת",
+        "הפחתה: מיון מפתחות ידועים, MVCC, טרנזקציות קצרות, וניטור"
+      ],
+      "explanation": "השאלה מעבירה את הנושא מ-mutexes ל-system design. מועמד חזק מבין שכשאי אפשר למנוע מעגל בתכנון, עוברים לגילוי והתאוששות או למניעה דינמית.",
+      "lesson": "conc.deadlock",
+      "tags": [
+        "microsoft"
+      ]
     }
   ]
 }

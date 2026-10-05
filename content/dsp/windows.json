@@ -35,7 +35,181 @@
         "לחשוב על memory bandwidth: חלון, המרה ונרמול במעבר אחד",
         "להכיר את ההשפעה של overlap על variance ב-Welch"
       ],
-      "diagram": "frame edges:  /\\/\\/\\|/\\/\\/\\  jump -> leakage\nHann:        _/~~~~~~\\_\n50% overlap: _/~~\\_/~~\\_  sum = const"
+      "diagram": "frame edges:  /\\/\\/\\|/\\/\\/\\  jump -> leakage\nHann:        _/~~~~~~\\_\n50% overlap: _/~~\\_/~~\\_  sum = const",
+      "details": [
+        {
+          "title": "למה חלון: leakage, mainlobe ו-sidelobes",
+          "body": "ה-DFT מניח שה-frame הוא מחזור אחד של אות מחזורי. אם טון לא נכנס מספר שלם של מחזורים ב-frame, החיבור של סוף ה-frame לתחילתו יוצר קפיצה, והאנרגיה של הטון 'נשפכת' לכל ה-bins: זה **spectral leakage**. במונחים של תדר: כפל בחלון בזמן הוא קונבולוציה של הספקטרום עם התגובה התדרית W(f) של החלון. כל טון מופיע כעותק של W(f) שממורכז בתדר שלו.\n\nלחלון מלבני (בלי חלון) W הוא Dirichlet, כמעט sinc: **mainlobe** ברוחב 2 bins בין האפסים, **sidelobe** ראשון של 13.3 dB- ודעיכה של 6 dB לאוקטבה בלבד. כשהטון נופל בדיוק על bin, כל שאר ה-bins נופלים על האפסים של ה-sinc, ולכן אין leakage בכלל. ברגע שהוא זז חצי bin, ה-sidelobes נדגמים בשיא שלהם.\n\nחלון חלק מוריד את הקצוות לאפס, וככל שהוא חלק יותר בקצוות (רציפות של הערך ושל הנגזרות) הדעיכה של ה-sidelobes מהירה יותר. Hann (0.5-0.5·cos) רציף עם נגזרת ראשונה רציפה, ולכן דועך ב-18 dB לאוקטבה, עם sidelobe ראשון של 31.5 dB-. המחיר הוא תמיד mainlobe רחב יותר: 4 bins ב-Hann, ולכן הפרדה גרועה יותר בין טונים קרובים, ויותר רעש לכל bin (ENBW).\n\nמה חלון לא עושה: הוא לא משנה את הסיבוכיות של ה-FFT (עוד O(N) כפלים), לא משפר רזולוציה, ולא מונע aliasing, שקרה כבר בדגימה."
+        },
+        {
+          "title": "משפחת החלונות ואיך בוחרים",
+          "body": "- **Hamming** (0.54-0.46·cos): sidelobe ראשון כ-43 dB-, אבל הוא לא מתאפס בקצוות ולכן דועך רק 6 dB לאוקטבה; טוב ליד ה-mainlobe, גרוע רחוק ממנו (כ-60 dB- ב-50 bins, לעומת כ-110 dB- ב-Hann).\n- **Blackman**: כ-58 dB-, 18 dB לאוקטבה, mainlobe של ±3 bins.\n- **Blackman-Harris 4-term**: כ-92 dB-, mainlobe של ±4 bins, ENBW של 2.0 bins. בחירה סטנדרטית לדינמיקה גבוהה.\n- **flat-top**: scalloping של כ-0.01 dB, ENBW של כ-3.8 bins. למדידת amplitude מדויקת, לא להפרדה.\n- **Kaiser**: פרמטר β שולט בטרייד-אוף. β=0 הוא מלבני; β≈6 נותן כ-44 dB-, β≈8.6 כ-63 dB-, β≈11 כ-82 dB-, β≈12.6 כ-95 dB-. הוא קירוב טוב ל-DPSS (החלון שמרכז הכי הרבה אנרגיה ב-mainlobe), וה-sidelobes שלו דועכים 6 dB לאוקטבה.\n- **Dolph-Chebyshev**: כל ה-sidelobes באותו גובה (equiripple). נותן את ה-mainlobe הצר ביותר לרמת sidelobes נתונה, אבל בלי דעיכה בכלל.\n- **Gaussian**: ה-log של ה-mainlobe כמעט פרבולה, ולכן מתאים לאינטרפולציה פרבולית של תדר.\n\nאיך בוחרים: שני טונים קרובים בעוצמה דומה דורשים mainlobe צר (מלבני, Hann). אות חלש ליד חזק דורש sidelobes נמוכים מספיק במרחק הרלוונטי (Blackman-Harris, Kaiser עם β גבוה). דיוק amplitude לטון בתדר לא ידוע דורש flat-top. חשוב: הגדלת N משפרת רזולוציה ב-Hz, אבל לא משנה את רמת ה-sidelobes ב-dB ולא את הרוחב ב-bins; את זה קובעים רק צורת החלון ו-β."
+        },
+        {
+          "title": "נרמול: coherent gain, ENBW, scalloping ו-processing loss",
+          "body": "**coherent gain** = Σw/N: פי כמה ה-peak של טון קטן לעומת מלבני. ל-Hann 0.5 (6.02 dB-). כדי לשחזר amplitude A מחלקים את |X[k]| ב-Σw (באות מרוכב), ובספקטרום חד-צדדי של אות ממשי מכפילים ב-2.\n\nרעש לבן לא מצטבר קוהרנטית: E|X[k]|^2 = σ^2·Σw^2. לכן PSD = |X[k]|^2 / (fs·Σw^2) (דו-צדדי; בחד-צדדי כפול 2 חוץ מ-DC ו-Nyquist). היחס בין שני הנרמולים הוא **ENBW** = N·Σw^2/(Σw)^2 בבינים: כמה bins של רעש כל bin 'אוסף'. ל-Hann 1.5, כלומר רצפת הרעש עולה ב-1.76 dB יחסית לטון לעומת מלבני. בגלל זה אין נרמול אחד שנכון גם לטונים וגם לרעש.\n\n**scalloping loss** (picket-fence): טון שנופל באמצע בין שני bins נמדד נמוך יותר מטון על bin. במלבני 3.92 dB (2/π), ב-Hann 1.42 dB, ב-Hamming 1.75, ב-Blackman-Harris 0.83, ב-flat-top כ-0.01.\n\n**worst-case processing loss** = scalloping + 10·log10(ENBW): ההפסד ביחס טון-לרעש ל-bin לטון בתדר לא ידוע, לעומת מלבני עם טון על bin. מלבני 3.92 dB, Hann 3.18, Hamming 3.10, Blackman-Harris 3.85, flat-top 5.77. מפתיע: גם בלי אות מפריע, Hann עדיף על מלבני לגילוי טון בתדר לא ידוע.\n\nטריק שימושי: Hann periodic בזמן שקול לקונבולוציה בת 3 taps בתדר: X_h[k] = 0.5·X[k] - 0.25·(X[k-1] + X[k+1]), מעגלית. אם כבר יש FFT מלבני, אפשר לקבל ממנו Hann בלי FFT נוסף."
+        },
+        {
+          "title": "periodic מול symmetric, COLA ו-overlap-add",
+          "body": "**symmetric** Hann מחלק ב-N-1, כך ששני הקצוות אפס; הוא מיועד לתכנון מסנני FIR. **periodic** (DFT-even) מחלק ב-N: הקצה השמאלי אפס, והקצה הימני הוא הדגימה שלפני האפס הבא, כלומר הוא symmetric Hann באורך N+1 בלי הדגימה האחרונה. לניתוח ספקטרלי ו-STFT משתמשים ב-periodic. `np.hanning` מחזיר symmetric; `scipy.signal.get_window('hann', N)` מחזיר periodic כברירת מחדל.\n\n**COLA** (constant overlap-add): סכום החלונות המוזזים ב-hop קבוע לכל דגימה. דוגמאות:\n- Hann periodic ב-50%: סכום 1. ב-75%: סכום 2.\n- Hamming periodic ב-50%: סכום 1.08.\n- Blackman: צריך 2/3 overlap. Blackman-Harris 4-term: צריך 75% (ב-50% הסכום נע בין 0.43 ל-1).\n- מלבני בלי overlap: סכום 1.\n- symmetric Hann ב-50%: לא קבוע (אדווה של כמה אחוזים, יותר ב-N קטן).\n\nב-**WOLA** (ניתוח, עיבוד בתדר, סינתזה ב-overlap-add עם חלון סינתזה) כל דגימה מוכפלת פעמיים, ולכן התנאי הוא שהמכפלה של חלון הניתוח והסינתזה תהיה COLA. Hann פעמיים נותן Hann^2, שהוא COLA רק ב-75%. לכן משתמשים ב-sqrt-Hann פעמיים, שמכפלתו Hann, ב-50%. חלון הסינתזה גם מרכך קצוות של frames שהעיבוד שינה."
+        },
+        {
+          "title": "Welch: ממוצע, overlap ו-variance",
+          "body": "periodogram יחיד של רעש הוא הערכה עם variance גדול: כל bin מתפלג בערך אקספוננציאלית, וסטיית התקן שלו שווה לממוצע. Welch ממצע |X|^2 של K frames (בסקאלה לינארית), וה-variance יורד בערך פי K.\n\nעם חלון, frames לא חופפים 'מבזבזים' את הדגימות שבקצוות, כי הן מוחלשות כמעט לאפס. overlap מחזיר אותן: הדגימות בקצה של frame אחד נמצאות במרכז של הבא. frames חופפים מתואמים, אבל מעט: מקדם הקורלציה הוא ρ = Σw[n]·w[n+D] / Σw^2, ב-Hann עם 50% overlap הוא 1/6 ≈ 0.167. ה-variance של הממוצע הוא בערך (1+2ρ^2)/K, ולכן 99 frames חופפים נותנים כמעט 1/99, לעומת 1/50 בלי overlap.\n\nלחלונות צרים יותר בזמן (Blackman-Harris, flat-top) 50% לא מספיק: ב-Blackman-Harris הקורלציה ב-50% היא רק כ-0.04, כלומר עדיין מבזבזים נתונים, והמומלץ הוא כ-66%-75%. מעל זה הקורלציה עולה מהר ומוסיפה חישוב בלי רווח."
+        },
+        {
+          "title": "מימוש: טבלה, fixed point, SIMD ו-fusion",
+          "body": "את טבלת החלון מחשבים פעם אחת באתחול, ב-double, ושומרים כ-float מיושר (64 bytes). בלולאה החמה יש רק כפל. לדאטה מרוכב interleaved (re, im, re, im) מכינים טבלה משוכפלת w0, w0, w1, w1, ... כך שכפל וקטורי רגיל (`_mm256_mul_ps`) עובד בלי shuffles.\n\nהכפל עצמו זניח, ולכן שלב חלון נפרד הוא בעיקר עוד מעבר על הזיכרון (memory-bound). **fusion**: באותה לולאה ממירים sc16 ל-fc32, מכפילים בחלון שכבר כולל את קבוע הנרמול (1/32768 ו-1/Σw), וכותבים ישר ל-buffer של ה-FFT.\n\n**Q15**: int16 שמייצג [-1, 1-2^-15]. ל-Hann periodic יש מקדם 1.0 בדיוק במרכז, ו-32768 לא נכנס ב-int16, אז מסקלים ב-32767 או עושים saturation. כפל Q15: מכפלה ב-int32, עיגול על ידי הוספת 2^14, והזזה ימינה ב-15. מאז C++20 הזזה ימינה של מספר שלילי מוגדרת כאריתמטית, וגם המרה ל-int16 של ערך מחוץ לטווח מוגדרת כ-modulo 2^16 (לפני כן implementation-defined). המקרה הקלאסי: (-1)·(-1) = 1, שלא ניתן לייצוג, ולכן בלי saturation התוצאה עוטפת ל-32768- (מינוס 1).\n\n**DC ו-leakage**: offset של DC עם Hann מופיע ב-bin 0 וגם ב-bins ±1, רק 6 dB מתחת (בגלל ה-3 taps), ומסתיר אותות חלשים ליד DC. מורידים DC לפני החלון, למשל ממוצע רץ או מסנן DC blocker."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: נרמול Hann ב-N=1024",
+          "body": "Hann periodic, N = 1024, fs = 1 MHz.\n\n- Σw = 512 (coherent gain 0.5), Σw^2 = 384, ENBW = 1024·384/512^2 = 1.5 bins\n- טון מרוכב באמפליטודה A על bin: |X[k]| = 512·A. קוסינוס ממשי: 256·A בכל צד, ובחד-צדדי 2·256/512 = A\n- רעש לבן מרוכב בהספק σ^2 = 9: E|X|^2 = 9·384 = 3456 לכל bin, ו-PSD = 3456/(1e6·384) = 9e-6, כלומר σ^2/fs ≈ 50.5 dB/Hz-\n- טון באמצע בין bins: נמדד נמוך ב-1.42 dB, והרצפה גבוהה ב-1.76 dB יחסית למלבני\n\nהלקח: מי שמנרמל ב-N מקבל טונים נמוכים ב-6 dB; מי שמנרמל רעש ב-Σw^2 טונים ב-Σw, מקבל את שניהם נכון."
+        },
+        {
+          "title": "דוגמה: אות חלש ב-80 dB- במרחק 5 bins",
+          "body": "הרמה המקסימלית של leakage בטווח 4.5-5.5 bins מטון חזק (שיא תגובה בטווח הזה):\n\n- מלבני: כ-23 dB-\n- Hamming: כ-43 dB-\n- Hann: כ-49 dB- (ב-20 bins כבר כ-87 dB-)\n- Blackman: כ-60 dB-\n- Kaiser β=11: כ-82 dB-\n- Blackman-Harris 4-term: כ-92 dB-\n\nרק Kaiser β=11 ו-Blackman-Harris עוברים את 80 dB-. Blackman-Harris עדיף כאן כי ה-mainlobe שלו נגמר ב-±4 bins, כך שהאות החלש ב-5 bins עדיין מחוץ לו. Hamming נראה טוב לפי ה-sidelobe הראשון, אבל לא דועך."
+        },
+        {
+          "title": "דוגמה: COLA ב-N=8 עם hop 4",
+          "body": "Hann periodic: [0, 0.146, 0.5, 0.854, 1, 0.854, 0.5, 0.146]. חפיפה של החצי השני של frame עם החצי הראשון של הבא: 0+1, 0.146+0.854, 0.5+0.5, 0.854+0.146, כלומר 1 בכל מקום.\n\nsymmetric (`np.hanning(8)`): [0, 0.188, 0.611, 0.95, 0.95, 0.611, 0.188, 0]. הסכומים 0.95, 0.8, 0.8, 0.95: אדווה של כ-16%, וזה בדיוק מה שמופיע כ-modulation בסינתזה.\n\nHann periodic בריבוע (ניתוח וסינתזה עם Hann): הסכומים 1, 0.75, 0.5, 0.75: לא COLA ב-50%. עם sqrt-Hann פעמיים המכפלה היא Hann, והסכום שוב 1."
+        },
+        {
+          "title": "דוגמה: כפל Q15 ומקרי הקצה",
+          "body": "mulQ15(x, w) = (int32(x)·w + 2^14) >> 15, והתוצאה מומרת ל-int16.\n\n- 16384·16384 (0.5·0.5): 268,435,456 + 16,384, הזזה ב-15: 8192, כלומר 0.25. תקין.\n- 32768-·32767 (1-·0.99997): 1,073,709,056- + 16,384 = 1,073,692,672-, חלקי 32768 = 32766.5-, והזזה אריתמטית מעגלת כלפי מטה ל-32767-.\n- 32768-·32768- (1-·1-): 1,073,741,824 + 16,384, הזזה: 32768, שלא נכנס ב-int16 ועוטף ל-32768-. התוצאה של 1·1 היא 1-.\n\nבחלון Hann זה קורה בדיוק במרכז אם שומרים 1.0 כ-32768 (שהופך ל-32768- כבר בטבלה). התיקון: סקאלה של 32767, או saturation אחרי ההזזה."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "spectral leakage",
+          "def": "פיזור אנרגיה של טון ל-bins אחרים כשהוא לא נכנס מספר שלם של מחזורים ב-frame, בגלל הקפיצה בין סוף ה-frame לתחילתו."
+        },
+        {
+          "term": "window / חלון",
+          "def": "סדרת מקדמים w[n] שמוכפלת ב-frame לפני ה-FFT. בתדר זו קונבולוציה עם W(f), ולכן כל טון מופיע כעותק של W(f)."
+        },
+        {
+          "term": "mainlobe",
+          "def": "האונה המרכזית של W(f). רוחבה (2 bins במלבני, 4 ב-Hann, 8 ב-Blackman-Harris) קובע את היכולת להפריד טונים קרובים."
+        },
+        {
+          "term": "sidelobes ו-roll-off",
+          "def": "האונות שמחוץ ל-mainlobe. הגובה (13.3 dB- במלבני, 31.5 dB- ב-Hann) והדעיכה (6 או 18 dB לאוקטבה) קובעים כמה אות חזק מסתיר אות חלש."
+        },
+        {
+          "term": "Rectangular",
+          "def": "בלי חלון. mainlobe הצר ביותר ו-ENBW של 1, אבל sidelobes גבוהים. בלי leakage רק כשהטון בדיוק על bin."
+        },
+        {
+          "term": "Hann",
+          "def": "0.5-0.5·cos(2πn/N). coherent gain 0.5, ENBW 1.5, sidelobe 31.5 dB-, 18 dB לאוקטבה. ברירת המחדל ל-STFT."
+        },
+        {
+          "term": "Hamming",
+          "def": "0.54-0.46·cos. sidelobe ראשון כ-43 dB-, אבל לא מתאפס בקצוות ולכן דועך רק 6 dB לאוקטבה."
+        },
+        {
+          "term": "Blackman / Blackman-Harris",
+          "def": "חלונות סכום-קוסינוסים עם 3-4 איברים. Blackman כ-58 dB-; Blackman-Harris 4-term כ-92 dB-, mainlobe ±4 bins, ENBW 2.0."
+        },
+        {
+          "term": "flat-top",
+          "def": "חלון עם mainlobe כמעט שטוח: scalloping של כ-0.01 dB למדידת amplitude, במחיר ENBW של כ-3.8 bins."
+        },
+        {
+          "term": "Kaiser ו-β",
+          "def": "חלון מבוסס Bessel I0 עם פרמטר β: β=0 מלבני, β גבוה מוריד sidelobes ומרחיב mainlobe. קירוב ל-DPSS."
+        },
+        {
+          "term": "DPSS",
+          "def": "Discrete Prolate Spheroidal Sequence: החלון שמרכז את מקסימום האנרגיה ברוחב פס נתון. בסיס ל-multitaper."
+        },
+        {
+          "term": "Dolph-Chebyshev",
+          "def": "חלון עם sidelobes שווים בגובהם (equiripple) ו-mainlobe צר ככל האפשר לרמה הזו, אבל בלי דעיכה."
+        },
+        {
+          "term": "Gaussian window",
+          "def": "חלון שה-log של ה-mainlobe שלו כמעט פרבולה; מתאים לאינטרפולציה פרבולית של תדר peak."
+        },
+        {
+          "term": "coherent gain",
+          "def": "Σw/N: פי כמה ה-peak של טון קטן לעומת מלבני (Hann 0.5, כלומר 6.02 dB-). מנרמלים amplitude ב-Σw."
+        },
+        {
+          "term": "ENBW",
+          "def": "N·Σw^2/(Σw)^2 בבינים: רוחב הפס של מסנן מלבני שאוסף אותו רעש. Hann 1.5 (1.76 dB)."
+        },
+        {
+          "term": "PSD",
+          "def": "Power Spectral Density, הספק ל-Hz: |X|^2/(fs·Σw^2) בדו-צדדי. בחד-צדדי כפול 2 חוץ מ-DC ו-Nyquist."
+        },
+        {
+          "term": "scalloping loss",
+          "def": "ההנחתה של טון שנופל באמצע בין bins לעומת טון על bin: 3.92 dB במלבני, 1.42 ב-Hann, כ-0.01 ב-flat-top."
+        },
+        {
+          "term": "worst-case processing loss",
+          "def": "scalloping + 10·log10(ENBW): ההפסד ביחס טון-לרעש ל-bin לטון בתדר לא ידוע. Hann 3.18 dB, מלבני 3.92."
+        },
+        {
+          "term": "periodic מול symmetric",
+          "def": "periodic מחלק ב-N ומתאים ל-DFT ול-STFT; symmetric מחלק ב-N-1 ומתאים ל-FIR. np.hanning הוא symmetric."
+        },
+        {
+          "term": "COLA",
+          "def": "Constant Overlap-Add: סכום החלונות המוזזים ב-hop קבוע. Hann periodic ב-50% (סכום 1) וב-75% (סכום 2)."
+        },
+        {
+          "term": "overlap-add ו-WOLA",
+          "def": "סינתזה של STFT: IFFT לכל frame וחיבור עם חפיפה. ב-WOLA יש גם חלון סינתזה, והמכפלה של שני החלונות צריכה להיות COLA."
+        },
+        {
+          "term": "sqrt-Hann",
+          "def": "שורש של Hann periodic. בניתוח ובסינתזה המכפלה היא Hann, ולכן שחזור מושלם ב-50% overlap."
+        },
+        {
+          "term": "Welch",
+          "def": "הערכת PSD בממוצע לינארי של periodograms מחולנים וחופפים. ה-variance יורד בערך פי K."
+        },
+        {
+          "term": "overlap correlation",
+          "def": "ρ = Σw[n]w[n+D]/Σw^2 בין frames סמוכים; ב-Hann ב-50% כ-0.167. ה-variance של ממוצע Welch בערך (1+2ρ^2)/K."
+        },
+        {
+          "term": "frequency-domain Hann",
+          "def": "Hann periodic שקול לקונבולוציה בתדר: 0.5·X[k] - 0.25·(X[k-1]+X[k+1]). מאפשר לקבל Hann מ-FFT מלבני."
+        },
+        {
+          "term": "DC leakage",
+          "def": "offset של DC עם Hann מופיע גם ב-bins ±1, רק 6 dB מתחת. מורידים DC לפני החלון."
+        },
+        {
+          "term": "Q15",
+          "def": "int16 שמייצג [-1, 1-2^-15]. 1.0 לא ניתן לייצוג. כפל: מכפלה ב-int32, הוספת 2^14 לעיגול, הזזה ב-15, ו-saturation."
+        },
+        {
+          "term": "saturation",
+          "def": "חיתוך התוצאה לטווח [32768-, 32767] במקום wrap-around. מונע היפוך סימן ב-(-1)·(-1)."
+        },
+        {
+          "term": "C++20 shift ו-conversion",
+          "def": "מאז C++20 הזזה ימינה של שלילי היא אריתמטית, והמרה לטיפוס שלם צר היא modulo 2^n. המרת double מחוץ לטווח ל-int היא עדיין UB."
+        },
+        {
+          "term": "טבלה משוכפלת ו-SIMD",
+          "def": "לדאטה מרוכב interleaved שומרים w0, w0, w1, w1, ... כדי שכפל וקטורי אחד יחול על re ו-im בלי shuffles."
+        },
+        {
+          "term": "fusion",
+          "def": "איחוד המרת sc16 ל-fc32, חלון ונרמול ללולאה אחת, כדי לקרוא ולכתוב את הזיכרון פעם אחת. החלון memory-bound, לא compute-bound."
+        },
+        {
+          "term": "sc16 / fc32",
+          "def": "פורמטים של IQ: sc16 הוא זוג int16 (4 bytes לדגימה), fc32 זוג float (8 bytes). ההמרה היא חלוקה ב-32768."
+        }
+      ]
     }
   ],
   "questions": [
@@ -238,7 +412,7 @@
         "חלון עם sidelobes מתחת ל-80 dB- כמו Blackman-Harris 4-term או Kaiser עם β גבוה, ולקחת בחשבון mainlobe רחב יותר (אולי N גדול יותר)"
       ],
       "answer": 3,
-      "explanation": "השאלה היא כמה leakage של האות החזק מגיע 5 bins משם. ב-Hann המעטפת היא בערך sinc(f)/(1-f^2), כלומר בסביבות 54 dB- ב-5 bins (ורק ב-20 bins היא יורדת לסביבות 88 dB-). Hamming דועך לאט ונמצא שם בסביבות 50 dB-. שניהם מסתירים אות ב-80 dB-. N גדול לא מוריד sidelobes ביחידות של bins. Blackman-Harris 4-term (sidelobes של 92 dB-, mainlobe עד ±4 bins) או Kaiser עם β גבוה מספיק (בסביבות 11) פותרים את זה, והמחיר הוא mainlobe רחב יותר.",
+      "explanation": "השאלה היא כמה leakage של האות החזק מגיע 5 bins משם. ב-Hann המעטפת היא בערך sinc(f)/(1-f^2), כלומר בין 49 dB- ל-54 dB- סביב 5 bins, תלוי איפה הטון נופל (ורק ב-20 bins היא יורדת לסביבות 88 dB-). Hamming דועך לאט מאוד ונמצא שם בסביבות 43 dB-. שניהם מסתירים אות ב-80 dB-. N גדול לא מוריד sidelobes ביחידות של bins. Blackman-Harris 4-term (sidelobes של 92 dB-, mainlobe עד ±4 bins) או Kaiser עם β גבוה מספיק (בסביבות 11, כ-82 dB-) פותרים את זה, והמחיר הוא mainlobe רחב יותר.",
       "lesson": "dsp.windows"
     },
     {
@@ -306,6 +480,295 @@
         "מדידה: GB/s מול גבול החומרה"
       ],
       "explanation": "זו שאלה טיפוסית של NVIDIA: כשפעולה זולה לוקחת זמן, הסיבה היא כמעט תמיד תנועת נתונים, והפתרון הוא kernel fusion.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.windows.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "אקספוננט מרוכב שנכנס בדיוק 10 מחזורים ב-frame של N = 64, בלי חלון (מלבני). מה רואים ב-|X[k]|?",
+      "choices": [
+        "bin 10 ושני שכניו, בגלל רוחב ה-mainlobe",
+        "ערך שאינו אפס רק ב-bin 10",
+        "פיזור על כל ה-bins שדועך כמו 1/k",
+        "bin 10 ו-bin 54"
+      ],
+      "answer": 1,
+      "explanation": "כשהטון בדיוק על bin, כל שאר ה-bins נופלים על האפסים של ה-sinc של החלון המלבני, ולכן יש ערך שאינו אפס רק ב-bin 10 (N = 64). leakage מופיע רק כשמספר המחזורים לא שלם. אקספוננט מרוכב לא יוצר תמונת ראי ב-N-10; זה קורה לקוסינוס ממשי. mainlobe של 2 bins הוא רוחב בין האפסים, לא מספר ה-bins שמקבלים אנרגיה במקרה הזה.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q19",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה רוחב ה-mainlobe של חלון Hann בין האפסים, ביחידות של bins?",
+      "accept": [
+        "4",
+        "4 bins",
+        "±2"
+      ],
+      "explanation": "התגובה של Hann היא סכום של שלושה sinc מוזזים ב-1 bin, והאפסים הראשונים שלה נמצאים ב-±2 bins, כלומר רוחב של 4 bins. במלבני זה 2 bins (±1), וב-Blackman-Harris 4-term 8 bins (±4). זה המחיר של sidelobes נמוכים.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה scalloping loss?",
+      "choices": [
+        "ההנחתה הקבועה של כל טון בגלל החלון (Σw/N)",
+        "עליית רצפת הרעש ל-bin בגלל רוחב הפס האפקטיבי של החלון",
+        "ההנחתה של טון שנופל בין שני bins לעומת טון שנופל בדיוק על bin",
+        "הספק שדולף ל-bins רחוקים דרך ה-sidelobes"
+      ],
+      "answer": 2,
+      "explanation": "scalloping (picket-fence) הוא ההבדל בגובה ה-peak בין טון שנופל על bin לטון שנופל בין bins, והמקסימום באמצע: 3.92 dB במלבני ו-1.42 ב-Hann. ההנחתה הקבועה של ה-peak בגלל החלון היא coherent gain. עליית רצפת הרעש היא ENBW. leakage ל-bins רחוקים הוא ה-sidelobes.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q21",
+      "level": 1,
+      "type": "multi",
+      "prompt": "מה המחיר של החלת חלון Hann במקום חלון מלבני? (בחר את כל הנכונים)",
+      "choices": [
+        "mainlobe רחב יותר: קשה יותר להפריד טונים קרובים",
+        "ENBW גדול יותר: יותר רעש לכל bin יחסית לטון",
+        "סיבוכיות ה-FFT עולה ל-O(N^2)",
+        "ה-peak של טון יורד ב-6 dB אם לא מתקנים את הנרמול",
+        "aliasing חזק יותר בגלל הקצוות המוחלשים"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "Hann מרחיב את ה-mainlobe (4 bins במקום 2), ולכן טונים קרובים קשים יותר להפרדה. ENBW עולה ל-1.5, ורצפת הרעש עולה ב-1.76 dB יחסית לטון. ה-peak של טון יורד ב-6 dB (coherent gain 0.5), אבל זה קבוע ומתקנים אותו בנרמול. החלון מוסיף רק N כפלים, ולא משנה את סיבוכיות ה-FFT. aliasing קורה בדגימה, וחלון לא יכול לבטל או ליצור אותו.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q22",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nN = 4\nw = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(N) / N)\nprint(np.round(w, 2), w.sum() / N)",
+      "choices": [
+        "[0.  0.5 1.  0.5] 0.5",
+        "[0.   0.75 0.75 0.  ] 0.375",
+        "[0.  0.5 1.  0.5] 0.375",
+        "[0.   0.75 0.75 0.  ] 0.5"
+      ],
+      "answer": 0,
+      "explanation": "זה Hann periodic: w[n] = 0.5-0.5·cos(2πn/4), ולכן [0, 0.5, 1, 0.5]. הסכום 2, וחלקי N נותן coherent gain של 0.5 בדיוק. [0, 0.75, 0.75, 0] הוא `np.hanning(4)`, ה-symmetric שמחלק ב-N-1. coherent gain של 0.375 הוא Σw^2/N (ההספק הממוצע של החלון), לא Σw/N.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q23",
+      "level": 2,
+      "type": "short",
+      "prompt": "מה הערך של Σw (סכום המקדמים) של חלון Hann periodic באורך N = 1024?",
+      "accept": [
+        "512",
+        "N/2"
+      ],
+      "explanation": "הממוצע של 0.5-0.5·cos על מחזור שלם הוא 0.5, כי סכום הקוסינוס על מחזור שלם הוא אפס. לכן Σw = N/2 = 512. זה המספר שמחלקים בו את |X| כדי לקבל amplitude. Σw^2 הוא 3N/8 = 384, והוא משמש לנרמול רעש.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q24",
+      "level": 2,
+      "type": "short",
+      "prompt": "בחלון מלבני, טון שנופל בדיוק באמצע בין שני bins. בכמה dB ה-peak שלו נמוך מטון שנופל על bin? (שתי ספרות אחרי הנקודה)",
+      "accept": [
+        "3.92",
+        "3.92dB",
+        "-3.92",
+        "3.9"
+      ],
+      "explanation": "התגובה של מלבני במרחק חצי bin היא sin(π/2)/(π/2) = 2/π ≈ 0.637, כלומר 20·log10(2/π) ≈ 3.92 dB-. זה ה-scalloping loss של המלבני. ב-Hann הוא 1.42 dB בלבד, וזו אחת הסיבות להעדיף Hann גם לגילוי טון בתדר לא ידוע.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q25",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הפונקציה אמורה להחזיר amplitude של קוסינוס ממשי, אבל לקוסינוס באמפליטודה 1 שנופל על bin היא מחזירה 0.5. איפה הבאג?",
+      "lang": "python",
+      "code": "import numpy as np\ndef tone_amp(x):\n    N = len(x)\n    w = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(N) / N)\n    X = np.fft.rfft(x * w)\n    return 2 * np.abs(X).max() / N",
+      "bugLine": 6,
+      "choices": [
+        "צריך symmetric Hann, חלוקה ב-N-1, ולא periodic",
+        "rfft מחזיר חצי מה-peak לעומת fft, ולכן צריך fft",
+        "הכפל ב-2 מיותר, כי rfft כבר מחזיר ספקטרום חד-צדדי מנורמל",
+        "הנרמול צריך להיות ב-`w.sum()` ולא ב-N: עם Hann ה-coherent gain הוא 0.5"
+      ],
+      "answer": 3,
+      "explanation": "הנרמול חייב להיות ב-Σw, לא ב-N: עם Hann ה-peak הוא A·Σw/2 = A·N/4, ולכן 2·|X|/N נותן A/2 (6 dB פחות). התיקון: `return 2 * np.abs(X).max() / w.sum()`. הכפל ב-2 נכון לספקטרום חד-צדדי של אות ממשי. החלון periodic, וזה הנכון ל-FFT; symmetric לא היה מתקן את פקטור 2. rfft מחזיר את אותו peak כמו fft בצד החיובי.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "כבר חישבת X = FFT של frame בלי חלון (N = 4096). איך מקבלים את הספקטרום עם חלון Hann periodic בלי FFT נוסף?",
+      "choices": [
+        "X_h[k] = 0.5·X[k] - 0.25·(X[k-1] + X[k+1]), מעגלית",
+        "X_h[k] = 0.5·X[k] + 0.25·(X[k-1] + X[k+1]), מעגלית",
+        "X_h[k] = X[k]·W[k], כאשר W הוא FFT של החלון",
+        "אי אפשר בלי FFT נוסף; זה עובד רק עם symmetric Hann"
+      ],
+      "answer": 0,
+      "explanation": "0.5-0.5·cos(2πn/N) הוא 0.5 פחות 0.25 של שני אקספוננטים בתדרים ±1 bin, וכפל באקספוננט בזמן הוא הזזה בתדר. לכן X_h[k] = 0.5·X[k] - 0.25·(X[k-1] + X[k+1]), עם אינדקסים מעגליים, ב-O(N). הסימן חיובי מתאים ל-0.5+0.5·cos, שהוא חלון הפוך שמגביר את הקצוות. כפל איבר-איבר ב-W[k] הוא כפל בתדר, שמתאים לקונבולוציה מעגלית בזמן ולא לחלון. ל-symmetric Hann אין תבנית של 3 taps מדויקת, כי הוא לא מחזורי ב-N.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q27",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך לראות אות חלש ב-70 dB מתחת לאות חזק, במרחק של כ-50 bins ממנו. בוחרים בין Hann ל-Hamming. מה נכון?",
+      "choices": [
+        "Hamming, כי ה-sidelobe הראשון שלו נמוך ב-11 dB",
+        "שניהם מספיקים, כי ב-50 bins כל חלון כבר מתחת ל-70 dB-",
+        "Hann: Hamming דועך רק 6 dB לאוקטבה (כ-60 dB- ב-50 bins), ו-Hann דועך 18 dB לאוקטבה (כ-110 dB- שם)",
+        "אף אחד: צריך להגדיל N עד שה-sidelobes יירדו"
+      ],
+      "answer": 2,
+      "explanation": "Hamming לא מתאפס בקצוות (0.08), ולכן ה-sidelobes שלו דועכים רק 6 dB לאוקטבה: כ-43 dB- ליד ה-mainlobe וכ-60 dB- ב-50 bins. Hann מתחיל ב-31.5 dB- אבל דועך 18 dB לאוקטבה, ונמצא בסביבות 110 dB- ב-50 bins. לכן הקריטריון הוא הרמה במרחק הרלוונטי, לא ה-sidelobe הראשון. ההבדל בין periodic ל-symmetric לא משנה את ההחלטה, ו-N גדול לא משנה רמות sidelobes ביחידות של bins.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q28",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו שילובים של חלון ו-overlap מקיימים COLA (סכום קבוע של החלונות המוזזים)? (בחר את כל הנכונים)",
+      "choices": [
+        "Hann periodic עם 50% overlap",
+        "Hann periodic בריבוע (Hann בניתוח ו-Hann בסינתזה) עם 50% overlap",
+        "Hann periodic עם 75% overlap",
+        "symmetric Hann (`np.hanning`) עם 50% overlap",
+        "חלון מלבני בלי overlap"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "Hann periodic מקיים COLA ב-50% (סכום 1) וב-75% (סכום 2), כי ההרמוניה היחידה שלו (cos אחד) מתבטלת בשני המקרים. מלבני בלי overlap מכסה כל דגימה פעם אחת. Hann^2 (Hann בניתוח ובסינתזה) מכיל cos(2·) שלא מתבטל ב-50%, והסכום נע בין 0.5 ל-1. symmetric Hann (חלוקה ב-N-1) לא מחזורי ב-N, והסכום מקבל אדווה.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q29",
+      "level": 4,
+      "type": "code",
+      "prompt": "כתוב `welch_psd(x, fs, N)` ב-NumPy: PSD דו-צדדי של אות מרוכב בשיטת Welch, עם Hann periodic באורך N ו-50% overlap, ביחידות של units^2/Hz. החזר תדרים ו-PSD אחרי fftshift. (בלי SciPy)",
+      "lang": "python",
+      "starter": "def welch_psd(x, fs, N):\n    ...",
+      "modelAnswer": "import numpy as np\n\ndef welch_psd(x, fs, N):\n    hop = N // 2\n    w = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(N) / N)  # periodic Hann\n    K = (len(x) - N) // hop + 1\n    if K < 1:\n        raise ValueError(\"signal shorter than one frame\")\n    idx = np.arange(K)[:, None] * hop + np.arange(N)       # K x N frame indices\n    P = np.abs(np.fft.fft(x[idx] * w, axis=1)) ** 2\n    psd = P.mean(axis=0) / (fs * np.sum(w ** 2))           # two-sided density\n    f = np.fft.fftfreq(N, d=1 / fs)\n    return np.fft.fftshift(f), np.fft.fftshift(psd)",
+      "rubric": [
+        "Hann periodic (חלוקה ב-N) ו-hop של N/2, עם מספר frames נכון (len-N)//hop+1",
+        "ממוצע לינארי של |X|^2 ורק אחריו נרמול, לא ממוצע ב-dB",
+        "נרמול ב-fs·Σw^2 (לא ב-N או ב-Σw)",
+        "fftshift גם לתדרים וגם ל-PSD, וטיפול באות קצר מ-frame",
+        "וקטוריזציה (מטריצת אינדקסים או stride_tricks) במקום לולאה, וזיכרון O(K·N) או לולאה עם צובר O(N)"
+      ],
+      "explanation": "בדיקה טובה: רעש לבן מרוכב בהספק σ^2 צריך לתת PSD ממוצע של σ^2/fs. זה מה ש-`scipy.signal.welch` מחזיר עם `window='hann'`, `noverlap=N//2`, `detrend=False`, `return_onesided=False` ו-`scaling='density'`.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "dsp.windows.q30",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מגלים טון חלש בתדר לא ידוע ברעש לבן, בלי אותות מפריעים. מישהו טוען שחלון מלבני עדיף, כי ה-ENBW שלו 1 ולכן רצפת הרעש הכי נמוכה. מה נכון?",
+      "choices": [
+        "נכון: ENBW של 1 נותן את היחס הטוב ביותר בכל תדר",
+        "Hann עדיף בכ-0.7 dB במקרה הגרוע: מלבני מאבד 3.92 dB ב-scalloping, ו-Hann מאבד 1.42 + 1.76 = 3.18 dB",
+        "flat-top עדיף, כי הוא מבטל את ה-scalloping לגמרי",
+        "אין הבדל: ההפסדים של scalloping ושל ENBW תמיד מתקזזים"
+      ],
+      "answer": 1,
+      "explanation": "המדד הנכון הוא worst-case processing loss = scalloping + 10·log10(ENBW). מלבני: 3.92 + 0 = 3.92 dB. Hann: 1.42 + 1.76 = 3.18 dB, כלומר טוב ב-0.7 dB במקרה הגרוע. הטענה על ENBW נכונה רק לטון שנופל בדיוק על bin. flat-top מבטל scalloping אבל משלם 5.8 dB על ENBW של 3.8. ממוצע scalloping על תדרים אחידים קטן יותר, אבל הדרישה לגילוי נקבעת במקרה הגרוע.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.windows.q31",
+      "level": 4,
+      "type": "output",
+      "prompt": "מה מודפס (C++20)?",
+      "lang": "cpp",
+      "code": "#include <cstdint>\n#include <cstdio>\nint16_t mulQ15(int16_t x, int16_t w) {\n    int32_t p = int32_t(x) * w;\n    return int16_t((p + (1 << 14)) >> 15);\n}\nint main() {\n    std::printf(\"%d %d\\n\", mulQ15(-32768, -32768),\n                mulQ15(-32768, 32767));\n}",
+      "choices": [
+        "32767 -32767",
+        "-32768 -32767",
+        "32767 -32768",
+        "-32768 -32766"
+      ],
+      "answer": 1,
+      "explanation": "32768-·32767 = 1,073,709,056-, ועם 16,384 מקבלים 1,073,692,672-, שהוא 32766.5- כפול 2^15. הזזה אריתמטית מעגלת כלפי מינוס אינסוף, ולכן 32767-. 32768-·32768- = 2^30, ועם העיגול ההזזה נותנת 32768, שלא נכנס ב-int16; מאז C++20 ההמרה היא modulo 2^16, ולכן 32768-. כלומר (-1)·(-1) יוצא 1-. מי שמצפה ל-32767 מניח saturation שלא קיים בקוד. התיקון: clamp לפני ההמרה. ב-SIMD שימו לב: `vqrdmulh` של NEON מבצע saturation, אבל `_mm_mulhrs_epi16` של x86 מחזיר במקרה הזה 32768- בדיוק כמו הקוד הזה.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.windows.q32",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ל-ADC יש DC offset גדול. מחילים Hann periodic באורך N ומחפשים אותות חלשים ליד DC. איך ה-DC מופיע בספקטרום, ומה התיקון?",
+      "choices": [
+        "רק ב-bin 0, כי DC קבוע לא דולף; מאפסים את bin 0 אחרי ה-FFT",
+        "ב-bin 0 ובכל ה-bins דרך sidelobes של 31.5 dB-; מחליפים ל-Blackman-Harris",
+        "ב-bin 0 וב-bins ±1, רק 6 dB מתחת, ואפס ב-|k| ≥ 2; מורידים DC לפני החלון",
+        "ב-bins ±1 בלבד; מגדילים N כדי להצר את ה-mainlobe"
+      ],
+      "answer": 2,
+      "explanation": "DC קבוע הוא טון על bin 0. ב-Hann periodic התגובה היא 0.5·X[k] - 0.25·(X[k-1]+X[k+1]), ולכן ה-DC מופיע ב-bin 0 ובשני ה-bins ±1, שהם רק 6.02 dB מתחת, וב-bins |k| ≥ 2 הוא אפס (כשהוא באמת קבוע). זה מסתיר אות חלש ב-±1 bin. sidelobes של 31.5 dB- הם מה שקורה לטון בין bins, לא ל-DC על bin. הגדלת N לא עוזרת כי ה-mainlobe תמיד ±2 bins. התיקון הוא להוריד DC לפני החלון (ממוצע או DC blocker), וכשה-DC משתנה לאט, הורדה לפני החלון עדיפה על איפוס bin 0 אחרי ה-FFT, שמשאיר את ±1.",
+      "lesson": "dsp.windows",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.windows.q33",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Welch PSD עם Blackman-Harris 4-term. מהנדס בוחר 50% overlap כמו ב-Hann. מה הבעיה, ומה ההמלצה?",
+      "choices": [
+        "ב-50% דגימות רבות כמעט לא תורמות (סכום החלונות יורד ל-0.43), וה-variance גבוה מהנדרש; עדיף כ-66%-75% overlap",
+        "50% overlap יוצר הטיה ב-PSD, וצריך לתקן אותה ב-ENBW",
+        "עם Blackman-Harris עדיף בלי overlap, כי frames חופפים מתואמים מאוד",
+        "עדיף להחליף לחלון מלבני עם 50% overlap, שמנצל את כל הדגימות"
+      ],
+      "answer": 0,
+      "explanation": "Blackman-Harris צר בזמן: ב-50% overlap הקורלציה בין frames סמוכים היא רק כ-0.04, והסכום של החלונות המוזזים נע בין 0.43 ל-1, כלומר יש דגימות שכמעט לא תורמות לאף frame. העלאה לכ-66%-75% מנצלת אותן ומקטינה variance בלי שהקורלציה (כ-0.25 ב-2/3) תאכל את הרווח, ו-75% גם נותן COLA. ההטיה ב-PSD לא תלויה ב-overlap, רק ב-variance. דילוג על חלון מחזיר את ה-leakage שבגללו בחרו ב-Blackman-Harris. overlap גבוה מתואם, אבל מתחת לכ-75% הרווח גדול מההפסד.",
+      "lesson": "dsp.windows"
+    },
+    {
+      "id": "dsp.windows.q34",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות על חלונות Kaiser ו-Dolph-Chebyshev נכונות? (בחר את כל הנכונים)",
+      "choices": [
+        "Kaiser עם β=0 זהה לחלון מלבני",
+        "הגדלת N עם β קבוע מורידה את רמת ה-sidelobes של Kaiser ב-dB",
+        "Dolph-Chebyshev נותן את ה-mainlobe הצר ביותר לרמת sidelobes נתונה, וכל ה-sidelobes שלו באותו גובה",
+        "ה-sidelobes של Kaiser דועכים 18 dB לאוקטבה, כמו של Hann",
+        "Kaiser הוא קירוב טוב לחלון DPSS, שממקסם את האנרגיה ב-mainlobe"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "Kaiser עם β=0 הוא I0(0)/I0(0) = 1, כלומר מלבני, ו-β גבוה יותר מוריד sidelobes ומרחיב mainlobe (β≈8.6 כ-63 dB-, β≈11 כ-82 dB-). Kaiser הוא קירוב טוב ל-DPSS. Dolph-Chebyshev נותן את ה-mainlobe הצר ביותר לרמת sidelobes נתונה, עם sidelobes שווים שלא דועכים. Kaiser לא מתאפס בקצוות, ולכן דועך רק 6 dB לאוקטבה ולא 18 כמו Hann. הגדלת N עם β קבוע מצרה את ה-mainlobe ב-Hz, אבל רמת ה-sidelobes ב-dB נקבעת רק לפי β.",
       "lesson": "dsp.windows",
       "tags": [
         "nvidia"

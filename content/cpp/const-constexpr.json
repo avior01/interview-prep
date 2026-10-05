@@ -35,7 +35,161 @@
         "constexpr מחייב את הקומפיילר לזהות UB בזמן קומפילציה. זה כלי לבדוק קוד: static_assert על חישוב constexpr תופס overflow ו-out-of-bounds",
         "C++17 הפך static constexpr data members ל-inline באופן מרומז, וזה פתר בעיות ODR בקבצי header"
       ],
-      "diagram": "              init at      mutable via\n              compile?     this name?\nconst int     maybe        no\nconstexpr int must         no\nconstinit int must (static) yes"
+      "diagram": "              init at      mutable via\n              compile?     this name?\nconst int     maybe        no\nconstexpr int must         no\nconstinit int must (static) yes",
+      "details": [
+        {
+          "title": "const: מה הוא מבטיח, ומה לא",
+          "body": "const הוא הבטחה על השם, לא תמיד על האובייקט. `const int x = 5;` מגדיר אובייקט const: אסור לשנות אותו בכלל, וניסיון לשנות אותו (למשל דרך const_cast) הוא UB. לעומת זאת `const int& r = y;` כש-y הוא int רגיל אומר רק \"אסור לשנות את y דרך r\". y עדיין יכול להשתנות דרך השם y, דרך pointer אחר או מ-thread אחר.\n\nלכן const& לא עוזר לאופטימייזר כמו שנדמה. בפונקציה שמקבלת `const int& r`, קוראת את r, קוראת לפונקציה חיצונית g שהקומפיילר לא רואה את הגוף שלה, וקוראת את r שוב, הקומפיילר חייב לטעון את r מהזיכרון מחדש: g עשויה לשנות את האובייקט המקורי דרך alias אחר. אם האובייקט עצמו הוגדר const (ומאותחל מקבוע), הקומפיילר רשאי להציב את הערך בכל מקום.\n\ntop-level מול low-level const:\n\n- top-level const חל על האובייקט עצמו: `const int x`, `int* const p`. על פרמטר by-value הוא לא חלק מחתימת הפונקציה, ולכן `void f(int)` ו-`void f(const int)` הן אותה פונקציה. הוא משפיע רק בתוך הגוף.\n- low-level const חל על מה שמצביעים עליו: `const int* p`, `const int&`. הוא כן חלק מהטיפוס, ולכן `f(int*)` ו-`f(const int*)` הם שני overloads.\n\nconst_cast מסיר או מוסיף const. הפעולה עצמה תמיד חוקית; השאלה היא מה האובייקט האמיתי. אם האובייקט לא הוגדר const (רק ה-reference היה const), מותר לכתוב אליו. אם הוא הוגדר const, הכתיבה היא UB: הקומפיילר כבר הציב את הערך המקורי בכל שימוש, והאובייקט עשוי לשבת בזיכרון read-only.\n\nconst int שמאותחל מ-constant expression (למשל `const int n = 4;`) \"usable in constant expressions\" ואפשר להשתמש בו כגודל מערך. החריג הזה קיים רק לטיפוסים שלמים ול-enum; `const double` לא. const int שמאותחל מערך של זמן ריצה הוא סתם משתנה read-only, ומערך בגודל כזה הוא VLA: לא קיים בתקן C++, ו-GCC מקבל אותו רק כהרחבה."
+        },
+        {
+          "title": "const member functions, mutable ו-shallow const",
+          "body": "`int size() const;` אומר שבתוך המתודה this הוא `const T*`. כל member נראה כ-const, ולכן אי אפשר לשנות אותו או לקרוא דרכו למתודה שאינה const. רק מתודות const אפשר לקרוא על אובייקט const או דרך `const T&`, ולכן כל מתודה שלא משנה מצב צריכה להיות const. אחרת היא לא שמישה מפונקציה שמקבלת const&.\n\noverload לפי const: אפשר להגדיר שתי גרסאות של אותה מתודה, `T& at(i)` ו-`const T& at(i) const`. הקומפיילר בוחר לפי ה-constness של האובייקט שעליו קוראים. כך עובדים begin(), operator[] ו-data() במכולות. `std::as_const(x)` (C++17) מחזיר `const T&` ל-x, ובכך מכריח בחירה בגרסת const. מקרה הפוך מוכר: `std::map::operator[]` אינו const, כי הוא מוסיף איבר אם המפתח חסר. לכן על `const std::map&` משתמשים ב-`at()` (זורק std::out_of_range) או ב-`find()`.\n\nshallow const: const של מתודה חל על ה-members עצמם, לא על מה שהם מצביעים עליו. member מסוג `int* p_` הופך בתוך מתודה const ל-`int* const`: אסור לשנות את p_, אבל מותר לכתוב ל-`*p_`. לעומת זאת `std::vector<int> v_` הופך ל-const vector, ו-`v_[0] = 1` לא מתקמפל, כי ה-vector מעביר את ה-constness לאיברים (deep const). מי שרוצה deep const על pointer משתמש ב-`std::experimental::propagate_const` או מחזיר const דרך accessor.\n\nmutable: member שמותר לשנות גם במתודה const. הוא מבטא logical constness: המצב הנצפה של האובייקט לא משתנה, גם אם הביטים כן. שימושים: cache של חישוב יקר, mutex, מונה סטטיסטיקה. ההבחנה: bitwise const (אף ביט לא משתנה) מול logical const (המשתמש לא יכול לראות שינוי).\n\nconst ו-threads: הספרייה הסטנדרטית ([res.on.data.races]) מבטיחה שקריאות מקבילות למתודות const על אותו אובייקט לא יוצרות data race, ומניחה את זה גם על טיפוסים של המשתמש שמוכנסים אליה. מכאן הכלל \"const אומר thread-safe לקריאה\". mutable cache בלי סנכרון שובר את הכלל: שני threads שקוראים `histogram() const` במקביל כותבים לאותו member, וזה data race, כלומר UB. הפתרונות: `mutable std::mutex` (המחלקה נהיית non-copyable, כי mutex לא ניתן להעתקה), `std::once_flag` עם `std::call_once` לחישוב חד-פעמי, `mutable std::atomic` לערך קטן, או לחשב מראש ב-constructor.\n\nהחזרת const by value (`const std::string make()`) היא anti-pattern: ה-prvalue הוא const, ולכן הוא לא נקשר ל-`std::string&&`, ו-`s = make();` מבצע copy assignment במקום move. אתחול `std::string t = make();` עדיין עובר guaranteed copy elision."
+        },
+        {
+          "title": "constexpr על משתנים ו-constant expressions",
+          "body": "constant expression הוא ביטוי שהקומפיילר חייב להיות מסוגל לחשב בזמן קומפילציה. יש הקשרים שדורשים אותו: גודל מערך, template argument (`std::array<int, N>`), `static_assert`, `case` ב-switch, ואתחול של משתנה constexpr. `static_assert(cond, \"msg\")` בודק תנאי בזמן קומפילציה ונכשל בקומפילציה עם ההודעה אם הוא false.\n\n`constexpr int n = ...;` מחייב שה-initializer יהיה constant expression, וגורר const. אם לא, זו שגיאת קומפילציה. constexpr על pointer חל על ה-pointer: `constexpr int* p = &g;` הוא `int* const`, כלומר מותר לכתוב ל-`*p`. pointer כזה צריך כתובת קבועה, ולכן מותר לקחת כתובת של אובייקט עם static storage duration (גלובלי, static local), שנקבעת בזמן link, אבל לא כתובת של משתנה אוטומטי, שמשתנה בכל קריאה.\n\nUB אסור בחישוב קבוע. אם בזמן החישוב קורה signed overflow (למשל `INT_MAX + 1`), גישה מחוץ לגבולות מערך, dereference של nullptr או קריאה לפונקציה שאינה constexpr, הביטוי אינו constant expression, והקומפיילר חייב להוציא שגיאה. זה הופך את constexpr ו-static_assert לכלי בדיקה: UB שבזמן ריצה היה עובר בשקט נתפס בבנייה.\n\nconstexpr ב-headers: `inline constexpr auto kTable = make_table();` (C++17) נותן הגדרה אחת לכל התוכנית גם כשה-header נכלל בהרבה translation units (TU, קובץ cpp אחרי preprocessing). static constexpr data member הוא inline באופן מרומז מ-C++17. ב-C++14 ההצהרה בתוך המחלקה הייתה רק declaration: אם ה-member עבר odr-use (למשל קשירה ל-const&, כמו ב-`std::max(3, Cfg::kN)`), נדרשה הגדרה בקובץ cpp אחד, ובלעדיה הייתה שגיאת link. ODR (One Definition Rule) הוא הכלל שלכל ישות יש בדיוק הגדרה אחת בתוכנית, חוץ מישויות inline שמותר להגדיר בכמה TUs אם ההגדרות זהות."
+        },
+        {
+          "title": "constexpr functions",
+          "body": "פונקציה constexpr היא פונקציה רגילה שמותר גם לחשב בזמן קומפילציה. כשהיא נקראת בהקשר שדורש constant expression, והארגומנטים קבועים, היא מחושבת בקומפילציה. כשהארגומנט הוא ערך של זמן ריצה (`sq(n)` אחרי `cin >> n`), היא פשוט רצה בזמן ריצה. אין שגיאה.\n\nמה מותר בתוכה, לפי תקן:\n\n- C++11: גוף של return אחד בלבד.\n- C++14: משתנים מקומיים, לולאות, if, שינוי של משתנים מקומיים.\n- C++17: lambdas הן constexpr באופן מרומז כשאפשר, ו-non-const `operator[]` של std::array הוא constexpr.\n- C++20: try/catch (בלי לזרוק בפועל בזמן קומפילציה), virtual, union, ו-transient allocation: מותר להקצות עם new, std::vector או std::string בתוך החישוב, בתנאי שהכול משוחרר לפני שהחישוב מסתיים. לכן פונקציה constexpr שבונה vector מקומי ומחזירה את הסכום שלו תקינה, אבל `constexpr std::vector<int> v{1,2,3};` לא מתקמפל: ההקצאה \"בורחת\" לתוך משתנה שחי בזמן ריצה.\n\nלקומפיילר יש מגבלות על חישוב קבוע (מספר צעדים ועומק recursion, למשל `-fconstexpr-ops-limit` ב-GCC). זה המחיר: זמן ריצה אפס, זמן קומפילציה גדל.\n\nstd::is_constant_evaluated (C++20) מחזיר true רק כשהחישוב manifestly constant-evaluated: ה-initializer של משתנה constexpr, template argument, static_assert, ואתחול של משתנה const שלם או של משתנה static שעובר constant initialization. באתחול `int b = f();` רגיל הוא מחזיר false, גם אם האופטימייזר מקפל את החישוב. כך כותבים מימוש אחד לזמן קומפילציה (לולאה פשוטה) ואחר לזמן ריצה (intrinsic). מלכודת: `if constexpr (std::is_constant_evaluated())` תמיד true, כי התנאי של if constexpr עצמו מחושב בזמן קומפילציה. C++23 הוסיף `if consteval` שפותר את זה."
+        },
+        {
+          "title": "consteval, constinit ואתחול של משתנים סטטיים",
+          "body": "consteval (C++20) מגדיר immediate function: כל קריאה אליה חייבת להיות constant expression. `consteval int sq(int)` עם ארגומנט של זמן ריצה הוא שגיאת קומפילציה, לא משנה מה עושים עם התוצאה. משתמשים בזה כשחישוב בזמן ריצה הוא באג, למשל hash של מחרוזת קבועה או בדיקת format string.\n\nאתחול של משתנה עם static storage duration (גלובלי, static member, static local) קורה באחת משתי דרכים:\n\n- static initialization: zero initialization ו-constant initialization. הערך נקבע בבנייה ונמצא כבר ב-image של התוכנית (.data או .rodata). אין קוד אתחול.\n- dynamic initialization: קוד שרץ בזמן ריצה. לגלובליים זה לפני main, בסדר שלא מוגדר בין translation units שונים. אם גלובלי ב-a.cpp משתמש בגלובלי מ-b.cpp שעוד לא אותחל, זה static initialization order fiasco.\n\nconstinit (C++20) מחייב שהמשתנה יעבור constant initialization, ואחרת שגיאת קומפילציה. הוא לא גורר const: המשתנה נשאר ניתן לשינוי בזמן ריצה. מותר רק על משתנים עם static או thread storage duration, לא על משתנה מקומי רגיל. זה מבטיח שאין fiasco, כי אין קוד אתחול.\n\nstatic local ו-magic statics: מ-C++11, `static T t = build();` בתוך פונקציה מאותחל בקריאה הראשונה, ובאופן thread-safe. הקומפיילר מוסיף guard: בכל קריאה נבדק flag (טעינת acquire זולה במסלול המהיר), ובקריאה הראשונה נלקח lock (ב-Itanium ABI זו `__cxa_guard_acquire`). אם ה-initializer הוא constant expression (`static constexpr`, או build שהיא constexpr), האתחול סטטי, הנתונים יושבים ב-.rodata ואין guard בכלל. ב-hot path זה ההבדל בין branch ו-load בכל קריאה לבין אפס."
+        },
+        {
+          "title": "if constexpr",
+          "body": "`if constexpr (cond)` (C++17) מחשב את התנאי בזמן קומפילציה. בתוך template, הענף שלא נבחר הוא discarded statement: הוא לא עובר instantiation, ולכן מותר לכתוב בו קוד שלא היה מתקמפל עבור הטיפוס הנוכחי (למשל קריאה ל-`v.size()` כש-T הוא int). גם return בענף שנזרק לא משתתף ב-return type deduction של `auto`, ולכן ענף אחד יכול להחזיר int והשני double.\n\nמחוץ ל-template אין instantiation, ולכן הענף שלא נבחר עדיין עובר בדיקה מלאה: name lookup, טיפוסים, הכול. קריאה לפונקציה שלא הוצהרה בתוך `if constexpr (sizeof(void*) == 4)` בפונקציה רגילה היא שגיאת קומפילציה גם על מכונת 64 ביט. if constexpr הוא לא תחליף ל-#if.\n\nמלכודת היסטורית: `static_assert(false)` בענף discarded היה ill-formed עד C++23, כי הוא לא תלוי ב-template parameter. העקיפה הנפוצה הייתה תנאי תלוי, למשל `static_assert(sizeof(T) == 0)`. C++23 (P2593) תיקן את זה, ומהדרים חדשים מיישמים את זה גם במצבי תקן קודמים."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מה הוא constant expression ומה לא",
+          "body": "נעבור על הצהרות בתוך פונקציה, ונשאל לגבי כל אחת אם אפשר להשתמש בה כ-N ב-`std::array<int, N>`:\n\n- `const int k = 10;` כן. const שלם שמאותחל מליטרל הוא usable in constant expressions.\n- `constexpr int n = k * 2;` כן, n הוא 20. k קבוע, ולכן גם k * 2.\n- `const int m = std::rand();` לא. m הוא read-only, אבל הערך נקבע בזמן ריצה.\n- `int j = 32;` לא. משתנה רגיל, גם אם הערך ההתחלתי ידוע.\n- `const std::size_t s = v.size();` כש-v הוא std::vector רגיל: לא, size() נקרא בזמן ריצה.\n- `constexpr int bad = std::rand();` שגיאת קומפילציה כבר בהצהרה, כי rand לא constexpr.\n\nמה לומדים: constexpr מכריח את השאלה להיענות בהצהרה עצמה. עם const, התשובה תלויה ב-initializer, והשגיאה מופיעה רק במקום השימוש."
+        },
+        {
+          "title": "דוגמה: חישוב constexpr שנתקע על UB",
+          "body": "`constexpr int fact(int n)` מחשב n! בלולאה, עם int של 32 ביט (INT_MAX = 2,147,483,647).\n\n1. `constexpr int a = fact(5);` הקומפיילר מריץ את הלולאה: 1, 2, 6, 24, 120. a הוא 120, ובקוד המכונה יש רק הקבוע 120.\n2. `constexpr int b = fact(12);` מגיע ל-479,001,600, עדיין פחות מ-INT_MAX. תקין.\n3. `constexpr int c = fact(13);` בצעד האחרון 479,001,600 * 13 = 6,227,020,800, גדול מ-INT_MAX. זה signed overflow, כלומר UB, ולכן החישוב אינו constant expression: שגיאת קומפילציה עם הסבר על overflow.\n4. `int d = fact(13);` כש-13 מגיע מקלט בזמן ריצה: מתקמפל, ו-UB בזמן ריצה. אף אחד לא מזהיר.\n\nמה לומדים: אותה פונקציה בטוחה יותר כשמחשבים אותה בקומפילציה. static_assert על מקרי קצה הוא unit test חינמי לאי-קיום UB."
+        },
+        {
+          "title": "דוגמה: mutable cache ושני threads",
+          "body": "מחלקה Image עם `mutable std::optional<Hist> cache_;` ומתודה `histogram() const` שבודקת את cache_ ומחשבת אם הוא ריק. האובייקט משותף כ-`std::shared_ptr<const Image>`.\n\n1. thread A קורא histogram(), רואה cache_ ריק ומתחיל לכתוב לתוכו.\n2. במקביל thread B קורא histogram(), גם הוא רואה ריק (או רואה חצי כתוב) וכותב גם.\n3. שתי כתיבות לא מסונכרנות לאותו זיכרון: data race, UB. התוצאה עשויה להיות histogram שבור או קריסה.\n\nהתיקון עם `mutable std::once_flag flag_;` ו-`std::call_once(flag_, ...)`: thread אחד מחשב, השני מחכה, ואחרי זה הגישה זולה. המחיר: once_flag לא ניתן להעתקה, ולכן צריך לכתוב copy constructor בעצמך (שיוצר flag חדש) או לוותר על copy. חלופה פשוטה יותר: לחשב את ה-histogram ב-constructor ולוותר על laziness."
+        },
+        {
+          "title": "דוגמה: shallow const במתודה const",
+          "body": "`struct Buf { int* p_; int n_; std::vector<int> v_; void touch() const; };` בתוך touch, הטיפוסים כפי שהם נראים:\n\n- p_ הוא `int* const`: `*p_ = 1` מתקמפל (כותבים לזיכרון ש-p_ מצביע עליו), `p_ = nullptr` לא.\n- n_ הוא `const int`: `++n_` לא מתקמפל.\n- v_ הוא `const std::vector<int>`: `v_[0] = 1` לא מתקמפל, כי גרסת const של operator[] מחזירה `const int&`.\n\nמה לומדים: מתודה const לא מגינה על נתונים שמוחזקים דרך raw pointer. אם הנתונים הם חלק מהמצב הלוגי, עדיף להחזיק אותם במכולה או ב-propagate_const."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "const object מול const view",
+          "def": "אובייקט שהוגדר const אסור לשנות בכלל (שינוי הוא UB). const& או const* הם רק view שאוסר שינוי דרכם, והאובייקט עצמו עלול להשתנות דרך alias אחר."
+        },
+        {
+          "term": "top-level / low-level const",
+          "def": "top-level חל על האובייקט עצמו (const int, int* const) ואינו חלק מחתימה של פרמטר by-value. low-level חל על מה שמצביעים עליו (const int*, const int&) ויוצר overload שונה."
+        },
+        {
+          "term": "const_cast",
+          "def": "cast שמוסיף או מסיר const. חוקי תמיד; כתיבה דרכו מוגדרת רק אם האובייקט המקורי לא הוגדר const."
+        },
+        {
+          "term": "const member function",
+          "def": "מתודה שבה this הוא const T*. אסור לה לשנות members שאינם mutable, ורק אותה אפשר לקרוא על אובייקט const או דרך const&."
+        },
+        {
+          "term": "mutable",
+          "def": "member שמותר לשנות גם במתודה const. מבטא logical constness (cache, mutex, מונים). במקביליות דורש סנכרון."
+        },
+        {
+          "term": "logical מול bitwise constness",
+          "def": "bitwise: אף ביט באובייקט לא משתנה. logical: המצב שהמשתמש יכול לראות לא משתנה, גם אם cache פנימי השתנה."
+        },
+        {
+          "term": "shallow const",
+          "def": "const של מתודה חל על ה-member ולא על מה שהוא מצביע עליו: int* p_ הופך ל-int* const, ומותר לכתוב ל-*p_. מכולות כמו vector מעבירות const לאיברים (deep)."
+        },
+        {
+          "term": "std::as_const",
+          "def": "פונקציה מ-<utility> (C++17) שמחזירה const T& לאובייקט, כדי לבחור במפורש overload של const."
+        },
+        {
+          "term": "constant expression",
+          "def": "ביטוי שהקומפיילר מחשב בזמן קומפילציה. נדרש בגודל מערך, template argument, static_assert, case ו-constexpr variable. ביטוי עם UB אינו constant expression."
+        },
+        {
+          "term": "constexpr variable",
+          "def": "משתנה שה-initializer שלו חייב להיות constant expression. גורר const. על pointer: ה-pointer קבוע (T* const)."
+        },
+        {
+          "term": "constexpr function",
+          "def": "פונקציה שמותר לחשב בזמן קומפילציה כשהארגומנטים קבועים וההקשר דורש קבוע; אחרת רצה בזמן ריצה. C++14 התיר לולאות, C++20 התיר transient allocation."
+        },
+        {
+          "term": "transient allocation",
+          "def": "ב-C++20 מותר להקצות זיכרון (new, vector, string) בתוך חישוב constexpr, בתנאי שהכול משוחרר לפני סוף החישוב. constexpr std::vector כמשתנה גלובלי לא מתקמפל."
+        },
+        {
+          "term": "consteval / immediate function",
+          "def": "פונקציה (C++20) שכל קריאה אליה חייבת להיות constant expression. ארגומנט של זמן ריצה הוא שגיאת קומפילציה."
+        },
+        {
+          "term": "constinit",
+          "def": "C++20: מחייב constant initialization למשתנה static או thread_local. לא גורר const. מונע static initialization order fiasco."
+        },
+        {
+          "term": "static / dynamic initialization",
+          "def": "static: zero או constant initialization, הערך כבר ב-image של התוכנית. dynamic: קוד שרץ בזמן ריצה, לגלובליים לפני main ובסדר לא מוגדר בין TUs."
+        },
+        {
+          "term": "static initialization order fiasco",
+          "def": "גלובלי ב-TU אחד שהאתחול הדינמי שלו משתמש בגלובלי מ-TU אחר שעוד לא אותחל. פתרונות: constinit, constexpr, או function-local static."
+        },
+        {
+          "term": "magic statics",
+          "def": "מ-C++11, static local מאותחל בקריאה הראשונה באופן thread-safe. הקומפיילר מוסיף guard שנבדק בכל קריאה. אתחול קבוע (constexpr) מבטל את ה-guard."
+        },
+        {
+          "term": "static storage duration",
+          "def": "אובייקט שחי לכל אורך התוכנית: גלובלי, static member, static local. הכתובת שלו היא constant expression."
+        },
+        {
+          "term": "std::is_constant_evaluated",
+          "def": "C++20: מחזיר true כשהחישוב manifestly constant-evaluated (constexpr variable, template argument, static_assert, אתחול קבוע של const שלם או static). בתוך if constexpr הוא תמיד true. C++23 מוסיף if consteval."
+        },
+        {
+          "term": "if constexpr / discarded statement",
+          "def": "C++17: תנאי שמחושב בזמן קומפילציה. בתוך template, הענף שלא נבחר לא עובר instantiation ולא משתתף ב-return type deduction. מחוץ ל-template הוא עדיין נבדק במלואו."
+        },
+        {
+          "term": "static_assert",
+          "def": "בדיקה בזמן קומפילציה של constant expression בוליאני. אם false, הקומפילציה נכשלת עם ההודעה."
+        },
+        {
+          "term": "odr-use",
+          "def": "שימוש שמחייב שלמשתנה תהיה כתובת ו-storage, למשל קשירה ל-reference או לקיחת כתובת. ב-C++14, static constexpr member שעבר odr-use דרש הגדרה בקובץ cpp."
+        },
+        {
+          "term": "ODR / inline variable",
+          "def": "One Definition Rule: לכל ישות הגדרה אחת בתוכנית. ישות inline (כולל inline variable מ-C++17 ו-static constexpr member) מותר להגדיר בכמה translation units אם ההגדרות זהות."
+        },
+        {
+          "term": "translation unit (TU)",
+          "def": "קובץ cpp אחרי preprocessing, כלומר עם כל ה-headers שנכללו. כל TU מקומפל בנפרד, וה-linker מחבר ביניהם."
+        },
+        {
+          "term": "VLA",
+          "def": "Variable Length Array: מערך שגודלו נקבע בזמן ריצה. קיים ב-C99, לא בתקן C++. GCC ו-Clang מקבלים אותו כהרחבה."
+        },
+        {
+          "term": "[res.on.data.races]",
+          "def": "הסעיף בתקן שקובע שהספרייה הסטנדרטית לא יוצרת data race בקריאות מקבילות למתודות const. מכאן הכלל ש-const אמור להיות בטוח לקריאה מקבילה."
+        },
+        {
+          "term": "std::call_once / once_flag",
+          "def": "מנגנון שמבטיח שפונקציה תרוץ פעם אחת בדיוק גם כשכמה threads מגיעים במקביל. once_flag לא ניתן להעתקה או להעברה."
+        }
+      ]
     }
   ],
   "questions": [
@@ -360,6 +514,186 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "cpp.const-constexpr.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה עושה `static_assert(sizeof(int) == 4, \"need 32-bit int\");`?",
+      "choices": [
+        "בודק את התנאי בזמן ריצה וזורק exception אם הוא false",
+        "בודק את התנאי בזמן קומפילציה; אם הוא false הקומפילציה נכשלת עם ההודעה",
+        "בודק את התנאי רק ב-debug build, כמו assert",
+        "מכריח את הקומפיילר להשתמש ב-int של 4 בתים"
+      ],
+      "answer": 1,
+      "explanation": "static_assert מקבל constant expression בוליאני ונבדק בזמן קומפילציה, ולכן אין לו שום עלות בזמן ריצה. assert רגיל נבדק בזמן ריצה ומבוטל כש-NDEBUG מוגדר. static_assert לא משנה את גודל הטיפוס, הוא רק בודק אותו.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו מילת מפתח מאפשרת לשנות data member בתוך מתודה const?",
+      "accept": [
+        "mutable"
+      ],
+      "explanation": "member שמוצהר mutable לא הופך ל-const בתוך מתודה const. משתמשים בו למצב שאינו חלק מהמצב הלוגי, כמו cache, mutex או מונה.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "בתוך פונקציה, איזה מהבאים אפשר להעביר כ-N ב-`std::array<int, N>`?",
+      "choices": [
+        "`const int m = std::rand();`",
+        "`int k = 32;`",
+        "`const std::size_t s = v.size();` כש-v הוא std::vector רגיל",
+        "`constexpr int n = 4 * 8;`"
+      ],
+      "answer": 3,
+      "explanation": "template argument חייב להיות constant expression. n הוא constexpr ומחושב בקומפילציה ל-32. m ו-s הם const, אבל הערך שלהם נקבע בזמן ריצה. k הוא משתנה רגיל, גם אם הערך ההתחלתי שלו ידוע.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q23",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "למה הקוד לא מתקמפל?",
+      "code": "int lookup(const std::map<int, int>& m, int key) {\n  return m[key];\n}",
+      "bugLine": 2,
+      "choices": [
+        "map לא תומך ב-operator[] עם מפתח int",
+        "אסור להחזיר int מ-const map, צריך להחזיר const int",
+        "operator[] של std::map אינו const, כי הוא מוסיף איבר כשהמפתח חסר; על const map משתמשים ב-at() או ב-find()",
+        "צריך להעביר את m by value כדי לקרוא ל-operator[]"
+      ],
+      "answer": 2,
+      "explanation": "map::operator[] עושה default construction של ערך ומכניס אותו אם המפתח לא קיים, ולכן אין לו גרסת const. at() יש גם בגרסת const, והיא זורקת std::out_of_range כשהמפתח חסר. find() מחזיר iterator ומאפשר לטפל במקרה של מפתח חסר בלי exception. העברה by value מתקמפלת אבל מעתיקה את כל ה-map.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q24",
+      "level": 2,
+      "type": "multi",
+      "prompt": "נתון `int x = 0;`. אילו שורות מתקמפלות? (כל שורה בנפרד)",
+      "choices": [
+        "`const int* p = &x; *p = 1;`",
+        "`int* const q = &x; *q = 1;`",
+        "`const int* r = &x; r = nullptr;`",
+        "`int* const s = &x; s = nullptr;`",
+        "`const int* const t = &x; int y = *t;`"
+      ],
+      "answer": [
+        1,
+        2,
+        4
+      ],
+      "explanation": "const משמאל ל-* אוסר לכתוב דרך ה-pointer, ולכן *p = 1 לא מתקמפל, אבל מותר לשנות את r עצמו. const מימין ל-* הופך את ה-pointer לקבוע, ולכן s = nullptr לא מתקמפל, אבל כתיבה דרך q מותרת. t קבוע משני הצדדים, וקריאה דרכו תמיד מותרת.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה קורה ב-C++20?",
+      "code": "constexpr int fib(int n) {\n  int a = 0, b = 1;\n  for (int i = 0; i < n; ++i) {\n    int t = a + b; a = b; b = t;\n  }\n  return a;\n}\n\nint main() {\n  std::array<int, fib(7)> arr{};\n  static_assert(fib(10) == 55);\n  std::cout << arr.size();\n}",
+      "choices": [
+        "מדפיס 13",
+        "מדפיס 8",
+        "שגיאת קומפילציה: אסור לולאה ומשתנים מקומיים בפונקציה constexpr",
+        "שגיאת קומפילציה: static_assert בלי הודעה"
+      ],
+      "answer": 0,
+      "explanation": "fib מחשבת 0,1,1,2,3,5,8,13, ולכן fib(7) הוא 13. החישוב קורה בזמן קומפילציה כי template argument דורש קבוע. ההגבלה של return אחד בלבד הייתה ב-C++11; מ-C++14 מותרים לולאות ומשתנים מקומיים. static_assert בלי הודעה מותר מ-C++17.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "נתון `struct Buf { int* p_; int n_; std::vector<int> v_; void touch() const; };`. איזו שורה בתוך `touch()` מתקמפלת?",
+      "choices": [
+        "`++n_;`",
+        "`*p_ = 1;`",
+        "`v_[0] = 1;`",
+        "`p_ = nullptr;`"
+      ],
+      "answer": 1,
+      "explanation": "במתודה const כל member נראה כ-const: n_ הוא const int, ו-p_ הוא int* const. ה-constness חל על ה-pointer ולא על מה שהוא מצביע עליו (shallow const), ולכן *p_ = 1 מותר. vector מעביר const לאיברים: גרסת const של operator[] מחזירה const int&.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה נכון ב-C++20 לגבי שתי השורות (בהיקף של namespace)?\n\n```cpp\nconstexpr int sum() {\n  std::vector<int> v{1, 2, 3};\n  int s = 0;\n  for (int x : v) s += x;\n  return s;\n}\nconstexpr int a = sum();                 // (1)\nconstexpr std::vector<int> b{1, 2, 3};   // (2)\n```",
+      "choices": [
+        "שתיהן לא מתקמפלות, כי std::vector מקצה זיכרון דינמי",
+        "(1) מתקמפלת; (2) לא, כי זיכרון שהוקצה בחישוב קבוע חייב להשתחרר לפני שהחישוב מסתיים",
+        "שתיהן מתקמפלות, כי ב-C++20 vector הוא constexpr",
+        "(2) מתקמפלת ו-(1) לא, כי לולאת range-for אסורה בפונקציה constexpr"
+      ],
+      "answer": 1,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "C++20 מתיר transient allocation: בתוך sum ה-vector מקצה ומשחרר, והתוצאה היא int רגיל. ב-(2) ההקצאה הייתה צריכה לשרוד לזמן ריצה, וזה אסור; GCC מדווח שהביטוי מתייחס לתוצאה של operator new. לטבלה קבועה בזמן ריצה משתמשים ב-std::array.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "קובץ שמקומפל רק ל-64 ביט מכיל פונקציה רגילה (לא template):\n\n```cpp\nvoid init() {\n  if constexpr (sizeof(void*) == 4) {\n    legacy32_setup();   // not declared anywhere\n  }\n}\n```\n\nמה קורה?",
+      "choices": [
+        "מתקמפל: התנאי false, ולכן הענף נזרק ולא נבדק",
+        "מתקמפל, וב-link יש undefined reference ל-legacy32_setup",
+        "שגיאת קומפילציה: מחוץ ל-template, הענף שלא נבחר עדיין עובר בדיקה מלאה, כולל name lookup",
+        "מתקמפל עם warning על dead code"
+      ],
+      "answer": 2,
+      "explanation": "discarded statement חוסך רק instantiation, וזה רלוונטי רק בתוך template שבו הקוד תלוי ב-template parameter. בפונקציה רגילה אין instantiation, ולכן name lookup של legacy32_setup נכשל. להחלפת קוד לפי פלטפורמה ברמה הזו משתמשים ב-#if, או מכניסים את הקוד ל-template.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "פונקציה ב-hot path ניגשת לטבלה קבועה של 4KB. מה ההבדל בין שתי הגרסאות?\n\n```cpp\n// A: build() is a regular function\nstatic const Table t = build();\n// B: build() is constexpr\nstatic constexpr Table t = build();\n```",
+      "choices": [
+        "A מאותחל בקריאה הראשונה עם guard thread-safe שנבדק בכל קריאה; B עובר constant initialization, יושב ב-.rodata ואין guard",
+        "אין הבדל: שני המשתנים מאותחלים לפני main",
+        "שניהם לוקחים mutex בכל קריאה כדי להבטיח thread safety",
+        "B לא חוקי, כי static local בפונקציה לא-constexpr לא יכול להיות constexpr עד C++23"
+      ],
+      "answer": 0,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "magic statics: static local עם dynamic initialization מאותחל בקריאה הראשונה, והקומפיילר מוסיף guard. המסלול המהיר הוא טעינת acquire ו-branch בכל קריאה, ורק בקריאה הראשונה נלקח lock (__cxa_guard_acquire ב-Itanium ABI). ב-B אין קוד אתחול בכלל. ההגבלה של C++23 נוגעת ל-static בתוך פונקציה constexpr, לא ל-static constexpr בפונקציה רגילה.",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "id": "cpp.const-constexpr.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "הקומפיילר לא רואה את הגוף של g. האם מותר לו לקמפל את f כאילו נכתב `return 2 * a;`?\n\n```cpp\nvoid g();\nint f(const int& r) {\n  int a = r;\n  g();\n  return a + r;\n}\n```",
+      "choices": [
+        "כן, כי r הוא const& ולכן הערך שלו לא יכול להשתנות",
+        "כן, אבל רק אם f מסומנת noexcept",
+        "לא, כי קריאה דרך const& תמיד דורשת memory barrier",
+        "לא. const& אוסר שינוי רק דרך r; g עשויה לשנות את האובייקט המקורי דרך alias אחר, ולכן צריך לטעון את r מחדש"
+      ],
+      "answer": 3,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "r יכול להיות קשור למשתנה גלובלי רגיל ש-g משנה. const על reference הוא הבטחה על הגישה דרך השם, לא על האובייקט. רק אם הקומפיילר יודע שהאובייקט עצמו הוגדר const, או רואה את הגוף של g, מותר לו להניח שהערך לא השתנה. אין כאן memory barrier, וזה לא קשור ל-noexcept.",
+      "lesson": "cpp.const-constexpr"
     }
   ]
 }

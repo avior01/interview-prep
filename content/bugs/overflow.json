@@ -35,7 +35,78 @@
         "לבחור בין wrap, saturation ו-widening לפי הדרישה, ולהסביר את מחיר הדינמיקה בנקודה קבועה",
         "לדעת שחולשות אבטחה רבות מתחילות ב-overflow בחישוב גודל הקצאה"
       ],
-      "diagram": "int16:  32767 + 1  -> wrap -> -32768\n        |-------------|-------------|\n     -32768           0           32767"
+      "diagram": "int16:  32767 + 1  -> wrap -> -32768\n        |-------------|-------------|\n     -32768           0           32767",
+      "details": [
+        {
+          "title": "signed overflow הוא UB: למה, ומה האופטימייזר עושה עם זה",
+          "body": "התקן של C++ קובע שאם תוצאה של פעולה אריתמטית על טיפוס signed לא נכנסת בטווח של הטיפוס, ההתנהגות **undefined**. זה נכון גם אחרי C++20, שקבע סוף סוף שייצוג השלמים הוא **two's complement**: הייצוג מוגדר, אבל הגלישה עצמה נשארה UB. הסיבה ההיסטורית היא מכונות עם ייצוגים אחרים (sign-magnitude, ones' complement) ומכונות שעושות trap על overflow. הסיבה שזה נשאר UB היום היא ביצועים.\n\nמאחר שהקומפיילר רשאי להניח ש-UB **לא קורה**, הוא מסיק עובדות מתמטיות 'נקיות' על signed:\n- `i + 1 > i` תמיד true, ו-`a + b < a` כש-b>0 תמיד false. בדיקת overflow שנכתבת **אחרי** הפעולה נמחקת.\n- מונה לולאה `int i` שעולה ב-1 לא עוטף, ולכן אפשר לחשב מראש את מספר האיטרציות, להחליף אותו במצביע 64 ביט (בלי sign-extension בכל איטרציה) ולעשות vectorization.\n- `x * 2 / 2` מתקפל ל-`x`, ו-`(x + c1) + c2` ל-`x + (c1+c2)`.\n\nהמחיר: קוד שתלוי בעטיפה (למשל לולאה שמחכה ש-i יהפוך לשלילי) עלול להפוך ללולאה אינסופית ב-`-O2` ולעבוד ב-`-O0`. התוצאה של UB לא 'ערך מוזר' אלא כל דבר, כולל מחיקת קוד.\n\nשני דגלים משנים את הכלל: `-fwrapv` מגדיר signed overflow כעטיפה מודולו 2^N (מבטל את ה-UB ואת האופטימיזציות, אבל מסתיר את הבאג), ו-`-ftrapv` עושה abort כשיש overflow בפעולות שהוא מכסה."
+        },
+        {
+          "title": "unsigned wraparound, two's complement והמרות",
+          "body": "לטיפוסים **unsigned** התקן מגדיר אריתמטיקה מודולרית: כל תוצאה נלקחת מודולו 2^N, כאשר N הוא רוחב הטיפוס. לכן `0u - 1` הוא `UINT_MAX` (4294967295 ב-32 ביט) ו-`UINT_MAX + 1u` הוא 0, באופן מוגדר לחלוטין. זה **לא** אומר שזה נכון לוגית: גודל שלילי שהפך למספר ענק הוא עדיין באג, פשוט באג שהקומפיילר לא יכול לנצל.\n\n**two's complement**: ב-N ביט הטווח הוא מ-2^(N-1)- עד 2^(N-1)-1. ב-int32 זה מ-2147483648- (`INT_MIN`) עד 2147483647 (`INT_MAX`). הטווח **אסימטרי**: יש ערך שלילי אחד יותר. לכן ל-`INT_MIN` אין נגדי ייצוגי, ו-`-INT_MIN`, `std::abs(INT_MIN)`, `INT_MIN / -1` ואפילו `INT_MIN % -1` הם UB (ב-x86 החילוק אף זורק SIGFPE).\n\n**המרות (conversions)** הן לא אריתמטיקה ולכן לא signed overflow:\n- המרה לכל טיפוס unsigned מוגדרת תמיד כמודולו 2^N.\n- המרה לטיפוס signed של ערך שלא נכנס (למשל 40000 ל-int16_t) הייתה implementation-defined עד C++20, ומ-C++20 מוגדרת כמודולו (מתקבל 25536-). זו **truncation**: הביטים העליונים נזרקים בשקט.\n- המרה של float ל-int כשהערך מחוץ לטווח היא UB (גם ב-C++20).\n\n**narrowing** הוא המרה שעלולה לאבד מידע (int ל-short, double ל-int). ב-brace initialization כמו `int16_t s{x}` הקומפיילר דוחה narrowing, אבל השמה רגילה או `static_cast` עוברים בלי שגיאה. `-Wconversion` מזהיר על המקרים האלה."
+        },
+        {
+          "title": "integer promotion ו-usual arithmetic conversions",
+          "body": "לפני כל פעולה אריתמטית בינארית, C++ מבצע שני שלבים:\n\n1. **integer promotion**: כל טיפוס שה-rank שלו נמוך מ-int (`char`, `int8_t`, `uint8_t`, `short`, `uint16_t`, `bool`) מקודם ל-`int` אם int יכול להחזיק את כל הערכים שלו, אחרת ל-`unsigned int`. ב-int של 32 ביט, גם `uint16_t` מקודם ל-**int signed**. התוצאה: `uint8_t(200) + uint8_t(100)` הוא int עם הערך 300, אבל `uint16_t(65535) * uint16_t(65535)` הוא int*int שגולש, כלומר UB, למרות ששני האופרנדים unsigned.\n\n2. **usual arithmetic conversions**: אחרי הקידום, אם לשני האופרנדים טיפוסים שונים, מביאים אותם לטיפוס משותף:\n- אם שניהם signed או שניהם unsigned, הקטן מומר לגדול.\n- אם ל-unsigned יש rank גדול או שווה, ה-signed מומר ל-unsigned. כך `-1 < 1u` הוא false, כי 1- הופך ל-4294967295.\n- אם ל-signed יש rank גדול יותר **והוא יכול לייצג את כל ערכי ה-unsigned**, ה-unsigned מומר ל-signed. כך `-1LL < 0u` הוא true: unsigned של 32 ביט נכנס ב-long long.\n- אחרת שניהם מומרים לגרסת ה-unsigned של הטיפוס ה-signed.\n\nמכאן מלכודת **sign-compare**: השוואה של int מול `size_t` או unsigned הופכת שלילי לענק. `-Wsign-compare` (חלק מ-`-Wextra` ב-C++) מזהיר על זה. ב-C++20 יש `std::cmp_less` ודומיו שמשווים נכון ערכים מטיפוסים מעורבים.\n\nכלל חשוב נוסף: **הטיפוס של צד שמאל לא משפיע על החישוב בצד ימין**. ב-`int64_t t = a * b` כש-a,b הם int, הכפל נעשה ב-int, גולש, ורק אז מורחב. צריך להרחיב **לפני**: `int64_t{a} * b`."
+        },
+        {
+          "title": "דפוסי באג קלאסיים",
+          "body": "- **חישוב גודל**: `n * sizeof(T)`, `rows * cols * channels`, כש-n מגיע מקלט חיצוני. בטיפוס 32 ביט המכפלה עוטפת, מוקצה buffer קטן, והלולאה כותבת מעבר לו. זה מקור קלאסי ל-heap overflow ול-CVE. בדיקה ניידת לפני הכפל: `b != 0 && a > MAX / b` פירושו שהמכפלה תגלוש.\n- **נקודת אמצע בחיפוש בינארי**: `(lo + hi) / 2` גולש כש-lo+hi גדול מ-INT_MAX, כלומר במערכים מעל כמיליארד איברים. הבאג הזה חי שנים ב-`Arrays.binarySearch` של Java. הפתרון: `lo + (hi - lo) / 2`, או סכום ב-unsigned, או `std::midpoint` (C++20).\n- **comparator בחיסור**: `return a - b;` לפונקציית השוואה של qsort גולש כשהערכים רחוקים (למשל ערך sentinel של INT_MIN), והסימן מתהפך. נכון: `(a > b) - (a < b)`.\n- **abs ו-negation**: `std::abs(INT_MIN)` הוא UB; בפועל מחזיר ערך שלילי. כשצריך ערך מוחלט של int32 מלא, מחזירים `uint32_t` ומחשבים `0u - uint32_t(x)` לשליליים.\n- **truncation**: אינדקס `int16_t` או `short` בלולאה על n גדול, או אחסון סכום ב-int16. ההמרה חזרה עוטפת בשקט.\n- **counters ו-time**: מונה ticks של 32 ביט ב-200 MHz עוטף כל כ-21.5 שניות; מונה מילישניות של 32 ביט (כמו `GetTickCount`) עוטף אחרי כ-49.7 ימים; `time_t` signed של 32 ביט (שניות מ-1970) גולש ב-19 בינואר 2038 (בעיית **Y2038**). להשוואת זמנים שעוטפים משתמשים ב-serial-number arithmetic: מחסרים ב-unsigned ומפרשים את ההפרש כ-signed."
+        },
+        {
+          "title": "זיהוי ומניעה: sanitizers, builtins, saturation",
+          "body": "**זיהוי בזמן ריצה**: UBSan עם `-fsanitize=signed-integer-overflow` (או `-fsanitize=undefined` שכולל אותו) מוסיף בדיקה לכל פעולת signed ומדפיס הודעה כמו 'signed integer overflow: 2147483647 + 1 cannot be represented in type int'. ב-Clang יש גם `-fsanitize=unsigned-integer-overflow`, שמדווח על עטיפה של unsigned למרות שאינה UB; שימושי לחיפוש באגים לוגיים אבל רועש. מומלץ להריץ את ה-unit tests ב-CI עם sanitizers, ולכלול בהם ערכי קצה: 0, 1, 1-, INT_MAX, INT_MIN.\n\n**בדיקה מפורשת**: GCC ו-Clang מציעים `__builtin_add_overflow(a, b, &r)`, `__builtin_sub_overflow` ו-`__builtin_mul_overflow`. הם מחשבים את התוצאה 'כאילו ברוחב אינסופי', כותבים ל-r את הערך העטוף, ומחזירים true אם היה overflow. הם עובדים לכל צירוף טיפוסים, ומתקמפלים להוראה אחת ואחריה קפיצה על דגל ה-overflow. בלי builtins בודקים **לפני** הפעולה: לחיבור `b > 0 && a > INT_MAX - b`, לכפל דרך חלוקה.\n\n**אזהרות קומפיילר**: `-Wall -Wextra` כוללים `-Wsign-compare`; `-Wconversion` מזהיר על narrowing ו-truncation; brace initialization חוסם narrowing בזמן קומפילציה.\n\n**מה עושים כשיש overflow** (החלטת תכנון):\n- **widening**: לחשב ברוחב גדול יותר (int64, או מצבר של 40 ביט כמו ב-DSP).\n- **saturation**: להצמיד ל-MIN/MAX. נכון לאודיו ו-RF, כי עטיפה של דגימה יוצרת קפיצה מהקצה החיובי לשלילי, כלומר click או ספקטרום מרוח. SIMD מציע פעולות saturating בחינם.\n- **wrap מכוון**: ב-unsigned, למשל ל-hash, ל-ring buffer או למונים, כשההיגיון כולו מודולרי.\n- **שגיאה**: להחזיר false או לזרוק, למשל בקלט חיצוני של גדלים."
+        },
+        {
+          "title": "Python ו-NumPy",
+          "body": "ה-`int` של Python הוא **arbitrary precision** (bignum): הוא גדל לפי הצורך, ולכן `2**64 + 1` הוא פשוט 18446744073709551617, ואין overflow בשלמים טהורים. המחיר הוא ביצועים: כל int הוא אובייקט על ה-heap.\n\nב-**NumPy** הכל אחר: מערכים ו-scalars הם בטיפוסים ברוחב קבוע (`int8`, `uint8`, `int16`, `int32`, `int64`, `uint16`...), והאריתמטיקה עוטפת כמו ב-C:\n- פעולה על **מערכים** עוטפת בשקט, בלי אזהרה ובלי exception. `np.array([2**31-1], dtype=np.int32) + 1` נותן `[-2147483648]`.\n- פעולה על שני **NumPy scalars** (למשל `np.uint16` שנשלף ממערך) עוטפת ומוציאה `RuntimeWarning: overflow` שקל לפספס.\n- התוצאה נשארת ב-dtype של הקלט כשמערבבים מערך עם Python int קטן (ב-NumPy 2 זה הכלל של NEP 50). לכן `uint8` פחות `uint8` נשאר `uint8` ועוטף.\n- ערבוב עם float מעביר ל-float64, ולכן `int8` כפול `2.0` לא עוטף.\n- `astype` לשלם צר יותר עושה truncation, ו-float מחוץ לטווח נותן ערך לא מוגדר.\n\nהתיקון הקבוע: להרחיב **לפני** הפעולה (`x.astype(np.int64)`, או float), או לציין `dtype` לצבירה. מקורות נפוצים: דגימות ADC ב-int16 בריבוע לחישוב אנרגיה, פיקסלים ב-uint8 בחיבור או חיסור, ומידות מתוך header בינארי שנקראו כ-uint16."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: INT_MAX + 1 מול 255 + 1 ב-uint8",
+          "body": "נניח int של 32 ביט, `a = INT_MAX = 2147483647`. החישוב `a + 1` הוא int+int, והתוצאה המתמטית 2147483648 לא נכנסת: signed overflow, כלומר UB. ב-`-O0` על x86 בדרך כלל יתקבל 2147483648- (הביטים של two's complement), אבל הקומפיילר רשאי לשנות את המשמעות של כל הקוד שתלוי בזה. UBSan ידווח על השורה.\n\nלעומת זאת `uint8_t x = 255; x = x + 1;`: x מקודם ל-int, החישוב 255+1 = 256 תקין לגמרי ב-int, וההמרה חזרה ל-uint8_t לוקחת מודולו 256: 256 mod 256 = 0. אין כאן UB בכלל: זו promotion ואז conversion ל-unsigned.\n\nואם `int16_t s = 32767; s = s + 1;`: החיבור ב-int נותן 32768 (תקין), וההמרה ל-int16_t נותנת 32768- (מוגדר מ-C++20, implementation-defined לפני). זו truncation, לא signed overflow."
+        },
+        {
+          "title": "דוגמה: נקודת אמצע בחיפוש בינארי עם ערכים גדולים",
+          "body": "מערך ממוין של כ-2.14 מיליארד איברים (עדיין מתחת ל-INT_MAX, ולכן נראה שאינדקס int מספיק), ובשלב מסוים `lo = 2,000,000,000` ו-`hi = 2,100,000,000`.\n\n- `(lo + hi) / 2`: הסכום 4,100,000,000 גדול מ-INT_MAX = 2,147,483,647. signed overflow, UB. בפועל הביטים נותנים 194,967,296- ואחרי החלוקה 97,483,648-, אינדקס שלילי וגישה מחוץ למערך.\n- `lo + (hi - lo) / 2`: ההפרש 100,000,000, חצי ממנו 50,000,000, והתוצאה 2,050,000,000. כל ביניים קטן מ-INT_MAX.\n- `(unsigned(lo) + unsigned(hi)) / 2`: הסכום 4,100,000,000 נכנס ב-unsigned של 32 ביט (מקסימום 4,294,967,295), והחלוקה נותנת 2,050,000,000. עובד כל עוד lo ו-hi אי-שליליים.\n\nהלקח: הבאג מופיע רק בקלטים ענקיים, ולכן טסטים רגילים לא תופסים אותו."
+        },
+        {
+          "title": "דוגמה: חישוב גודל שעוטף",
+          "body": "header של קובץ מצהיר על `nFrames = 65536` ו-`frameLen = 65536`, שניהם `uint32_t`. המכפלה המתמטית היא 2^32 = 4,294,967,296, אבל ב-uint32 היא מודולו 2^32, כלומר **0**. מוקצה buffer בגודל 0 (או זעיר), והלולאה שקוראת את ה-frames כותבת 16 GiB מעבר לו: heap overflow שתוקף יכול לשלוט בו.\n\nאותו דבר ב-NumPy: תמונה 640x480 עם מידות שנקראו כ-`np.uint16`. `w * h` הוא uint16 כפול uint16, והתוצאה 307,200 נלקחת מודולו 65,536: 307200 - 4·65536 = **45,056**, עם RuntimeWarning בלבד. אם אחר כך מחשבים `npix * 3` לגודל ב-RGB, גם זה uint16: 135,168 mod 65,536 = **4,096** בתים במקום 921,600.\n\nהתיקון: להרחיב לרוחב מספיק לפני הכפל (`int(w) * int(h)` ב-Python, `size_t` או `uint64_t` ב-C++), לבדוק `a > MAX / b` או `__builtin_mul_overflow`, ולהגביל גדלים לערך הגיוני."
+        },
+        {
+          "title": "דוגמה: השוואות עם טיפוסים מעורבים",
+          "body": "int של 32 ביט, `unsigned short` של 16 ביט, `long long` של 64 ביט.\n\n- `-1 < 0u`: int מול unsigned int, אותו rank. ה-int מומר ל-unsigned: 1- הופך ל-4,294,967,295, וההשוואה 4294967295 < 0 היא **false**.\n- `-1 < us` כש-`us` הוא `unsigned short` עם 0: קודם promotion, ו-us הופך ל-int (כי int מכיל את כל ערכי unsigned short). עכשיו זה int מול int: 1- < 0 הוא **true**.\n- `ll < 0u` כש-`ll = -1LL`: long long בעל rank גבוה יותר ויכול לייצג את כל ערכי unsigned int, ולכן ה-unsigned מומר ל-long long. 1- < 0 הוא **true**.\n\nהלקח: התוצאה תלויה ברוחב היחסי של הטיפוסים, לא רק בשאלה מי signed. `-Wsign-compare` מזהיר רק על חלק מהמקרים, ו-`std::cmp_less` (C++20) נותן את התשובה המתמטית הנכונה תמיד."
+        }
+      ],
+      "glossary": [
+        { "term": "Integer overflow", "def": "תוצאה של פעולה אריתמטית שלא נכנסת בטווח של הטיפוס. ב-C++ ההשלכה תלויה בשאלה אם הטיפוס signed או unsigned." },
+        { "term": "Signed overflow (UB)", "def": "גלישה בפעולה על טיפוס signed היא undefined behavior. הקומפיילר רשאי להניח שלא קורית, למחוק בדיקות שתלויות בה ולשנות לולאות." },
+        { "term": "Undefined behavior (UB)", "def": "התנהגות שהתקן לא מגביל כלל. התוכנית יכולה לעבוד, לקרוס, או להתנהג אחרת בכל רמת אופטימיזציה." },
+        { "term": "Unsigned wraparound", "def": "לטיפוסי unsigned התוצאה מוגדרת כמודולו 2^N: `UINT_MAX + 1u == 0` ו-`0u - 1 == UINT_MAX`. מוגדר, אבל לרוב באג לוגי." },
+        { "term": "Modular arithmetic", "def": "אריתמטיקה מודולו 2^N, שבה חיבור, חיסור וכפל נשארים נכונים מודולו 2^N. בגללה הפרש של מונים שעוטפים עדיין נכון ב-unsigned." },
+        { "term": "Two's complement", "def": "ייצוג שלמים signed: טווח מ-2^(N-1)- עד 2^(N-1)-1. מחייב מ-C++20. אסימטרי: ל-INT_MIN אין נגדי." },
+        { "term": "INT_MIN / INT_MAX", "def": "הקצוות של int: ב-32 ביט 2147483648- ו-2147483647. `-INT_MIN`, `std::abs(INT_MIN)`, `INT_MIN / -1` ו-`INT_MIN % -1` הם UB." },
+        { "term": "Integer promotion", "def": "טיפוסים צרים מ-int (char, short, int8/16, uint8/16, bool) מקודמים ל-int לפני פעולה, או ל-unsigned int אם int לא מכיל את כל ערכיהם. לכן uint16*uint16 הוא int*int." },
+        { "term": "Usual arithmetic conversions", "def": "הכללים שמביאים שני אופרנדים לטיפוס משותף: unsigned באותו rank או גבוה 'מנצח' ו-signed מומר אליו; signed רחב יותר שמכיל את כל הערכים 'מנצח'." },
+        { "term": "Sign-compare", "def": "השוואה של signed מול unsigned, שבה שלילי מומר לערך ענק. `-Wsign-compare` מזהיר; `std::cmp_less` (C++20) משווה נכון." },
+        { "term": "Narrowing conversion", "def": "המרה שעלולה לאבד מידע (int ל-short, double ל-int, int64 ל-int32). brace initialization דוחה אותה; השמה רגילה ו-static_cast לא." },
+        { "term": "Truncation", "def": "המרה לשלם צר יותר שזורקת את הביטים העליונים: 40000 ל-int16_t נותן 25536- (מודולו 2^16, מוגדר מ-C++20)." },
+        { "term": "size_t", "def": "טיפוס unsigned לגדלים (64 ביט במערכות 64 ביט). מכפלה ב-size_t גם עוטפת, וערבוב עם int יוצר sign-compare." },
+        { "term": "n * sizeof(T) overflow", "def": "מכפלה של כמות בגודל איבר שעוטפת ומקצה buffer קטן מדי. בודקים מראש `n > SIZE_MAX / sizeof(T)` או משתמשים ב-`__builtin_mul_overflow`." },
+        { "term": "Midpoint overflow", "def": "`(lo + hi) / 2` גולש כש-lo+hi > INT_MAX. נכון: `lo + (hi - lo) / 2`, סכום ב-unsigned, או `std::midpoint` (C++20)." },
+        { "term": "UBSan", "def": "UndefinedBehaviorSanitizer: `-fsanitize=signed-integer-overflow` (או `undefined`) מדווח בזמן ריצה על signed overflow, shift לא חוקי וחילוק באפס." },
+        { "term": "-fwrapv / -ftrapv", "def": "`-fwrapv` מגדיר signed overflow כעטיפה (מבטל את ה-UB ואופטימיזציות); `-ftrapv` עושה abort על overflow. רק -ftrapv מזהה." },
+        { "term": "-Wconversion", "def": "אזהרת GCC/Clang על המרות מרומזות שעלולות לשנות ערך: narrowing, truncation ושינוי signedness." },
+        { "term": "__builtin_add_overflow / __builtin_mul_overflow", "def": "builtins של GCC/Clang שמחזירים true אם הפעולה גלשה וכותבים את התוצאה העטופה. בלי UB, לכל צירוף טיפוסים, בעלות של הוראה וקפיצה." },
+        { "term": "Saturation", "def": "הצמדת תוצאה ל-MIN/MAX במקום עטיפה. נדרש באודיו ו-DSP כי עטיפה הופכת שיא חיובי לשלילי (click). SIMD מציע פעולות saturating." },
+        { "term": "Widening", "def": "חישוב ברוחב גדול יותר לפני הפעולה: `int64_t{a} * b` ולא `int64_t(a * b)`, שבו הגלישה כבר קרתה." },
+        { "term": "Python int (bignum)", "def": "ה-int של Python הוא arbitrary precision וגדל לפי הצורך; אין בו overflow. איטי יותר כי כל ערך הוא אובייקט." },
+        { "term": "NumPy fixed-width wrap", "def": "מערכי NumPy ב-int8/16/32/64 ו-uint עוטפים כמו C: על מערכים בשקט, על scalars עם RuntimeWarning. מרחיבים עם astype לפני הפעולה." },
+        { "term": "Counter / time_t overflow", "def": "מונים ברוחב קבוע עוטפים: 32 ביט ב-200 MHz כל 21.5 שניות, מילישניות 32 ביט כל 49.7 ימים, ו-time_t signed של 32 ביט ב-2038 (Y2038)." },
+        { "term": "Serial-number arithmetic", "def": "השוואת מונים שעוטפים: מחסרים ב-unsigned ומפרשים את ההפרש כ-signed (RFC 1982, Linux `time_after`). תקף כשההפרש האמיתי קטן מחצי הטווח." }
+      ]
     }
   ],
   "questions": [
@@ -328,6 +399,319 @@
       "explanation": "המונה עוטף כל 2^32/200e6 ≈ 21.5 שניות. `t1 - t0` ב-unsigned נותן את ההפרש הנכון מודולו 2^32, והמרה ל-int32_t (מוגדרת כמודולו מ-C++20) מפרשת אותו כחיובי אם הוא קטן מ-2^31 ticks, בערך 10.7 שניות. זה serial-number arithmetic (RFC 1982), ואותו טריק משמש ב-Linux `time_after`. `t1 > t0` ו-int64 נכשלים כשהמונה עוטף בין האירועים, ו-`t1 - t0 > 0` ב-unsigned נכון לכל t1 != t0.",
       "lesson": "bugs.overflow",
       "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-C++ עם unsigned של 32 ביט: `unsigned x = 0; x = x - 1;`. מה מצב x?",
+      "choices": [
+        "undefined behavior, כמו ב-signed",
+        "x שווה 4294967295 (`UINT_MAX`), באופן מוגדר",
+        "x נשאר 0 (saturation)",
+        "implementation-defined: תלוי בקומפיילר"
+      ],
+      "answer": 1,
+      "explanation": "אריתמטיקה של unsigned מוגדרת בתקן כמודולו 2^N: 0-1 מודולו 2^32 הוא 2^32-1 = 4294967295. זה ההבדל המרכזי מ-signed, שבו גלישה היא UB. saturation לא קיים בשלמים רגילים של C++, וזה לא implementation-defined: כל קומפיילר חייב לתת את אותה תוצאה.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q20",
+      "level": 1,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "x = 2**64 + 1\nprint(x)",
+      "choices": [
+        "1",
+        "OverflowError",
+        "18446744073709551617",
+        "-18446744073709551615"
+      ],
+      "answer": 2,
+      "explanation": "ה-int של Python הוא arbitrary precision (bignum) וגדל לפי הצורך, ולכן אין overflow והתוצאה המדויקת 2^64+1 מודפסת. 1 היה מתקבל בעטיפה מודולו 2^64 כמו ב-uint64, ו-OverflowError נזרק ב-Python רק בהמרות מסוימות (למשל float גדול מדי או המרה לטיפוס C), לא בחשבון של int.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה הערך של `INT_MIN` כש-int הוא 32 ביט בייצוג two's complement?",
+      "accept": ["-2147483648", "-2,147,483,648", "-2^31"],
+      "explanation": "ב-two's complement של 32 ביט הטווח הוא מ-2^31- = 2147483648- עד 2^31-1 = 2147483647. הטווח אסימטרי, ולכן `-INT_MIN` ו-`std::abs(INT_MIN)` לא ייצוגיים ב-int והם UB.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה עושה הדגל `-fsanitize=signed-integer-overflow` ב-GCC וב-Clang?",
+      "choices": [
+        "מוסיף בדיקות בזמן ריצה שמדווחות כשמתבצע signed overflow",
+        "גורם לקומפיילר לסרב לקמפל כל ביטוי שעלול לגלוש",
+        "מגדיר signed overflow כעטיפה מודולו 2^N",
+        "מחליף כל תוצאה שגולשת ב-INT_MAX או INT_MIN (saturation)"
+      ],
+      "answer": 0,
+      "explanation": "זה חלק מ-UBSan: הקומפיילר מוסיף בדיקה לכל פעולת signed, ובזמן ריצה מודפסת הודעה כמו 'signed integer overflow: 2147483647 + 1 cannot be represented in type int'. הקומפיילר לא יכול לדעת בזמן קומפילציה אילו ערכים יגיעו. הגדרת עטיפה היא `-fwrapv`, ו-saturation לא מסופק על ידי שום דגל.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס? (int ו-unsigned הם 32 ביט)",
+      "code": "int x = -1;\nunsigned y = 1;\nstd::cout << (x < y);",
+      "choices": ["1", "undefined behavior", "לא מתקמפל", "0"],
+      "answer": 3,
+      "explanation": "usual arithmetic conversions: int ו-unsigned הם באותו rank, ולכן ה-int מומר ל-unsigned. 1- הופך ל-4294967295, וההשוואה 4294967295 < 1 היא false. אין כאן UB (המרה ל-unsigned תמיד מוגדרת), והקוד מתקמפל עם אזהרת `-Wsign-compare` בלבד. ב-C++20 `std::cmp_less(x, y)` מחזיר true כמצופה.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q24",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\na = np.array([2**31 - 1], dtype=np.int32)\nprint(a + 1, (2**31 - 1) + 1)",
+      "choices": [
+        "[2147483648] 2147483648",
+        "[-2147483648] 2147483648",
+        "[-2147483648] -2147483648",
+        "OverflowError"
+      ],
+      "answer": 1,
+      "explanation": "המערך הוא int32, וחיבור עם Python int קטן נשאר ב-int32 ועוטף ל-INT32_MIN, בלי אזהרה (פעולות על מערכים עוטפות בשקט). החשבון השני הוא Python int טהור, שהוא arbitrary precision, ולכן יוצא 2147483648. NumPy לא מרחיב את ה-dtype אוטומטית כדי להימנע מגלישה.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q25",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "חיפוש בינארי על וקטור ממוין עם כ-1.5 מיליארד איברים. לעיתים התוכנית קורסת עם גישה לאינדקס שלילי. מה הבאג?",
+      "code": "int findIdx(const std::vector<int>& a, int key) {\n    int lo = 0, hi = (int)a.size() - 1;\n    while (lo <= hi) {\n        int mid = (lo + hi) / 2;\n        if (a[mid] == key) return mid;\n        if (a[mid] < key) lo = mid + 1;\n        else hi = mid - 1;\n    }\n    return -1;\n}",
+      "bugLine": 4,
+      "choices": [
+        "`hi` צריך להתחיל ב-`a.size()` ולא `a.size() - 1`",
+        "`(int)a.size()` מאבד מידע, ולכן hi שלילי מההתחלה",
+        "`lo + hi` יכול לעבור את INT_MAX כשהחיפוש מגיע לחצי העליון: signed overflow (UB), ובפועל mid שלילי. צריך `lo + (hi - lo) / 2`",
+        "`hi = mid - 1` יכול לרדת ל-1-, ואז `a[hi]` חורג"
+      ],
+      "answer": 2,
+      "explanation": "כשהמטרה בחצי העליון, lo ו-hi שניהם מעל 750 מיליון, והסכום עובר את 2147483647. זה הבאג שחי שנים ב-`Arrays.binarySearch` של Java. `lo + (hi - lo) / 2` לא גולש כי ההפרש אי-שלילי וקטן מ-hi. 1.5 מיליארד עדיין נכנס ב-int, כך שה-cast תקין כאן. hi=-1 הוא מצב עצירה רגיל של closed range: הלולאה יוצאת לפני גישה.",
+      "lesson": "bugs.overflow",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.overflow.q26",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס?",
+      "code": "uint8_t a = 200, b = 100;\nstd::cout << a + b;",
+      "choices": [
+        "300",
+        "44",
+        "255",
+        "התו שקוד ה-ASCII שלו 44 (פסיק)"
+      ],
+      "answer": 0,
+      "explanation": "integer promotion: שני ה-uint8_t מקודמים ל-int לפני החיבור, והתוצאה היא int עם 300. אין עטיפה כי אין המרה חזרה ל-uint8_t. 44 (300 מודולו 256) היה מתקבל רק עם `uint8_t c = a + b;`. ההדפסה כתו קורית כשמדפיסים uint8_t עצמו (הוא בדרך כלל `unsigned char`), אבל כאן הביטוי הוא int.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q27",
+      "level": 3,
+      "type": "multi",
+      "prompt": "נתון `0 <= lo <= hi <= INT_MAX`, שניהם int (32 ביט). אילו ביטויים מחשבים את נקודת האמצע מעוגלת למטה בלי שום overflow? (בחר את כל הנכונים)",
+      "choices": [
+        "`(lo + hi) / 2`",
+        "`lo + (hi - lo) / 2`",
+        "`(lo + hi) >> 1`",
+        "`int((unsigned(lo) + unsigned(hi)) / 2)`",
+        "`std::midpoint(lo, hi)` (C++20)"
+      ],
+      "answer": [1, 3, 4],
+      "explanation": "`hi - lo` אי-שלילי ולא גדול מ-INT_MAX, ולכן `lo + (hi - lo) / 2` בטוח. הסכום ב-unsigned הוא לכל היותר 2^32-2, שנכנס ב-unsigned של 32 ביט, והחצי שלו קטן מ-INT_MAX. `std::midpoint` מוגדר ללא overflow ומעגל לכיוון הארגומנט הראשון, כלומר למטה כש-lo<=hi. שתי הגרסאות עם `lo + hi` ב-int גולשות (UB) כשהסכום עובר את INT_MAX; ה-shift לא עוזר כי הגלישה קורית בחיבור.",
+      "lesson": "bugs.overflow",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.overflow.q28",
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "קריאת תמונת RGB מ-buffer בינארי: 4 בתים ראשונים הם רוחב וגובה (uint16 little-endian), ואחריהם הפיקסלים. עבור תמונה 640x480 מתקבל מערך קצר מאוד, עם RuntimeWarning בלבד. מה הבאג?",
+      "code": "import numpy as np\n\ndef read_image(buf):\n    w, h = np.frombuffer(buf[:4], dtype='<u2')\n    npix = w * h\n    return np.frombuffer(buf[4:], dtype=np.uint8, count=npix * 3)",
+      "bugLine": 5,
+      "choices": [
+        "`np.frombuffer` על `buf[:4]` מחזיר מערך read-only, ולכן unpacking נכשל",
+        "`'<u2'` צריך להיות `'>u2'`",
+        "unpacking של מערך NumPy ל-w, h מחזיר מערכים ולא סקלרים",
+        "w ו-h הם `np.uint16`, ולכן `w * h` מחושב ב-uint16: 307200 עוטף ל-45056, וגם `npix * 3` עוטף ל-4096"
+      ],
+      "answer": 3,
+      "explanation": "פעולה בין שני NumPy scalars נשארת ב-dtype שלהם, ו-NumPy רק מוציא `RuntimeWarning: overflow encountered in scalar multiply`. 307200 mod 65536 = 45056, ו-135168 mod 65536 = 4096, כך שנקראים 4096 בתים במקום 921600. תיקון: `npix = int(w) * int(h)` (Python int לא גולש). מערך read-only לא מפריע ל-unpacking, הפורמט תואם את ההגדרה (little-endian), ו-unpacking של מערך חד-ממדי נותן scalars.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q29",
+      "level": 4,
+      "type": "oral",
+      "prompt": "הסבר למה signed overflow הוא undefined behavior ב-C++ גם אחרי ש-C++20 קבע two's complement, אילו אופטימיזציות זה מאפשר, ומה ה-trade-off של `-fwrapv`. איך היית מוודא שקוד DSP קריטי לא תלוי בהתנהגות הזו?",
+      "modelAnswer": "C++20 קבע את הייצוג (two's complement), אבל השאיר את הגלישה האריתמטית UB, כי הקומפיילרים מנצלים את ההנחה שהיא לא קורית. מכך הם מסיקים ש-`i + 1 > i`, ש-`a + b < a` כש-b>0 הוא false, ושמונה לולאה int לא עוטף: לכן אפשר לחשב trip count, להחליף אינדקס int במצביע 64 ביט בלי sign-extension, ולעשות vectorization ו-strength reduction. `-fwrapv` מגדיר עטיפה: מבטל את ה-UB אבל גם חלק מהאופטימיזציות (במיוחד בלולאות), ובעיקר מסתיר את הבאג במקום לתקן אותו, כי עטיפה של דגימה עדיין שגויה פונקציונלית. בקוד DSP: לחשב ברוחב מספיק (מצבר int32/int64 למכפלות int16), להשתמש ב-saturation מפורש או ב-intrinsics saturating, לבדוק overflow לפני הפעולה או עם `__builtin_add_overflow`/`__builtin_mul_overflow`, להריץ unit tests עם ערכי קצה (INT16_MIN כפול INT16_MIN, סכומים בשיא) תחת UBSan ב-CI, ולהפעיל `-Wconversion -Wsign-compare`. כשבאמת רוצים עטיפה (מונים, hash), לעבוד ב-unsigned שבו היא מוגדרת.",
+      "rubric": [
+        "מבחין בין ייצוג מוגדר (C++20) לבין גלישה שנשארה UB",
+        "נותן דוגמה קונקרטית לאופטימיזציה: מחיקת בדיקת `a + b < a`, trip count או vectorization של לולאה עם int",
+        "מסביר ש-`-fwrapv` מסתיר את הבאג ועולה באופטימיזציות, ושעטיפה לא נכונה פונקציונלית ב-DSP",
+        "מציע אסטרטגיה: widening, saturation או builtins, ולעבוד ב-unsigned כשעטיפה רצויה",
+        "מציין UBSan ב-CI עם בדיקות ערכי קצה ואזהרות קומפיילר"
+      ],
+      "explanation": "תשובה חזקה מפרידה בין 'איך המספר מיוצג' ל'מה מותר לקומפיילר להניח', ומראה שהפתרון הוא תכנון טיפוסים ובדיקות, לא דגל שמכבה את הבעיה.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q30",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מדידת שיא של מצבר 32 ביט. כשהאות נוגע בדיוק בקצה השלילי של הטווח, השיא שמוחזר קטן מהצפוי. מה הבאג?",
+      "code": "// x: int32 samples from a 32-bit accumulator\nint32_t peakAbs(const int32_t* x, size_t n) {\n    int32_t peak = 0;\n    for (size_t i = 0; i < n; ++i) {\n        int32_t m = std::abs(x[i]);\n        if (m > peak) peak = m;\n    }\n    return peak;\n}",
+      "bugLine": 5,
+      "choices": [
+        "`std::abs(INT32_MIN)` הוא UB: 2147483648+ לא ייצוגי ב-int32. בפועל מתקבל ערך שלילי, והוא לא עובר את `m > peak`",
+        "`peak` צריך להתחיל ב-`x[0]` ולא ב-0",
+        "השוואה של `size_t i` מול n צריכה להיות ב-int",
+        "`std::abs` על int32_t מחזיר double ומאבד דיוק"
+      ],
+      "answer": 0,
+      "explanation": "הטווח של int32 אסימטרי, ולערך המינימלי אין נגדי. `std::abs(INT32_MIN)` הוא UB, ובפועל לרוב מחזיר INT32_MIN עצמו, שלילי, ולכן השיא האמיתי לא נספר. תיקון: להחזיר `uint32_t` ולחשב `x < 0 ? 0u - uint32_t(x) : uint32_t(x)`, שמוגדר ונותן 2147483648. peak=0 תקין לערך מוחלט, size_t הוא האינדקס הנכון, ו-`std::abs(int)` מחזיר int.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q31",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מיון detections לפי עוצמה עם `qsort`. detections חסרות מסומנות ב-`power = INT_MIN`. אחרי המיון הסדר שגוי. מה הבאג?",
+      "code": "struct Det { int64_t ts; int power; };\nint cmpPower(const void* a, const void* b) {\n    int pa = static_cast<const Det*>(a)->power;\n    int pb = static_cast<const Det*>(b)->power;\n    return pa - pb;\n}",
+      "bugLine": 5,
+      "choices": [
+        "qsort לא יציב, ולכן detections עם אותה עוצמה מתערבבות",
+        "comparator של qsort חייב להחזיר בדיוק 1-, 0 או 1",
+        "`pa - pb` גולש: למשל pa=100 ו-pb=INT_MIN נותן 100+2^31, signed overflow (UB) שבפועל יוצא שלילי, וההשוואה מתהפכת",
+        "ה-cast ל-`const Det*` מ-`const void*` הוא UB"
+      ],
+      "answer": 2,
+      "explanation": "comparator בחיסור עובד רק כשההפרש תמיד נכנס ב-int. עם sentinel של INT_MIN כל השוואה מול ערך אי-שלילי גולשת, והסימן ההפוך שובר את הסדר ואף את העקביות שהמיון מניח. תיקון: `return (pa > pb) - (pa < pb);`. qsort דורש רק את הסימן של התוצאה, אי-יציבות לא משנה את הסדר לפי power, וה-static_cast מ-`const void*` שמצביע על Det חוקי.",
+      "lesson": "bugs.overflow",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.overflow.q32",
+      "level": 5,
+      "type": "multi",
+      "prompt": "int הוא 32 ביט ו-int16_t הוא 16 ביט, C++20. אילו מהביטויים הבאים הם undefined behavior? (בחר את כל הנכונים)",
+      "choices": [
+        "`INT_MIN / -1`",
+        "`INT_MIN % -1`",
+        "`UINT_MAX + 1u`",
+        "`-INT_MIN`",
+        "`static_cast<int16_t>(40000)`",
+        "`std::abs(INT_MIN)`"
+      ],
+      "answer": [0, 1, 3, 5],
+      "explanation": "המנה INT_MIN/-1 היא 2^31, לא ייצוגית, ולכן UB (ב-x86 ההוראה idiv זורקת SIGFPE). התקן קובע במפורש שאם המנה לא ייצוגית, גם `a % b` הוא UB, למרות שהשארית המתמטית היא 0. `-INT_MIN` ו-`std::abs(INT_MIN)` הם signed overflow. `UINT_MAX + 1u` הוא אריתמטיקה unsigned ומוגדר כ-0. `static_cast<int16_t>(40000)` הוא conversion ולא אריתמטיקה: מ-C++20 מוגדר כמודולו 2^16 ונותן 25536- (לפני C++20 implementation-defined, אבל אף פעם לא UB).",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q33",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "int ו-unsigned הם 32 ביט, `unsigned short` הוא 16 ביט ו-`long long` הוא 64 ביט. מה מודפס?",
+      "code": "unsigned short us = 0;\nlong long ll = -1;\nstd::cout << (-1 < 0u) << (-1 < us) << (ll < 0u);",
+      "choices": ["000", "011", "111", "010"],
+      "answer": 1,
+      "explanation": "`-1 < 0u`: int מול unsigned באותו rank, ה-int מומר ל-unsigned (4294967295) והתוצאה false. `-1 < us`: integer promotion הופך את unsigned short ל-int, כי int מכיל את כל ערכיו, וההשוואה היא 1- < 0, true. `ll < 0u`: ל-long long rank גבוה יותר והוא מכיל את כל ערכי unsigned int, ולכן ה-unsigned מומר ל-long long, ו-1- < 0 הוא true. 'unsigned תמיד מנצח' נכון רק כשה-rank שלו לא נמוך יותר.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q34",
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "כתוב `int32_t satAdd(int32_t a, int32_t b)` שמחזירה את a+b עם saturation לטווח [INT32_MIN, INT32_MAX]. בלי UB, בלי builtins של הקומפיילר ובלי טיפוס רחב יותר (כמו במעבד DSP שאין בו int64 זול).",
+      "starter": "int32_t satAdd(int32_t a, int32_t b);",
+      "modelAnswer": "int32_t satAdd(int32_t a, int32_t b) {\n    // check before adding: never compute an overflowing a + b\n    if (b > 0 && a > INT32_MAX - b) return INT32_MAX;\n    if (b < 0 && a < INT32_MIN - b) return INT32_MIN;\n    return a + b;   // safe: result is in range\n}",
+      "rubric": [
+        "הבדיקה נעשית לפני החיבור, ושום ביטוי בבדיקה עצמה לא גולש (`INT32_MAX - b` עם b>0, `INT32_MIN - b` עם b<0)",
+        "מטפל בשני הכיוונים: גלישה חיובית ל-INT32_MAX ושלילית ל-INT32_MIN",
+        "לא משתמש ב-`a + b < a` או בבדיקה אחרי הפעולה",
+        "מזכיר ערכי קצה לבדיקה: (INT32_MAX, 1), (INT32_MIN, -1), (INT32_MIN, INT32_MAX), ו-b=0",
+        "O(1), ומציין ש-`__builtin_add_overflow` או intrinsics saturating הם החלופה כשמותר"
+      ],
+      "explanation": "הטריק הוא להעביר את b לצד השני של אי-השוויון: `a + b > INT32_MAX` שקול ל-`a > INT32_MAX - b`, והביטוי הימני לא גולש כש-b>0. באותו אופן לצד השלילי. כש-b ו-a בסימנים מנוגדים אין גלישה, והבדיקות לא מופעלות.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q35",
+      "level": 5,
+      "type": "oral",
+      "prompt": "FPGA שולח timestamps של 32 ביט במונה 200 MHz (עוטף כל כ-21.5 שניות), וה-host צריך זמן מונוטוני של 64 ביט שמחזיק ימים. תכנן את ה-unwrapping: מה ההנחות, מה קורה כשחבילות הולכות לאיבוד או מגיעות לא בסדר, ואיך זה קשור לבעיית Y2038 ול-`time_t`?",
+      "modelAnswer": "שומרים את הערך הגולמי האחרון (uint32) ומונה 64 ביט מצטבר. לכל timestamp חדש מחשבים `delta = int32_t(raw - lastRaw)`: החיסור ב-unsigned נכון מודולו 2^32, והפרשנות כ-signed (מוגדרת מ-C++20) מאפשרת לזהות גם חבילה מאוחרת (delta שלילי קטן) בלי לשבור את המונוטוניות. ההנחה: ההפרש האמיתי בין שתי דגימות עוקבות קטן מ-2^31 ticks, בערך 10.7 שניות. delta חיובי מוסיפים למונה 64 ביט ומעדכנים את lastRaw; delta שלילי מחשבים יחסית למונה בלי לקדם אותו. אם יש פער של יותר מ-10.7 שניות (ניתוק, overflow של buffer) התוצאה דו-משמעית: צריך heartbeat תכוף מה-FPGA, או סנכרון גס מול שעון host או PPS כדי לדעת כמה עטיפות פוספסו. מונה 64 ביט ב-200 MHz עוטף אחרי כ-2900 שנה, ולכן לא צריך לטפל בו. הקשר ל-Y2038: `time_t` signed של 32 ביט סופר שניות מ-1970 וגולש ב-19.1.2038 03:14:07 UTC; signed overflow הוא UB, ובפועל הזמן קופץ ל-1901. הפתרון שם הוא אותו עיקרון: 64 ביט לזמן מוחלט, וחשבון מודולרי מפורש רק למונים קצרים. אותה בעיה ב-`GetTickCount` (32 ביט מילישניות, עוטף אחרי 49.7 ימים), שבו `now - start > timeout` ב-unsigned עובד אבל `now > start + timeout` נשבר.",
+      "rubric": [
+        "משתמש בחיסור unsigned ופירוש כ-signed (serial-number arithmetic), ולא בהשוואה ישירה של ערכים גולמיים",
+        "מנסח את ההנחה: הפרש בין עדכונים קטן מחצי הטווח (כ-10.7 שניות), ומה עושים כשהיא מופרת (heartbeat, סנכרון חיצוני)",
+        "מטפל בחבילות שמגיעות לא בסדר בלי לשבור מונוטוניות",
+        "מסביר Y2038: time_t signed 32 ביט, גלישה ב-2038, ופתרון 64 ביט",
+        "מחשב או מעריך טווחים: 21.5 שניות ל-32 ביט, אלפי שנים ל-64 ביט ב-200 MHz"
+      ],
+      "explanation": "השאלה בודקת אם המועמד יודע להפוך מונה עוטף לזמן מוחלט באופן בטוח, לנסח את ההנחה שבלעדיה האלגוריתם לא מוגדר, ולהכליל לבעיות מוכרות כמו Y2038 ו-GetTickCount.",
+      "lesson": "bugs.overflow",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.overflow.q36",
+      "level": 4,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "חישוב אנרגיה ממוצעת של דגימות ADC מסוג int16. לאותות חזקים מתקבלת אנרגיה קטנה מדי ולפעמים שלילית. מה הבאג?",
+      "code": "import numpy as np\n\ndef band_energy(x):\n    # x: np.int16 IQ samples from the ADC\n    return np.sum(x ** 2) / len(x)",
+      "bugLine": 5,
+      "choices": [
+        "`/ len(x)` הוא חלוקת שלמים ומאבד את השבר",
+        "`np.sum` על int16 צובר תמיד ב-int16 ולכן הסכום גולש",
+        "צריך `np.mean` כי `np.sum` לא תומך ב-int16",
+        "`x ** 2` מחושב ב-int16 ועוטף (למשל 30000 בריבוע הופך ל-5888-); ההרחבה של `np.sum` לצבירה קורית אחרי שהנזק כבר נעשה"
+      ],
+      "answer": 3,
+      "explanation": "פעולה על מערך int16 עם Python int נשארת int16, ו-900,000,000 mod 65536 מתפרש כ-5888-, בלי אזהרה. `np.sum` על int16 אכן מרחיב את המצבר לשלם ברירת המחדל של הפלטפורמה, אבל הריבועים כבר עטופים. תיקון: `x.astype(np.int64) ** 2` או `x.astype(np.float64) ** 2`. ב-Python 3 האופרטור `/` הוא חלוקה אמיתית, ו-np.mean היה נופל באותו באג.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q37",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import numpy as np\na = np.array([100], dtype=np.int8)\nprint(a * 2, a * 2.0)",
+      "choices": [
+        "[200] [200.]",
+        "OverflowError: Python integer 200 out of bounds for int8",
+        "[-56] [200.]",
+        "[-56] [-56.]"
+      ],
+      "answer": 2,
+      "explanation": "int8 כפול Python int נשאר int8: 200 לא נכנס (מקסימום 127), ו-200-256 = 56-, בשקט. כפל ב-Python float מעביר את התוצאה ל-float64, ושם 200.0 מיוצג בלי בעיה. OverflowError נזרק רק כשה-Python int עצמו לא נכנס ב-dtype (למשל `a * 300`), לא כשהתוצאה גולשת.",
+      "lesson": "bugs.overflow"
     }
   ]
 }

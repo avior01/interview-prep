@@ -34,7 +34,153 @@
         "דיוק נומרי: P[r] − P[l] ב-float מאבד דיוק כש-P גדול (cancellation)",
         "על GPU: parallel scan (Blelloch) ב-O(n) work ו-O(log n) depth – בסיס ל-stream compaction, radix sort ו-histogram"
       ],
-      "diagram": "a = [3, 1, 4, 1, 5]\nP = [0, 3, 4, 8, 9, 14]\nsum(a[1..3]) = P[4] - P[1] = 9 - 3 = 6"
+      "diagram": "a = [3, 1, 4, 1, 5]\nP = [0, 3, 4, 8, 9, 14]\nsum(a[1..3]) = P[4] - P[1] = 9 - 3 = 6",
+      "details": [
+        {
+          "title": "ההגדרה, האינדקסים, ולמה n + 1",
+          "body": "P[0] = 0 ו-P[i+1] = P[i] + a[i], ולכן P[i] הוא סכום i האיברים הראשונים, a[0..i−1]. הסכום של a[l..r] (כולל) הוא P[r+1] − P[l]: P[r+1] מכיל את a[0..r], ו-P[l] מכיל את a[0..l−1], וההפרש הוא בדיוק הטווח.\n\nהגודל n + 1 והאפס בהתחלה חוסכים מקרה קצה: טווח שמתחיל ב-0 הוא פשוט P[r+1] − P[0]. טעויות off-by-one נפוצות: P[r] − P[l] מפספס את a[r], ו-P[r+1] − P[l−1] מוסיף את a[l−1].\n\nיש שתי מוסכמות: **inclusive scan** (out[i] = a[0] + ... + a[i]) ו-**exclusive scan** (out[i] = a[0] + ... + a[i−1], ו-out[0] = 0). ב-C++17 יש std::inclusive_scan, std::exclusive_scan ו-std::partial_sum (שהוא inclusive). מערך P בגודל n + 1 הוא exclusive scan עם האיבר הנוסף בסוף.\n\n**Overflow**: 2·10⁵ איברים של עד 10⁹ מגיעים ל-2·10¹⁴, הרבה מעבר ל-int (כ-2.1·10⁹), ו-signed overflow ב-C++ הוא undefined behavior. P צריך להיות long long גם כשהקלט int.\n\nבנייה O(n) ושאילתה O(1). זה מושלם למערך **סטטי**; אם המערך משתנה בין שאילתות, כל עדכון מחייב בנייה מחדש ב-O(n), ואז עוברים ל-Fenwick tree."
+        },
+        {
+          "title": "Hash map של prefixes: ספירה, אורך ושאריות",
+          "body": "תת-מערך (i, j] (כלומר a[i..j−1]) סכומו P[j] − P[i]. לכן שאלה על תתי-מערכים הופכת לשאלה על **זוגות prefixes**, ואפשר לענות עליה במעבר אחד עם hash map של prefixes שכבר ראינו. זה עובד גם עם מספרים שליליים, בניגוד ל-sliding window.\n\n- **Subarray Sum Equals K (ספירה)**: לכל prefix s מוסיפים את מספר ה-prefixes הקודמים ששווים ל-s − K, ואחר כך מגדילים את המונה של s. מאתחלים {0: 1} – ה-prefix הריק – כדי לתפוס תתי-מערכים שמתחילים באינדקס 0. סדר הפעולות חשוב: אם מגדילים לפני שסופרים, עם K = 0 כל prefix נספר מול עצמו (תת-מערך ריק).\n- **האורך המקסימלי עם סכום K** (Maximum Size Subarray Sum Equals k, Contiguous Array עם המרה של 0 ל-−1): שומרים לכל ערך את האינדקס **הראשון** שבו הופיע, ולא דורסים. מאתחלים {0: −1} כדי שתת-מערך מההתחלה עד j ייתן אורך j + 1.\n- **האורך המינימלי** (למשל Make Sum Divisible by P: להסיר את תת-המערך הקצר ביותר כך שסכום השאר יתחלק ב-p): שומרים את האינדקס **האחרון** של כל ערך, כי רוצים i קרוב ככל האפשר ל-j.\n- **מתחלק ב-k**: P[j] − P[i] מתחלק ב-k אם P[j] ≡ P[i] (mod k), ולכן סופרים prefixes לפי שארית. ב-C++ החילוק מעוגל לכיוון 0 מאז C++11, ולכן (−7) % 3 == −1; מנרמלים ((s % k) + k) % k לפני שמשתמשים בשארית כאינדקס.\n\nכל אלה O(n) בתוחלת (hash map) ו-O(n) זיכרון, או O(k) כשמונים לפי שארית."
+        },
+        {
+          "title": "Difference array: עדכוני טווח",
+          "body": "difference array הוא ההפך של prefix sum (כמו נגזרת מול אינטגרל): d[i] = a[i] − a[i−1]. כדי להוסיף v לטווח [l, r] כותבים d[l] += v ו-d[r+1] −= v; prefix sum אחד בסוף משחזר את המערך המעודכן. כך m עדכונים עולים O(m + n) במקום O(m·n).\n\nזו טכניקה **אופליין**: כל העדכונים קודמים לקריאה. דוגמאות: Corporate Flight Bookings, Car Pooling, ספירת חפיפות של אינטרוולים. שימו לב לסמנטיקה של הקצה: ב-Car Pooling נוסעים יורדים בתחנה to, ולכן ההחסרה היא ב-d[to] ולא ב-d[to+1] – הטווח הוא חצי-פתוח [from, to).\n\n**דו-ממד**: להוספת v למלבן (r1, c1)..(r2, c2): d[r1][c1] += v, d[r1][c2+1] −= v, d[r2+1][c1] −= v, d[r2+1][c2+1] += v, ובסוף 2D prefix sum.\n\nכשעדכונים ושאילתות **משולבים**, ערך a[i] הוא prefix של d עד i, שעולה O(n). הפתרון: Fenwick tree על d (point update ב-l וב-r+1, prefix query ל-a[i]) – O(log n) לשתי הפעולות."
+        },
+        {
+          "title": "2D prefix sums ו-integral image",
+          "body": "P[i][j] הוא סכום המלבן (0,0)..(i−1, j−1), במערך (R+1)×(C+1). בנייה: P[i+1][j+1] = a[i][j] + P[i][j+1] + P[i+1][j] − P[i][j] (מוסיפים את שתי הרצועות ומחסירים את החפיפה שנספרה פעמיים).\n\nשאילתת מלבן (r1, c1)..(r2, c2) כולל: P[r2+1][c2+1] − P[r1][c2+1] − P[r2+1][c1] + P[r1][c1]. מורידים את הרצועה מעל ואת הרצועה משמאל; הפינה השמאלית-עליונה הוסרה פעמיים ולכן מוחזרת (inclusion-exclusion).\n\nבעיבוד תמונה זה נקרא **integral image** או summed-area table: box filter בכל גודל עולה O(1) לפיקסל. טריק חשוב: אם מחשבים את הטבלה ב-unsigned (uint32), גם אם ערכי הטבלה עצמם עושים wrap-around, הסכום של מלבן יוצא נכון כל עוד הסכום האמיתי שלו נכנס בטיפוס – כי חיבור וחיסור modulo 2³² הם חוג, ו-inclusion-exclusion נשאר נכון מודולו. ב-signed זה UB, ולכן דווקא unsigned.\n\n**Fix two rows**: לבעיות כמו Number of Submatrices That Sum to Target או Max Sum of Rectangle No Larger Than K, מקבעים זוג שורות (top, bottom), מכווצים כל עמודה לסכום אחד, ופותרים בעיה חד-ממדית. O(R²·C) כפול עלות הבעיה החד-ממדית; תמיד מקבעים את הממד הקטן."
+        },
+        {
+          "title": "מתי הטריק עובד: group, הופכי ו-idempotency",
+          "body": "'prefix ואז ביטול ה-prefix של l' דורש **איבר הופכי** לפעולה – מבנה של group:\n\n- חיבור: מבטלים בחיסור.\n- XOR: x XOR x = 0, ולכן XOR של [l, r] הוא X[r+1] XOR X[l].\n- כפל מודולו ראשוני p, כשאף איבר אינו מתחלק ב-p: מבטלים בכפל ב-**modular inverse** (שקיים רק לאיברים זרים ל-p). אפס אחד הורס את ההופכי.\n- כפל רגיל: Product of Array Except Self עוקף את החילוק עם prefix product משמאל ו-suffix product מימין, במעבר כפול.\n\nל-max, min ו-gcd אין הופכי. שם משתמשים ב-**sparse table**: טבלה של תשובות לכל קטע באורך חזקת 2, ושאילתה מכסה את [l, r] בשני קטעים חופפים. החפיפה לא מזיקה כי הפעולות **idempotent** (max(x, x) = x). O(n log n) בנייה, O(1) שאילתה, אבל סטטי.\n\nמבנים דינמיים: **Fenwick tree** (Binary Indexed Tree) מחזיק סכומים חלקיים כך ש-point update ו-prefix query עולים O(log n) (מעבר על i += i & −i או i −= i & −i). ל-range update + range query משתמשים בשני BITs: סכום [1..x] = B1(x)·x − B2(x), כאשר עדכון [l, r] += v מוסיף v ל-B1 ב-l ו-−v ב-r+1, ו-v·(l−1) ל-B2 ב-l ו-−v·r ב-r+1. **Segment tree** עם lazy propagation עושה את זה לכל פעולה אסוציאטיבית. **sqrt decomposition** עובד ב-O(√n) לפעולה – פשוט יותר אבל איטי יותר."
+        },
+        {
+          "title": "ספירת זוגות עם אילוץ טווח, ו-scan מקבילי",
+          "body": "כשהשאלה היא 'כמה תתי-מערכים עם סכום **בטווח** [lo, hi]' (Count of Range Sum), hash map לא מספיק. צריך לספור זוגות i < j עם lo ≤ P[j] − P[i] ≤ hi – אותו מבנה כמו ספירת **inversions**. שתי דרכים ב-O(n log n):\n\n- merge sort על P: בכל merge, שני החצאים ממוינים וכל אינדקס משמאל קודם לכל אינדקס מימין, ולכן שני מצביעים מונוטוניים סופרים את הזוגות.\n- Fenwick tree על P אחרי **coordinate compression** (מיפוי הערכים לדירוגים 1..n): לכל j שואלים כמה prefixes קודמים נמצאים ב-[P[j] − hi, P[j] − lo].\n\nבאותו אופן, 'הסכום המקסימלי ≤ K' דורש ordered set (std::set) של prefixes קודמים: לכל s מחפשים את ה-prefix הקטן ביותר ≥ s − K עם lower_bound. Kadane (המקסימום הלא מוגבל) לא עוזר כאן.\n\n**Scan על GPU**: נראה סדרתי (P[i] תלוי ב-P[i−1]), אבל מכיוון שהפעולה **אסוציאטיבית** אפשר לחשב בעץ. Hillis–Steele: log n צעדים אבל O(n log n) work. Blelloch: up-sweep ו-down-sweep, O(n) work ו-O(log n) depth – work-efficient. במערכים גדולים סורקים כל block ב-shared memory, סורקים את סכומי ה-blocks ומוסיפים בחזרה, או single-pass עם decoupled look-back. נדרשת אסוציאטיביות, לא קומוטטיביות."
+        },
+        {
+          "title": "דיוק נומרי",
+          "body": "P[r] − P[l] ב-floating point הוא חיסור של שני מספרים גדולים וקרובים – **catastrophic cancellation**. ב-float32 ליד 10⁷ ה-ULP (המרחק בין שני float סמוכים) הוא 1, ולכן כל P מעוגל לשלם, וסכום של חלון של 10 דגימות ~1.0 יכול לצאת עם שגיאה של עשרות אחוזים. Kahan summation משפר את **חישוב** P, אבל אם P **נשמר** ב-float32 העיגול נשאר.\n\nפתרונות: prefix ב-double (שגיאה ~10⁻¹⁶ · |P|), במספרים שלמים או fixed-point כשאפשר, או prefix מקומי לכל block יחד עם מערך סכומי blocks, כך שהערכים שמחסירים נשארים קטנים."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: Subarray Sum Equals K על [1, 2, 3, −2, 2] עם K = 3",
+          "body": "seen מתחיל {0: 1}, s = 0, res = 0.\n\nאיבר | s | מחפשים s − 3 | נמצאו | res | seen אחרי\n1 | 1 | −2 | 0 | 0 | {0:1, 1:1}\n2 | 3 | 0 | 1 | 1 | {0:1, 1:1, 3:1}\n3 | 6 | 3 | 1 | 2 | + {6:1}\n−2 | 4 | 1 | 1 | 3 | + {4:1}\n2 | 6 | 3 | 1 | 4 | {6:2}\n\nהתשובה 4: [1, 2], [3], [2, 3, −2], [3, −2, 2]. ה-{0: 1} תפס את [1, 2] שמתחיל באינדקס 0; בלעדיו התשובה הייתה 3."
+        },
+        {
+          "title": "דוגמה: difference array עם שלושה עדכונים",
+          "body": "n = 6, כל הערכים 0. עדכונים: [1, 3] += 5, [2, 5] += 2, [0, 1] += 1.\n\n- d[1] += 5, d[4] −= 5\n- d[2] += 2, d[6] −= 2 (d בגודל n + 1, כך שאין צורך בבדיקה)\n- d[0] += 1, d[2] −= 1\n\nd = [1, 5, 1, 0, −5, 0, −2]. prefix sum על n האיברים הראשונים: [1, 6, 7, 7, 2, 2].\n\nבדיקה: אינדקס 1 מקבל 5 + 1 = 6; אינדקס 2 מקבל 5 + 2 = 7; אינדקס 4 מקבל רק 2. שלושה עדכונים עלו O(1) כל אחד, ושחזור אחד O(n)."
+        },
+        {
+          "title": "דוגמה: שאילתת מלבן ב-2D",
+          "body": "המטריצה:\n\n1 2 3\n4 5 6\n7 8 9\n\nP (4×4, שורה ועמודה של אפסים בהתחלה):\n\n0  0  0  0\n0  1  3  6\n0  5 12 21\n0 12 27 45\n\nסכום המלבן (1,1)..(2,2), כלומר 5 + 6 + 8 + 9 = 28:\nP[3][3] − P[1][3] − P[3][1] + P[1][1] = 45 − 6 − 12 + 1 = 28.\n\nה-+1 בסוף מחזיר את הפינה (0,0) שהוסרה פעמיים: פעם עם השורה העליונה ופעם עם העמודה השמאלית."
+        },
+        {
+          "title": "דוגמה: Pivot Index על [1, 7, 3, 6, 5, 6]",
+          "body": "צריך אינדקס שבו סכום האיברים משמאלו שווה לסכום האיברים מימינו. total = 28, ובמעבר אחד מחזיקים left:\n\n- i = 0: left = 0, right = 28 − 0 − 1 = 27\n- i = 1: left = 1, right = 28 − 1 − 7 = 20\n- i = 2: left = 8, right = 28 − 8 − 3 = 17\n- i = 3: left = 11, right = 28 − 11 − 6 = 11 → נמצא.\n\nאין צורך במערך P: right = total − left − a[i]. O(n) זמן ו-O(1) זיכרון."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Prefix sum (P)",
+          "def": "P[0] = 0, P[i+1] = P[i] + a[i]. סכום a[l..r] הוא P[r+1] − P[l]. בנייה O(n), שאילתה O(1)."
+        },
+        {
+          "term": "Inclusive / exclusive scan",
+          "def": "inclusive כולל את a[i] ב-out[i]; exclusive מסתיים ב-a[i−1] ומתחיל ב-0. ב-C++17: std::inclusive_scan, std::exclusive_scan, std::partial_sum."
+        },
+        {
+          "term": "Signed overflow",
+          "def": "חריגה מטווח של int חתום היא undefined behavior ב-C++. לכן prefix sums שומרים ב-long long."
+        },
+        {
+          "term": "Prefix hash map ו-{0: 1}",
+          "def": "מונה prefixes שכבר נראו כדי לספור זוגות עם הפרש K. האתחול {0: 1} מייצג את ה-prefix הריק ותופס תתי-מערכים שמתחילים ב-0; {0: −1} משמש כשמחפשים אורך."
+        },
+        {
+          "term": "Subarray Sum Equals K",
+          "def": "ספירת תתי-מערכים עם סכום K, כולל שליליים: לכל prefix s מוסיפים seen[s − K]. O(n) בתוחלת."
+        },
+        {
+          "term": "Contiguous Array / Maximum Size Subarray Sum Equals k",
+          "def": "האורך המקסימלי: שומרים את האינדקס הראשון של כל prefix. Contiguous Array ממיר 0 ל-−1 ומחפש סכום 0."
+        },
+        {
+          "term": "Make Sum Divisible by P",
+          "def": "הסרת תת-המערך הקצר ביותר כך שסכום השאר יתחלק ב-p: prefix mod p ו-hash map של האינדקס האחרון לכל שארית."
+        },
+        {
+          "term": "שארית שלילית ב-C++",
+          "def": "החילוק מעוגל לכיוון 0, ולכן (−7) % 3 == −1. מנרמלים ((s % k) + k) % k לפני שימוש כאינדקס."
+        },
+        {
+          "term": "Difference array",
+          "def": "d[l] += v, d[r+1] −= v לכל עדכון טווח, ואז prefix sum אחד. אופליין בלבד: כל העדכונים לפני הקריאה. ב-2D: ארבעה עדכוני פינות."
+        },
+        {
+          "term": "Car Pooling / Corporate Flight Bookings",
+          "def": "בעיות difference array קלאסיות. ב-Car Pooling הטווח חצי-פתוח [from, to), ולכן ההחסרה ב-d[to]."
+        },
+        {
+          "term": "2D prefix sum / integral image",
+          "def": "P[i][j] = סכום המלבן (0,0)..(i−1, j−1). שאילתת מלבן ב-4 גישות עם inclusion-exclusion. ב-unsigned, wrap-around בטבלה לא מזיק כל עוד סכום המלבן עצמו נכנס בטיפוס."
+        },
+        {
+          "term": "Inclusion-exclusion",
+          "def": "מוסיפים קבוצות, מחסירים חיתוכים שנספרו פעמיים, ומוסיפים חזרה מה שהוסר יותר מדי – הבסיס לנוסחת המלבן."
+        },
+        {
+          "term": "Product of Array Except Self",
+          "def": "prefix product משמאל ו-suffix product מימין, בלי חילוק, כך שאפסים מטופלים. O(n) זמן ו-O(1) זיכרון נוסף."
+        },
+        {
+          "term": "Pivot index",
+          "def": "אינדקס שבו סכום השמאל שווה לסכום הימין. right = total − left − a[i], במעבר אחד."
+        },
+        {
+          "term": "Group ואיבר הופכי",
+          "def": "הטריק P[r+1] ∘ P[l]⁻¹ עובד רק לפעולות עם הופכי: חיבור, XOR, כפל מודולו ראשוני עם modular inverse. לא ל-max, min, gcd."
+        },
+        {
+          "term": "Modular inverse",
+          "def": "x⁻¹ mod p הוא y כך ש-x·y ≡ 1 (mod p). קיים רק אם x זר ל-p, ולכן כפל עם איבר שמתחלק ב-p (או 0) שובר prefix products."
+        },
+        {
+          "term": "Sparse table ו-idempotency",
+          "def": "טבלת תשובות לכל קטע באורך 2^k. שאילתת min/max/gcd ב-O(1) עם שני קטעים חופפים, כי הפעולה idempotent. סטטי, בנייה O(n log n)."
+        },
+        {
+          "term": "Fenwick tree (BIT)",
+          "def": "מבנה של סכומים חלקיים: point update ו-prefix query ב-O(log n) עם i & −i. עם שני BITs תומך גם ב-range update + range query: sum(1..x) = B1(x)·x − B2(x)."
+        },
+        {
+          "term": "Segment tree ו-lazy propagation",
+          "def": "עץ על טווחים שתומך בשאילתות ועדכוני טווח לכל פעולה אסוציאטיבית ב-O(log n); lazy propagation דוחה עדכוני טווח עד שצריך אותם."
+        },
+        {
+          "term": "Sqrt decomposition",
+          "def": "חלוקה ל-√n בלוקים עם סכום לכל בלוק. O(√n) לעדכון או שאילתה – פשוט מ-Fenwick אבל איטי יותר."
+        },
+        {
+          "term": "Count of Range Sum ו-coordinate compression",
+          "def": "ספירת זוגות i < j עם P[j] − P[i] בטווח, ב-merge sort או ב-Fenwick על דירוגי הערכים (coordinate compression). אותו מבנה כמו ספירת inversions."
+        },
+        {
+          "term": "Ordered set ו-lower_bound",
+          "def": "std::set ממוין עם חיפוש של האיבר הקטן ביותר ≥ x ב-O(log n). משמש ל-'סכום מקסימלי ≤ K' על prefixes."
+        },
+        {
+          "term": "Parallel scan (Hillis–Steele, Blelloch)",
+          "def": "חישוב prefix sum במקביל, אפשרי כי הפעולה אסוציאטיבית. Hillis–Steele: O(n log n) work; Blelloch: O(n) work ו-O(log n) depth. decoupled look-back מאפשר single-pass."
+        },
+        {
+          "term": "Catastrophic cancellation ו-ULP",
+          "def": "חיסור שני מספרי floating point גדולים וקרובים מאבד את רוב הספרות המשמעותיות. ULP הוא המרחק בין שני ערכים סמוכים; ב-float32 ליד 10⁷ הוא 1."
+        }
+      ]
     }
   ],
   "questions": [
@@ -43,7 +189,12 @@
       "level": 1,
       "type": "mcq",
       "prompt": "אחרי בניית מערך prefix sums במערך באורך n, מה העלות של שאילתת סכום על טווח [l, r]?",
-      "choices": ["O(r − l)", "O(log n)", "O(1)", "O(n)"],
+      "choices": [
+        "O(r − l)",
+        "O(log n)",
+        "O(1)",
+        "O(n)"
+      ],
       "answer": 2,
       "explanation": "השאילתה היא חיסור אחד: P[r+1] − P[l]. העבודה הכבדה, O(n), נעשתה פעם אחת בבנייה. O(r − l) הוא סכימה ישירה בלי prefix sums, ו-O(log n) הוא Fenwick tree, שנדרש רק אם המערך משתנה.",
       "lesson": "alg.prefix-sums"
@@ -53,7 +204,11 @@
       "level": 1,
       "type": "short",
       "prompt": "P[0] = 0 ו-P[i+1] = P[i] + a[i]. כתוב ביטוי לסכום a[l] + ... + a[r] (כולל r).",
-      "accept": ["P[r+1]-P[l]", "-P[l]+P[r+1]", "P[r+1] - P[l]"],
+      "accept": [
+        "P[r+1]-P[l]",
+        "-P[l]+P[r+1]",
+        "P[r+1] - P[l]"
+      ],
       "explanation": "P[r+1] מכיל את a[0..r] ו-P[l] מכיל את a[0..l−1]; ההפרש הוא בדיוק a[l..r]. P[r] − P[l] היה מפספס את a[r], ו-P[r+1] − P[l−1] היה מוסיף את a[l−1].",
       "lesson": "alg.prefix-sums"
     },
@@ -79,7 +234,12 @@
       "lang": "cpp",
       "code": "std::vector<int> a{3, 1, 4, 1, 5, 9};\nstd::vector<int> P(a.size() + 1, 0);\nfor (size_t i = 0; i < a.size(); i++)\n    P[i + 1] = P[i] + a[i];\nstd::cout << P[5] - P[2];",
       "prompt": "מה יודפס?",
-      "choices": ["19", "10", "11", "14"],
+      "choices": [
+        "19",
+        "10",
+        "11",
+        "14"
+      ],
       "answer": 1,
       "explanation": "P = [0, 3, 4, 8, 9, 14, 23]. P[5] − P[2] = 14 − 4 = 10, שזה a[2] + a[3] + a[4] = 4 + 1 + 5. 19 הוא a[2..5], ו-11 הוא a[1..4] – טעויות off-by-one בהבנת האינדקסים של P.",
       "lesson": "alg.prefix-sums"
@@ -91,7 +251,12 @@
       "lang": "python",
       "code": "n = 5\nd = [0] * (n + 1)\nfor l, r, v in [(1, 3, 2), (0, 1, 1)]:\n    d[l] += v\n    d[r + 1] -= v\nres, run = [], 0\nfor i in range(n):\n    run += d[i]\n    res.append(run)\nprint(res)",
       "prompt": "מה יודפס?",
-      "choices": ["[1, 3, 3, 2, 0]", "[1, 3, 2, 0, 0]", "[1, 2, 2, 2, 0]", "[1, 3, 2, 2, 0]"],
+      "choices": [
+        "[1, 3, 3, 2, 0]",
+        "[1, 3, 2, 0, 0]",
+        "[1, 2, 2, 2, 0]",
+        "[1, 3, 2, 2, 0]"
+      ],
       "answer": 3,
       "explanation": "זה difference array: העדכונים הם +2 לאינדקסים 1..3 ו-+1 לאינדקסים 0..1. התוצאה: אינדקס 0 = 1, אינדקס 1 = 2 + 1 = 3, אינדקסים 2–3 = 2, אינדקס 4 = 0. d = [1, 2, −1, 0, −2, 0], וה-prefix sum שלו נותן בדיוק את זה.",
       "lesson": "alg.prefix-sums"
@@ -113,7 +278,9 @@
       "answer": 1,
       "explanation": "int מגיע בערך ל-2.1·10⁹, ושלושה איברים כבר יכולים לעבור אותו. signed overflow ב-C++ הוא UB, לא רק wrap-around. הגודל n + 1 נכון ומכוון (P[0] = 0), והאינדקסים בלולאה נכונים. size_t מול size() הם אותו טיפוס.",
       "lesson": "alg.prefix-sums",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.prefix-sums.q07",
@@ -144,7 +311,9 @@
       "answer": 1,
       "explanation": "תת-מערך (i, j] סכומו K בדיוק כש-P[j] − P[i] = K, כלומר P[i] = P[j] − K. ה-hash map סופר prefixes שכבר ראינו, וה-{0: 1} מייצג את ה-prefix הריק כדי לתפוס תתי-מערכים שמתחילים ב-0. sliding window נשבר עם שליליים, ומיון הורס את הרציפות.",
       "lesson": "alg.prefix-sums",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.prefix-sums.q09",
@@ -153,7 +322,12 @@
       "lang": "python",
       "code": "from collections import Counter\n\ndef count(a, k):\n    seen = Counter({0: 1})\n    s = res = 0\n    for x in a:\n        s += x\n        res += seen[s - k]\n        seen[s] += 1\n    return res\n\nprint(count([1, -1, 0], 0))",
       "prompt": "מה יודפס?",
-      "choices": ["1", "2", "3", "4"],
+      "choices": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
       "answer": 2,
       "explanation": "ה-prefixes הם 0, 1, 0, 0. כל זוג prefixes שווים הוא תת-מערך עם סכום 0: יש שלושה prefixes עם ערך 0, ולכן C(3,2) = 3 – אלה [1, −1], [0] ו-[1, −1, 0]. בלי האתחול {0: 1} הקוד היה מדפיס 1 ומפספס את שני תתי-המערכים שמתחילים באינדקס 0.",
       "lesson": "alg.prefix-sums"
@@ -192,7 +366,9 @@
       ],
       "explanation": "זו גרסה כפלית של prefix sums. הפתרון עם חילוק נכשל באפסים, וזו הסיבה שהמראיין אוסר עליו.",
       "lesson": "alg.prefix-sums",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.prefix-sums.q12",
@@ -238,7 +414,9 @@
       ],
       "explanation": "הטכניקה 'קבע שני גבולות וכווץ ממד' חוזרת בהרבה בעיות מטריצה (Max Sum Rectangle, Max Submatrix ≤ K).",
       "lesson": "alg.prefix-sums",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.prefix-sums.q15",
@@ -253,7 +431,11 @@
         "gcd",
         "כפל של מספרים ממשיים שחלקם אפס"
       ],
-      "answer": [0, 1, 2],
+      "answer": [
+        0,
+        1,
+        2
+      ],
       "explanation": "הטריק דורש איבר הופכי (group): חיבור עם חיסור, XOR עם עצמו, וכפל מודולו p עם modular inverse – שקיים רק לאיברים שזרים ל-p. ל-max ול-gcd אין הופכי (אי אפשר 'לבטל' את ה-max של ה-prefix), ולכן משתמשים ב-sparse table – גם הוא O(1) לשאילתה, אבל בזכות idempotency ולא בזכות prefix. אפס במכפלה הורס את ההופכי.",
       "lesson": "alg.prefix-sums"
     },
@@ -301,7 +483,9 @@
       "answer": 2,
       "explanation": "scan ניתן להקבלה כי הפעולה associative: אפשר לחשב סכומים חלקיים בעץ. Hillis–Steele הוא O(n log n) work ב-log n צעדים – פשוט אבל בזבזני; Blelloch הוא work-efficient. מה שנדרש הוא associativity, לא commutativity (scan על הרכבת מטריצות עובד אף שאינה commutative). ב-float, סדר החיבור משנה את התוצאה, ולכן scan מקבילי אינו bit-identical לסדרתי.",
       "lesson": "alg.prefix-sums",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.prefix-sums.q19",
@@ -317,7 +501,197 @@
       "answer": 1,
       "explanation": "זה catastrophic cancellation: חיסור שני מספרים גדולים וקרובים. בסביבת 10⁷ (בין 2²³ ל-2²⁴) ה-ULP של float32 הוא 1, כך שכל P מעוגל לשלם הקרוב, ובבנייה עצמה כל חיבור מאבד את החלק השברי – והשגיאות האלה נשארות בהפרש. Kahan משפר את חישוב P אבל לא את האחסון שלו ב-float32. double נותן ~10⁻¹⁶·10⁷ – מספיק. בלוקים מקומיים שומרים את הערכים קטנים.",
       "lesson": "alg.prefix-sums",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "alg.prefix-sums.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מתי difference array הוא הכלי המתאים?",
+      "choices": [
+        "הרבה עדכונים של 'הוסף v לטווח [l, r]', ואחריהם קריאה אחת של כל הערכים",
+        "שאילתות מקסימום על טווחים במערך סטטי",
+        "עדכון נקודתי ושאילתת סכום טווח משולבים זה בזה",
+        "מציאת תת-המערך עם הסכום המקסימלי"
+      ],
+      "answer": 0,
+      "explanation": "כל עדכון טווח עולה O(1) (שני תאים), ו-prefix sum אחד בסוף משחזר את הכול. שאילתות מקסימום הן sparse table, עדכונים ושאילתות משולבים הם Fenwick tree, וסכום מקסימלי הוא Kadane.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "a = [2, 4, 6, 8], ו-P[0] = 0, P[i+1] = P[i] + a[i]. מה הערך של P[3]?",
+      "accept": [
+        "12"
+      ],
+      "explanation": "P = [0, 2, 6, 12, 20]. P[3] הוא סכום שלושת האיברים הראשונים: 2 + 4 + 6 = 12. 20 הוא P[4], ו-6 הוא P[2] – הטעויות של מי ששוכח את ה-0 בהתחלה.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "X הוא prefix XOR: X[0] = 0 ו-X[i+1] = X[i] ^ a[i]. מה ה-XOR של a[l..r] (כולל)?",
+      "choices": [
+        "X[r+1] − X[l]",
+        "X[r] ^ X[l]",
+        "X[r+1] & X[l]",
+        "X[r+1] ^ X[l]"
+      ],
+      "answer": 3,
+      "explanation": "XOR הוא ההופכי של עצמו: X[l] מופיע גם בתוך X[r+1], ו-XOR נוסף שלו מבטל אותו ומשאיר רק את a[l..r]. חיסור הוא ההופכי של חיבור, לא של XOR. X[r] מפספס את a[r], ו-AND אינו הפיך.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "code": "std::vector<int> a{3, 1, 4, 1}, out(a.size());\nstd::exclusive_scan(a.begin(), a.end(), out.begin(), 0);\nfor (int x : out) std::cout << x << ' ';",
+      "prompt": "מה יודפס? (C++17, <numeric>)",
+      "choices": [
+        "3 4 8 9",
+        "0 3 4 8 9",
+        "0 3 4 8",
+        "1 4 8 9"
+      ],
+      "answer": 2,
+      "explanation": "exclusive scan: out[i] הוא סכום האיברים שלפני i, ו-out[0] הוא ערך ההתחלה 0. לכן 0, 3, 3+1 = 4, 4+4 = 8. הסכום הכולל 9 לא נכלל כי מערך הפלט באורך n. 3 4 8 9 הוא inclusive scan (או std::partial_sum).",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בונים 2D prefix sum P בגודל (R+1)×(C+1) עם שורה ועמודה של אפסים בהתחלה. מה נוסחת הבנייה של P[i+1][j+1]?",
+      "choices": [
+        "a[i][j] + P[i][j+1] + P[i+1][j]",
+        "a[i][j] + P[i][j+1] + P[i+1][j] − P[i][j]",
+        "a[i][j] + P[i][j]",
+        "P[i][j+1] + P[i+1][j] − a[i][j]"
+      ],
+      "answer": 1,
+      "explanation": "P[i][j+1] הוא המלבן מעל ו-P[i+1][j] הוא המלבן משמאל; שניהם מכילים את P[i][j], ולכן מחסירים אותו פעם אחת ומוסיפים את התא עצמו. בלי ההחסרה החפיפה נספרת פעמיים. a[i][j] + P[i][j] מכסה רק את האלכסון.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "code": "def pivot(a):\n    total = sum(a)\n    left = 0\n    for i, x in enumerate(a):\n        if left == total - left - x:\n            return i\n        left += x\n    return -1\n\nprint(pivot([1, 7, 3, 6, 5, 6]), pivot([2, 1, -1]))",
+      "prompt": "מה יודפס?",
+      "choices": [
+        "3 0",
+        "3 -1",
+        "2 0",
+        "3 2"
+      ],
+      "answer": 0,
+      "explanation": "ב-[1, 7, 3, 6, 5, 6], באינדקס 3 left = 11 ו-right = 28 − 11 − 6 = 11. ב-[2, 1, −1], באינדקס 0 left = 0 ו-right = 2 − 0 − 2 = 0, ולכן 0 – סכום ריק משמאל נחשב 0. מי שמחפש רק אינדקסים פנימיים יענה −1.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Car Pooling: כל נסיעה היא (נוסעים, from, to): הנוסעים עולים בתחנה from ויורדים בתחנה to. בודקים אם בשום רגע אין יותר מ-capacity נוסעים, עם difference array על התחנות. איזה עדכון נכון?",
+      "choices": [
+        "d[from] += p ו-d[to + 1] −= p, כמו בכל difference array",
+        "d[from + 1] += p ו-d[to] −= p",
+        "d[from] += p ו-d[to] −= p, כי בתחנה to הנוסעים כבר ירדו",
+        "d[from] −= p ו-d[to] += p"
+      ],
+      "answer": 2,
+      "explanation": "הנוסעים נמצאים ברכב בתחנות [from, to) – טווח חצי-פתוח. עם d[to + 1], נסיעה שמסתיימת ב-5 ונסיעה שמתחילה ב-5 ייספרו יחד, ו-[(2, 1, 5), (3, 5, 7)] עם capacity = 3 יידחה בטעות. הלקח: קודם מבינים אם הטווח סגור או חצי-פתוח, ורק אז בוחרים את מקום ההחסרה.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Make Sum Divisible by P: להסיר את תת-המערך הרציף הקצר ביותר (לא את כולו) כך שסכום השאר יתחלק ב-p. מחשבים need = total % p ומחפשים j ו-i < j עם (P[j] − P[i]) % p == need. מה שומרים ב-hash map לכל שארית?",
+      "choices": [
+        "את האינדקס הראשון שבו הופיעה, כמו ב-Contiguous Array",
+        "את מספר ההופעות שלה",
+        "את סכום האינדקסים שבהם הופיעה",
+        "את האינדקס האחרון שבו הופיעה, כי רוצים i קרוב ככל האפשר ל-j"
+      ],
+      "answer": 3,
+      "explanation": "האורך הוא j − i וכאן רוצים אותו **מינימלי**, ולכן לכל j מעניין ה-i המאוחר ביותר עם השארית המתאימה – דורסים בכל הופעה. ב-Contiguous Array מחפשים מקסימום ולכן שומרים את הראשון. מונה הופעות מתאים לספירה, לא לאורך. צריך גם לבדוק שהתשובה לא שווה ל-n (אסור להסיר הכול), ולנרמל שארית שלילית.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q28",
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "prompt": "Maximum Size Subarray Sum Equals k: החזר את האורך המקסימלי של תת-מערך רציף שסכומו k בדיוק (יש מספרים שליליים), או 0 אם אין. דרישה: O(n).",
+      "starter": "def max_len(a: list[int], k: int) -> int:",
+      "modelAnswer": "def max_len(a: list[int], k: int) -> int:\n    first = {0: -1}\n    s = best = 0\n    for i, x in enumerate(a):\n        s += x\n        if s - k in first:\n            best = max(best, i - first[s - k])\n        if s not in first:\n            first[s] = i\n    return best",
+      "rubric": [
+        "hash map מ-prefix לאינדקס הראשון שבו הופיע, בלי דריסה",
+        "אתחול {0: −1} כדי שתת-מערך מההתחלה ייתן אורך i + 1",
+        "edge cases: מערך ריק, k = 0, אין פתרון (מחזיר 0)",
+        "O(n) זמן בתוחלת ו-O(n) זיכרון; sliding window לא מתאים בגלל שליליים"
+      ],
+      "explanation": "דוגמה: [1, −1, 5, −2, 3] עם k = 3 נותן 4 ([1, −1, 5, −2]). אם דורסים את האינדקס בכל הופעה, מקבלים תתי-מערכים קצרים יותר.",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q29",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך להוסיף v למלבן (r1, c1)..(r2, c2) במטריצה, עבור 10⁵ מלבנים, ובסוף להדפיס את המטריצה. מה העדכון ב-2D difference array?",
+      "choices": [
+        "d[r1][c1] += v ו-d[r2+1][c2+1] −= v",
+        "d[r1][c1] += v, d[r1][c2+1] −= v, d[r2+1][c1] −= v, d[r2+1][c2+1] += v",
+        "d[r1][c1] += v, d[r1][c2+1] −= v, d[r2+1][c1] −= v, d[r2+1][c2+1] −= v",
+        "לכל שורה r1..r2: d[r][c1] += v ו-d[r][c2+1] −= v"
+      ],
+      "answer": 1,
+      "explanation": "אחרי 2D prefix sum, עדכון בפינה (r1, c1) משפיע על כל הרביע מימין-למטה. מבטלים את הרצועה מימין ב-(r1, c2+1) ואת הרצועה מלמטה ב-(r2+1, c1); הרביע (r2+1, c2+1) בוטל פעמיים ולכן מוסיפים חזרה. שתי פינות בלבד משאירות רצועות. עדכון שורה-שורה נכון אבל עולה O(R) למלבן במקום O(1).",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "range update + range query עם שני Fenwick trees (1-indexed): עדכון [l, r] += v מבוצע כ-B1.add(l, v), B1.add(r+1, −v), B2.add(l, v·(l−1)), B2.add(r+1, −v·r). מה הסכום של a[1..x]?",
+      "choices": [
+        "B1.query(x) − B2.query(x)",
+        "B1.query(x) · (x + 1) − B2.query(x)",
+        "B1.query(x) · x − B2.query(x)",
+        "B1.query(x) · x + B2.query(x)"
+      ],
+      "answer": 2,
+      "explanation": "B1 הוא difference array, ולכן B1.query(i) = a[i]. סכום עד x הוא Σ a[i] = Σ_{j≤x} d[j]·(x − j + 1) = x·Σ d[j] − Σ d[j]·(j − 1). המונח הראשון הוא B1.query(x)·x, והשני הוא בדיוק מה ש-B2 צובר (d[j]·(j−1)). בעדכון ב-r+1 מוסיפים ל-B2 את −v·r כדי שלאחר r התרומה של העדכון תהיה קבועה v·(r − l + 1). הגרסה עם (x + 1) נכונה רק אם B2 צובר d[j]·j ולא d[j]·(j − 1).",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "id": "alg.prefix-sums.q31",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מחשבים integral image לתמונה של 8K×8K פיקסלים של uint16 ומאחסנים אותו ב-uint32. ערכי הטבלה עצמם יחרגו מ-2³² ליד הפינה הימנית-תחתונה. משתמשים בו ל-box filter של 31×31. האם התוצאות נכונות?",
+      "choices": [
+        "כן: חשבון uint32 הוא מודולו 2³², ו-inclusion-exclusion נשאר נכון מודולו; כל עוד הסכום האמיתי של חלון (≤ 961 · 65535 ≈ 6.3·10⁷) נכנס ב-uint32, התוצאה מדויקת",
+        "לא: ברגע שערך בטבלה עושה wrap-around המידע אבד, וחייבים uint64",
+        "כן, אבל רק אם משתמשים ב-int32 במקום uint32, כי signed overflow מתנהג כמו wrap-around",
+        "לא, כי ההחסרות יוצאות שליליות ו-uint32 לא יכול לייצג אותן"
+      ],
+      "answer": 0,
+      "explanation": "הטבלה מחשבת את P מודולו 2³², וכל שאילתה היא צירוף לינארי של ארבעה ערכים עם מקדמים ±1, ולכן גם היא נכונה מודולו 2³². אם הסכום האמיתי קטן מ-2³², הערך המודולרי שווה לו. ערכי ביניים 'שליליים' פשוט עוטפים וחוזרים. ב-int32 signed overflow הוא undefined behavior ב-C++, ולכן דווקא unsigned. uint64 יעבוד אבל מכפיל את הזיכרון ואת ה-bandwidth.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.prefix-sums"
     }
   ]
 }

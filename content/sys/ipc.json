@@ -35,7 +35,189 @@
         "העברת fds (memfd, dma-buf) ו-sealing לשיתוף בטוח",
         "מחזור חיים: מי יוצר, מי מנקה, מה קורה כשצד אחד קורס"
       ],
-      "diagram": "pipe/socket:  A --copy--> [kernel buf] --copy--> B\n\nshared mem:   A ---------> [ shm pages ] <------ B\n               (same physical pages,\n                sync is your job)"
+      "diagram": "pipe/socket:  A --copy--> [kernel buf] --copy--> B\n\nshared mem:   A ---------> [ shm pages ] <------ B\n               (same physical pages,\n                sync is your job)",
+      "details": [
+        {
+          "title": "מפת המנגנונים",
+          "body": "לכל process מרחב כתובות משלו, ולכן כל העברה בין processes עוברת דרך הקרנל או דרך דפים שהקרנל מיפה לשניהם. השאלות שמכריעות: האם יש גבולות הודעה, כמה העתקות, מי מעיר את הצד השני, ומה קורה כשצד אחד מת.\n\n- **pipe**: stream של bytes, חד-כיווני, באפר בקרנל. בין processes שירשו את ה-fds. **FIFO** (named pipe) הוא אותו דבר עם שם במערכת הקבצים.\n- **Unix domain socket (UDS)**: מקומי, דו-כיווני. SOCK_STREAM (stream בלי גבולות), SOCK_DGRAM (הודעות), SOCK_SEQPACKET (הודעות עם חיבור וסדר). מעביר fds והרשאות.\n- **POSIX message queue** (mq_open): הודעות עם גבולות ועדיפויות, דרך הקרנל.\n- **shared memory**: אותם דפים פיזיים בשני processes. אפס העתקות, בלי סנכרון מובנה.\n- **signals**: התראה בלי נתונים (או מילה אחת עם sigqueue). מוגבלים ומסוכנים.\n- **eventfd**: מונה של 64 ביט בקרנל עם fd, שאפשר לחכות לו ב-epoll. התראה זולה.\n- **futex**: מילה בזיכרון שאפשר לישון עליה ולהעיר דרכה. הבסיס ל-mutex ול-condition variable.\n\npipe ו-socket מעתיקים פעמיים (מה-user לקרנל ומהקרנל ל-user) ודורשים syscall בכל צד. shm לא מעתיק, אבל אם הקורא רוצה לישון עד שיש נתונים צריך עדיין מנגנון התראה (eventfd או futex), אחרת polling."
+        },
+        {
+          "title": "Pipes: באפר, אטומיות, EOF ו-deadlock",
+          "body": "ב-Linux קיבולת ברירת המחדל של pipe היא 64KB (16 דפים), וניתן לשנות אותה עם `fcntl(F_SETPIPE_SZ)`. כתיבה חוסמת כשהבאפר מלא, קריאה חוסמת כשהוא ריק.\n\n**אטומיות**: כתיבה של עד **PIPE_BUF** בתים (4096 ב-Linux, POSIX מחייב לפחות 512) אטומית: היא לא תתערבב עם כותבים אחרים. כתיבה גדולה יותר יכולה להתפצל.\n\n**O_NONBLOCK**: קריאה מ-pipe ריק מחזירה EAGAIN. כתיבה של עד PIPE_BUF כשאין מספיק מקום מחזירה EAGAIN (ולא כותבת חלקית, כדי לשמור על האטומיות). כתיבה גדולה מ-PIPE_BUF כותבת כמה שנכנס ומחזירה את המספר.\n\n**EOF**: read מחזיר 0 רק כשכל צדדי הכתיבה נסגרו בכל ה-processes. אחרי fork לשני הצדדים יש עותק של כל fd, ולכן חובה לסגור את הקצוות שלא בשימוש. אם הקורא עצמו מחזיק צד כתיבה פתוח, הוא לא יקבל EOF לעולם.\n\n**SIGPIPE**: כתיבה כשאין אף קורא שולחת SIGPIPE, שברירת המחדל שלו היא לסיים את ה-process. אם מתעלמים ממנו (או MSG_NOSIGNAL ב-send), הכתיבה מחזירה EPIPE.\n\n**deadlock עם שני pipes**: האב כותב קלט גדול לילד ורק אחר כך קורא את הפלט. הילד כותב פלט תוך כדי, ה-pipe של הפלט מתמלא, הילד נחסם ומפסיק לקרוא, וה-pipe של הקלט מתמלא ואז האב נחסם. הפתרון: poll על שני ה-fds עם O_NONBLOCK, או thread נפרד לכתיבה."
+        },
+        {
+          "title": "Unix domain sockets והעברת fds",
+          "body": "UDS משתמש באותו API של sockets, אבל בלי IP, checksums, ACKs ו-congestion control. הוא עדיין מעתיק את הנתונים דרך הקרנל, אבל עם הרבה פחות עבודה מ-TCP ל-localhost. `socketpair` יוצר זוג מחובר בלי שם, נוח בין אב לילד. ב-Linux יש גם **abstract namespace**: שם שמתחיל בבית אפס ולא יוצר קובץ.\n\n**SO_PEERCRED** מחזיר את ה-pid, uid ו-gid של הצד השני, כפי שהקרנל רשם אותם בזמן החיבור. זו דרך אמינה לאמת מי מדבר איתך, למשל daemon שמקבל פקודות מ-CLI.\n\n**SCM_RIGHTS** מעביר fds בהודעת ancillary data. המקבל מקבל fd חדש בטבלה שלו (בדרך כלל במספר אחר) שמצביע לאותו **open file description**: אותו offset, אותם flags, אותו אובייקט. זה כמו dup בין processes. כך מעבירים memfd, dma-buf, או socket שהתקבל, בלי שם ובלי הרשאות פתיחה.\n\nב-SOCK_STREAM אין גבולות הודעה: שתי הודעות של 100 בתים יכולות להגיע כ-200, כ-150 ו-50, וכו'. צריך framing (אורך בתחילת כל הודעה). SOCK_SEQPACKET נותן הודעות עם חיבור ושומר על גבולות."
+        },
+        {
+          "title": "Shared memory: יצירה, חיים ומלכודות",
+          "body": "יצירה עם שם: `shm_open` (ב-Linux קובץ תחת /dev/shm), `ftruncate` לגודל, ו-`mmap` עם MAP_SHARED. mmap מחזיר **MAP_FAILED** (שהוא (void*)-1) בכישלון, לא nullptr. אחרי mmap אפשר לסגור את ה-fd, והמיפוי נשאר.\n\n**מחזור חיים**: `shm_unlink` מוחק את השם, אבל מיפויים קיימים נשארים תקפים, והזיכרון משתחרר רק כשהמיפוי האחרון והפניה האחרונה נעלמים. שם שלא נמחק (למשל אחרי קריסה) נשאר ב-/dev/shm עד reboot, ו-process שמתחיל מחדש עלול להתחבר לאזור ישן עם layout ישן. לכן שמים header עם magic, גרסה וגודל, ומשתמשים ב-O_EXCL ביצירה.\n\n**memfd_create** יוצר קובץ אנונימי ב-RAM שמיוצג רק כ-fd. אין שם שיכול להישאר אחרי קריסה, והוא משתחרר כשאחרון ה-fds והמיפויים נסגר. משתפים אותו דרך SCM_RIGHTS. **file sealing** (F_SEAL_SHRINK, F_SEAL_GROW, F_SEAL_WRITE) נועל תכונות של ה-memfd, והמקבל בודק עם F_GET_SEALS. בלי SEAL_SHRINK, הצד השני יכול לכווץ את הקובץ בזמן שאתה קורא, וגישה מעבר לסופו נותנת **SIGBUS**.\n\nאפשרות שלישית: `mmap(MAP_SHARED | MAP_ANONYMOUS)` לפני fork. האב והילד חולקים את הדפים. (MAP_PRIVATE היה הופך אותם ל-copy-on-write.)\n\nכל process ממפה את האזור בכתובת אחרת, ולכן בתוך shm שומרים **offsets**, לא pointers. `msync` קשור לכתיבה לדיסק של מיפוי קובץ, ולא לנראות בין processes: הנראות מיידית, כי אלה אותם דפים."
+        },
+        {
+          "title": "סנכרון בין processes",
+          "body": "בזיכרון משותף חלים כללי מודל הזיכרון כאילו אלה שני threads: בלי atomics יש data race.\n\n- **atomics שהם lock-free** הם address-free: הפעולה מתבצעת על הזיכרון עצמו, ולכן עובדת כשאותו דף ממופה בכמה מקומות. אם האטומי **לא** lock-free (למשל struct של 16 בתים בלי תמיכה בחומרה), libatomic מממש אותו עם טבלת locks בזיכרון **של ה-process**, ושני processes לא מוציאים זה את זה. בודקים עם `is_always_lock_free`.\n- **pthread mutex** בזיכרון משותף חייב PTHREAD_PROCESS_SHARED. אם process מת כשהוא מחזיק אותו, כולם ייתקעו, אלא אם הוא **ROBUST**: אז הנועל הבא מקבל **EOWNERDEAD**, צריך לתקן את הנתונים ולקרוא ל-`pthread_mutex_consistent`. אם משחררים בלי זה, ה-mutex הופך ל-ENOTRECOVERABLE.\n- **futex**: `FUTEX_WAIT(addr, expected)` נרדם רק אם `*addr == expected` עדיין, ובדיקה זו אטומית ביחס ל-WAKE. כך נסגר החלון בין בדיקת התנאי לשינה. futex עם FUTEX_PRIVATE_FLAG מזוהה לפי (מרחב כתובות, כתובת וירטואלית), ולכן לא עובד בין processes. בלי הדגל הוא מזוהה לפי האובייקט המשותף (דף או inode ו-offset).\n- **eventfd**: write מוסיף ערך למונה. read מחזיר את המונה ומאפס אותו, או במצב EFD_SEMAPHORE מחזיר 1 ומפחית 1. read על מונה 0 חוסם (או EAGAIN). משתלב עם epoll.\n- **seqlock**: הכותב מגדיל seq לאי-זוגי, כותב, ומגדיל לזוגי. הקורא קורא seq, את הנתונים (כ-atomics relaxed), **fence acquire**, ושוב seq. אם השתנה או אי-זוגי, מנסה שוב. ה-fence נחוץ כי acquire על הקריאה השנייה לא מונע מקריאות הנתונים שלפניה לרדת אחריה.\n- **signals**: signal רגיל שנשלח כמה פעמים בזמן שהוא pending מתמזג לאחד (לא נספר). **real-time signals** (SIGRTMIN ומעלה) נכנסים לתור ונושאים ערך. ב-handler מותר לקרוא רק לפונקציות async-signal-safe. signalfd הופך signals ל-fd שקוראים ממנו בלולאה רגילה."
+        },
+        {
+          "title": "ביצועים ותכנון",
+          "body": "סדרי גודל (round trip, cores נפרדים, x86): pipe או UDS כ-5–20µs, בעיקר syscalls ו-wakeup של ה-thread הישן (כולל scheduler ולפעמים יציאה מ-C-state). shm עם busy-poll כ-100–300ns: רק העברת cache line לכל כיוון. המחיר: שני cores ב-100%. היברידי: polling קצר, ואז שינה על futex או eventfd.\n\nבחירה לפי מקרה:\n- פקודות ותשובות קטנות, צריך לדעת מי השולח: UDS עם SO_PEERCRED.\n- זרם גדול מכותב אחד לקוראים: ring בזיכרון משותף, הכותב לא מחכה לאף אחד, וקורא שמפגר מזהה דריסה.\n- בלוקים גדולים שעוברים בעלות: pool בזיכרון משותף (memfd), ומעבירים רק אינדקסים או offsets בתורים.\n- התראה בלבד: eventfd.\n\nמחזור חיים וכשלים הם חלק מהתכנון: מי יוצר ומי מוחק, איך מזהים שצד מת (pidfd, heartbeat, EOF על socket), ומה קורה לנתונים שהוא החזיק. sockets ו-pipes נותנים זיהוי מוות בחינם (EOF או EPIPE). shared memory לא נותן שום דבר כזה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: deadlock עם שני pipes במספרים",
+          "body": "האב שולח 10MB ל-filter שמוציא פלט תוך כדי (למשל filter שמעביר כל שורה מיד), וקורא את הפלט רק אחרי שסיים לכתוב. כל pipe בגודל 64KB.\n\n1. האב כותב. הילד קורא וכותב פלט.\n2. אחרי כ-64KB של פלט, ה-pipe של הפלט מלא. האב לא קורא, כי הוא עדיין בשלב הכתיבה. הילד נחסם ב-write.\n3. הילד לא קורא יותר. אחרי עוד 64KB, ה-pipe של הקלט מלא, והאב נחסם ב-write.\n4. שניהם חסומים לנצח.\n\nעם קלט של 10KB זה לא קורה, כי שום pipe לא מתמלא, ולכן הבאג מופיע רק בנתונים גדולים. התיקון: poll על שני ה-fds וכתיבה וקריאה לפי מה שמוכן."
+        },
+        {
+          "title": "דוגמה: מונה eventfd",
+          "body": "eventfd שנוצר עם ערך 0, בלי EFD_SEMAPHORE:\n- write(1): מונה = 1\n- write(1): מונה = 2\n- write(5): מונה = 7\n- read: מחזיר 7, מונה = 0\n- read נוסף: חוסם (או EAGAIN עם EFD_NONBLOCK)\n\nאותם writes עם EFD_SEMAPHORE: כל read מחזיר 1 ומפחית 1, כך שאפשר לקרוא 7 פעמים.\n\nמה לומדים: בלי SEMAPHORE כמה התראות מתמזגות לקריאה אחת, וזה מה שרוצים כשהקורא ממילא מעבד את כל מה שהצטבר בתור. עם SEMAPHORE כל התראה נספרת בנפרד."
+        },
+        {
+          "title": "דוגמה: למה offsets ולא pointers",
+          "body": "אזור של 1MB ממופה ב-process A בכתובת 0x7f00_0000_0000 וב-process B בכתובת 0x7f80_0000_0000.\n\nA בונה רשימה מקושרת בתוך האזור, וצומת יושב ב-offset 0x1000. אם A שומר pointer, הוא כותב 0x7f00_0000_1000. ב-B הכתובת הזו אינה ממופה בכלל (או ממופה למשהו אחר), ו-B קורס או קורא זבל.\n\nאם A שומר את ה-offset 0x1000, כל process מחשב בסיס + offset: A מקבל 0x7f00_0000_1000 ו-B מקבל 0x7f80_0000_1000, ושניהם מגיעים לאותו צומת. זו הסיבה שספריות כמו Boost.Interprocess משתמשות ב-offset_ptr."
+        },
+        {
+          "title": "דוגמה: קורא seqlock",
+          "body": "הנתון: זוג (freq, gain). seq מתחיל ב-10.\n\n1. הקורא: s1 = 10 (זוגי). מתחיל להעתיק: freq = 100.\n2. הכותב: seq = 11, כותב freq = 200, gain = 5, seq = 12.\n3. הקורא ממשיך: gain = 5. fence acquire. s2 = 12.\n4. s1 ≠ s2, ולכן הזוג (100, 5) מעורבב וזורקים אותו.\n5. ניסיון שני: s1 = 12, freq = 200, gain = 5, fence, s2 = 12. תקין.\n\nמה לומדים: הכותב אף פעם לא מחכה לקורא, והקורא משלם בניסיון חוזר רק כשהייתה התנגשות. הנתונים נקראים כ-atomics relaxed, כי הקריאה בשלב 3 מתחרה עם כתיבה, וגם קריאה שנזרקת אסור שתהיה data race."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "IPC",
+          "def": "Inter-Process Communication: מנגנונים להעברת נתונים והתראות בין processes עם מרחבי כתובות נפרדים."
+        },
+        {
+          "term": "pipe / FIFO",
+          "def": "ערוץ bytes חד-כיווני עם באפר בקרנל (64KB כברירת מחדל ב-Linux). FIFO הוא pipe עם שם במערכת הקבצים, כך שגם processes לא קשורים יכולים להתחבר."
+        },
+        {
+          "term": "PIPE_BUF",
+          "def": "הגודל המרבי של כתיבה אטומית ל-pipe: 4096 ב-Linux. כתיבות גדולות יותר עלולות להתערבב עם כותבים אחרים."
+        },
+        {
+          "term": "F_SETPIPE_SZ",
+          "def": "fcntl שמשנה את קיבולת ה-pipe ב-Linux, עד מגבלה שמוגדרת ב-/proc/sys/fs/pipe-max-size."
+        },
+        {
+          "term": "EOF ב-pipe",
+          "def": "read מחזיר 0 רק כשכל צדדי הכתיבה נסגרו בכל ה-processes. לכן אחרי fork סוגרים קצוות שלא בשימוש."
+        },
+        {
+          "term": "SIGPIPE / EPIPE / MSG_NOSIGNAL",
+          "def": "כתיבה ל-pipe או socket בלי קורא שולחת SIGPIPE (שמסיים את ה-process). אם מתעלמים ממנו או משתמשים ב-MSG_NOSIGNAL, הכתיבה מחזירה EPIPE."
+        },
+        {
+          "term": "O_NONBLOCK ו-EAGAIN",
+          "def": "במצב לא חוסם, פעולה שהייתה חוסמת מחזירה EAGAIN. כתיבה של עד PIPE_BUF לא נכתבת חלקית, וכתיבה גדולה יותר יכולה להיכתב חלקית."
+        },
+        {
+          "term": "Unix domain socket",
+          "def": "socket מקומי בלי מחסנית IP. SOCK_STREAM, SOCK_DGRAM או SOCK_SEQPACKET. מהיר מ-TCP ל-localhost ומעביר fds והרשאות."
+        },
+        {
+          "term": "socketpair",
+          "def": "יוצר זוג UDS מחוברים בלי שם. נוח לתקשורת דו-כיוונית בין אב לילד."
+        },
+        {
+          "term": "SO_PEERCRED",
+          "def": "אפשרות socket שמחזירה pid, uid ו-gid של הצד השני כפי שהקרנל רשם אותם. משמשת לאימות."
+        },
+        {
+          "term": "SCM_RIGHTS",
+          "def": "העברת fds דרך UDS. המקבל מקבל fd חדש שמצביע לאותו open file description."
+        },
+        {
+          "term": "open file description",
+          "def": "האובייקט בקרנל שמאחורי fd: offset, flags והפניה לקובץ. dup, fork ו-SCM_RIGHTS יוצרים fds שחולקים אותו."
+        },
+        {
+          "term": "framing",
+          "def": "הוספת גבולות הודעה (למשל אורך בתחילת כל הודעה) מעל stream של bytes, שבו הודעות יכולות להתחבר או להתפצל."
+        },
+        {
+          "term": "POSIX message queue",
+          "def": "תור הודעות בקרנל (mq_open) ששומר על גבולות הודעה ותומך בעדיפויות."
+        },
+        {
+          "term": "shm_open / shm_unlink",
+          "def": "יצירה ומחיקה של אובייקט shared memory עם שם (ב-Linux תחת /dev/shm). unlink מוחק את השם, ומיפויים קיימים נשארים עד שהם נסגרים."
+        },
+        {
+          "term": "mmap MAP_SHARED / MAP_FAILED",
+          "def": "מיפוי שבו כתיבות נראות לכל מי שממפה את אותו אובייקט. בכישלון mmap מחזיר MAP_FAILED, שהוא (void*)-1 ולא nullptr."
+        },
+        {
+          "term": "MAP_SHARED | MAP_ANONYMOUS",
+          "def": "זיכרון משותף בלי קובץ, שנוצר לפני fork ומשותף בין האב לילד."
+        },
+        {
+          "term": "memfd_create",
+          "def": "קובץ אנונימי ב-RAM שמיוצג רק כ-fd. אין שם שנשאר אחרי קריסה, ומשתפים אותו דרך SCM_RIGHTS."
+        },
+        {
+          "term": "file sealing",
+          "def": "נעילת תכונות של memfd: F_SEAL_SHRINK, F_SEAL_GROW, F_SEAL_WRITE. המקבל בודק עם F_GET_SEALS לפני שהוא סומך על ה-fd."
+        },
+        {
+          "term": "SIGBUS",
+          "def": "signal שמתקבל בגישה לחלק של מיפוי שאין מאחוריו דף בקובץ, למשל אחרי שהקובץ כווץ."
+        },
+        {
+          "term": "offset_ptr",
+          "def": "pointer שנשמר כמרחק מבסיס האזור במקום כתובת מוחלטת, כדי שיהיה תקף בכל process."
+        },
+        {
+          "term": "address-free atomics",
+          "def": "atomics שהם lock-free פועלים על הזיכרון עצמו, ולכן עובדים בין processes. atomics שאינם lock-free משתמשים ב-locks פרטיים של ה-process ולא עובדים."
+        },
+        {
+          "term": "PTHREAD_PROCESS_SHARED",
+          "def": "attribute ל-mutex או condition variable שמאפשר שימוש בהם בזיכרון משותף בין processes (futex לא פרטי)."
+        },
+        {
+          "term": "robust mutex / EOWNERDEAD",
+          "def": "mutex שבו מות המחזיק מתגלה: הנועל הבא מקבל EOWNERDEAD, מתקן ומבצע pthread_mutex_consistent. בלי זה ה-mutex הופך ל-ENOTRECOVERABLE."
+        },
+        {
+          "term": "futex",
+          "def": "Fast Userspace muTEX: מילה בזיכרון. WAIT נרדם רק אם המילה שווה לערך הצפוי, WAKE מעיר. PRIVATE מזוהה לפי כתובת וירטואלית ולכן רק בתוך process."
+        },
+        {
+          "term": "eventfd",
+          "def": "מונה 64 ביט בקרנל כ-fd. write מוסיף, read מחזיר ומאפס (או 1 ב-EFD_SEMAPHORE). מתאים להתראות עם epoll."
+        },
+        {
+          "term": "epoll",
+          "def": "API של Linux להמתנה על הרבה fds ביחד: sockets, pipes, eventfd, signalfd ועוד."
+        },
+        {
+          "term": "seqlock",
+          "def": "סנכרון שבו הכותב לא מחכה: מונה אי-זוגי בזמן כתיבה, והקורא בודק שהמונה זהה וזוגי לפני ואחרי ההעתקה, עם fence acquire לפני הבדיקה השנייה."
+        },
+        {
+          "term": "signals: standard / real-time",
+          "def": "signal רגיל שנשלח שוב כשהוא pending מתמזג. real-time signals נכנסים לתור ונושאים ערך (sigqueue)."
+        },
+        {
+          "term": "async-signal-safe ו-signalfd",
+          "def": "רק פונקציות ברשימה מוגדרת מותרות בתוך signal handler (לא malloc, לא printf). signalfd מאפשר לקבל signals כקריאה רגילה מ-fd."
+        },
+        {
+          "term": "msync",
+          "def": "כותב לדיסק דפים מלוכלכים של מיפוי קובץ. לא קשור לנראות בין processes, שהיא מיידית."
+        },
+        {
+          "term": "pidfd",
+          "def": "fd שמייצג process. אפשר לחכות עליו ב-poll כדי לדעת שה-process מת, בלי מרוץ על מספר pid שמוחזר לשימוש."
+        },
+        {
+          "term": "wakeup latency",
+          "def": "הזמן עד שה-thread שישן מתחיל לרוץ אחרי ההתראה: scheduler, context switch, ולפעמים יציאה מ-C-state. רוב העלות של IPC קטן."
+        },
+        {
+          "term": "libatomic",
+          "def": "ספריית runtime שמממשת atomics שאין להם הוראה בחומרה, באמצעות טבלת locks לפי כתובת בתוך ה-process."
+        }
+      ]
     }
   ],
   "questions": [
@@ -316,6 +498,227 @@
       ],
       "answer": 0,
       "explanation": "PRIVATE היא אופטימיזציה ל-futexes בתוך process אחד: הקרנל מדלג על חיפוש המיפוי. בין processes ה-key חייב להיות מבוסס על האובייקט המשותף. זה בדיוק מה ש-PTHREAD_PROCESS_SHARED משנה במימוש של pthread_mutex.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "process קורא מ-pipe שהבאפר שלו ריק, וכל צדדי הכתיבה שלו כבר נסגרו. מה מחזיר `read`?",
+      "choices": [
+        "-1 עם EPIPE",
+        "הוא נחסם לנצח",
+        "0, כלומר EOF",
+        "הוא מקבל SIGPIPE"
+      ],
+      "answer": 2,
+      "explanation": "read שמחזיר 0 הוא הסימן שאין ולא יהיו עוד נתונים. SIGPIPE ו-EPIPE שייכים לצד ההפוך: כתיבה כשאין קוראים. אם אפילו צד כתיבה אחד עדיין פתוח באיזשהו process, read נחסם במקום להחזיר 0.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה eventfd ב-Linux?",
+      "choices": [
+        "תור הודעות עם עדיפויות",
+        "fd שמייצג מונה של 64 ביט בקרנל: write מוסיף למונה, read מחזיר אותו (וחוסם כשהוא 0), ואפשר לחכות לו ב-epoll",
+        "socket שמעביר אירועים בין מחשבים",
+        "signal שמגיע כ-fd"
+      ],
+      "answer": 1,
+      "explanation": "eventfd הוא מנגנון התראה זול: אין בו נתונים מעבר למונה, אבל הוא משתלב בלולאת epoll יחד עם sockets. signal כ-fd הוא signalfd, ותור הודעות עם עדיפויות הוא POSIX mq.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה syscall ב-Linux יוצר קובץ אנונימי ב-RAM שמיוצג רק כ-fd (בלי שם במערכת הקבצים), כך שאפשר למפות אותו ולהעביר אותו ל-process אחר דרך SCM_RIGHTS?",
+      "accept": [
+        "memfd_create",
+        "memfd"
+      ],
+      "explanation": "memfd_create מחזיר fd לקובץ ב-tmpfs פנימי. אין שם שנשאר תקוע אחרי קריסה, כמו ב-/dev/shm, והוא משתחרר כשה-fd והמיפוי האחרונים נסגרים. אפשר להוסיף seals כדי שהמקבל ידע שהגודל לא ישתנה.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q21",
+      "level": 2,
+      "type": "bug",
+      "prompt": "האב מעביר נתונים ל-`sort` דרך pipe ומחכה שיסתיים. ה-process של sort לא מסתיים, וגם האב נתקע. איפה הבאג?",
+      "lang": "cpp",
+      "code": "int fds[2];\npipe(fds);\nif (fork() == 0) {\n  dup2(fds[0], STDIN_FILENO);\n  close(fds[0]);\n  close(fds[1]);\n  execlp(\"sort\", \"sort\", (char*)nullptr);\n  _exit(127);\n}\nclose(fds[0]);\nwrite_all(fds[1], data, n);\nwait(nullptr);",
+      "bugLine": 12,
+      "choices": [
+        "צריך לסגור את fds[0] גם בילד לפני ה-dup2",
+        "האב לא סוגר את fds[1] לפני ה-wait. sort קורא עד EOF ורק אז ממיין ומדפיס, אבל צד כתיבה עדיין פתוח אצל האב, ולכן EOF לא מגיע. האב מחכה ל-sort, ו-sort מחכה לאב",
+        "execlp צריך להיות execvp",
+        "write_all צריך לרוץ לפני ה-fork"
+      ],
+      "answer": 1,
+      "explanation": "EOF ב-pipe מגיע רק כשכל צדדי הכתיבה סגורים. הילד סגר נכון את העותק שלו של fds[1], אבל האב לא. התיקון: close(fds[1]) אחרי write_all ולפני wait. סגירה של fds[0] לפני dup2 הייתה שוברת את ה-dup2 עצמו.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "צריך לשלוח הודעות בגדלים משתנים בין processes על אותה מכונה, כך שכל recv יחזיר בדיוק הודעה אחת. איזה ערוץ נותן את זה בלי framing ידני?",
+      "choices": [
+        "pipe",
+        "FIFO (named pipe)",
+        "Unix domain socket מסוג SOCK_STREAM",
+        "Unix domain socket מסוג SOCK_SEQPACKET (או SOCK_DGRAM), או POSIX message queue"
+      ],
+      "answer": 3,
+      "explanation": "pipe, FIFO ו-SOCK_STREAM הם streams של bytes: שתי הודעות יכולות להגיע יחד או מפוצלות, וצריך להוסיף אורך בתחילת כל הודעה. SEQPACKET שומר על גבולות הודעה, עם חיבור וסדר. POSIX mq מוסיף גם עדיפויות.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "process A קורא ל-`shm_unlink(\"/samples\")` בזמן ש-process B עדיין ממפה את האזור הזה וקורא ממנו. מה קורה?",
+      "choices": [
+        "השם נמחק ו-process חדש לא יוכל לפתוח אותו, אבל המיפוי של B נשאר תקף. הזיכרון ישתחרר רק כשהמיפוי האחרון ייסגר",
+        "B מקבל SIGBUS מיד",
+        "shm_unlink נכשל עם EBUSY",
+        "הנתונים מתאפסים אבל המיפוי נשאר"
+      ],
+      "answer": 0,
+      "explanation": "זה אותו עיקרון כמו unlink של קובץ פתוח: השם נמחק, האובייקט חי כל עוד יש לו הפניות. לכן אחרי שכל הצדדים התחברו מקובל לבצע unlink מוקדם, כך שגם אם כולם קורסים לא נשאר אזור יתום ב-/dev/shm.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q24",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "daemon שמנהל רדיו מקבל פקודות מ-CLI מקומי. רק משתמשים בקבוצה מסוימת מורשים לשנות תדר. איזה מנגנון מתאים, ואיך ה-daemon יודע מי שלח את הפקודה?",
+      "choices": [
+        "TCP ל-localhost עם סיסמה בהודעה",
+        "pipe, ולבדוק את ה-pid של ה-process האב",
+        "Unix domain socket, ולקרוא SO_PEERCRED כדי לקבל את ה-uid וה-gid של הצד השני כפי שהקרנל רשם אותם, ובנוסף הרשאות קובץ על ה-socket",
+        "shared memory עם דגל הרשאה"
+      ],
+      "answer": 2,
+      "explanation": "הקרנל ממלא את ה-credentials, ולכן הצד השני לא יכול לזייף אותם. הרשאות על קובץ ה-socket מגבילות מי בכלל יכול להתחבר. ב-TCP אין מידע אמין על המשתמש המקומי, ו-shared memory לא מספקת זיהוי בכלל. גם systemd ו-D-Bus משתמשים בדיוק במנגנון הזה.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q25",
+      "level": 3,
+      "type": "multi",
+      "prompt": "pipe ב-Linux עם קיבולת ברירת מחדל (64KB), ואף אחד לא קורא ממנו כרגע. אילו טענות נכונות?",
+      "choices": [
+        "write חוסם של 100KB ל-pipe ריק נחסם אחרי שנכנסו 64KB, עד שמישהו יקרא",
+        "write של 100 בתים כשכל צדדי הקריאה סגורים מחזיר 0",
+        "עם O_NONBLOCK, write של 100KB ל-pipe ריק כותב 65536 בתים ומחזיר את המספר הזה",
+        "עם O_NONBLOCK, write של 100 בתים כשנשארו רק 50 בתים פנויים נכשל עם EAGAIN, ולא כותב חלקית",
+        "עם O_NONBLOCK, read מ-pipe ריק שעדיין יש לו כותבים מחזיר 0"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "כתיבה של עד PIPE_BUF (4096) חייבת להיות אטומית, ולכן במצב לא חוסם היא או נכתבת כולה או נכשלת. כתיבה גדולה מ-PIPE_BUF במצב לא חוסם כותבת כמה שנכנס. כתיבה בלי קוראים מייצרת SIGPIPE או EPIPE, לא 0. read לא חוסם מ-pipe ריק עם כותבים מחזיר EAGAIN, ו-0 שמור ל-EOF.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q26",
+      "level": 3,
+      "type": "short",
+      "prompt": "eventfd נוצר עם ערך 0 ובלי EFD_SEMAPHORE. מבצעים write של 1, write של 1, ו-write של 5. מה יחזיר read אחד?",
+      "accept": [
+        "7"
+      ],
+      "explanation": "write מוסיף למונה: 1 + 1 + 5 = 7. בלי EFD_SEMAPHORE, read מחזיר את כל המונה ומאפס אותו, כך ש-read נוסף ייחסם. עם EFD_SEMAPHORE כל read היה מחזיר 1 ומפחית 1.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "process שולח 10 פעמים ברצף מהיר `kill(pid, SIGUSR1)` כדי לסמן 10 בלוקים מוכנים. ה-handler אצל המקבל מגדיל מונה. המונה מגיע לפעמים רק ל-3. למה, ומה החלופה?",
+      "choices": [
+        "signals רגילים לא נכנסים לתור: כשהסיגנל כבר pending, שליחות נוספות שלו מתמזגות. החלופה: real-time signals (sigqueue, שנכנסים לתור), או עדיף eventfd או מונה בזיכרון משותף, שבהם הספירה לא אובדת",
+        "ה-handler לא async-signal-safe",
+        "kill נכשל כשנשלח יותר מדי מהר",
+        "המונה צריך להיות volatile sig_atomic_t"
+      ],
+      "answer": 0,
+      "explanation": "לכל signal רגיל יש ביט pending אחד, לא מונה. גם אם המונה הוא sig_atomic_t, ה-handler פשוט לא רץ 10 פעמים. real-time signals כן נספרים (עד מגבלה), אבל signals בכלל הם מנגנון מסורבל לנתונים: handler מוגבל ל-async-signal-safe, ו-syscalls נקטעים עם EINTR. eventfd סופר את כל ה-writes.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שירות יוצר `shm_open(\"/rx_ring\", O_CREAT | O_RDWR)` בהפעלה. אחרי שדרוג שבו ה-layout השתנה, השירות קרס מיד בהפעלה מחדש. מה הבעיה ומה התכנון העמיד?",
+      "choices": [
+        "/dev/shm מתמלא",
+        "האזור מהגרסה הקודמת לא נמחק (קריסה או יציאה בלי shm_unlink) ונשאר ב-/dev/shm עם layout ישן, והשירות התחבר אליו כאילו הוא חדש. תכנון עמיד: header עם magic, גרסה וגודל שנבדק בהתחברות, יצירה עם O_EXCL ומחיקה של אזור ישן, או memfd שמועבר ב-SCM_RIGHTS ואין לו שם שנשאר",
+        "צריך ftruncate לפני shm_open",
+        "צריך לקרוא msync לפני היציאה"
+      ],
+      "answer": 1,
+      "explanation": "אובייקט shm עם שם חי עד unlink או reboot, בלי קשר ל-processes. O_CREAT בלי O_EXCL מתחבר בשקט לקיים. header עם magic וגרסה הופך התאמה שגויה לשגיאה ברורה. memfd מבטל את הבעיה מהשורש: כשכל ה-fds והמיפויים נסגרים, הזיכרון משתחרר.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "שני processes חולקים `std::atomic<Pair>` בזיכרון משותף, כש-Pair הוא struct של 16 בתים (שני uint64_t). הקוד עובר קומפילציה בלי `-mcx16`, ו-`std::atomic<Pair>::is_always_lock_free` הוא false. לפעמים הקורא רואה זוג מעורבב. למה?",
+      "choices": [
+        "atomics לא עובדים בזיכרון משותף בכלל",
+        "צריך memory_order_seq_cst",
+        "הזיכרון המשותף לא מיושר ל-16",
+        "האטומי ממומש ב-libatomic עם טבלת locks לפי כתובת, שנמצאת בזיכרון הפרטי של כל process. כל process נועל lock משלו, ולכן אין הדדיות בין processes"
+      ],
+      "answer": 3,
+      "explanation": "רק atomics שהם lock-free הם address-free, ולכן רק הם עובדים בין processes. כש-cmpxchg16b לא זמין לקומפיילר (או ש-libatomic בוחר לא להשתמש בו), הפעולה מוגנת ב-lock פנימי שאינו משותף. הפתרונות: static_assert על is_always_lock_free, לארוז את הזוג ל-64 ביט, להשתמש ב-seqlock, או ב-pthread mutex עם PTHREAD_PROCESS_SHARED.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "למה `FUTEX_WAIT(addr, expected)` מקבל ערך צפוי, ולא פשוט נרדם עד WAKE?",
+      "choices": [
+        "כדי לבדוק הרשאות לכתובת",
+        "כדי לסגור את המרוץ בין בדיקת התנאי לבין השינה: הקרנל נרדם רק אם `*addr == expected`, ובודק את זה תחת אותו lock של תור ההמתנה שבו WAKE משתמש. אם המעיר שינה את הערך וקרא ל-WAKE בדיוק באמצע, ה-WAIT חוזר מיד עם EAGAIN",
+        "כדי לאפשר timeout",
+        "כדי לדעת כמה waiters להעיר"
+      ],
+      "answer": 1,
+      "explanation": "בלי הערך הצפוי היה lost wakeup: ה-waiter רואה שהתנאי לא מתקיים, המעיר משנה ומעיר (אין עדיין אף אחד בתור), ואז ה-waiter נרדם לנצח. ההשוואה האטומית בתוך הקרנל היא מה שמאפשר ל-mutex ול-condition variable להשאיר את ה-fast path כולו ב-user space.",
+      "lesson": "sys.ipc",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.ipc.q31",
+      "level": 5,
+      "type": "oral",
+      "prompt": "process לכידה מעביר בלוקים של 32MB (כ-200 בשנייה) ל-2 processes עיבוד, כל בלוק לאחד מהם, בלי העתקה. תכנן את מנגנון ה-buffer pool בין ה-processes, כולל מה קורה כשמעבד קורס כשהוא מחזיק בלוקים.",
+      "modelAnswer": "קצב: 200 × 32MB = 6.4 GB/s, ולכן העתקה אחת נוספת כבר יקרה, וחייבים zero-copy. Pool: memfd אחד גדול (למשל 64 בלוקים, 2GB), עם MFD_HUGETLB או huge pages כדי לצמצם TLB misses ו-page faults, prefault ו-mlock אצל היוצר, ו-seals (F_SEAL_SHRINK ו-F_SEAL_GROW) כדי שאף צד לא ישנה את הגודל. היוצר מעביר את ה-fd לכל מעבד דרך UDS עם SCM_RIGHTS, וכל אחד ממפה. בלוקים מזוהים לפי אינדקס, לא pointer. בעלות: תור SPSC בזיכרון משותף מהלוכד לכל מעבד (אינדקסים של בלוקים מלאים), ותור SPSC חוזר מכל מעבד ללוכד (אינדקסים של בלוקים שסיים). כך כל תור עם כותב יחיד, lock-free, וכל בלוק בבעלות של צד אחד בכל רגע. התראה: eventfd לכל כיוון, או polling אם ה-cores מוקדשים. backpressure: אם אין בלוק פנוי, הלוכד לא יכול לחכות (ה-ADC לא מחכה), ולכן הוא זורק ומדווח overflow, או מגדיל את ה-pool מראש לפי jitter מחושב. קריסה: הלוכד מחזיק טבלת בעלות (איזה בלוק אצל מי). הוא מזהה מוות של מעבד דרך pidfd ב-epoll או EOF על ה-UDS, ואז מחזיר ל-free list את כל הבלוקים שהיו אצלו. אם המעבד חוזר, הוא מתחבר מחדש ומקבל תורים מאופסים. אם ייתכן שהמעבד עדיין כותב (זומבי, hang), מגדילים generation counter לכל בלוק כדי לזהות החזרה ישנה. מעדיפים לא להשתמש ב-mutex משותף בנתיב החם, ואם כן, ROBUST. NUMA: להקצות את ה-pool על ה-node של ה-NIC וה-cores. header עם magic וגרסה. מדידה: מילוי תורים, overflow, וזמן החזקה של בלוק.",
+      "rubric": [
+        "חישוב רוחב פס ומסקנה שצריך zero-copy",
+        "memfd עם seals ו-huge pages, העברה ב-SCM_RIGHTS, ואינדקסים במקום pointers",
+        "בעלות בלוקים עם תורי SPSC בשני הכיוונים והתראה",
+        "backpressure כשה-pool ריק (הלוכד לא נחסם)",
+        "זיהוי מוות (pidfd או EOF) והחזרת בלוקים, generation counters"
+      ],
+      "explanation": "שאלה ברמת senior: לא מספיק לומר shared memory. צריך להראות מי מחזיק כל בלוק בכל רגע, ומה קורה כשמשהו נכשל.",
       "lesson": "sys.ipc",
       "tags": [
         "nvidia"

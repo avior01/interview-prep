@@ -36,7 +36,165 @@
         "ההבדל בין happens-before לבין זמן אמיתי: sleep, זמן או ייתכן לא יוצרים סדר",
         "מיפוי לחומרה: TSO מול weak, ldar/stlr, dmb, lock prefix"
       ],
-      "diagram": "Producer            Consumer\ndata = 42\nflag.store(1, rel) --sync-with--> flag.load(acq)==1\n                                  read data -> 42\n(everything above rel is visible\n below acq)"
+      "diagram": "Producer            Consumer\ndata = 42\nflag.store(1, rel) --sync-with--> flag.load(acq)==1\n                                  read data -> 42\n(everything above rel is visible\n below acq)",
+      "details": [
+        {
+          "title": "למה בכלל יש סידור מחדש",
+          "body": "הקוד שכתבת הוא לא מה שרץ. שני גורמים משנים את סדר הגישות לזיכרון, ושניהם חוקיים כל עוד **thread יחיד** לא יכול להבחין בהבדל (כלל ה-as-if).\n\n**הקומפיילר**: מזיז קריאות וכתיבות, מאחד אותן, ומוציא קריאות מלולאות. דוגמה קלאסית: לולאה שמחכה ל-bool רגיל stop. כיוון ש-data race הוא UB, הקומפיילר רשאי להניח שאף thread אחר לא כותב ל-stop בזמן הלולאה, קורא אותו פעם אחת לרגיסטר, והלולאה נהיית אינסופית ב-O2. זה קורה גם על x86.\n\n**המעבד**: מבצע הוראות out-of-order, ומחזיק **store buffer**: כתיבות נכנסות לתור פרטי של ה-core ומתפרסמות ל-cache מאוחר יותר. ה-core עצמו רואה את הכתיבות שלו מיד (store forwarding), אבל cores אחרים רואים אותן מאוחר יותר. בינתיים ה-core כבר ממשיך לקרוא כתובות אחרות מה-cache. במעבדים weakly ordered (ARM, POWER, RISC-V) גם כתיבות לכתובות שונות יכולות להתפרסם בסדר שונה מהקוד, וקריאות יכולות להתבצע בסדר שונה.\n\nחשוב להבין: ה-caches עצמם קוהרנטיים בכל המעבדים האלה. הבעיה היא לא שערך 'נתקע' ב-cache, אלא **סדר**: באיזה סדר core אחר רואה כתיבות לכתובות **שונות**. memory order הוא הדרך לומר לקומפיילר ולמעבד אילו סידורים מחדש אסורים סביב פעולה אטומית."
+        },
+        {
+          "title": "sequenced-before, synchronizes-with, happens-before",
+          "body": "מודל הזיכרון של C++ לא מדבר על זמן אלא על יחסים בין פעולות.\n\n- **sequenced-before**: הסדר בתוך thread אחד, לפי הקוד.\n- **synchronizes-with**: קשר בין threads. store עם release ב-A מסתנכרן עם load עם acquire ב-B **אם ה-load קרא את הערך שה-store כתב** (או ערך מאוחר יותר מה-release sequence שלו). גם unlock מול lock של אותו mutex, יצירת thread מול תחילת הריצה שלו, וסיום thread מול join.\n- **happens-before**: הסגור הטרנזיטיבי. אם X sequenced-before release, release synchronizes-with acquire, ו-acquire sequenced-before Y, אז X happens-before Y, ו-Y חייב לראות את התוצאה של X.\n\n**data race**: שתי גישות לאותו מקום, לפחות אחת כתיבה, לפחות אחת לא-atomic, ואף אחת לא happens-before השנייה. זה UB גם אם התוצאה 'נראית נכון'. גישות אטומיות אף פעם אינן data race, אבל עדיין יכול להיות להן race לוגי (race condition).\n\nזמן אמיתי לא יוצר סדר. 'ה-store קרה קודם כי הוספתי sleep' לא נותן happens-before. רק קריאה של **הערך הספציפי** שנכתב יוצרת סנכרון: load-acquire שקרא ערך ישן לא מסתנכרן עם שום דבר, גם אם הוא בוצע 'אחרי' ה-store בשעון."
+        },
+        {
+          "title": "ה-orders אחד אחד, ו-release sequence",
+          "body": "- **relaxed**: אטומיות ו-coherence של המשתנה עצמו בלבד. שום סדר מול משתנים אחרים. למונים, סטטיסטיקות ודגלים שלא מפרסמים נתונים.\n- **release** (רק על store או RMW): שום קריאה או כתיבה **שלפניו** ב-thread לא תעבור אחריו.\n- **acquire** (רק על load או RMW): שום קריאה או כתיבה **שאחריו** לא תעבור לפניו.\n- **acq_rel**: ל-RMW, שני הצדדים. RMW כזה גם מקבל את מה שפורסם לפניו וגם מפרסם את מה שה-thread עשה.\n- **seq_cst**: acquire או release לפי סוג הפעולה, ובנוסף כל פעולות ה-seq_cst בתוכנית נמצאות בסדר כולל אחד S שכל ה-threads מסכימים עליו. רק seq_cst אוסר את הסידור StoreLoad: store ואחריו load למשתנה אחר.\n- **consume**: ניסיון לסדר רק פעולות שתלויות בנתון (dependency). קשה מדי למימוש, כל הקומפיילרים מתייחסים אליו כ-acquire, והתקן ממליץ מאז C++17 לא להשתמש בו.\n\nהמחסומים **חד-כיווניים**, מה שנקרא roach motel: פעולה מבחוץ מותר להכניס פנימה, אבל לא להוציא. כתיבה שבאה אחרי release יכולה לעלות מעליו, וקריאה שלפני acquire יכולה לרדת מתחתיו.\n\n**release sequence**: מתחילה ב-store-release למשתנה M וממשיכה בכל פעולות ה-RMW שאחריו ב-modification order של M, **מכל thread ובכל memory order**. acquire שקורא ערך שנכתב על ידי RMW כזה מסתנכרן עם ה-release המקורי. זה מה שמאפשר reference counting: כל owner מוריד ב-fetch_sub, וה-thread שמוחק מסתנכרן עם כולם. (C++20 הוציא מה-release sequence כתיבות רגילות של אותו thread, אבל RMWs נשארו.)"
+        },
+        {
+          "title": "fences",
+          "body": "atomic_thread_fence הוא מחסום שלא קשור למשתנה מסוים.\n\n- **fence release** לפני store relaxed מתנהג כאילו ה-store היה release.\n- **fence acquire** אחרי load relaxed מתנהג כאילו ה-load היה acquire.\n- אם fence release ב-A קודם ל-store ל-M, ו-load ב-B קרא את הערך הזה וקודם ל-fence acquire, אז ה-fences מסתנכרנים (fence-to-fence). גם צירוף של fence בצד אחד ופעולה עם order בצד השני עובד.\n\nלמה זה שימושי: בודקים הרבה דגלים עם relaxed, ומשלמים על fence acquire אחד רק אחרי שמצאנו דגל מוכן. ב-reference counting: fetch_sub עם release, ורק ה-thread שראה 1 מבצע fence acquire לפני delete, כך שה-threads האחרים לא משלמים על acquire.\n\n**fence seq_cst** הוא מחסום מלא שמשתתף בסדר S. הוא אוסר גם StoreLoad. אם בכל thread של Store Buffering יש fence seq_cst בין ה-store ל-load (גם כשהם relaxed), אחד ה-fences ראשון ב-S, וה-load שאחרי ה-fence השני חייב לראות את ה-store שלפני הראשון. כך התוצאה 0/0 נאסרת. זו גם הדרך לתקן Peterson. מנגד, fence seq_cst בצד אחד בלבד לא מספיק."
+        },
+        {
+          "title": "litmus tests: MP, SB, IRIW, ו-Dekker/Peterson",
+          "body": "**MP (message passing)**: A כותב data ואז flag. B קורא flag ואז data. האם B יכול לראות flag חדש ו-data ישן? עם release על flag ו-acquire בקריאתו: לא. עם relaxed: כן, גם בחומרה (ARM) וגם בגלל הקומפיילר.\n\n**SB (store buffering)**: T1 כותב x=1 וקורא y, T2 כותב y=1 וקורא x. התוצאה r1=0, r2=0 נראית בלתי אפשרית, אבל היא מותרת עם acquire/release וקורית בפועל ב-x86: כל store יושב ב-store buffer של ה-core שלו, ושני ה-loads קוראים מה-cache לפני שה-stores התפרסמו. רק seq_cst בכל הפעולות, או fences seq_cst בשני הצדדים, אוסרים.\n\n**Dekker ו-Peterson** הם אלגוריתמי mutual exclusion שבנויים בדיוק על SB: כל thread מסמן 'אני רוצה להיכנס' ואז בודק אם השני רוצה. אם StoreLoad מותר, שניהם רואים 'השני לא רוצה' ונכנסים יחד. לכן הם דורשים seq_cst.\n\n**IRIW (independent reads of independent writes)**: T1 כותב x, T2 כותב y, T3 קורא x ואז y, T4 קורא y ואז x. האם T3 יכול לראות x חדש ו-y ישן, ובאותו זמן T4 לראות y חדש ו-x ישן? כלומר שני קוראים לא מסכימים על הסדר של שתי כתיבות בלתי תלויות. עם acquire/release: מותר. החומרה: מעבד הוא **multi-copy atomic** אם כתיבה נראית לכל ה-cores האחרים באותו רגע. x86 ו-ARMv8 הם multi-copy atomic (ARMv8 מאז תיקון 2017), ולכן שם זה לא קורה. POWER אינו, כי core יכול לראות כתיבה של שכן שחולק איתו cache לפני שאחרים רואים אותה. seq_cst אוסר בכל מקום."
+        },
+        {
+          "title": "מיפוי לחומרה ומחיר",
+          "body": "**x86 (TSO)**: הסידור היחיד שהחומרה עושה הוא StoreLoad, בגלל ה-store buffer. לכן כל load הוא כבר acquire וכל store כבר release, ושניהם mov רגיל. seq_cst load גם הוא mov. seq_cst store הוא xchg (או mov ו-mfence), שמרוקן את ה-store buffer ועולה עשרות מחזורים. כל RMW הוא lock-prefixed ולכן full barrier, ואין הבדל במחיר בין relaxed, acq_rel ו-seq_cst ב-RMW.\n\n**ARMv8 (AArch64)**: weakly ordered. acquire load הוא ldar (או ldapr ב-ARMv8.3, שהוא RCpc), release store הוא stlr. ldar ו-stlr הם RCsc: stlr ואחריו ldar לא מסודרים מחדש, ולכן הם מספיקים גם ל-seq_cst load ו-store. fence מלא הוא dmb ish, יקר יותר.\n\n**POWER**: חלש עוד יותר ואינו multi-copy atomic. seq_cst דורש hwsync (sync) כבד.\n\nלכן קוד עם relaxed שגוי יכול לעבור חודשים על x86 ולהישבר מיד על Jetson (ARMv8). ב-x86 החומרה לא מסדרת מחדש store-store ו-load-load, ורק הקומפיילר יכול לחשוף את הבאג. ב-ARM החומרה עצמה מראה את הדגל לפני הנתונים.\n\nהמחיר האמיתי של orders חזקים הוא לא רק ההוראות: הקומפיילר מוותר על אופטימיזציות סביבם. מצד שני, באג סידור הוא מהבאגים הקשים ביותר לאיתור. ברירת מחדל סבירה: seq_cst או mutex, וירידה ל-acquire/release או relaxed רק במסלול חם שנמדד, עם נימוק כתוב לכל פעולה."
+        },
+        {
+          "title": "דפוסים: spinlock, refcount, double-checked locking, seqlock",
+          "body": "**spinlock**: lock הוא exchange(true, acquire), unlock הוא store(false, release). acquire בכניסה מבטיח שהקריאות בתוך ה-critical section רואות את מה שהמחזיק הקודם כתב. release ביציאה מבטיח שהכתיבות בפנים לא 'יירדו' מתחת לשחרור. **test-and-test-and-set (TTAS)**: הממתינים מסתובבים על load relaxed ולא על exchange, כך שה-cache line נשארת במצב Shared אצל כולם ולא קופצת (ping-pong) בכל סיבוב. בתוך הלולאה מבצעים pause (ב-x86, הוראת PAUSE דרך _mm_pause) שמקטינה צריכת חשמל ועונש speculation, ומפנה משאבים ל-hyperthread השכן.\n\n**reference counting**: fetch_sub(1, release), ואם התוצאה היא 1, atomic_thread_fence(acquire) ואז delete. האטומיות של RMW מבטיחה שבדיוק אחד רואה 1 גם ב-relaxed. ה-release וה-acquire נחוצים כדי שכל מה ששאר ה-owners עשו לאובייקט happens-before ה-destructor.\n\n**double-checked locking**: בודקים pointer בלי lock, ורק אם הוא null לוקחים lock ובודקים שוב. אם ה-pointer רגיל, הקריאה בלי lock היא data race, וקורא יכול לראות pointer לא-null לפני שהשדות של האובייקט נכתבו. התיקון: atomic pointer עם load acquire ו-store release, או פשוט std::call_once, או static מקומי (magic statics, thread-safe מאז C++11).\n\n**seqlock**: כותב יחיד מגדיל מונה seq לאי-זוגי, כותב את הנתונים, ומגדיל לזוגי. קורא קורא seq, קורא את הנתונים, קורא seq שוב, ואם השתנה או אי-זוגי מנסה שוב. כדי שזה יהיה חוקי ב-C++: הנתונים עצמם חייבים להיות atomics (relaxed מספיק), הקריאה הראשונה של seq היא acquire, ובין קריאת הנתונים לקריאה השנייה של seq צריך fence acquire, אחרת הקריאות של הנתונים יכולות לרדת אחרי הבדיקה השנייה. בצד הכותב, אחרי ההגדלה הראשונה צריך fence release לפני כתיבת הנתונים, וההגדלה השנייה היא release."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: message passing עם relaxed מול release/acquire על ARM",
+          "body": "data = 0, flag = 0. A: data = 42 ואז flag = 1. B: מחכה ל-flag == 1 ואז קורא data.\n\nעם relaxed על flag, על ARM:\n- t1: A כותב data = 42 ל-store buffer\n- t2: A כותב flag = 1. החומרה מפרסמת את flag קודם\n- t3: B רואה flag == 1\n- t4: B קורא data מה-cache ומקבל 0\n- t5: רק עכשיו data = 42 מתפרסם\n\nעם release על flag: stlr לא יכול להתפרסם לפני הכתיבות שלפניו, ולכן כש-B רואה flag == 1, data = 42 כבר גלוי. ldar בצד של B מבטיח שהקריאה של data לא מתבצעת לפני הקריאה של flag. שני הצדדים נחוצים: release בלי acquire, או ההפך, לא יוצרים synchronizes-with."
+        },
+        {
+          "title": "דוגמה: Store Buffering על x86",
+          "body": "x = y = 0. T1: x = 1 ואז r1 = y. T2: y = 1 ואז r2 = x. הכול acquire/release.\n\n- t1: T1 שם x = 1 ב-store buffer שלו. ה-cache עדיין מחזיק x = 0\n- t2: T2 שם y = 1 ב-store buffer שלו\n- t3: T1 קורא y מה-cache: 0\n- t4: T2 קורא x מה-cache: 0\n- t5: שני ה-buffers מתרוקנים\n\nתוצאה: r1 = 0, r2 = 0. עם seq_cst ה-store הוא xchg, שמרוקן את ה-buffer לפני שה-load מתבצע. עכשיו אחד ה-stores ראשון בסדר הגלובלי, וה-load של ה-thread השני חייב לראות אותו. התוצאות האפשריות: (0,1), (1,0), (1,1), אבל לא (0,0)."
+        },
+        {
+          "title": "דוגמה: IRIW על מעבד שאינו multi-copy atomic",
+          "body": "על POWER, T1 ו-T3 חולקים cache פרטי, וכך גם T2 ו-T4.\n\n- t1: T1 כותב x = 1. T3, השכן, רואה אותו מיד. T4 עדיין לא\n- t2: T2 כותב y = 1. T4 רואה מיד. T3 עדיין לא\n- t3: T3 קורא x = 1 ואז y = 0\n- t4: T4 קורא y = 1 ואז x = 0\n\nT3 'חושב' ש-x נכתב לפני y, ו-T4 חושב ההפך. acquire לא עוזר: כל קורא מסודר מול הכותב שהוא קרא ממנו, אבל אין הסכמה גלובלית. עם seq_cst הקומפיילר מוסיף sync כבד, ויש סדר כולל אחד שכולם רואים. ב-x86 וב-ARMv8 התרחיש הזה לא קורה בחומרה, אבל לפי התקן הוא מותר ב-acquire/release."
+        },
+        {
+          "title": "דוגמה: למה refcount צריך release ו-acquire",
+          "body": "rc = 2. thread B משתמש באובייקט ואחר כך משחרר. thread C משחרר ומוחק.\n\n- t1: B כותב obj->x = 5\n- t2: B מבצע fetch_sub(1) ומקבל 2. rc = 1\n- t3: C מבצע fetch_sub(1) ומקבל 1, ולכן מוחק\n\nעם relaxed: החומרה (או הקומפיילר) רשאית לפרסם את הכתיבה ל-obj->x **אחרי** ה-fetch_sub של B. אז ה-destructor של C רץ, ובמקביל מגיעה כתיבה לזיכרון שכבר שוחרר: use-after-free. עם release ב-B, הכתיבה ל-x חייבת להתפרסם לפני ה-fetch_sub. עם fence acquire ב-C אחרי שראה 1, ה-destructor מסודר אחרי כל ה-releases בזכות ה-release sequence."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "reordering",
+          "def": "שינוי סדר הגישות לזיכרון על ידי הקומפיילר או המעבד. חוקי כל עוד thread יחיד לא מבחין (כלל ה-as-if)."
+        },
+        {
+          "term": "store buffer",
+          "def": "תור פרטי של core שבו כתיבות ממתינות לפני שהן מגיעות ל-cache. ה-core רואה אותן מיד, אחרים מאוחר יותר. הגורם ל-StoreLoad reordering."
+        },
+        {
+          "term": "StoreLoad",
+          "def": "store ואחריו load לכתובת אחרת, כשה-load מתבצע לפני שה-store גלוי לאחרים. הסידור היחיד שמותר ב-x86, ורק seq_cst אוסר אותו."
+        },
+        {
+          "term": "TSO",
+          "def": "Total Store Order, מודל הזיכרון של x86: רק StoreLoad מותר. כל load הוא acquire וכל store הוא release בחינם."
+        },
+        {
+          "term": "weakly ordered",
+          "def": "מעבד (ARM, POWER, RISC-V) שמותר לו לסדר מחדש כמעט כל זוג גישות לכתובות שונות, אלא אם יש מחסום."
+        },
+        {
+          "term": "sequenced-before",
+          "def": "סדר הפעולות בתוך thread אחד לפי הקוד."
+        },
+        {
+          "term": "synchronizes-with",
+          "def": "קשר בין release ב-thread אחד ל-acquire ב-thread אחר שקרא את הערך שלו (או מה-release sequence). גם unlock/lock ו-create/join."
+        },
+        {
+          "term": "happens-before",
+          "def": "הסגור הטרנזיטיבי של sequenced-before ו-synchronizes-with. אם X happens-before Y, אז Y רואה את X. בלעדיו, גישות לא-atomic מתנגשות הן data race."
+        },
+        {
+          "term": "data race",
+          "def": "שתי גישות לאותו מקום, אחת לפחות כתיבה ואחת לפחות לא-atomic, בלי happens-before. undefined behavior."
+        },
+        {
+          "term": "relaxed",
+          "def": "אטומיות ו-coherence בלבד, בלי סדר מול משתנים אחרים."
+        },
+        {
+          "term": "acquire / release",
+          "def": "release: מה שלפניו לא עובר אחריו. acquire: מה שאחריו לא עובר לפניו. יחד, כשה-acquire קורא את ערך ה-release, יוצרים happens-before."
+        },
+        {
+          "term": "acq_rel",
+          "def": "ל-RMW: גם acquire וגם release."
+        },
+        {
+          "term": "seq_cst",
+          "def": "acquire/release ועוד סדר כולל אחד S של כל פעולות ה-seq_cst. אוסר StoreLoad ו-IRIW. ברירת המחדל."
+        },
+        {
+          "term": "memory_order_consume",
+          "def": "סידור לפי תלות נתונים בלבד. כל הקומפיילרים מממשים כ-acquire, והתקן ממליץ לא להשתמש בו."
+        },
+        {
+          "term": "roach motel",
+          "def": "המחסומים חד-כיווניים: מותר להכניס פעולות לתוך האזור המוגן, אסור להוציא."
+        },
+        {
+          "term": "release sequence",
+          "def": "store-release וכל ה-RMWs שאחריו על אותו משתנה, מכל thread. acquire שקורא ערך מתוכה מסתנכרן עם ה-release המקורי."
+        },
+        {
+          "term": "atomic_thread_fence",
+          "def": "מחסום שאינו קשור למשתנה. fence release לפני store relaxed ו-fence acquire אחרי load relaxed מסתנכרנים. fence seq_cst הוא מחסום מלא שמשתתף ב-S."
+        },
+        {
+          "term": "MP (message passing)",
+          "def": "litmus test: כתיבת נתון ואז דגל, קריאת דגל ואז נתון. release/acquire מספיקים."
+        },
+        {
+          "term": "SB (store buffering)",
+          "def": "litmus test: כל thread כותב משתנה אחד וקורא את השני. 0/0 מותר בלי seq_cst, וקורה ב-x86."
+        },
+        {
+          "term": "IRIW",
+          "def": "שני קוראים שרואים שתי כתיבות בלתי תלויות בסדרים הפוכים. מותר ב-acquire/release, קורה ב-POWER, נאסר ב-seq_cst."
+        },
+        {
+          "term": "multi-copy atomicity",
+          "def": "תכונת חומרה: כתיבה נראית לכל ה-cores האחרים באותו רגע. x86 ו-ARMv8 כן, POWER לא."
+        },
+        {
+          "term": "Dekker / Peterson",
+          "def": "אלגוריתמי mutual exclusion שבנויים על 'סמן כוונה ואז בדוק את השני'. דורשים seq_cst כי הם תלויים באיסור StoreLoad."
+        },
+        {
+          "term": "ldar / stlr / dmb",
+          "def": "הוראות AArch64: load-acquire, store-release (שתיהן RCsc, ולכן מספיקות ל-seq_cst), ו-dmb ish, מחסום מלא."
+        },
+        {
+          "term": "test-and-test-and-set",
+          "def": "spinlock שממתין על load relaxed ורק כשהוא פנוי מנסה exchange. מונע ping-pong של ה-cache line. בלולאה מוסיפים pause."
+        },
+        {
+          "term": "double-checked locking",
+          "def": "בדיקה בלי lock ואז עם lock. נכון רק עם atomic pointer (acquire/release). חלופות: call_once ו-static מקומי."
+        },
+        {
+          "term": "seqlock",
+          "def": "כותב יחיד מסמן מונה אי-זוגי בזמן כתיבה. קורא מנסה שוב אם המונה השתנה. ב-C++ דורש נתונים atomic relaxed ו-fences במקומות הנכונים."
+        },
+        {
+          "term": "ThreadSanitizer (TSan)",
+          "def": "כלי שמזהה data races בזמן ריצה לפי happens-before. מבין atomics, אבל התמיכה שלו ב-atomic_thread_fence חלקית."
+        }
+      ]
     }
   ],
   "questions": [
@@ -340,6 +498,223 @@
         5
       ],
       "explanation": "הסדר הכולל S חל רק על פעולות seq_cst, ולכן store relaxed לא משתתף בו ו-SB נשאר אפשרי. data race על משתנה לא-atomic הוא UB תמיד, ו-seq_cst רק יכול ליצור את ה-happens-before שמונע אותו. ב-AArch64, ldar ו-stlr הם RCsc ולכן מספיקים גם ל-seq_cst. ב-x86 כל RMW הוא lock-prefixed ולכן full barrier ממילא, ואין הבדל בין acq_rel ל-seq_cst.",
+      "lesson": "conc.memory-order",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.memory-order.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של \"פעולה X happens-before פעולה Y\" במודל הזיכרון של C++?",
+      "choices": [
+        "X בוצעה מוקדם יותר לפי השעון של המערכת",
+        "X ו-Y הן פעולות seq_cst ו-X קודמת ל-Y בסדר הגלובלי",
+        "יש שרשרת של sequenced-before ו-synchronizes-with מ-X ל-Y, ולכן Y מובטח לראות את התוצאות של X",
+        "X ו-Y באותו thread"
+      ],
+      "answer": 2,
+      "explanation": "happens-before הוא יחס לוגי, לא זמן. הוא נבנה מסדר הקוד בתוך thread ומקשרי synchronizes-with בין threads (release/acquire, unlock/lock, join). פעולה שקרתה מוקדם בשעון אבל בלי שרשרת כזו לא מובטחת להיראות. seq_cst הוא רק דרך אחת ליצור את השרשרת.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מונה סטטיסטיקה `std::atomic<uint64_t> packets` שרק מגדילים אותו וקוראים אותו להצגה, ולא מפרסמים דרכו שום נתון אחר. איזה memory order מתאים?",
+      "choices": [
+        "acquire בקריאה ו-release בהגדלה",
+        "relaxed",
+        "seq_cst, כי הוא היחיד שמבטיח שאין עדכונים אבודים",
+        "consume"
+      ],
+      "answer": 1,
+      "explanation": "fetch_add אטומי בכל memory order, ולכן relaxed לא מאבד עדכונים. סדר מול משתנים אחרים לא נחוץ כי שום נתון לא מתפרסם דרך המונה. acquire/release ו-seq_cst רק מגבילים אופטימיזציות (וב-ARM מוסיפים מחסומים) בלי תועלת. consume לא מתאים לכלום בפועל.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקרא המבנה בתוך ה-core שבו כתיבות ממתינות לפני שהן גלויות ל-cores אחרים, והוא הסיבה ש-x86 מסדר מחדש store ואחריו load?",
+      "accept": [
+        "store buffer",
+        "write buffer",
+        "storebuffer"
+      ],
+      "explanation": "ב-store buffer הכתיבות ממתינות עד שה-cache line זמינה, וה-core ממשיך לרוץ. ה-core עצמו רואה את הכתיבות שלו (store forwarding), אבל load לכתובת אחרת קורא מה-cache לפני שהכתיבה התפרסמה. seq_cst store ב-x86 (xchg או mfence) מרוקן את ה-buffer.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q21",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את השלבים של פרסום נתון נכון בין שני threads (message passing), לפי סדר ה-happens-before:",
+      "items": [
+        "היצרן כותב את הנתון (int רגיל)",
+        "היצרן מבצע store של הדגל עם release",
+        "הצרכן מבצע load של הדגל עם acquire וקורא את הערך שהיצרן כתב",
+        "הצרכן קורא את הנתון ומקבל את הערך החדש"
+      ],
+      "explanation": "כתיבת הנתון sequenced-before ה-release. ה-acquire שקרא את ערך ה-release מסתנכרן איתו. קריאת הנתון sequenced-after ה-acquire. השרשרת נותנת happens-before מהכתיבה לקריאה, ולכן אין data race והערך מובטח.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "`bool stop = false;` (לא atomic). thread עובד מריץ `while (!stop) { work(); }` כש-work לא נוגע ב-stop, ו-thread אחר כותב `stop = true`. ב-O2, גם על x86, הלולאה לפעמים לא נעצרת לעולם. למה?",
+      "choices": [
+        "ה-cache של ה-core העובד לא מתעדכן לעולם, כי x86 לא קוהרנטי",
+        "ה-store buffer של ה-thread הכותב לא מתרוקן לעולם",
+        "ה-scheduler לא מריץ את ה-thread הכותב",
+        "זה data race ולכן UB. הקומפיילר רשאי להניח ש-stop לא משתנה בלולאה, לקרוא אותו פעם אחת לרגיסטר ולהפוך את הלולאה לאינסופית"
+      ],
+      "answer": 3,
+      "explanation": "הבעיה כאן היא בקומפיילר, לא בחומרה: ה-caches קוהרנטיים, וה-store buffer מתרוקן תוך זמן קצר. כיוון שאסור שיהיה data race, הקומפיילר מניח שאף אחד לא כותב ל-stop בזמן הלולאה ומוציא את הקריאה החוצה (hoisting). `std::atomic<bool>`, אפילו עם relaxed, מחייב קריאה אמיתית בכל סיבוב.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה נותן `x.fetch_add(1, std::memory_order_acq_rel)` שלא נותן `x.fetch_add(1, std::memory_order_release)`?",
+      "choices": [
+        "ה-RMW גם מתנהג כ-acquire: אם הוא קרא ערך שנכתב ב-release, מה שפורסם לפניו נראה לקוד שאחריו",
+        "אטומיות. עם release לבד ההוספה יכולה ללכת לאיבוד",
+        "סדר כולל אחד של כל ה-RMWs בתוכנית",
+        "שום דבר, acq_rel ו-release זהים על RMW"
+      ],
+      "answer": 0,
+      "explanation": "release על RMW מפרסם את מה שה-thread עשה לפניו, אבל הקריאה שבתוך ה-RMW לא acquire, כך שהקוד שאחריו לא מובטח לראות את מה שכותבים קודמים פרסמו. acq_rel נותן את שני הכיוונים. האטומיות קיימת בכל order. סדר כולל נותן רק seq_cst.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q24",
+      "level": 3,
+      "type": "multi",
+      "prompt": "x ו-y אטומיים, מאותחלים ל-0. T1: `x.store(1, relaxed); y.store(1, release);` T2: `r1 = y.load(acquire); r2 = x.load(relaxed);` אילו תוצאות סופיות אפשריות?",
+      "choices": [
+        "r1 = 0, r2 = 0",
+        "r1 = 0, r2 = 1",
+        "r1 = 1, r2 = 0",
+        "r1 = 1, r2 = 1"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "אם r1 = 1, ה-acquire קרא את ערך ה-release ולכן מסתנכרן איתו. ה-store ל-x הוא sequenced-before ה-release, ולכן happens-before הקריאה של x, ו-r2 חייב להיות 1. אם r1 = 0 אין סנכרון, ו-x יכול להיראות או לא, ולכן גם (0,1) אפשרי: T2 יכול לקרוא y לפני ש-T1 כתב ו-x אחרי. relaxed על x עצמו לא מזיק כאן, כי ה-release וה-acquire מסדרים אותו.",
+      "lesson": "conc.memory-order",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.memory-order.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה המצב המעשי של `memory_order_consume`?",
+      "choices": [
+        "הוא הדרך המומלצת לקרוא pointers שפורסמו, כי הוא תמיד זול מ-acquire",
+        "הוא זהה ל-relaxed בכל הקומפיילרים",
+        "הקומפיילרים הגדולים מממשים אותו כ-acquire, כי מעקב אחרי תלויות נתונים בקומפיילר התגלה כלא מעשי, והתקן ממליץ מאז C++17 לא להשתמש בו",
+        "הוא מותר רק ב-ARM"
+      ],
+      "answer": 2,
+      "explanation": "הרעיון של consume: לסדר רק קריאות שתלויות בערך שנקרא (למשל dereference של pointer), מה שב-ARM ו-POWER חינמי בחומרה. בפועל הקומפיילר מבטל תלויות באופטימיזציות, ואף אחד לא הצליח לממש את ההגדרה כראוי, ולכן GCC, Clang ו-MSVC מקדמים אותו ל-acquire. RCU בקרנל של Linux עושה את זה ידנית ומחוץ למודל של C++.",
+      "lesson": "conc.memory-order"
+    },
+    {
+      "id": "conc.memory-order.q26",
+      "level": 4,
+      "type": "bug",
+      "prompt": "lazy initialization ב-double-checked locking. מה הבעיה?",
+      "lang": "cpp",
+      "code": "Widget* g = nullptr;\nstd::mutex m;\n\nWidget* get() {\n  if (g == nullptr) {\n    std::lock_guard<std::mutex> lk(m);\n    if (g == nullptr) g = new Widget();\n  }\n  return g;\n}",
+      "bugLine": 5,
+      "choices": [
+        "הבדיקה השנייה מיותרת, כי ה-mutex כבר מגן",
+        "הקריאה של g בלי lock מתבצעת במקביל לכתיבה שלו בתוך ה-lock, וזה data race. בפועל thread יכול לראות g לא-null לפני שהשדות של Widget נכתבו. צריך `std::atomic<Widget*>` עם load acquire ו-store release, או static מקומי",
+        "lock_guard משתחרר לפני ש-new מסתיים",
+        "new Widget() יכול לזרוק, וה-mutex יישאר נעול"
+      ],
+      "answer": 1,
+      "explanation": "ה-mutex מסנכרן רק את מי שלוקח אותו. ה-thread שעובר בבדיקה הראשונה ומוצא g לא-null לא לקח שום lock, ולכן אין happens-before מהבנייה של Widget אליו. הכותב (או החומרה ב-ARM) יכול לפרסם את ה-pointer לפני את השדות. התיקון הקל: `static Widget w; return &w;` (thread-safe מאז C++11) או call_once. lock_guard הוא RAII ומשתחרר גם בזריקה.",
+      "lesson": "conc.memory-order",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.memory-order.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "seqlock: הנתונים הם `std::atomic<int> d1, d2` (relaxed). הקורא: `s1 = seq.load(acquire); a = d1.load(relaxed); b = d2.load(relaxed); s2 = seq.load(relaxed);` ומקבל את (a, b) אם s1 == s2 וזוגי. מה חסר כדי שהקורא לא יקבל ערכים לא עקביים?",
+      "choices": [
+        "שום דבר, ה-acquire על הקריאה הראשונה מסדר את כל הקריאות שאחריה",
+        "`std::atomic_thread_fence(std::memory_order_acquire)` לפני הקריאה של s2, כדי שהקריאות של d1 ו-d2 לא ירדו אחריה",
+        "להפוך את הקריאה של s2 ל-release",
+        "להפוך את d1 ו-d2 ל-int רגילים, כי atomic מוסיף סדר מיותר"
+      ],
+      "answer": 1,
+      "explanation": "ה-acquire על s1 מונע מהקריאות של הנתונים לעלות לפניו, אבל שום דבר לא מונע מהן לרדת אחרי הקריאה של s2. אם הן יורדות, הקורא יכול לבדוק s2 = s1, ורק אז לקרוא ערכים של כתיבה חדשה שהתחילה בינתיים. fence acquire אחרי קריאות הנתונים ולפני s2 קושר אותן. release על load אינו order חוקי. נתונים לא-atomic בקריאה מקבילית לכתיבה הם data race, גם אם בסוף זורקים את הערך.",
+      "lesson": "conc.memory-order",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.memory-order.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "T1: `data = 7; x.store(1, release);` T2: `x.fetch_add(1, relaxed);` T3: `if (x.load(acquire) == 2) use(data);` (data הוא int רגיל). האם הקריאה של data ב-T3 בטוחה?",
+      "choices": [
+        "לא: T3 קרא ערך שכתב T2, ו-T2 relaxed, ולכן אין סנכרון עם אף אחד",
+        "לא: מאז C++20 release sequence כבר לא כולל RMWs",
+        "רק אם T2 משתמש ב-acq_rel",
+        "כן: ה-fetch_add הוא RMW ולכן ממשיך את ה-release sequence של ה-store של T1, גם כשהוא relaxed ובתוך thread אחר. ה-acquire של T3 מסתנכרן עם T1"
+      ],
+      "answer": 3,
+      "explanation": "release sequence מתחיל ב-store-release וכולל כל RMW שאחריו ב-modification order, מכל thread ובכל order. הערך 2 נכתב רק אחרי שה-RMW קרא 1, כלומר אחרי ה-release. C++20 הוציא מה-release sequence רק כתיבות רגילות של אותו thread, לא RMWs. acq_rel ב-T2 נחוץ רק אם T2 עצמו צריך לראות את data.",
+      "lesson": "conc.memory-order",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.memory-order.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Store Buffering עם fences. x ו-y מאותחלים ל-0. T1: `x.store(1, relaxed); atomic_thread_fence(seq_cst); r1 = y.load(relaxed);` T2: `y.store(1, relaxed); atomic_thread_fence(seq_cst); r2 = x.load(relaxed);` מה נכון לגבי התוצאה r1 == 0 && r2 == 0?",
+      "choices": [
+        "אסורה: שני ה-fences נמצאים בסדר הכולל S. מי שראשון, ה-load שאחרי ה-fence השני חייב לראות את ה-store שלפני הראשון",
+        "מותרת, כי fences לא משפיעים על פעולות relaxed",
+        "מותרת, כי fence seq_cst הוא בעצם acq_rel",
+        "אסורה רק ב-x86, כי שם fence seq_cst הוא mfence"
+      ],
+      "answer": 0,
+      "explanation": "התקן קובע: אם store ל-M sequenced-before fence seq_cst X, ו-fence seq_cst Y sequenced-before load מ-M, ו-X קודם ל-Y ב-S, ה-load רואה את ה-store או ערך מאוחר יותר. אחד ה-fences ראשון ב-S, ולכן לפחות אחד ה-loads רואה 1. fence seq_cst חזק מ-acq_rel בדיוק בזה שהוא אוסר StoreLoad. זה מוגדר בתקן ומחייב כל פלטפורמה, לא רק x86. זו גם הדרך לתקן Peterson עם פעולות relaxed.",
+      "lesson": "conc.memory-order",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.memory-order.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "קוד lock-free שלך עובד על x86 ונכשל פעם בכמה שעות על Jetson (ARMv8). תאר איך תאתר את הבאג, איך תוכיח שהוא באג סידור ולא משהו אחר, ואיך תוודא שהתיקון נכון.",
+      "modelAnswer": "1. קודם להבין שעל x86 החומרה מסתירה כל באג של store-store ו-load-load, אז 'עובד על x86' כמעט לא אומר כלום, ורק StoreLoad ובאגי קומפיילר נחשפים שם. 2. לעבור על כל פעולה אטומית ולכתוב לכל אחת איזה happens-before היא אמורה ליצור: מי מפרסם, מי צורך, איזה ערך ה-acquire חייב לקרוא. כל relaxed שמגן על נתון אחר הוא חשוד מיידי, וגם acquire בלי release תואם. 3. ThreadSanitizer: מוצא data races לפי happens-before ומבין atomics, אבל לא מבין היטב atomic_thread_fence, אז fences עלולים לתת false positives (GCC אף מזהיר על כך). להריץ עם stress. 4. לבודד את הדפוס ל-litmus test קטן (MP, SB, seqlock) ולבדוק אותו בכלי כמו herd7 עם מודל C++ או ARM, או להריץ אותו מיליוני פעמים על ה-Jetson עם threads מוצמדים ל-cores שונים, ולספור תוצאות אסורות. 5. להסתכל ב-assembly: האם יש ldar/stlr או dmb איפה שצריך. 6. התיקון: להעלות את ה-orders למינימום הנכון עם נימוק, לא לפזר seq_cst עיוור. להוכיח עם ה-litmus test שהתוצאה האסורה כבר לא מופיעה, ולהשאיר stress test ב-CI על ARM. 7. לשקול אם המבנה בכלל צריך להיות lock-free או ש-mutex פשוט מספיק.",
+      "rubric": [
+        "מבין למה x86 מסתיר את הבאג (TSO) ושגם הקומפיילר יכול לשבור",
+        "ניתוח שיטתי: לכל פעולה, איזה synchronizes-with היא צריכה",
+        "כלים: TSan (כולל מגבלת fences), litmus tests, herd7, stress על ARM, בדיקת assembly",
+        "תיקון מינימלי עם נימוק, ואימות שהתוצאה האסורה נעלמה, ובדיקה קבועה ב-CI"
+      ],
+      "explanation": "מראיין רוצה לשמוע מתודולוגיה ולא ניחוש. סימן אדום: 'אוסיף sleep' או 'אשנה הכול ל-volatile'.",
       "lesson": "conc.memory-order",
       "tags": [
         "nvidia"

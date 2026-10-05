@@ -34,7 +34,78 @@
         "לדעת לחקור דליפה בשירות חי: מדדים לאורך זמן, heap profiles משני זמנים והשוואה",
         "לתכנן caches עם גבול (LRU, TTL) ועם מדד גודל"
       ],
-      "diagram": "acquire ---- work ---- release\n          \\-> early return / throw\n               (release skipped)\nRAII: release in destructor = always"
+      "diagram": "acquire ---- work ---- release\n          \\-> early return / throw\n               (release skipped)\nRAII: release in destructor = always",
+      "details": [
+        {
+          "title": "RAII ומסלולי יציאה: למה delete ידני לא מספיק",
+          "body": "הבעיה הבסיסית: קוד שכותב `new` בהתחלה ו-`delete` בסוף מניח שיש מסלול יציאה אחד. בפועל יש הרבה: `return` מוקדם על שגיאה, `break`/`continue` בלולאה, ו-**exception** שנזרק מכל פונקציה שנקראת באמצע. כשנזרק exception מתבצע **stack unwinding**: הריצה קופצת ל-catch הקרוב, ובדרך רצים ה-destructors של כל האובייקטים המקומיים שכבר נבנו. שורות רגילות כמו `delete[] buf` או `fclose(f)` פשוט מדולגות.\n\n**RAII** (Resource Acquisition Is Initialization) הופך את הבעיה ליתרון: כל משאב נעטף באובייקט, הרכישה ב-constructor והשחרור ב-destructor. מאחר שה-destructor רץ בכל יציאה מה-scope, השחרור מובטח בכל מסלול. דוגמאות בספרייה הסטנדרטית: `std::vector` ו-`std::string` לזיכרון, `std::unique_ptr` לאובייקט בודד, `std::lock_guard`/`std::scoped_lock` ל-mutex, `std::ifstream` לקובץ.\n\nמקרה קצה חשוב: אם **constructor זורק**, האובייקט לא נחשב בנוי, ולכן ה-destructor שלו **לא רץ**. מה שכן רץ הוא ה-destructor של כל member שכבר נבנה במלואו. לכן member מסוג raw pointer שקיבל `new` דולף, ו-member מסוג `std::unique_ptr` או `std::vector` משתחרר. המסקנה: מחלקה שמחזיקה יותר ממשאב אחד צריכה שכל member יהיה RAII בעצמו.\n\nמראיינים מצפים להכיר את **exception safety guarantees**: basic (אין דליפה, האובייקט במצב תקין כלשהו), strong (הפעולה מצליחה או שאין שום שינוי, כמו `push_back` של vector), ו-nothrow (לא זורק, נדרש מ-destructors ומ-move operations)."
+        },
+        {
+          "title": "Smart pointers: unique_ptr, shared_ptr, weak_ptr",
+          "body": "- **`std::unique_ptr<T>`**: בעלים יחיד. אי אפשר להעתיק, רק להעביר (move). בגודל של מצביע רגיל ובלי עלות ריצה. תומך ב-**custom deleter**, למשל `std::unique_ptr<FILE, decltype(&fclose)>` שסוגר קובץ, ובגרסת מערך `std::unique_ptr<T[]>` שקוראת ל-`delete[]`. זו ברירת המחדל.\n- **`std::make_unique<T>(args)`** (C++14): יוצר את האובייקט ואת ה-unique_ptr בצעד אחד, בלי `new` גלוי בקוד. עד C++14 זה גם היה הכרחי ל-exception safety: בקריאה `f(std::unique_ptr<T>(new T), g())` הקומפיילר היה רשאי להריץ את `new T`, אחר כך את `g()`, ורק אחר כך לבנות את ה-unique_ptr, כך שאם `g` זורק, ה-T דולף. מ-C++17 כל ארגומנט מוערך במלואו לפני שמתחילים את הבא (הסדר ביניהם עדיין לא מוגדר), והחור הזה נסגר.\n- **`release()` מול `get()`**: `get` מחזיר מצביע בלי לוותר על בעלות. `release` מוותר על הבעלות ולא מוחק: מרגע זה מישהו אחר אחראי ל-delete. שימוש ב-release לפני שהיעד באמת קיבל את המצביע הוא מקור דליפה קלאסי.\n- **`std::shared_ptr<T>`**: בעלות משותפת עם **reference count** בתוך **control block**. כל העתקה מבצעת increment אטומי, וכשה-count מגיע ל-0 האובייקט נהרס. `std::make_shared` מקצה את האובייקט ואת ה-control block בהקצאה אחת.\n- **`std::weak_ptr<T>`**: מצביע 'צופה' שלא מעלה את ה-strong count. `lock()` מחזיר shared_ptr אם האובייקט עדיין חי, או shared_ptr ריק אם לא. משמש לשבירת מעגלים, ל-caches ול-observers.\n\n**מעגל shared_ptr** הוא הדליפה הטיפוסית של קוד 'מודרני': A מחזיק shared_ptr ל-B ו-B מחזיק shared_ptr ל-A. כשההפניות החיצוניות נעלמות, לכל אחד נשאר count של 1 מהשני, ואף אחד לא נהרס. הכלל: הבעלות זורמת בכיוון אחד (parent אל children), והכיוון ההפוך (child אל parent, callback אל owner) הוא weak_ptr או raw pointer לא-בעלים. וריאציה עדינה: `enable_shared_from_this` עם lambda שלוכדת `shared_from_this()` ונשמרת בתוך האובייקט עצמו (timer, callback). הפתרון: ללכוד `weak_from_this()` (C++17) ולעשות lock בתוך ה-callback."
+        },
+        {
+          "title": "new/delete, new[]/delete[], virtual destructor ומכלים של raw pointers",
+          "body": "**התאמת צורות:** מה שהוקצה ב-`new` משוחרר ב-`delete`, מה שהוקצה ב-`new[]` ב-`delete[]`, ומה שהוקצה ב-`malloc`/`realloc` ב-`free`. ערבוב הוא undefined behavior. בפועל, `delete` על מערך של אובייקטים עם destructor מריץ לרוב רק את ה-destructor של האיבר הראשון (כך שה-buffers של השאר דולפים) או משבש את ה-heap, כי `new[]` שומר לפני המערך 'cookie' עם מספר האיברים. GCC מזהיר על חלק מהמקרים עם `-Wmismatched-new-delete`.\n\n**virtual destructor:** כשמוחקים אובייקט נגזר דרך מצביע לבסיס (`Base* p = new Derived; delete p;`), ה-destructor של הבסיס חייב להיות `virtual`. אחרת זה undefined behavior, ובפועל רץ רק `~Base`: ה-destructor של Derived לא רץ, וכל ה-members שלו (vector, קובץ, socket) דולפים. זו **partial destruction**. כלל אצבע: לכל מחלקה עם פונקציה וירטואלית יש virtual destructor, או destructor שהוא protected ולא וירטואלי אם לא מתכוונים למחוק דרך הבסיס. `-Wall` כולל `-Wdelete-non-virtual-dtor` שמזהיר על חלק מהמקרים.\n\n**מכל של raw pointers:** `std::vector<T*>` לא יודע שהוא 'בעלים'. `clear()` או ה-destructor של ה-vector הורסים את המצביעים עצמם (מספרים), לא את האובייקטים שהם מצביעים עליהם. הפתרון הוא `std::vector<std::unique_ptr<T>>`, או פשוט `std::vector<T>` כשאין צורך בפולימורפיזם. גם אם מוסיפים לולאת delete ב-destructor, נשארות בעיות: העתקה של המחלקה תגרום ל-double free (rule of three), ו-exception באמצע מילוי ה-vector ידלוף.\n\n**realloc:** כשהוא נכשל הוא מחזיר nullptr ומשאיר את הבלוק המקורי בחיים. השמה ישירה `p = realloc(p, n)` דורסת את המצביע היחיד לבלוק. תמיד לשמור את התוצאה במשתנה זמני."
+        },
+        {
+          "title": "משאבים שאינם זיכרון: FILE*, file descriptors, sockets ו-locks",
+          "body": "**file descriptor** (fd) הוא מספר שלם קטן שהקרנל מחזיר מ-`open`, `socket`, `pipe` או `accept`, ומצביע לרשומה בטבלת הקבצים של התהליך. `FILE*` מ-`fopen` הוא עטיפה של stdio מעל fd, ומשתחרר רק ב-`fclose`. למספר ה-fds יש גבול לתהליך (`ulimit -n`, לרוב 1024 כברירת מחדל); כשהוא נגמר, כל `open`/`socket`/`accept` נכשל עם **EMFILE** ('Too many open files'). דליפת socket נראית גם כחיבורים שנתקעים במצב CLOSE_WAIT: הצד השני סגר, והתהליך שלנו לעולם לא קרא ל-close.\n\nעובדה פחות מוכרת: קובץ שנמחק (`rm`) ממשיך לתפוס מקום בדיסק כל עוד יש fd פתוח אליו. לכן דליפת fd לקובץ לוג אחרי log rotation נראית כ'דיסק מלא בלי קבצים גדולים'.\n\n**ירושה ב-fork/exec:** אחרי `fork` הילד מקבל עותק של כל ה-fds של האב, ו-`exec` משאיר אותם פתוחים, אלא אם הם מסומנים **close-on-exec**. בלי הסימון, כל תהליך-עזר שהופעל מחזיק עותקים של קבצי הלוג, ה-sockets וה-pipes של השירות: קובץ שנמחק לא משתחרר, port נשאר תפוס ('Address already in use' אחרי restart), ו-pipe לא מקבל EOF. הדרך הנכונה היא לסמן כבר בפתיחה: `O_CLOEXEC` ל-`open`, `SOCK_CLOEXEC` ל-`socket`, ו-`accept4`/`pipe2` עם הדגל המתאים. סימון מאוחר עם `fcntl(fd, F_SETFD, FD_CLOEXEC)` הוא race בתהליך multi-threaded, כי thread אחר יכול לעשות fork בין ה-open ל-fcntl.\n\n**locks:** mutex נעול הוא משאב בדיוק כמו זיכרון. `return` מוקדם או exception בין `lock()` ל-`unlock()` משאירים אותו נעול, והקריאה הבאה נתקעת (deadlock), או UB אם אותו thread נועל שוב std::mutex רגיל. הפתרון הוא `std::lock_guard`, `std::unique_lock` או `std::scoped_lock`, שמשחררים ב-destructor."
+        },
+        {
+          "title": "Python: reference counting, cyclic GC, with, __del__ ו-weakref",
+          "body": "ב-CPython כל אובייקט מחזיק **reference count**. כשהוא יורד ל-0 האובייקט משתחרר מיד, ולכן קובץ שאין אליו הפניה נסגר 'במקרה' מיד. זו התנהגות של CPython ולא הבטחה של השפה: ב-PyPy, שמשתמש ב-tracing GC, האובייקט חי עד ה-collection הבא.\n\n**מעגלי הפניות** (a.other = b, b.other = a) לא משתחררים ב-refcount לבד. לשם כך יש **cyclic GC** (מודול `gc`), שרץ מדי פעם לפי ספי הקצאות ומחפש קבוצות אובייקטים שלא נגישות מבחוץ. `gc.collect()` מריץ אותו מיד ומחזיר כמה אובייקטים לא נגישים נמצאו. מ-Python 3.4 (PEP 442) גם מעגלים עם `__del__` משתחררים; לפני כן הם נתקעו ב-`gc.garbage`.\n\n**`with` ו-context manager:** אובייקט עם `__enter__` ו-`__exit__`. `with` מבטיח קריאה ל-`__exit__` בכל יציאה מהבלוק, כולל exception, ו-`__exit__` של קובץ, lock או socket משחרר את המשאב. `with` לא יוצר scope חדש: המשתנה עדיין קיים אחרי הבלוק, אבל המשאב סגור. לכמה משאבים דינמיים יש `contextlib.ExitStack`.\n\n**מלכודות `__del__`:** מועד הקריאה לא מובטח (תלוי ב-refcount או ב-GC), exception בתוכו לא מתפשט אלא רק מודפס כ-'Exception ignored in', ובכיבוי ה-interpreter globals ומודולים עלולים כבר להיות None. לכן משחררים במפורש (`with`, `close()`), ו-`__del__` או `weakref.finalize` הם רק רשת ביטחון.\n\n**הפניות שנשכחו (lingering references):** הגורם הנפוץ לדליפה ב-Python הוא לא 'זיכרון שאבד' אלא אובייקט שמישהו עדיין מחזיק: list או dict גלובלי, cache בלי גבול, `functools.lru_cache` על method (מחזיק את self), callback רשום, closure, ו-exception שנשמר. exception מחזיק `__traceback__`, ה-traceback מחזיק את ה-frames, וה-frames מחזיקים את כל המשתנים המקומיים, כולל מערכים גדולים. בגלל זה Python מוחק אוטומטית את השם `e` בסוף `except ... as e`. ב-NumPy, view כמו `big[:10]` מחזיק את כל המערך המקורי. **`weakref`** מאפשר להפנות לאובייקט בלי להחזיק אותו בחיים: `weakref.ref(obj)()` מחזיר את האובייקט או None, ו-`WeakValueDictionary` מתאים ל-caches."
+        },
+        {
+          "title": "כלים: Valgrind, ASan/LeakSanitizer, tracemalloc",
+          "body": "- **Valgrind memcheck** עם `--leak-check=full`: מריץ את התוכנית על CPU וירטואלי (איטי פי 10 עד 50), וביציאה מדווח על כל בלוק heap עם ה-stack של ההקצאה, מחולק לקטגוריות: **definitely lost** (אין שום מצביע לבלוק, דליפה ודאית), **indirectly lost** (נגיש רק מבלוק שאבד, למשל צמתים של רשימה שה-head שלה אבד), **possibly lost** (יש רק מצביע לאמצע הבלוק), ו-**still reachable** (עדיין נגיש מ-global, כמו cache; לא נחשב leak כברירת מחדל, ו-`--show-leak-kinds=all` מציג אותו). `--track-fds=yes` מדווח על fds פתוחים ביציאה.\n- **AddressSanitizer** (`-fsanitize=address`) כולל את **LeakSanitizer** (LSan), שעל Linux מופעל אוטומטית ביציאה מהתהליך. אפשר גם `-fsanitize=leak` לבדו, בלי עלות ה-ASan המלאה. מהיר בהרבה מ-Valgrind ומתאים ל-CI. LSan מדווח רק על זיכרון שלא נגיש מה-roots (globals, stacks, registers), ולכן מעגל shared_ptr מדווח, אבל cache שגדל בלי גבול לא. התמיכה ב-LSan מחוץ ל-Linux חלקית. ThreadSanitizer, לעומתו, מיועד ל-data races ולא לדליפות.\n- **מעקב לאורך זמן:** heaptrack ו-massif מראים מי מחזיק זיכרון שגדל בזמן ריצה, גם כשהוא עדיין נגיש. RSS יכול לגדול גם בלי leak בגלל fragmentation או allocator (כמו glibc עם arena לכל thread) שלא מחזיר זיכרון ל-OS; החלפה ל-jemalloc/tcmalloc היא דרך לבדוק. ל-fds: `ls /proc/<pid>/fd | wc -l` ו-`lsof -p <pid>`.\n- **Python:** `tracemalloc.start()` מתחיל לעקוב אחרי הקצאות של ה-interpreter, `take_snapshot()` מצלם, ו-`snapshot.compare_to(old, 'lineno')` מראה אילו שורות הקצו הכי הרבה זיכרון חדש בין שני זמנים. הוא לא רואה הקצאות native של extensions שקוראים ל-malloc ישירות (NumPy כן מדווח עליו). `gc.get_referrers` ו-objgraph עוזרים לגלות מי מחזיק אובייקט, ו-`python -X dev` מציג **ResourceWarning** על קבצים ו-sockets שלא נסגרו במפורש."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: דליפת FILE* ב-return מוקדם עד EMFILE",
+          "body": "שירות טוען כל דקה 2,000 קבצי מקדמים. 3% מהם פגומים, והפונקציה מחזירה false אחרי fread שנכשל בלי fclose.\n\n- אחרי ריצה אחת: 60 FILE* פתוחים שאיש לא יסגור.\n- `ulimit -n` הוא 1024, ובשירות כבר פתוחים כ-40 fds קבועים (לוגים, sockets).\n- אחרי 16 ריצות: 960 + 40 = 1000 fds. בריצה ה-17 מגיעים לגבול.\n- מאותו רגע כל fopen נכשל עם EMFILE, וגם `accept` על ה-socket הראשי נכשל: השירות 'מת' אחרי כרבע שעה בלי שום קריסה.\n\nמה לומדים: ההשפעה נראית רחוק מהבאג (accept נכשל, לא הטעינה). המדד שהיה תופס את זה מוקדם הוא מספר ה-fds ב-`/proc/<pid>/fd` שעולה ב-60 כל דקה. התיקון הוא RAII (`unique_ptr` עם `fclose` כ-deleter, או `std::ifstream`), לא עוד fclose לפני כל return."
+        },
+        {
+          "title": "דוגמה: מעקב reference count במעגל shared_ptr",
+          "body": "שני Node, A ו-B. A->next = B ו-B->prev = A, שניהם shared_ptr. המשתנה החיצוני `head` מחזיק את A, ו-`tmp` מחזיק את B.\n\n| שלב | count(A) | count(B) |\n|---|---|---|\n| אחרי החיבור | 2 (head, B->prev) | 2 (tmp, A->next) |\n| tmp יוצא מה-scope | 2 | 1 |\n| head יוצא מה-scope | 1 | 1 |\n\nבשלב האחרון אין שום מצביע חיצוני, אבל אף count לא הגיע ל-0, ולכן אף destructor לא רץ: שני הצמתים דולפים. LeakSanitizer ידווח על כך ביציאה, כי שניהם לא נגישים מה-roots.\n\nעם `prev` כ-weak_ptr: אחרי החיבור count(A)=1 (רק head), ו-count(B)=2. כש-head יוצא, count(A)=0 ו-A נהרס; ה-destructor שלו הורס את A->next, כך ש-count(B) יורד, ו-B נהרס ברגע ש-tmp יוצא. המעגל נשבר."
+        },
+        {
+          "title": "דוגמה: קריאת דו\"ח של Valgrind",
+          "body": "תוכנית מקצה בכל בלוק `new float[4096]` ולא משחררת, ובנוסף מאבדת רשימה מקושרת של 10 צמתים בגודל 32 בתים. ריצה של 100 בלוקים עם `--leak-check=full`:\n\n- **definitely lost: 1,638,400 bytes in 100 blocks**: 100 מערכים של 4096*4 = 16,384 בתים. ה-stack מצביע על שורת ה-new בלולאה.\n- **indirectly lost: 288 bytes in 9 blocks**: 9 צמתים שנגישים רק דרך ה-head שאבד.\n- ה-head עצמו (32 בתים) מופיע תחת definitely lost.\n- **still reachable: 72,704 bytes in 1 blocks**: לרוב buffer פנימי של הספרייה הסטנדרטית, לא באג.\n\nמה לומדים: מתקנים קודם definitely lost (שורש הבעיה), ו-indirectly lost נעלם איתו. still reachable דורש בדיקה רק אם הוא גדל לאורך זמן."
+        },
+        {
+          "title": "דוגמה: exception שנשמר ומחזיק מערך של 80MB",
+          "body": "פונקציית עיבוד יוצרת מערך מקומי של 10 מיליון float64 (80MB), נכשלת, ושומרת את ה-exception ברשימה `errors` לצורך דיווח מאוחר.\n\n- `errors` מחזיק את ה-exception.\n- ה-exception מחזיק `__traceback__`.\n- ה-traceback מחזיק את ה-frame של הפונקציה, וה-frame מחזיק את המשתנים המקומיים, כולל המערך.\n\nאחרי 50 כשלונות התהליך מחזיק 4GB בלי שום leak ש-LeakSanitizer או Valgrind היו מדווחים. tracemalloc עם השוואת snapshots יראה גדילה בשורה שמקצה את המערך, ו-`gc.get_referrers` על המערך יוביל ל-frame. התיקון: לשמור רק `str(e)` או `traceback.format_exc()`, או לנקות frames עם `traceback.clear_frames`."
+        }
+      ],
+      "glossary": [
+        { "term": "Resource leak", "def": "משאב (זיכרון, fd, socket, lock, thread) שנרכש ואיש כבר לא ישחרר. מצטבר עד OOM, EMFILE או deadlock." },
+        { "term": "Logical leak (still reachable)", "def": "זיכרון שעדיין נגיש (cache, list גלובלי) אבל לעולם לא ישמש שוב. כלי leak לא מדווחים עליו; מאתרים לפי גדילה לאורך זמן." },
+        { "term": "RAII", "def": "Resource Acquisition Is Initialization: המשאב נרכש ב-constructor ומשתחרר ב-destructor, ולכן משתחרר בכל מסלול יציאה, כולל exception." },
+        { "term": "Stack unwinding", "def": "כשנזרק exception, הריצה עולה במחסנית עד ה-catch הקרוב ומריצה בדרך destructors של אובייקטים מקומיים בנויים. שורות שחרור רגילות מדולגות." },
+        { "term": "Exception safety guarantees", "def": "basic: אין דליפה והאובייקט תקין; strong: הצלחה או שום שינוי; nothrow: לא זורק. destructors ו-move operations צריכים להיות nothrow. אם constructor זורק, ה-destructor שלו לא רץ ורק members שכבר נבנו נהרסים." },
+        { "term": "delete מול delete[]", "def": "new מתאים ל-delete, new[] ל-delete[], malloc ל-free. ערבוב הוא UB: לרוב רק איבר אחד נהרס או שה-heap משתבש." },
+        { "term": "std::unique_ptr", "def": "בעלים יחיד, move-only, בלי עלות ריצה. תומך ב-custom deleter (למשל fclose) ובגרסת T[] שקוראת ל-delete[]. get() מחזיר מצביע בלי לוותר על בעלות; release() מוותר על הבעלות בלי למחוק." },
+        { "term": "std::make_unique / make_shared", "def": "יוצרים אובייקט ו-smart pointer בלי new גלוי. make_shared מקצה אובייקט ו-control block יחד. מונעים את חור ה-exception safety של ארגומנטים לפני C++17." },
+        { "term": "std::shared_ptr ו-control block", "def": "בעלות משותפת: control block מחזיק strong count ו-weak count. כל העתקה היא increment אטומי; ב-count 0 האובייקט נהרס." },
+        { "term": "std::weak_ptr", "def": "הפניה שלא מעלה את ה-strong count. lock() מחזיר shared_ptr אם האובייקט חי, אחרת ריק. שובר מעגלים ומשמש caches ו-observers." },
+        { "term": "מעגל shared_ptr", "def": "שני אובייקטים (או יותר) שמחזיקים shared_ptr זה לזה; ה-count לעולם לא מגיע ל-0. פותרים עם weak_ptr לכיוון 'אחורה'." },
+        { "term": "enable_shared_from_this / weak_from_this", "def": "מאפשר לאובייקט שבבעלות shared_ptr לקבל shared_ptr או weak_ptr לעצמו. לכידת shared_from_this ב-callback שנשמר בתוך האובייקט יוצרת מעגל." },
+        { "term": "Virtual destructor", "def": "נדרש כשמוחקים Derived דרך Base*. בלעדיו זה UB ובפועל רק ~Base רץ, ו-members של Derived דולפים (partial destruction)." },
+        { "term": "Lock guard (lock_guard / scoped_lock / unique_lock)", "def": "עטיפות RAII ל-mutex שמשחררות ב-destructor, כך ש-return מוקדם או exception לא משאירים את ה-mutex נעול." },
+        { "term": "File descriptor ו-EMFILE", "def": "מספר שהקרנל מחזיר לקובץ/socket/pipe פתוח. לתהליך יש גבול (ulimit -n); כשנגמר, open ו-accept נכשלים עם EMFILE." },
+        { "term": "O_CLOEXEC", "def": "דגל ל-open שמסמן את ה-fd להיסגר אוטומטית ב-exec, באופן אטומי. בלעדיו תהליכי-עזר יורשים את ה-fds. מקבילים: SOCK_CLOEXEC, accept4, pipe2." },
+        { "term": "Reference counting (CPython)", "def": "לכל אובייקט מונה הפניות; ב-0 הוא משתחרר מיד. זו התנהגות CPython, לא הבטחה של Python; PyPy משתמש ב-tracing GC." },
+        { "term": "Cyclic GC (gc module)", "def": "האיסוף של CPython שמוצא מעגלי הפניות לא נגישים, שה-refcount לבדו לא משחרר. gc.collect() מריץ אותו ומחזיר את מספר האובייקטים שנמצאו." },
+        { "term": "with / context manager", "def": "אובייקט עם __enter__ ו-__exit__. with מבטיח קריאה ל-__exit__ בכל יציאה מהבלוק, כולל exception. לא יוצר scope חדש." },
+        { "term": "__del__", "def": "finalizer של Python. מועד ריצה לא מובטח, exceptions בתוכו רק מודפסות, ובכיבוי globals עלולים להיות None. רק רשת ביטחון, לא דרך עיקרית לשחרור." },
+        { "term": "weakref", "def": "הפניה ב-Python שלא שומרת על האובייקט בחיים; weakref.ref(obj)() מחזיר את האובייקט או None. WeakValueDictionary מתאים ל-caches." },
+        { "term": "Traceback ו-frames", "def": "exception מחזיק __traceback__, שמחזיק frames, שמחזיקים משתנים מקומיים. שמירת exception משאירה בחיים את כל המקומיים של הפונקציות שבדרך." },
+        { "term": "Valgrind memcheck --leak-check=full", "def": "מדווח ביציאה על בלוקים: definitely lost, indirectly lost, possibly lost ו-still reachable, עם stack ההקצאה. איטי פי 10 עד 50." },
+        { "term": "LeakSanitizer / ASan", "def": "LSan, חלק מ-ASan (-fsanitize=address) או לבד (-fsanitize=leak). מדווח ביציאה על זיכרון לא נגיש מה-roots; מהיר ומתאים ל-CI. תמיכה מלאה ב-Linux." },
+        { "term": "tracemalloc", "def": "מודול Python שעוקב אחרי הקצאות ה-interpreter לפי שורת קוד. take_snapshot ו-compare_to מראים מה גדל בין שני זמנים. לא רואה malloc ישיר של extensions." }
+      ]
     }
   ],
   "questions": [
@@ -343,6 +414,261 @@
         "תיקון ומניעה: גבולות, weakref, ניטור"
       ],
       "explanation": "מראיין מצפה לשיטה: מדידה, הפרדה בין שכבות, השוואה לאורך זמן, ורשימת חשודים מוכרת, ולא ניחוש.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "זיכרון שהוקצה ב-`int* p = new int[64];` צריך להשתחרר באמצעות:",
+      "choices": [
+        "`delete p;`",
+        "`free(p);`",
+        "`delete[] p;`",
+        "לא צריך כלום: הוא משתחרר אוטומטית ביציאה מה-scope של p"
+      ],
+      "answer": 2,
+      "explanation": "מה שהוקצה ב-`new[]` משוחרר ב-`delete[]`. `delete` על מערך הוא undefined behavior, ו-`free` מתאים רק ל-malloc/realloc. p עצמו הוא משתנה מקומי, אבל הוא רק מצביע: יציאה מה-scope משמידה את המצביע ולא את המערך, ולכן בלי delete[] יש דליפה. עדיף מלכתחילה `std::vector<int>(64)`.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד העיקרי של `std::weak_ptr`?",
+      "choices": [
+        "גרסה מהירה של shared_ptr שמוותרת על הפעולות האטומיות",
+        "הפניה שלא מעלה את ה-reference count: אפשר לבדוק עם `lock()` אם האובייקט עדיין חי, וכך לשבור מעגלים של shared_ptr",
+        "מצביע עם בעלים יחיד שאי אפשר להעתיק, רק להעביר",
+        "מצביע שמשחרר את האובייקט אוטומטית כשהזיכרון במערכת נמוך"
+      ],
+      "answer": 1,
+      "explanation": "weak_ptr צופה באובייקט שבבעלות shared_ptr בלי להחזיק אותו בחיים. `lock()` מחזיר shared_ptr אם האובייקט קיים, או shared_ptr ריק אם לא. בגלל שהוא לא משתתף ב-strong count, הוא משמש לכיוון 'אחורה' במבנים דו-כיווניים ושובר מעגלים. בעלים יחיד מתאר את unique_ptr, ו-weak_ptr אינו מהיר יותר: גם הוא נוגע ב-control block.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-Python, איזה מודול מהספרייה הסטנדרטית מראה אילו שורות קוד הקצו הכי הרבה זיכרון, ומאפשר להשוות snapshots משני זמנים?",
+      "choices": [
+        "`gc`",
+        "`weakref`",
+        "`sys.getrefcount`",
+        "`tracemalloc`"
+      ],
+      "answer": 3,
+      "explanation": "`tracemalloc` עוקב אחרי הקצאות של ה-interpreter לפי שורת קוד; `take_snapshot()` ו-`compare_to()` מראים מה גדל בין שני זמנים. `gc` שולט באיסוף מעגלים ומאפשר לחקור מי מחזיק אובייקט, אבל לא מודד הקצאות. `weakref` הוא כלי למניעת החזקה, ו-`sys.getrefcount` מחזיר מונה של אובייקט בודד.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q22",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "טעינת שמות ערוצים. מה הבאג?",
+      "code": "void loadNames(int n) {\n    std::string* names = new std::string[n];\n    for (int i = 0; i < n; ++i)\n        names[i] = \"sdr_rx_channel_\" + std::to_string(i);\n    use(names, n);\n    delete names;\n}",
+      "bugLine": 6,
+      "choices": [
+        "`std::to_string` מחזיר אובייקט זמני שלא משתחרר",
+        "`new std::string[n]` לא מאתחל את המחרוזות, ולכן ההשמה אליהן היא UB",
+        "`delete` על מערך שהוקצה ב-`new[]` הוא undefined behavior. בפועל לרוב רק ה-destructor של האיבר הראשון רץ וה-buffers של שאר המחרוזות דולפים, או שה-heap משתבש. צריך `delete[]`, ועדיף `std::vector<std::string>`",
+        "צריך `free(names)` כי זה מערך"
+      ],
+      "answer": 2,
+      "explanation": "`new[]` שומר את מספר האיברים כדי ש-`delete[]` יריץ destructor לכל אחד; `delete` רגיל לא יודע על כך. השמות ארוכים מ-15 תווים, ולכן כל מחרוזת מחזיקה buffer על ה-heap (מעבר ל-SSO). GCC מזהיר כאן עם `-Wmismatched-new-delete`. `new std::string[n]` כן מריץ default constructor לכל איבר, הזמני מ-to_string נהרס בסוף הביטוי, ו-free על זיכרון מ-new הוא UB נוסף.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import io\n\nwith io.StringIO(\"abc\") as f:\n    data = f.read()\nprint(data, f.closed)",
+      "choices": [
+        "abc False",
+        "abc True",
+        "NameError: f אינו מוגדר מחוץ לבלוק with",
+        "ValueError: I/O operation on closed file"
+      ],
+      "answer": 1,
+      "explanation": "בסיום הבלוק `with` קורא ל-`__exit__`, שסוגר את ה-stream, ולכן `f.closed` הוא True. `with` לא יוצר scope חדש, כך ש-`f` עדיין מוגדר אחרי הבלוק (רק סגור). הקריאה התבצעה בתוך הבלוק, כשהקובץ עוד היה פתוח, ולכן אין ValueError. ValueError היה מתקבל רק אם היינו קוראים `f.read()` אחרי הבלוק.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "בנק מסננים שנוצר ונהרס פעמים רבות. הזיכרון עולה בכל מחזור. מה הבאג?",
+      "code": "struct Bank {\n    std::vector<Filter*> filters;\n    void add(int taps) {\n        filters.push_back(new Filter(taps));\n    }\n    ~Bank() { filters.clear(); }\n};",
+      "bugLine": 6,
+      "choices": [
+        "צריך `filters.shrink_to_fit()` אחרי clear כדי שהזיכרון ישתחרר",
+        "ה-destructor של vector כבר קורא ל-delete על כל איבר, ולכן clear גורם ל-double free",
+        "`push_back` מעתיק את ה-Filter, והעותק המקורי דולף",
+        "`clear()` הורס רק את המצביעים עצמם, לא את ה-Filter שהם מצביעים עליהם: כל Filter דולף. עדיף `std::vector<std::unique_ptr<Filter>>` או `std::vector<Filter>`"
+      ],
+      "answer": 3,
+      "explanation": "vector של raw pointers לא יודע שהוא בעלים: הוא הורס את האיברים שלו, ואיבר כאן הוא מספר (כתובת). לכן לא clear ולא ה-destructor של vector קוראים ל-delete. לולאת delete ידנית הייתה עוצרת את הדליפה, אבל העתקה של Bank הייתה גורמת ל-double free (rule of three). עם unique_ptr המחלקה נהיית move-only ונכונה בלי קוד נוסף. push_back מעתיק את המצביע, לא את האובייקט.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q25",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מקורות נתונים פולימורפיים. כל קריאה ל-run מגדילה את הזיכרון בכ-1MB. מה הבאג?",
+      "code": "struct Source {\n    ~Source() {}\n    virtual void read() = 0;\n};\nstruct FileSource : Source {\n    std::vector<char> buf = std::vector<char>(1 << 20);\n    void read() override {}\n};\nvoid run() {\n    Source* s = new FileSource;\n    s->read();\n    delete s;\n}",
+      "bugLine": 2,
+      "choices": [
+        "FileSource צריך destructor מפורש שקורא ל-`buf.clear()`",
+        "ה-destructor של Source אינו virtual: מחיקת FileSource דרך `Source*` היא undefined behavior, ובפועל רץ רק `~Source`, כך שה-vector של 1MB לא משתחרר",
+        "`new FileSource` בלי סוגריים משאיר את buf לא מאותחל",
+        "צריך `delete[] s` כי FileSource מכיל מערך"
+      ],
+      "answer": 1,
+      "explanation": "`delete` דרך מצביע לבסיס בוחר destructor לפי הטיפוס הסטטי, אלא אם ה-destructor וירטואלי. כאן נקרא רק `~Source`, ה-members של FileSource לא נהרסים: partial destruction. התיקון: `virtual ~Source() = default;`. GCC מזהיר עם `-Wdelete-non-virtual-dtor` (חלק מ-`-Wall`). vector משחרר את עצמו ב-destructor שלו, אם רק ירוץ; default member initializer מאתחל את buf גם בלי סוגריים; delete[] מתאים רק ל-new[].",
+      "lesson": "bugs.leaks",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.leaks.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import weakref\n\nclass Big:\n    pass\n\ncache = []\nb = Big()\nr = weakref.ref(b)\ncache.append(b)\ndel b\nprint(r() is None)",
+      "choices": [
+        "False: הרשימה `cache` עדיין מחזיקה הפניה חזקה, ולכן האובייקט חי וה-weakref עדיין מחזיר אותו",
+        "TypeError: אי אפשר ליצור weakref למופע של מחלקה רגילה",
+        "True: `del b` משחרר את האובייקט וה-weakref מת",
+        "None"
+      ],
+      "answer": 0,
+      "explanation": "`del b` מוחק שם, לא אובייקט: הוא מוריד את ה-refcount ב-1, אבל `cache` עדיין מחזיק הפניה חזקה. weakref לא משתתף בספירה, ולכן `r()` מחזיר את האובייקט. זו בדיוק הדליפה הנפוצה ב-Python: הפניה שנשכחה ב-container. מופעים של מחלקות רגילות תומכים ב-weakref (רק טיפוסים כמו int ו-list לא). הביטוי `r() is None` הוא bool, ולכן לא יודפס None.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q27",
+      "level": 3,
+      "type": "oral",
+      "prompt": "הסבר את ההבדלים בין `std::unique_ptr`, `std::shared_ptr` ו-`std::weak_ptr`: מתי משתמשים בכל אחד, מה העלות, ואיזו דליפה shared_ptr לא מונע.",
+      "modelAnswer": "unique_ptr הוא בעלים יחיד: move-only, בגודל של מצביע רגיל עם deleter ברירת מחדל, בלי עלות ריצה. זו ברירת המחדל לכל בעלות. הוא תומך ב-custom deleter (FILE* עם fclose, fd) ובגרסת T[]. יוצרים אותו עם make_unique כדי שלא יהיה new גלוי. shared_ptr מיועד לבעלות משותפת אמיתית, כשאין owner יחיד ברור (למשל buffer שכמה consumers מחזיקים). העלות: control block (strong count, weak count, deleter), increment/decrement אטומי בכל העתקה, ובפוטנציה cache-line contention בין threads. make_shared חוסך הקצאה אחת, אבל הזיכרון של האובייקט נשאר מוקצה עד שגם ה-weak_ptrs נעלמים. weak_ptr לא מעלה את ה-strong count; lock() מחזיר shared_ptr או ריק. משתמשים בו לכיוון 'אחורה' (child אל parent), ל-observers, ל-caches ול-callbacks אסינכרוניים. הדליפה ש-shared_ptr לא מונע היא מעגל: A מחזיק B ו-B מחזיק A, ה-count לא מגיע ל-0. גם lambda שלוכדת shared_from_this ונשמרת בתוך האובייקט יוצרת מעגל. כלל: הבעלות זורמת בכיוון אחד, ופרמטרים לא-בעלים מעבירים כ-T& או T*, לא כ-shared_ptr by value.",
+      "rubric": [
+        "unique_ptr כברירת מחדל: בעלים יחיד, move-only, zero overhead, custom deleter",
+        "עלות shared_ptr: control block ופעולות אטומיות בכל העתקה; make_shared",
+        "weak_ptr ו-lock(): לא מעלה strong count, משמש לשבירת מעגלים ו-observers",
+        "מזהה את מעגל ה-shared_ptr (כולל self-capture ב-callback) כדליפה שלא נמנעת",
+        "מעביר פרמטרים לא-בעלים כ-reference או raw pointer"
+      ],
+      "explanation": "תשובה טובה לא רק מגדירה את שלושת הטיפוסים, אלא מראה שיקול דעת: מתי לא להשתמש ב-shared_ptr, מה העלות, ואיך נוצרת דליפה למרות smart pointers.",
+      "lesson": "bugs.leaks",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.leaks.q28",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "שירות multi-threaded על Linux כותב לוג ומדי פעם מפעיל helper ארוך-חיים ב-fork+exec. אחרי log rotation השירות סוגר את הלוג הישן ופותח חדש, אבל `df` מראה שהמקום של הקובץ הישן (שנמחק) לא משתחרר כל עוד helpers רצים. מה הבאג?",
+      "code": "int openLog(const char* path) {\n    return open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);\n}\n\nvoid spawnHelper() {\n    if (fork() == 0) {\n        execl(\"/usr/bin/helper\", \"helper\", (char*)nullptr);\n        _exit(127);\n    }\n}",
+      "bugLine": 2,
+      "choices": [
+        "`_exit(127)` צריך להיות `exit(127)` כדי שהקבצים הפתוחים ייסגרו כראוי",
+        "חסר `waitpid` על הילד, ולכן נוצר zombie שמחזיק את הקובץ פתוח",
+        "ההרשאות 0644 מונעות מהקרנל לשחרר את הקובץ אחרי מחיקה",
+        "ה-fd נפתח בלי `O_CLOEXEC`: ב-fork הילד יורש אותו ו-exec משאיר אותו פתוח, כך שכל helper מחזיק עותק, והקרנל לא משחרר את הקובץ שנמחק עד שכל העותקים נסגרים"
+      ],
+      "answer": 3,
+      "explanation": "קובץ שנמחק משתחרר רק כשה-fd האחרון אליו נסגר, וה-helpers מחזיקים fd שהם בכלל לא יודעים עליו. התיקון: `O_CLOEXEC` כבר ב-open (וכך גם `SOCK_CLOEXEC`, `accept4`, `pipe2`). `fcntl(FD_CLOEXEC)` אחרי open הוא race בתהליך multi-threaded: thread אחר יכול לעשות fork ביניהם. `_exit` הוא דווקא הנכון בילד אחרי fork, כדי לא לעשות flush כפול ל-buffers של stdio. zombie כבר שחרר את כל ה-fds שלו, ובכל מקרה ה-helper כאן חי ורץ.",
+      "lesson": "bugs.leaks",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.leaks.q29",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "בקוד הבא Parent מחזיק את ה-Child-ים שלו, וכל Child מחזיק את ה-Parent כדי לדווח לו על אירועים. גם אחרי שה-shared_ptr החיצוני האחרון ל-Parent משתחרר, אף אובייקט לא נהרס. תקן את המבנה כך שהעץ כולו ישתחרר, הוסף ל-Parent מתודה `addChild()` שמחברת child חדש, ושנה את `notify()` כך שתעבוד בבטחה גם אם ה-Parent כבר נהרס.",
+      "starter": "struct Child;\nstruct Parent {\n    std::vector<std::shared_ptr<Child>> kids;\n    void onEvent();\n};\nstruct Child {\n    std::shared_ptr<Parent> parent;\n    void notify() { parent->onEvent(); }\n};",
+      "modelAnswer": "struct Parent;\nstruct Child {\n    std::weak_ptr<Parent> parent;   // back edge: non-owning\n    void notify();\n};\nstruct Parent : std::enable_shared_from_this<Parent> {\n    std::vector<std::shared_ptr<Child>> kids;  // owning\n    void onEvent() { /* ... */ }\n    void addChild() {   // only after Parent is owned by a shared_ptr\n        auto c = std::make_shared<Child>();\n        c->parent = weak_from_this();\n        kids.push_back(std::move(c));\n    }\n};\nvoid Child::notify() {\n    if (auto p = parent.lock())   // null if Parent is gone\n        p->onEvent();\n}",
+      "rubric": [
+        "הכיוון child אל parent הופך ל-weak_ptr; הבעלות parent אל children נשארת shared_ptr",
+        "notify משתמש ב-lock() ובודק שהתוצאה לא ריקה לפני השימוש",
+        "החיבור משתמש ב-weak_from_this (או shared_from_this) ומציין שזה חוקי רק אחרי שה-Parent כבר בבעלות shared_ptr, לא ב-constructor",
+        "מסביר איך מוודאים: destructors שמדפיסים, או LeakSanitizer/Valgrind בלי דיווח"
+      ],
+      "explanation": "מעגל parent/child הוא הדליפה הקלאסית של shared_ptr: כל צד מחזיק את השני עם count 1. בעלות זורמת בכיוון אחד, והכיוון ההפוך הוא weak_ptr. `lock()` נותן shared_ptr זמני שמבטיח שה-Parent חי לאורך הקריאה, גם אם thread אחר משחרר אותו במקביל. קריאה ל-shared_from_this בתוך constructor זורקת bad_weak_ptr (מ-C++17), כי עדיין אין shared_ptr בעלים.",
+      "lesson": "bugs.leaks",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.leaks.q30",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מפתח Python מימש מחלקה שעוטפת socket וסוגרת אותו ב-`__del__`, בלי close מפורש ובלי context manager. מה הבעיה העיקרית בגישה?",
+      "choices": [
+        "`__del__` לעולם לא נקרא ב-CPython, רק ב-PyPy",
+        "אובייקט עם `__del__` שנמצא במעגל הפניות לעולם לא ישוחרר בגרסאות Python 3 המודרניות, ונשאר תמיד ב-`gc.garbage`",
+        "מועד הקריאה ל-`__del__` לא מובטח: הפניה שנשכחה (cache, traceback) דוחה אותו ללא הגבלה, ב-PyPy הוא מחכה ל-GC, ו-exception בתוכו לא מתפשט אלא רק מודפס",
+        "`__del__` רץ תמיד על thread ייעודי של ה-GC, ולכן close בתוכו יוצר race"
+      ],
+      "answer": 2,
+      "explanation": "ב-CPython `__del__` רץ כשה-refcount מגיע ל-0, אבל כל הפניה שנשארה (list גלובלי, exception שמור, closure) דוחה את זה, ובמימושים עם tracing GC המועד שרירותי. exceptions בתוכו מודפסים כ-'Exception ignored in' ונבלעים, ובכיבוי ה-interpreter globals עלולים להיות None. לכן מספקים `close()` ו-`__enter__/__exit__`, ומשאירים `__del__` או `weakref.finalize` כרשת ביטחון. מאז Python 3.4 (PEP 442) מעגלים עם `__del__` כן משתחררים. `__del__` רץ ב-thread שבו ירד ה-refcount האחרון או שהריץ את ה-GC, לא ב-thread ייעודי.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q31",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתונה `void submit(std::unique_ptr<Job> j, int prio);` והקריאה `submit(std::unique_ptr<Job>(new Job), computePrio());`, כש-`computePrio` עלולה לזרוק. מה נכון?",
+      "choices": [
+        "C++17 קבע סדר הערכה משמאל לימין לארגומנטים של פונקציה, ולכן ה-unique_ptr תמיד נבנה לפני computePrio ואין דליפה",
+        "בטוח בכל גרסה של C++, כי ה-unique_ptr נבנה באותו ביטוי שבו new רץ",
+        "עד C++14 מותר interleaving: `new Job`, אחריו `computePrio()`, ורק אז בניית ה-unique_ptr, כך שזריקה דולפת. מ-C++17 כל ארגומנט מוערך במלואו לפני הבא (בסדר לא מוגדר), ואין דליפה",
+        "דולף בכל גרסה: new תמיד רץ לפני computePrio, ואם computePrio זורק אף אחד לא משחרר את ה-Job"
+      ],
+      "answer": 2,
+      "explanation": "לפני C++17 הערכות של ארגומנטים שונים היו unsequenced, והקומפיילר יכול היה לשזור תת-ביטויים: להקצות את ה-Job, לקרוא ל-computePrio, ורק אז להריץ את ה-constructor של unique_ptr. מ-C++17 ארגומנטים הם indeterminately sequenced: כל אחד מוערך במלואו, אבל הסדר ביניהם עדיין לא מוגדר. C++17 קבע סדר משמאל לימין רק לאופרטורים מסוימים (`<<`, השמה, גישה ל-member), לא לארגומנטים. אם computePrio רץ קודם, new עוד לא רץ ואין מה לדלוף. `make_unique` עדיין מועדף: אין new גלוי, ובטוח גם ב-C++14.",
+      "lesson": "bugs.leaks",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.leaks.q32",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "n גדול, ו-`new` השני עלול לזרוק `std::bad_alloc`. מה הבאג?",
+      "code": "class Pair {\n    int* a_;\n    int* b_;\npublic:\n    explicit Pair(size_t n)\n        : a_(new int[n]), b_(new int[n]) {}\n    ~Pair() { delete[] a_; delete[] b_; }\n};",
+      "bugLine": 6,
+      "choices": [
+        "אם ה-`new int[n]` השני זורק, האובייקט לא נבנה במלואו ולכן `~Pair` לא רץ. a_ הוא raw pointer בלי destructor, והמערך הראשון דולף. צריך members מטיפוס `std::unique_ptr<int[]>` או `std::vector<int>`",
+        "`~Pair` רץ גם על אובייקט שנבנה חלקית, ואז `delete[] b_` משחרר מצביע לא מאותחל",
+        "סדר האתחול נקבע לפי רשימת האתחול ולא לפי סדר ההצהרה, ולכן b_ עלול להיות מוקצה ראשון",
+        "חסרים copy constructor ו-copy assignment (rule of three), וזה מה שגורם לדליפה כש-new זורק"
+      ],
+      "answer": 0,
+      "explanation": "כש-constructor זורק, רק sub-objects שכבר נבנו במלואם נהרסים. a_ נבנה, אבל ה-'destructor' של int* לא עושה כלום, ו-`~Pair` עצמו לא רץ כי האובייקט מעולם לא הושלם. עם `std::unique_ptr<int[]>` ה-member הראשון היה משחרר את עצמו במהלך ה-unwinding. סדר האתחול הוא לפי סדר ההצהרה, ולכן a_ ראשון. rule of three חסר באמת (העתקה תגרום ל-double free), אבל זו בעיה נפרדת שלא קשורה לזריקה.",
+      "lesson": "bugs.leaks",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.leaks.q33",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "ב-CPython, מה מודפס?",
+      "code": "import weakref\n\nclass Buf:\n    pass\n\nsaved = []\n\ndef work():\n    buf = Buf()\n    try:\n        raise ValueError(\"bad frame\")\n    except ValueError as e:\n        saved.append(e)\n    return weakref.ref(buf)\n\nw = work()\nprint(w() is None)",
+      "choices": [
+        "True: `buf` הוא משתנה מקומי ומשתחרר כש-work חוזרת",
+        "True: Python מוחק אוטומטית את `e` בסוף בלוק ה-except, וזה שובר את השרשרת",
+        "NameError: `e` כבר נמחק כשקוראים ל-`saved.append(e)`",
+        "False: ה-exception השמור מחזיק `__traceback__`, שמחזיק את ה-frame של work, שמחזיק את המשתנים המקומיים שלו, כולל buf"
+      ],
+      "answer": 3,
+      "explanation": "השרשרת היא saved אל exception, אל traceback, אל frame, אל locals. כל עוד ה-exception שמור, buf חי, ובקוד אמיתי buf יכול להיות מערך NumPy ענק. Python אכן מוחק את השם `e` בסוף ה-except (כדי למנוע מעגל frame/traceback), אבל זה מוחק שם, לא את האובייקט שכבר ב-saved. ה-append רץ בתוך הבלוק, כש-e עוד מוגדר. תיקון: לשמור `str(e)` או `traceback.format_exc()`, או לקרוא `traceback.clear_frames(e.__traceback__)`.",
       "lesson": "bugs.leaks"
     }
   ]

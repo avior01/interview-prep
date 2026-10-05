@@ -33,7 +33,66 @@
         "גישה היברידית לדיוק: integer phase accumulator כמקור אמת, sincos אחד לכל block ורקורסיה בתוך ה-block.",
         "בדיקות: טון ב-bin צפוי, invariance בין עיבוד בחלקים לעיבוד חד-פעמי, קצוות של saturation, ריצה ארוכה לבדיקת drift, השוואה למודל Python."
       ],
-      "diagram": "phase acc: phi += dphi (wrap)\n            |\nx[n] ---> (x) ---> y[n]\n            ^\n      p = e^{j phi}\nrecursive: p <- p * w,\n           renorm every block"
+      "diagram": "phase acc: phi += dphi (wrap)\n            |\nx[n] ---> (x) ---> y[n]\n            ^\n      p = e^{j phi}\nrecursive: p <- p * w,\n           renorm every block",
+      "details": [
+        {
+          "title": "מה NCO עושה: הזזה בתדר בתוכנה",
+          "body": "NCO (Numerically Controlled Oscillator) מזיז אות **בתדר** בתוכנה: כופלים כל דגימה complex ב-פאזור מסתובב `e^{jφ[n]}`. לפי **תכונת ההזזה בתדר** של התמרת פורייה, כפל בזמן באקספוננט complex שקול להזזת כל הספקטרום: `x[n]·e^{j2πf0n/fs} ↔ X(f − f0)`.\n\nנקודה מהותית: המכפיל הוא complex (ולא `cos` ממשי), ולכן מתקבלת הזזה **אחת** בכיוון אחד, בלי תמונת מראה ב-`−f0`. אם היינו כופלים ב-`cos` ממשי, היינו מקבלים שני העתקים ב-`±f0`. ההזזה אינה משנה את קצב הדגימה ואינה מסננת; היא רק מגלגלת את הצירים בתדר.\n\nהפאזה מתקדמת בכל דגימה ב-`Δφ = 2π·f/fs` רדיאן, כי בין דגימות עובר זמן `1/fs`. ב-`f = fs/4` (למשל 12.5 MHz ב-50 MS/s) זה `π/2`: הפאזור עובר `1, j, −1, −j` וחוזר כל 4 דגימות."
+        },
+        {
+          "title": "Phase accumulator: float מול integer",
+          "body": "הפאזה היא **האינטגרל** של התדר: `φ[n+1] = φ[n] + Δφ`. איך מחזיקים אותה קובע את הדיוק.\n\n- **float accumulator בלי wrap** הוא מלכודת: אחרי שנייה ב-1 MHz הפאזה כבר כ-`6.3e6` רדיאן. שם ה-ulp של float הוא כ-0.5 רדיאן (הערך נמצא בין `2^22` ל-`2^23`), כך שכל `+= Δφ` מעוגל בגסות והתדר נסחף. חובה wrap לטווח `[−π, π)`.\n- **integer accumulator (uint32)** פותר את זה אלגנטית: ה-wrap של `2π` מתקבל **בחינם** מ-overflow של unsigned, שמוגדר היטב ב-C++ (מודולו `2^32`). ה-**tuning word** הוא `TW = round(2^32 · f/fs)`, והרזולוציה היא `fs/2^32 ≈ 0.0116 Hz` ב-50 MS/s. הפאזה מדויקת ולא נסחפת.\n\nדוגמה: ל-1 MHz, `TW = round(2^32/50) = 85,899,346`, עם שגיאת תדר של כ-0.0009 Hz בלבד."
+        },
+        {
+          "title": "בלי trig לכל דגימה: recursive rotation ו-LUT",
+          "body": "ב-50 MS/s יש `1/50e6 = 20 ns` לדגימה, כמה עשרות מחזורי שעון. `sin`/`cos` scalar מ-libm ו-`fmod` לכל דגימה אוכלים את התקציב ומונעים vectorization. שתי חלופות:\n\n1. **Recursive rotation:** מחזיקים פאזור `p` ומכפילים אותו בכל צעד ב-`w = e^{jΔφ}` שמחושב **פעם אחת**. זה כפל complex אחד לדגימה (4 כפלים ו-2 חיבורים), בלי libm. החיסרון: שגיאות עיגול גורמות ל-`|p|` לסטות מ-1 (amplitude drift) ולפאזה להיסחף, ולכן **מנרמלים מחדש** (`p ← p/|p|`) מדי block. בנוסף יש loop-carried dependency שמקשה על SIMD.\n2. **Integer accumulator + LUT:** האינדקס לטבלת `sin`/`cos` נגזר מביטי העליון של ה-accumulator. החיסרון: **phase-truncation spurs** — קיטוע הפאזה ל-M ביטים מייצר קווים ספוריים עם SFDR של כ-`6.02·M` dB (טבלה של `2^12` כניסות → כ-72 dB).\n\nגם ה-`fmod` יוצא מה-loop ומוחלף ב-wrap בחיסור (`if (φ ≥ π) φ −= 2π`) או ב-overflow של integer accumulator."
+        },
+        {
+          "title": "int16: overflow, backoff ו-saturating cast",
+          "body": "דגימת IQ ב-int16: `|I|, |Q| ≤ 32767`. הגודל `|z| = √(I²+Q²)` יכול להגיע ל-`32767·√2 ≈ 46,339` (כש-`I=Q=32767`). סיבוב שומר על `|z|`, אבל יכול להפיל את כל הגודל על ציר אחד, כך ש-רכיב בודד יחרוג מטווח int16.\n\nשני תיקונים משלימים:\n- **Backoff** של האמפליטודה לפני הסיבוב: scaling ב-`1/√2` (כ-−3 dB) מגביל `|z| ≤ 32767`, ולכן כל רכיב `≤ 32767`. זה ה-backoff המינימלי; `1/2` (−6 dB) מספיק אבל מבזבז עוד dynamic range.\n- **Saturating cast** אחרי הסיבוב כרשת ביטחון, כי `0.70710678f` מעוגל ו-`lrint` עלול לדחוף ערך ל-32768.\n\nאזהרה חשובה: `static_cast` מ-float ל-int16 כשהערך מחוץ לטווח הוא **undefined behavior**, לא wrap ולא saturation. חייבים לבדוק את הטווח (ואת NaN) **לפני** ההמרה. וגם: saturation/clipping הוא אי-ליניאריות שמייצרת הרמוניות ו-spectral regrowth, ולכן עדיף למנוע חריגה ב-backoff ולא רק לחתוך."
+        },
+        {
+          "title": "Hybrid NCO+LO, ורציפות פאזה",
+          "body": "שינוי תדר אפשרי בשתי דרכים, וכל אחת מכסה את חולשת השנייה:\n- **NCO תוכנתי:** מיידי (מהדגימה הבאה), **phase-continuous**, דטרמיניסטי, בלי תלות בחומרה. אבל מזיז רק בתוך רוחב הפס הדגום (`±fs/2`, ובפועל פחות בגלל roll-off של הפילטרים), ועולה CPU לכל דגימה.\n- **Retune של ה-LO:** מכסה טווח רחב, אבל יש לו **settling time** של ה-PLL, אין רציפות פאזה, ובזמן המעבר הדגימות לא אמינות.\n\nההיגיון ההיברידי: צעדים קטנים בתוך הפס ב-NCO, קפיצות גדולות ב-LO. בפרויקט, ה-NCO קיים כרגע רק בכלי ה-file playback, וה-main עושה רק retune של ה-LO — הפשטה מכוונת.\n\nרציפות פאזה חשובה: כדי לעבור מ-`f1` ל-`f2` בלי קפיצה, שומרים את ה-accumulator ומשנים רק את ה-increment. **איפוס** הפאזה (או חישוב מחדש כאילו התדר תמיד היה `f2`) יוצר קפיצת פאזה ו-**spectral splatter**."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: סיבוב ב-π/2 ומחזוריות",
+          "body": "NCO ב-`f = fs/4`, כלומר `Δφ = π/2`. מתחילים בפאזור `p = 1 + 0j` וכופלים ב-`w = e^{jπ/2} = j` בכל צעד:\n\n- צעד 0: `p = (1, 0)`\n- צעד 1: `p·j = (0, 1)`\n- צעד 2: `(0,1)·j = (−1, 0)`\n- צעד 3: `(−1,0)·j = (0, −1)`\n- צעד 4: חוזר ל-`(1, 0)`.\n\nהמחזור הוא 4 דגימות. במקרה המיוחד הזה הכפל מצטמצם להחלפות וסימנים בלבד. זה גם מראה למה recursive rotation עובד: במקום לחשב `cos/sin` בכל צעד, פשוט מכפילים את המצב הקודם ב-`w`."
+        },
+        {
+          "title": "דוגמה: overflow אחרי סיבוב ולמה −3 dB",
+          "body": "דגימה `I = Q = 32767`. הגודל `|z| = 32767·√2 ≈ 46,339`. נניח סיבוב שמביא את כל הגודל לציר הממשי: הרכיב יהיה כ-46,339, הרבה מעבר ל-32767.\n\nעם `static_cast<int16_t>` זהו UB; על x86 בפועל מתקבל לרוב wrap: 46,339 שאינו נכנס ב-int16 קופץ לערך שלילי (קפיצת סימן), כלומר עיוות חמור. התיקון: קודם מכפילים ב-`1/√2 ≈ 0.7071`, אז `|z| ≤ 32767` וכל רכיב מובטח `≤ 32767`; ואז saturating cast חוסם ל-`[−32768, 32767]` למקרה שהעיגול דחף ל-32768. התוצאה: אין UB ואין קפיצות סימן, במחיר 3 dB של dynamic range."
+        },
+        {
+          "title": "דוגמה: float accumulator שנסחף",
+          "body": "NCO ב-1 MHz, `fs = 50 MS/s`, פאזה ב-float בלי wrap. אחרי שנייה (`5e7` דגימות), הפאזה הגיעה ל-`2π·1e6 ≈ 6.28e6` רדיאן. הערך הזה נמצא בין `2^22 ≈ 4.19e6` ל-`2^23 ≈ 8.39e6`, ושם המרחק בין floats עוקבים (ulp) הוא `2^(22−23) = 0.5` רדיאן.\n\nמשמעות: `Δφ` עצמו קטן בהרבה מ-0.5, כך שכל חיבור מעוגל בגסות, התדר האפקטיבי משתבש והפאזה מאבדת כל קשר לאמת. הפתרון: wrap לטווח `[−π, π)` אחרי כל צעד, או (עדיף) integer accumulator שבו ה-wrap מדויק וחופשי."
+        }
+      ],
+      "glossary": [
+        { "term": "NCO (Numerically Controlled Oscillator)", "def": "מנגנון תוכנה שמזיז אות בתדר על ידי כפל כל דגימה complex בפאזור מסתובב `e^{jφ[n]}`. שקול ל-DDS ב-host." },
+        { "term": "Phase increment Δφ", "def": "`2π·f/fs` רדיאן לדגימה: הפאזה שמתווספת בכל צעד כדי להזיז בתדר f. ב-`f=fs/4` שווה `π/2`." },
+        { "term": "Frequency-shift property", "def": "`x[n]·e^{j2πf0n/fs} ↔ X(f−f0)`: כפל בזמן באקספוננט complex מזיז את כל הספקטרום ב-f0, בלי תמונת מראה (בניגוד לכפל ב-cos ממשי)." },
+        { "term": "Phase accumulator", "def": "המשתנה שצובר את הפאזה `φ[n+1]=φ[n]+Δφ`. integer (uint32) נותן wrap חופשי ומדויק; float דורש wrap מפורש ונסחף." },
+        { "term": "Tuning word (TW)", "def": "`round(2^32·f/fs)` ל-accumulator של 32 bit. ל-1 MHz ב-50 MS/s שווה 85,899,346. הרזולוציה היא fs/2^32 ≈ 0.0116 Hz." },
+        { "term": "Recursive rotation", "def": "מחזיקים פאזור p ומכפילים בכל צעד ב-`w=e^{jΔφ}` (מחושב פעם אחת), במקום sin/cos לדגימה. כפל complex אחד לדגימה." },
+        { "term": "Amplitude drift / renormalization", "def": "ברקורסיה, עיגול גורם ל-|p| לסטות מ-1 לאורך זמן; מנרמלים `p←p/|p|` מדי block כדי לייצב את האמפליטופה." },
+        { "term": "Loop-carried dependency", "def": "כל p תלוי ב-p הקודם, מה שחוסם SIMD. שוברים עם L נתיבים מקבילים וצעד `w^L`, ומאתחלים כל block מהפאזה המדויקת." },
+        { "term": "Phase-truncation spurs / SFDR", "def": "קיטוע הפאזה ל-M ביטים לאינדקס LUT מייצר קווים ספוריים; ה-SFDR כ-`6.02·M` dB (12 bit ≈ 72 dB). אינטרפולציה משפרת." },
+        { "term": "int16 overflow after rotation", "def": "`|z|` יכול להגיע ל-`32767·√2≈46,339`, וסיבוב יכול להפיל את כל הגודל על ציר אחד, כך שרכיב בודד חורג מטווח int16." },
+        { "term": "Amplitude backoff (−3 dB)", "def": "כפל ב-`1/√2` לפני הסיבוב מגביל `|z|≤32767` ולכן כל רכיב בטווח. זה ה-backoff המינימלי; −6 dB מבזבז dynamic range." },
+        { "term": "Saturating cast / float→int UB", "def": "המרת float מחוץ לטווח ה-int היא UB (לא wrap/saturation). בודקים טווח ו-NaN לפני ההמרה, ו-saturating cast חוסם ל-[−32768,32767]." },
+        { "term": "NaN handling", "def": "NaN נכשל בכל השוואה (`x==x` שקר), ולכן בודקים אותו במפורש או מנסחים את הבדיקות כך ש-NaN נופל לענף בטוח (למשל מחזיר 0)." },
+        { "term": "C++20 integer narrowing", "def": "המרה מ-int ל-signed צר יותר מוגדרת modulo 2^N מאז C++20 (קודם implementation-defined): `int16_t(40000)` = −25536." },
+        { "term": "Integral promotion", "def": "`int16_t + int16_t` מקודם ל-int לפני החיבור, ולכן `30000+30000` לא גולש ב-int16 אלא מחושב כ-60000 ב-int." },
+        { "term": "float-cast-overflow (UBSan)", "def": "דגל `-fsanitize=float-cast-overflow` תופס בדיוק את ה-UB של המרת float מחוץ לטווח ל-int. כלי אימות ל-saturation." },
+        { "term": "Spectral regrowth / clipping", "def": "saturation היא אי-ליניאריות שמייצרת הרמוניות ומרחיבה את הספקטרום. לכן עדיף backoff שמונע חריגה, ולא רק חיתוך." },
+        { "term": "LO retune / settling time", "def": "שינוי תדר בחומרה ע\"י כוונון ה-LO. מכסה טווח רחב אבל דורש settling של ה-PLL, אין רציפות פאזה, והדגימות במעבר לא אמינות." },
+        { "term": "Phase continuity / splatter", "def": "מעבר תדר בלי קפיצת פאזה (שמירת ה-accumulator, שינוי ה-increment בלבד). איפוס פאזה יוצר קפיצה ופיזור ספקטרלי (splatter)." },
+        { "term": "20 ns budget", "def": "`1/50e6`: הזמן לדגימה בודדת ב-thread אחד. הנימוק להוצאת sin/cos ו-fmod מה-hot loop, שכל אחד עולה עשרות מחזורים." },
+        { "term": "Streaming בחלקים (chunks)", "def": "כלי ה-playback קורא את הקובץ ב-chunks במקום קריאה חוסמת גדולה ב-TX loop, מה שתיקן underruns. 10 שניות ב-50 MS/s sc16 הן 2 GB." }
+      ]
     }
   ],
   "questions": [
@@ -312,6 +371,198 @@
       "explanation": "הבדיקה הטובה ביותר היא זו שהייתה נכשלת לפני התיקון. מועמד שממפה כל באג היסטורי לבדיקה שתופסת אותו, ויודע להשתמש ב-sanitizers, מראה בגרות הנדסית.",
       "lesson": "cv.nco-impl",
       "tags": ["microsoft"]
+    },
+    {
+      "id": "cv.nco-impl.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה NCO עושה לאות?",
+      "choices": [
+        "מסנן את האות סביב תדר נבחר באמצעות קונבולוציה",
+        "מזיז את האות בתדר, על ידי כפל כל דגימה complex בפאזור מסתובב e^{jφ[n]}",
+        "משנה את קצב הדגימה (decimation/interpolation)",
+        "ממיר את האות מ-int16 ל-float ובחזרה"
+      ],
+      "answer": 1,
+      "explanation": "NCO (Numerically Controlled Oscillator) מזיז את האות בתדר: כופלים כל דגימה complex בפאזור `e^{jφ[n]}` שהפאזה שלו מתקדמת ב-Δφ=2π·f/fs לדגימה. לפי תכונת ההזזה בתדר כל הספקטרום זז ב-f. זה לא סינון (שזו קונבולוציה), לא שינוי קצב דגימה, ולא המרת פורמט.",
+      "lesson": "cv.nco-impl"
+    },
+    {
+      "id": "cv.nco-impl.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-phase accumulator מטיפוס uint32, מאיפה מתקבל ה-wrap של 2π בלי קוד מיוחד?",
+      "choices": [
+        "מ-overflow של unsigned, שעוטף מודולו 2^32 בצורה מוגדרת היטב וממפה בדיוק למחזור של 2π",
+        "מקריאה ל-fmod בכל דגימה",
+        "מ-saturation של הטיפוס ב-2^32−1",
+        "צריך if מפורש; אין wrap חופשי"
+      ],
+      "answer": 0,
+      "explanation": "אריתמטיקת unsigned ב-C++ עוטפת מודולו 2^32 (התנהגות מוגדרת), וזה בדיוק מה שצריך לפאזה מחזורית: הערך 0 עד 2^32−1 ממפה למחזור [0, 2π). לכן integer accumulator לא דורש fmod ולא if, והוא גם מדויק ולא נסחף כמו float. זה אחד היתרונות המרכזיים שלו.",
+      "lesson": "cv.nco-impl"
+    },
+    {
+      "id": "cv.nco-impl.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-recursive rotation מחשבים את w=e^{jΔφ} פעם אחת ואז מכפילים p←p·w בכל דגימה. מה הסיבה העיקרית לכך במקום sin/cos לכל דגימה?",
+      "choices": [
+        "כדי לקבל דיוק גבוה יותר מאשר sin/cos",
+        "כדי להימנע מקריאות scalar ל-libm (sin/cos) ב-hot loop, שעולות עשרות מחזורים כל אחת ומונעות vectorization",
+        "כי sin/cos לא מוגדרים לזוויות גדולות",
+        "כדי לחסוך זיכרון של טבלת LUT"
+      ],
+      "answer": 1,
+      "explanation": "ב-50 MS/s יש כ-20 ns לדגימה. sin ו-cos scalar מ-libm לוקחים בסדר גודל של עשרות מחזורי שעון ומונעים vectorization, ולכן מחליפים אותם בכפל complex אחד לדגימה (recursive rotation). הדיוק דווקא נפגע מעט (drift) ודורש נרמול; sin/cos מוגדרים לכל זווית סופית; וה-LUT הוא חלופה נפרדת, לא מה ש-recursive rotation עושה.",
+      "lesson": "cv.nco-impl"
+    },
+    {
+      "id": "cv.nco-impl.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-recursive rotation p←p·w לאורך זמן רב, מה הבעיה המעשית ומה התיקון?",
+      "choices": [
+        "הפאזה קופצת ב-2π ולכן צריך fmod",
+        "|p| נסחף מ-1 בגלל עיגול בכל כפל (amplitude drift), ולכן מנרמלים p←p/|p| מדי block",
+        "w משתנה בכל צעד ולכן צריך לחשב אותו מחדש",
+        "אין בעיה: כפל floating-point מדויק לחלוטין"
+      ],
+      "answer": 1,
+      "explanation": "כל כפל complex ב-float מוסיף שגיאת עיגול קטנה, וכתוצאה הגודל |p| נסחף לאט מ-1 (וגם הפאזה נסחפת). התיקון הוא נרמול מחדש p←p/|p| מדי block, שמחזיר את |p| ל-1. w מחושב פעם אחת ולא משתנה, ו-floating-point אינו מדויק לחלוטין — זו בדיוק מקור הבעיה.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.nco-impl.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס? (מודל הייחוס ב-NumPy לבדיקת NCO ב-f=fs/4)",
+      "code": "import numpy as np\nn = np.arange(4)\np = np.exp(1j * np.pi/2 * n)\nprint(np.round(p.real).astype(int), np.round(p.imag).astype(int))",
+      "choices": [
+        "[1 0 -1 0] [0 1 0 -1]",
+        "[1 1 1 1] [0 0 0 0]",
+        "[1 0 1 0] [0 1 0 1]",
+        "[0 1 0 -1] [1 0 -1 0]"
+      ],
+      "answer": 0,
+      "explanation": "הפאזור e^{jπ/2·n} מסתובב רבע סיבוב לכל n: n=0→(1,0), n=1→(0,1), n=2→(−1,0), n=3→(0,−1). לכן החלק הממשי הוא [1,0,−1,0] והמדומה [0,1,0,−1]. זו בדיוק הסדרה 1, j, −1, −j שמאפיינת NCO ב-fs/4, והיא מקור נוח לבדיקת נכונות מול המימוש ב-C++.",
+      "lesson": "cv.nco-impl"
+    },
+    {
+      "id": "cv.nco-impl.q24",
+      "level": 2,
+      "type": "short",
+      "prompt": "פאזור NCO מסתובב π/2 רדיאן בכל דגימה. אחרי כמה דגימות הוא חוזר למצב ההתחלתי?",
+      "accept": ["4", "4 samples", "ארבע"],
+      "explanation": "מחזור שלם הוא 2π, וכל דגימה מקדמת π/2, ולכן 2π / (π/2) = 4 דגימות. זה מתאים ל-f=fs/4, והסדרה היא 1, j, −1, −j. במקרה הזה הכפל ב-w=j מצטמצם להחלפת רכיבים ושינוי סימן בלבד, בלי כפל אמיתי.",
+      "lesson": "cv.nco-impl"
+    },
+    {
+      "id": "cv.nco-impl.q25",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה אמורה להחזיר את ה-phase increment ברדיאנים לדגימה עבור תדר f בקצב fs. מה הבאג?",
+      "code": "// dphi (rad/sample) for freq f Hz at sample rate fs Hz\nfloat nco_dphi(int f, int fs) {\n    return 2.0f * 3.14159265f * (f / fs);\n}",
+      "bugLine": 3,
+      "choices": [
+        "חסר נרמול של התוצאה לטווח [-π, π)",
+        "`f / fs` הוא חילוק שלמים: לכל f<fs התוצאה 0 (ולכל f כפולה של fs ערך שלם שגוי), ולכן Δφ יוצא 0. צריך להמיר ל-double/float לפני החילוק",
+        "צריך להשתמש ב-M_PI במקום בקבוע מעוגל",
+        "התוצאה צריכה להיות double כי float לא מספיק מדויק"
+      ],
+      "answer": 1,
+      "explanation": "`f` ו-`fs` הם int, ולכן `f / fs` מתבצע כחילוק שלמים: עבור f=1e6, fs=50e6 התוצאה היא 0, וכל ה-NCO לא מזיז כלום. התיקון: `2π · ((double)f / fs)` או לקבל את הפרמטרים כ-double. דיוק הקבוע או float מול double הם שיקולים משניים; הבאג ששובר נכונות לחלוטין הוא חילוק השלמים.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.nco-impl.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "כבר עשית backoff של 1/√2 (−3 dB) שמבטיח |z|≤32767 לפני הסיבוב. למה בכל זאת צריך saturating cast אחרי הסיבוב?",
+      "choices": [
+        "לא צריך; ה-backoff מבטיח שלא תהיה חריגה אף פעם",
+        "כי 0.70710678f מעוגל וגם lrint מעגל, כך שרכיב בודד יכול לצאת 32768 בקצה; saturating cast חוסם את ה-UB של המרת float מחוץ לטווח",
+        "כי saturation מוסיף dither שמשפר SNR",
+        "כי int16 לא יכול לייצג ערכים שליליים בלי saturation"
+      ],
+      "answer": 1,
+      "explanation": "ה-backoff התיאורטי מבטיח |z|≤32767, אבל 1/√2 מיוצג כ-float מעוגל (0.70710678f) וגם העיגול לשלם (lrint) יכול לדחוף ערך קצה ל-32768, שאינו נכנס ב-int16, וההמרה שלו היא UB. ה-saturating cast הוא רשת ביטחון שחוסמת ל-[−32768, 32767]. backoff ו-saturation משלימים: הראשון מונע עיוות גדול, השני מונע UB בקצה.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.nco-impl.q27",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה נקראת פעם אחת לכל chunk, והפאזה אמורה להמשיך ברציפות בין chunks. מה הבאג (נכונות, לא ביצועים)?",
+      "code": "using cf = std::complex<float>;\n// called once per chunk; phase must continue across chunks\nvoid mix(const cf* in, cf* out, size_t n, float dphi) {\n    float phase = 0.0f;\n    for (size_t k = 0; k < n; ++k) {\n        out[k] = in[k] * std::polar(1.0f, phase);\n        phase += dphi;\n    }\n}",
+      "bugLine": 4,
+      "choices": [
+        "std::polar מחזיר ערך שגוי לזוויות שליליות",
+        "`phase` מאותחל ל-0 בתחילת כל קריאה (משתנה מקומי), ולכן בכל chunk הפאזה קופצת חזרה ל-0: אי-רציפות פאזה ו-spectral splatter על גבולות ה-chunks",
+        "dphi צריך להיות double אחרת התדר שגוי לגמרי",
+        "צריך לכפול ב-n כדי לקדם את הפאזה בין chunks"
+      ],
+      "answer": 1,
+      "explanation": "`phase` הוא משתנה מקומי שמאותחל ל-0 בכל קריאה, ולכן בתחילת כל chunk הפאזה קופצת ל-0 במקום להמשיך מהערך האחרון של ה-chunk הקודם. קפיצת הפאזה בגבולות ה-chunks יוצרת אי-רציפות ו-splatter ספקטרלי. התיקון: לשמור את הפאזה כ-state (פרמטר by-reference או שדה של אובייקט). std::polar מוגדר לכל זווית, וה-trade-off של double הוא עניין דיוק נפרד.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.nco-impl.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מימוש NCO מבוסס LUT: ה-accumulator הוא 32 bit אבל רק 12 הביטים העליונים מכתובבים אינדקס לטבלת sin/cos (phase truncation). מה בקירוב ה-SFDR של ה-spurs שנוצרים?",
+      "choices": [
+        "כ-36 dB",
+        "כ-72 dB",
+        "כ-192 dB",
+        "אין spurs כי ה-accumulator ב-32 bit"
+      ],
+      "answer": 1,
+      "explanation": "קיטוע הפאזה ל-M ביטים לאינדקס הטבלה מייצר phase-truncation spurs עם SFDR של כ-6.02·M dB. ל-M=12: 6.02·12 ≈ 72 dB. רוחב ה-accumulator המלא (32 bit) קובע את רזולוציית התדר, אבל ה-spurs נקבעים ממספר הביטים שמכתובבים את הטבלה. אינטרפולציה בין כניסות הטבלה משפרת את ה-SFDR.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.nco-impl.q29",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "פונקציית saturation ל-int16. מה הבאג?",
+      "code": "int16_t sat16(float x) {\n    int16_t v = static_cast<int16_t>(x);\n    if (v > 32767) v = 32767;\n    if (v < -32768) v = -32768;\n    return v;\n}",
+      "bugLine": 2,
+      "choices": [
+        "צריך לבדוק קודם v==32767 עם ==, לא עם >",
+        "ההמרה ל-int16 מתבצעת ראשונה, לפני כל בדיקת טווח: להמיר float מחוץ לטווח ל-int16 זו UB, ו-NaN נכנס גם הוא. הבדיקות על `v` מיותרות (int16 לעולם לא חורג מטווחו). צריך לחסום את ה-float לפני ההמרה ולטפל ב-NaN",
+        "צריך `>=` ו-`<=` כדי לכלול את הקצוות",
+        "static_cast איטי, צריך reinterpret_cast"
+      ],
+      "answer": 1,
+      "explanation": "הסדר הפוך: ההמרה `static_cast<int16_t>(x)` קורית ראשונה, וכש-x מחוץ לטווח int16 (או NaN) זו כבר undefined behavior. יתרה מזו, הבדיקות `v > 32767` ו-`v < -32768` תמיד שקריות כי int16 לא יכול להחזיק ערכים כאלה — הקומפיילר אף מזהיר -Wtype-limits. התיקון: לחסום את ה-float לטווח (ולבדוק NaN) ורק אז להמיר, למשל if(!(x==x)) return 0; ואז clamp ואז cast.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "cv.nco-impl.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-GCC, לולאת recursive rotation עם std::complex<float> לא עברה vectorization. מה סביר שחוסם אותה, ומה הכיוון לתקן?",
+      "choices": [
+        "complex<float> לא נתמך ב-GCC; צריך לכתוב IQ ידנית בכל מקרה",
+        "לפי Annex G, GCC מוסיף לכל כפל complex בדיקות NaN/Inf (טיפול במקרי קצה), שמוסיפות ענפים וחוסמות vectorization; הדגל -fcx-limited-range (או כתיבת הכפל ידנית ב-SoA) מסיר אותן",
+        "הבעיה היא ש-float לא מדויק מספיק; מעבר ל-double יפתור",
+        "vectorization בלתי אפשרית כל עוד יש loop-carried dependency, ללא קשר ל-complex"
+      ],
+      "answer": 1,
+      "explanation": "הכפל של std::complex<float> לפי Annex G של תקן C מחייב טיפול נכון ב-NaN/Inf, ולכן GCC פולט ענפים לכל כפל, שחוסמים את ה-vectorizer. `-fcx-limited-range` (או `-ffast-math`) מרשה לוותר על הטיפול הזה, וחלופה נקייה יותר היא לכתוב את הכפל ידנית בפורמט SoA (I ו-Q בנפרד). ה-loop-carried dependency היא מכשול נפרד שפותרים עם L נתיבים וצעד w^L; גם אחרי שפותרים אותה, בדיקות ה-Annex G עדיין יכולות לחסום.",
+      "lesson": "cv.nco-impl",
+      "tags": ["nvidia"]
     }
   ]
 }

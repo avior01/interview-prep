@@ -36,7 +36,181 @@
         "MESI ו-RFO כהסבר למחיר של atomics ושל כתיבות משותפות",
         "non-temporal stores, prefetch מפורש, ו-DDIO בהקשר של NIC"
       ],
-      "diagram": "core0 L1          core1 L1\n[a|b|..64B..]     [a|b|..64B..]\n T0 writes a  ---> invalidate\n T1 writes b  <--- invalidate\nsame line ping-pongs: false sharing\nfix: a and b on separate lines"
+      "diagram": "core0 L1          core1 L1\n[a|b|..64B..]     [a|b|..64B..]\n T0 writes a  ---> invalidate\n T1 writes b  <--- invalidate\nsame line ping-pongs: false sharing\nfix: a and b on separate lines",
+      "details": [
+        {
+          "title": "איך כתובת מוצאת את מקומה ב-cache",
+          "body": "ה-cache מחולק ל-lines של 64 בתים (ב-x86 וברוב ARM; ב-Apple M-series 128). כל כתובת מתפרקת לשלושה חלקים: **offset** (הביטים הנמוכים, המיקום בתוך ה-line: 6 ביטים ל-64 בתים), **index** (הביטים שבוחרים את ה-set), ו-**tag** (שאר הביטים, שנשמר כדי לזהות איזה line יושב שם).\n\nב-cache שהוא **N-way set-associative** כל set מכיל N מקומות (ways). line יכול לשבת רק ב-set שה-index שלו בוחר, אבל בכל אחד מ-N ה-ways שבו. מספר ה-sets הוא גודל ה-cache חלקי (גודל line כפול N). L1D של 32KB, 8-way, עם lines של 64 בתים: 32768 / (64×8) = 64 sets, כלומר 6 ביטים של index (ביטים 6 עד 11).\n\nהמשמעות המעשית: שתי כתובות שההפרש ביניהן הוא כפולה של 64 sets × 64 בתים = 4096 בתים נוחתות **באותו set**. אם ניגשים ל-9 כתובות כאלה לסירוגין, אין להן מקום יחד (רק 8 ways) והן מפנות זו את זו, גם אם שאר ה-cache ריק. זה conflict miss, והוא הסיבה ש-stride של חזקה גדולה של 2 (שורה של 4096 floats = 16KB) מסוכן.\n\nשלושת סוגי ה-misses (ה-3C):\n- **compulsory (cold)**: הגישה הראשונה ל-line. אי אפשר להימנע ממנו, רק להסתיר אותו עם prefetch.\n- **capacity**: ה-working set גדול מה-cache, ולכן lines נזרקים לפני שימוש חוזר.\n- **conflict**: יש מקום בסך הכול, אבל יותר מדי lines מתחרים על אותו set.\nלכל סוג תיקון אחר: prefetch ל-cold, blocking ל-capacity, padding או שינוי stride ל-conflict."
+        },
+        {
+          "title": "כתיבות: write-back, RFO ו-non-temporal stores",
+          "body": "כמעט כל ה-caches המודרניים הם **write-back**: כתיבה משנה רק את העותק ב-cache ומסמנת אותו dirty (Modified). הנתון נכתב לרמה הבאה רק כשה-line מפונה. החלופה, write-through, כותבת מיד גם לרמה הבאה ומייצרת הרבה יותר תעבורה.\n\nהם גם **write-allocate**: כתיבה ל-line שאינו ב-cache מביאה אותו קודם. זה נקרא **RFO (Read For Ownership)**: ה-core מבקש את ה-line עם בעלות בלעדית, קורא 64 בתים מהזיכרון, ורק אז דורס חלק מהם. כשכותבים באפר גדול שלא נקרא, חצי מהתעבורה היא קריאות מיותרות.\n\n**non-temporal stores** (כמו `_mm256_stream_ps` או `movntdq`) עוקפים את זה: הם נאספים ב-**write-combining buffers**, ו-line מלא נשלח לזיכרון בלי RFO ובלי להיכנס ל-cache. היתרונות: פחות תעבורה ובלי זיהום ה-cache. החסרונות: אם קוראים את הנתונים מיד אחר כך, הם לא ב-cache. בנוסף, הם **weakly ordered** גם ב-x86, ולכן לפני פרסום הנתונים לצרכן חייבים `sfence`."
+        },
+        {
+          "title": "Coherence: MESI, HITM ו-LLC inclusive",
+          "body": "כשלכל core יש cache פרטי, צריך פרוטוקול שיבטיח שלא יהיו שני ערכים שונים לאותו line. ב-**MESI** לכל line בכל core יש מצב:\n- **Modified**: רק אצלי, ושונה מהזיכרון (dirty).\n- **Exclusive**: רק אצלי, ונקי. כתיבה הופכת אותו ל-M בלי שום הודעה.\n- **Shared**: ייתכן שגם אצל אחרים, נקי, קריאה בלבד.\n- **Invalid**: לא תקף.\nכדי לכתוב צריך M או E. כתיבה ל-S שולחת invalidate לכל העותקים האחרים. קריאה של line שנמצא M אצל core אחר נקראת **HITM** (hit modified): ה-core השני חייב לספק את הנתונים, וזו העברת cache-to-cache שעולה עשרות ns. וריאנטים כמו MESIF (Intel) ו-MOESI (AMD) מוסיפים מצבים כדי לחסוך כתיבות לזיכרון, אבל הרעיון זהה.\n\n**LLC inclusive** אומר שכל line שנמצא ב-L1/L2 של core כלשהו חייב להיות גם ב-L3. זה מקל על חיפוש (מספיק לבדוק את L3), אבל כש-L3 מפנה line הוא שולח **back-invalidation** ומוציא אותו גם מה-caches הפרטיים. כך process רועש על core אחר פוגע ב-L2 שלך. מעבדי שרת של Intel מ-Skylake-SP ומעבדי AMD משתמשים ב-L3 שאינו inclusive. **Intel CAT** (Cache Allocation Technology) מאפשר לחלק את ה-ways של L3 בין קבוצות cores.\n\nחשוב: **coherence אינו consistency**. coherence מבטיח ערך אחד לכל line. אבל לכל core יש **store buffer**: כתיבה ממתינה בו לפני שהיא נכנסת ל-cache, והקריאות של אותו core ממשיכות בינתיים. לכן גם ב-x86 (מודל TSO) store ואחריו load לכתובת אחרת יכולים להיראות בסדר הפוך (StoreLoad reordering). רק `mfence`, הוראה עם lock או seq_cst מונעים זאת."
+        },
+        {
+          "title": "False sharing, true sharing ו-128 בתים",
+          "body": "**false sharing**: שני threads כותבים למשתנים שונים שיושבים באותו line. כל כתיבה דורשת M, ולכן ה-line קופץ בין ה-cores (ping-pong), וכל גישה עולה עשרות ns במקום ns אחד. התוצאה נכונה, רק איטית. קריאות בלבד לא יוצרות בעיה, כי כולם יכולים להחזיק S.\n\n**true sharing**: כל ה-threads כותבים לאותו משתנה, למשל `std::atomic<long> counter` משותף. כאן אין padding שיעזור: כל fetch_add צריך את ה-line, וקצב הפעולות הכולל חסום בקצב שבו ה-line עובר בין cores, בלי קשר למספר ה-threads. הפתרון הוא sharding: מונה לכל thread (מרופד) וסכימה בזמן קריאה.\n\nתיקונים ל-false sharing: `alignas(64)` או `std::hardware_destructive_interference_size` (C++17), צבירה במשתנה מקומי וכתיבה פעם אחת, או מבני נתונים פר-thread. ב-Intel ה-**adjacent line prefetcher** של L2 מושך זוגות lines מיושרים ל-128 בתים, ולכן ספריות כמו folly ו-crossbeam מרפדות ל-128.\n\nמלכודת מדידה: ב-benchmark שבו הלולאה מגדילה `long` רגיל, הקומפיילר רשאי להחזיק אותו ברגיסטר לכל אורך הלולאה (**scalar replacement**) ולכתוב פעם אחת בסוף. אז לא רואים false sharing בכלל. בקוד אמיתי, קריאה לפונקציה לא ידועה בתוך הלולאה מונעת את האופטימיזציה, והבעיה מופיעה."
+        },
+        {
+          "title": "Locality, layout ותעבורת זיכרון",
+          "body": "**spatial locality**: גישה לנתונים סמוכים. כל miss מביא 64 בתים, וה-**hardware prefetcher** מזהה גישות רציפות או עם stride קבוע ומביא lines מראש. **temporal locality**: שימוש חוזר באותו נתון כשהוא עוד ב-cache.\n\nמטריצה ב-C++ היא row-major: שורה רציפה. מעבר לפי עמודות משתמש ב-4 בתים מכל line, ובנוסף כל גישה בדף אחר (TLB miss) ועם stride של חזקת 2 (conflict misses). כשאחד הצדדים חייב לגשת לפי עמודות (transpose, כפל מטריצות), **blocking (tiling)** מעבד בלוקים קטנים שנכנסים ל-L1, כך שכל line מנוצל לגמרי לפני שהוא נזרק. בכפל מטריצות C[i][j] += A[i][k]·B[k][j], סדר הלולאות i-k-j נותן גישה רציפה ל-B ול-C בלולאה הפנימית.\n\n**AoS מול SoA**: מערך של structs טוב כשניגשים לכל השדות של איבר; מערך לכל שדה טוב כשעוברים על שדה אחד בהרבה איברים, ומתאים ל-SIMD.\n\n**loop fusion**: כמה שלבים elementwise (חלון, הכפלה, threshold) במעבר אחד על הנתונים במקום מעבר לכל שלב. אם כל שלב עושה מעט חישוב לכל בית שנטען, הקוד **memory-bound**: רוחב הפס של הזיכרון קובע את הזמן, ומעבר אחד במקום חמישה חוסך כמעט פי 5.\n\n**TLB**: גם תרגום הכתובות נשמר ב-cache קטן. ב-Skylake לדוגמה ל-STLB יש 1536 רשומות: עם דפים של 4KB הוא מכסה 6MB בלבד, ועם huge pages של 2MB כ-3GB. בגישה אקראית לטבלה של עשרות MB, huge pages חוסכים page walk כמעט בכל גישה. **NUMA**: במערכת עם כמה sockets, זיכרון של socket מרוחק איטי יותר, ו-Linux מקצה דף פיזי לפי ה-thread שנגע בו ראשון (first touch). **DDIO** ב-Intel מאפשר ל-NIC לכתוב ישירות ל-L3, כך שהחבילה כבר ב-cache כשה-CPU ניגש אליה."
+        },
+        {
+          "title": "מדידה ומספרים",
+          "body": "סדרי גודל (x86 מודרני, להערכה בלבד): L1 כ-4–5 מחזורים, L2 כ-14, L3 כ-40–70, DRAM כ-80–100ns, העברת line בין cores עשרות ns ובין sockets יותר.\n\n**AMAT** (average memory access time) = זמן hit + miss rate × miss penalty, כשה-miss penalty של רמה הוא בעצמו ה-AMAT של הרמה הבאה. חשוב להבחין בין miss rate **מקומי** (מתוך הגישות שהגיעו לרמה הזו) לבין **גלובלי** (מתוך כל הגישות).\n\nכלים ב-Linux:\n- `perf stat -e cache-misses,LLC-load-misses,dTLB-load-misses`: מונים כלליים.\n- `perf c2c`: מזהה false sharing. הוא דוגם loads ו-stores עם כתובות (באמצעות **PEBS** ב-Intel), סופר HITM לכל line, ומראה offsets ופונקציות.\n- `valgrind --tool=cachegrind`: מדמה cache של core יחיד. טוב ל-locality, אבל לא רואה coherence ולכן לא false sharing.\n\n**4K aliasing** (Intel): מנגנון ה-memory disambiguation משווה רק את 12 הביטים הנמוכים כדי להחליט מהר אם load תלוי ב-store קודם. load מכתובת שנבדלת מ-store קודם בכפולה של 4096 מעוכב, כאילו הוא תלוי בו. זה קורה כששני מערכים מוקצים בהפרש של כפולה מדויקת של 4KB, והתיקון הוא offset קטן (למשל 64 בתים) לאחד מהם."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: פירוק כתובת ו-conflict",
+          "body": "L1D: 32KB, 8-way, lines של 64 בתים. 64 sets, 6 ביטים של offset, 6 ביטים של index.\n\nכתובת 0x12345:\n- offset = 0x12345 mod 64 = 5\n- 0x12345 / 64 = 1165 (0x48D). index = 1165 mod 64 = 13\n- tag = 0x12345 / 4096 = 0x12\n\nכתובת 0x13345 (רחוקה ב-4096 בדיוק): offset 5, index 13, tag 0x13. אותו set, tag אחר.\n\nעכשיו ניגשים בלולאה ל-9 כתובות: 0x12345, 0x13345, ..., 0x1A345. כולן ב-set 13. שמונה נכנסות, התשיעית מפנה את הוותיקה (LRU), ובסיבוב הבא כל גישה היא miss, אף על פי שרק 9 × 64 = 576 בתים בשימוש מתוך 32KB. מה לומדים: stride של 4KB או כפולותיו הורג associativity. padding של שורה ב-64 בתים מפזר את הכתובות על sets שונים."
+        },
+        {
+          "title": "דוגמה: סכום של מטריצה לפי שורות ולפי עמודות",
+          "body": "`float m[4096][4096]`: 64MB, שורה = 16KB.\n\n**לפי שורות:** כל line מביא 16 floats, וכולם בשימוש. סך תעבורה: 64MB, כלומר מיליון lines. ה-prefetcher מזהה גישה רציפה, והקוד מוגבל ברוחב הפס.\n\n**לפי עמודות:** עמודה אחת = 4096 גישות, כל אחת ל-line אחר ובדף אחר. משתמשים ב-4 בתים מתוך 64 (1/16). האם ה-lines ישרדו עד העמודה הבאה (שצריכה את אותם lines בדיוק, offset 4 בתים הלאה)? 4096 lines × 64 בתים = 256KB, יותר מ-L1. גרוע מזה: ה-stride הוא 16KB, כפולה של 4KB, ולכן כולם נוחתים באותו set של L1 ומעט sets של L2. כמעט כל גישה היא miss.\n\nתעבורה: 4096 × 4096 × 64 בתים = 1GB, פי 16 יותר, ועוד TLB miss כמעט בכל גישה. החלפת הלולאות מחזירה את הגרסה המהירה."
+        },
+        {
+          "title": "דוגמה: מחיר של false sharing במספרים",
+          "body": "8 threads, `long counts[8]` = 64 בתים, line אחד. כל thread מבצע 10^8 הגדלות (נניח שהקומפיילר לא מחזיק ברגיסטר, למשל כי יש קריאה לפונקציה חיצונית בלולאה).\n\n- **בלי שיתוף:** הגדלה ב-L1 עולה בערך 1ns, כלומר כ-0.1 שניות לכל thread, במקביל.\n- **עם false sharing:** כמעט כל הגדלה מוצאת את ה-line אצל core אחר ומבצעת RFO. אם העברה עולה כמה עשרות ns, הזמן מגיע לכמה שניות. 8 threads איטיים יותר מ-thread אחד.\n- **אחרי alignas(64):** כל מונה ב-line משלו, חזרה לכ-0.1 שניות.\n\nמה לומדים: התיקון לא משנה לוגיקה, רק layout. כדי לאשר את האבחנה מריצים `perf c2c` ורואים HITM גבוה על line אחד, עם 8 offsets שונים שנגישים מ-8 threads."
+        },
+        {
+          "title": "דוגמה: חישוב AMAT",
+          "body": "נתונים: L1 hit = 4 מחזורים, miss rate של L1 = 10%. L2 hit = 14 מחזורים, miss rate **מקומי** של L2 = 20%. DRAM = 200 מחזורים.\n\n- AMAT של L2 = 14 + 0.2 × 200 = 54 מחזורים\n- AMAT כולל = 4 + 0.1 × 54 = 9.4 מחזורים\n\nmiss rate גלובלי של L2 = 0.1 × 0.2 = 2% מכל הגישות. טעות נפוצה היא להכפיל 20% ב-200 ישירות על כל הגישות, ולקבל 4 + 1.4 + 40.\n\nמה לומדים: שיפור L1 miss rate מ-10% ל-5% חוסך 2.7 מחזורים בממוצע, ושיפור L2 miss rate מ-20% ל-10% חוסך 2 מחזורים. כך מחליטים במה להשקיע."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "cache line",
+          "def": "יחידת ההעברה וה-coherence: 64 בתים ב-x86 וברוב ARM, 128 ב-Apple M-series. כל miss מביא line שלם."
+        },
+        {
+          "term": "L1 / L2 / L3 (LLC)",
+          "def": "היררכיית ה-caches: L1 (כ-32–48KB לנתונים, פרטי) ו-L2 (כ-1–2MB, פרטי) לכל core, ו-L3 משותף של עשרות MB. LLC = last level cache."
+        },
+        {
+          "term": "set-associative",
+          "def": "כל כתובת ממופה ל-set אחד לפי ביטי ה-index, ויכולה לשבת בכל אחד מ-N ה-ways שבו. מספר sets = גודל / (line × N)."
+        },
+        {
+          "term": "tag / index / offset",
+          "def": "פירוק הכתובת: offset בתוך ה-line, index שבוחר set, tag שמזהה איזה line יושב ב-way."
+        },
+        {
+          "term": "compulsory / capacity / conflict miss",
+          "def": "שלושת סוגי ה-misses: גישה ראשונה, working set גדול מה-cache, ויותר מדי lines שמתחרים על אותו set."
+        },
+        {
+          "term": "temporal / spatial locality",
+          "def": "temporal: שימוש חוזר באותו נתון בקרוב. spatial: גישה לנתונים סמוכים. ה-cache מנצל את שתיהן."
+        },
+        {
+          "term": "hardware prefetcher",
+          "def": "חומרה שמזהה גישות רציפות או עם stride קבוע ומביאה lines מראש. ב-Intel יש גם adjacent line prefetcher שמביא את ה-line השכן בזוג מיושר ל-128 בתים."
+        },
+        {
+          "term": "write-back / write-allocate",
+          "def": "write-back: כתיבה נשארת ב-cache (dirty) עד שה-line מפונה. write-allocate: כתיבה ל-line שאינו ב-cache מביאה אותו קודם."
+        },
+        {
+          "term": "RFO (Read For Ownership)",
+          "def": "בקשה להביא line עם בעלות בלעדית לפני כתיבה. מבטלת עותקים אצל cores אחרים, ועולה קריאה מהזיכרון גם כשדורסים את כל ה-line."
+        },
+        {
+          "term": "MESI",
+          "def": "פרוטוקול coherence עם המצבים Modified, Exclusive, Shared, Invalid. כתיבה דורשת M או E, וכתיבה ל-S מבטלת עותקים אחרים. וריאנטים: MESIF, MOESI."
+        },
+        {
+          "term": "HITM",
+          "def": "קריאה שפגעה ב-line שנמצא Modified ב-cache של core אחר. ה-core השני מספק את הנתונים. מונה מרכזי בזיהוי false sharing."
+        },
+        {
+          "term": "false sharing",
+          "def": "threads שכותבים למשתנים שונים באותו line. ה-line קופץ ביניהם וכל גישה הופכת להעברה בין cores. מתקנים ב-padding או בצבירה מקומית."
+        },
+        {
+          "term": "true sharing (contended atomic)",
+          "def": "כמה threads כותבים לאותו משתנה. הקצב הכולל חסום במהירות העברת ה-line, ו-padding לא עוזר. מתקנים ב-sharding."
+        },
+        {
+          "term": "hardware_destructive_interference_size",
+          "def": "קבוע C++17 ב-<new>: ההפרדה המינימלית שמונעת false sharing. ה-constructive המשלים הוא הגודל המרבי שכדאי לשים בו נתונים שמשמשים יחד."
+        },
+        {
+          "term": "non-temporal store",
+          "def": "כתיבה שעוקפת את ה-cache דרך write-combining buffers, בלי RFO. חוסכת תעבורה וזיהום cache, אבל היא weakly ordered ודורשת sfence לפני פרסום."
+        },
+        {
+          "term": "write-combining buffer",
+          "def": "באפר קטן שאוסף כתיבות ל-line אחד ושולח אותו בבת אחת. משמש ל-NT stores ולזיכרון מסוג WC (למשל framebuffer)."
+        },
+        {
+          "term": "sfence / mfence",
+          "def": "sfence: כל ה-stores הקודמים (כולל NT) נראים לפני הבאים. mfence: מחסום מלא, כולל StoreLoad."
+        },
+        {
+          "term": "store buffer ו-TSO",
+          "def": "תור כתיבות לפני ה-cache. בגללו x86 (מודל TSO) מתיר ל-load לעקוף store קודם לכתובת אחרת. coherence לא מונע את זה."
+        },
+        {
+          "term": "inclusive LLC ו-back-invalidation",
+          "def": "ב-L3 inclusive כל line ב-L1/L2 נמצא גם ב-L3. פינוי מ-L3 מוציא את ה-line גם מה-caches הפרטיים, כך שלחץ של core אחד פוגע באחרים."
+        },
+        {
+          "term": "Intel CAT",
+          "def": "Cache Allocation Technology: הקצאת ways של L3 לקבוצות cores, כדי לבודד עומס RT משכנים רועשים. ב-AMD יש L3 QoS דומה."
+        },
+        {
+          "term": "AoS / SoA",
+          "def": "Array of Structs מול Struct of Arrays. SoA עדיף כשמעבדים שדה אחד על הרבה איברים, ומתאים ל-SIMD."
+        },
+        {
+          "term": "blocking (tiling)",
+          "def": "עיבוד בלוקים שנכנסים ל-cache כדי לנצל שימוש חוזר לפני פינוי. קלאסי ב-transpose וכפל מטריצות."
+        },
+        {
+          "term": "loop fusion",
+          "def": "איחוד כמה לולאות elementwise למעבר אחד, כך שכל נתון נטען פעם אחת. חוסך רוחב פס בקוד memory-bound."
+        },
+        {
+          "term": "memory-bound / compute-bound",
+          "def": "memory-bound: הזמן נקבע ברוחב הפס או ב-latency של הזיכרון. compute-bound: ביחידות החישוב. קובע איזו אופטימיזציה תעזור."
+        },
+        {
+          "term": "TLB ו-huge pages",
+          "def": "TLB הוא cache של תרגומי כתובות. huge pages (2MB) מגדילים את הכיסוי שלו פי 512 ומפחיתים page walks בגישה אקראית לנתונים גדולים."
+        },
+        {
+          "term": "NUMA ו-first touch",
+          "def": "במערכת עם כמה sockets, זיכרון מקומי מהיר ממרוחק. Linux מקצה דף פיזי על ה-node של ה-thread שנגע בו ראשון."
+        },
+        {
+          "term": "DDIO",
+          "def": "Intel Data Direct I/O: התקן PCIe כמו NIC כותב ישירות ל-L3, כך שהנתונים כבר ב-cache כשהמעבד קורא אותם."
+        },
+        {
+          "term": "perf c2c ו-PEBS",
+          "def": "perf c2c מנתח העברות cache-to-cache ומראה lines עם HITM, offsets ופונקציות. הוא נשען על דגימת כתובות בחומרה (PEBS ב-Intel)."
+        },
+        {
+          "term": "cachegrind",
+          "def": "כלי valgrind שמדמה cache של core יחיד. מראה misses לפי שורת קוד, אבל לא רואה coherence ולכן לא false sharing."
+        },
+        {
+          "term": "4K aliasing",
+          "def": "ב-Intel, load שכתובתו נבדלת מ-store קודם בכפולה של 4096 מעוכב, כי בדיקת התלות המהירה משווה רק 12 ביטים נמוכים."
+        },
+        {
+          "term": "scalar replacement",
+          "def": "אופטימיזציה שבה הקומפיילר מחזיק משתנה זיכרון ברגיסטר לאורך לולאה וכותב פעם אחת בסוף. מותרת כשאין synchronization, ולכן מסתירה false sharing ב-benchmarks."
+        },
+        {
+          "term": "AMAT",
+          "def": "Average Memory Access Time = hit time + miss rate × miss penalty, באופן רקורסיבי לכל רמה."
+        }
+      ]
     }
   ],
   "questions": [
@@ -339,6 +513,239 @@
       ],
       "answer": 0,
       "explanation": "TSO של x86 חל על stores רגילים. stores מסוג NT (וגם rep movs מהיר) הם חריגים, ויכולים להיראות אחרי stores רגילים מאוחרים יותר. sfence מבטיח שכל ה-stores הקודמים, כולל NT, נראים לפני הבאים. memcpy של glibc משתמש ב-NT stores להעתקות גדולות מאוד ומבצע sfence בסוף בדיוק בגלל זה.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-MESI, באיזה מצב נמצא line שקיים רק ב-cache של core אחד, ותוכנו זהה לזיכרון?",
+      "choices": [
+        "Modified",
+        "Shared",
+        "Exclusive",
+        "Invalid"
+      ],
+      "answer": 2,
+      "explanation": "Exclusive: עותק יחיד ונקי. היתרון שלו הוא שכתיבה הופכת אותו ל-Modified בלי לשלוח הודעה לאף core. Modified הוא עותק יחיד אבל dirty (שונה מהזיכרון). Shared ייתכן שקיים גם אצל אחרים.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q19",
+      "level": 1,
+      "type": "short",
+      "prompt": "ב-cache עם lines של 64 בתים, כמה ביטים נמוכים של הכתובת הם ה-offset בתוך ה-line?",
+      "accept": [
+        "6",
+        "שישה"
+      ],
+      "explanation": "2^6 = 64, ולכן 6 ביטים נמוכים בוחרים בית בתוך ה-line. הביטים שמעליהם בוחרים set (index), והשאר הם ה-tag.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "תוכנית קוראת מערך של 4KB בפעם הראשונה מאז שהתחילה. מאיזה סוג הם ה-misses בקריאה הזו?",
+      "choices": [
+        "compulsory (cold): הגישה הראשונה ל-line, שעוד לא היה ב-cache",
+        "conflict: יותר מדי lines מתחרים על אותו set",
+        "capacity: ה-working set גדול מה-cache",
+        "coherence: core אחר ביטל את ה-line"
+      ],
+      "answer": 0,
+      "explanation": "4KB נכנס בקלות ל-L1, ולכן אין כאן capacity, ולא מתחרים על set. אלה misses של גישה ראשונה. אי אפשר לבטל אותם, רק להסתיר את ה-latency שלהם, למשל עם ה-hardware prefetcher שמזהה גישה רציפה.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q21",
+      "level": 2,
+      "type": "short",
+      "prompt": "קוראים ברצף מערך של מיליון `int32_t` (בדיוק 2^20 איברים), מיושר ל-64 בתים. כמה cache lines של 64 בתים מובאים מהזיכרון?",
+      "accept": [
+        "65536",
+        "2^16"
+      ],
+      "explanation": "2^20 × 4 בתים = 4MB = 2^22 בתים. חלקי 64 = 2^16 = 65536 lines. כל line מכיל 16 איברים, וכולם בשימוש, כי הגישה רציפה. זו הסיבה שגישה רציפה מגיעה כמעט לרוחב הפס המלא.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-cache מסוג write-back, מתי ערך שנכתב ל-line מגיע לרמה הבאה (L2, L3 או DRAM)?",
+      "choices": [
+        "מיד, בכל כתיבה",
+        "רק כשקוראים לו שוב",
+        "כל מילישנייה, ב-flush מחזורי",
+        "כשה-line המלוכלך (dirty) מפונה מה-cache, או כש-core אחר מבקש אותו"
+      ],
+      "answer": 3,
+      "explanation": "write-back מסמן את ה-line כ-Modified ודוחה את הכתיבה. אם הוא נכתב 1000 פעמים לפני פינוי, רק כתיבה אחת יוצאת. כש-core אחר מבקש line שנמצא M, ה-core המחזיק מעביר אותו. write-through, שכותב מיד, נדיר כיום ב-caches של CPU.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q23",
+      "level": 2,
+      "type": "multi",
+      "prompt": "16 threads מעדכנים כל אחד מונה משלו במערך `long counts[16]`, והביצועים גרועים בגלל false sharing. אילו שינויים פותרים את הבעיה?",
+      "choices": [
+        "להחליף את המערך ב-`std::atomic<long> counts[16]`, באותו layout",
+        "לעטוף כל מונה ב-`struct alignas(64) Slot { long c; }` ולהחזיק מערך של Slot",
+        "לצבור במשתנה מקומי בתוך הלולאה, ולכתוב ל-counts[tid] פעם אחת בסוף",
+        "להגדיר את המערך כ-volatile",
+        "להחזיק את המונה בתוך מבנה נתונים פרטי לכל thread, מיושר ל-64 בתים"
+      ],
+      "answer": [
+        1,
+        2,
+        4
+      ],
+      "explanation": "הבעיה היא layout: כמה מונים באותו line. padding ל-64 (או 128 ב-Intel בגלל ה-adjacent line prefetcher), צבירה מקומית, או מבנה פרטי מיושר, כולם מפרידים את הכתיבות. atomic לא משנה את ה-layout, ורק מוסיף פעולות lock. volatile מכריח גישה לזיכרון בכל הגדלה, וזה רק מחמיר.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q24",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "L1D של 32KB, 8-way, lines של 64 בתים. לולאה ניגשת שוב ושוב ל-16 lines, שכל אחד מהם רחוק מקודמו ב-4096 בתים בדיוק. מה קורה?",
+      "choices": [
+        "כולם נכנסים ל-L1, כי 16 × 64 = 1KB הרבה פחות מ-32KB",
+        "רק ה-line הראשון נשאר, כי ה-cache direct-mapped",
+        "ה-prefetcher מביא את כולם ואין misses",
+        "כל ה-16 נוחתים באותו set, שיש בו רק 8 ways, ולכן הם מפנים זה את זה ורוב הגישות הן conflict misses"
+      ],
+      "answer": 3,
+      "explanation": "מספר sets = 32768 / (64 × 8) = 64. ה-index הוא ביטים 6–11, כלומר כתובות שנבדלות ב-4096 מקבלות אותו index. 16 lines מתחרים על 8 ways, ועם LRU כל גישה בלולאה מחזורית היא miss. התיקון: padding (למשל להוסיף 64 בתים לכל שורה) כדי לפזר אותם על sets שונים.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q25",
+      "level": 3,
+      "type": "bug",
+      "prompt": "ring buffer מסוג SPSC: thread יצרן מקדם את tail, thread צרכן מקדם את head. הקוד נכון, אבל ה-throughput נמוך מהצפוי, ו-perf c2c מראה HITM גבוה על ה-line הראשון של המבנה. איפה הבעיה?",
+      "lang": "cpp",
+      "code": "template <size_t N>\nstruct SpscRing {\n  std::atomic<size_t> head{0};  // consumer writes\n  std::atomic<size_t> tail{0};  // producer writes\n  float buf[N];\n};",
+      "bugLine": 4,
+      "choices": [
+        "צריך memory_order_seq_cst בכל הגישות ל-head ול-tail",
+        "N חייב להיות חזקה של 2",
+        "head ו-tail צמודים באותו cache line. כל קידום של אחד מהם מבטל את ה-line אצל ה-thread השני. צריך `alignas(64)` (או 128) על כל אחד מהם",
+        "buf צריך להיות volatile"
+      ],
+      "answer": 2,
+      "explanation": "כל thread כותב לאינדקס שלו וקורא את של השני, אבל שניהם באותו line, ולכן כל כתיבה מבטלת אותו אצל הצד השני. מפרידים אותם ל-lines נפרדים, ובמימוש טוב כל צד גם שומר עותק מקומי (cached) של האינדקס של הצד השני ומרענן אותו רק כשהתור נראה מלא או ריק. חזקה של 2 היא אופטימיזציה ל-modulo ולא קשורה ל-HITM.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q26",
+      "level": 3,
+      "type": "short",
+      "prompt": "L1 hit = 4 מחזורים, miss rate של L1 = 10%. L2 hit = 14 מחזורים, miss rate מקומי של L2 (מתוך הגישות שהגיעו ל-L2) = 20%. DRAM = 200 מחזורים. מה ה-AMAT במחזורים?",
+      "accept": [
+        "9.4"
+      ],
+      "explanation": "AMAT של L2 = 14 + 0.2 × 200 = 54. AMAT כולל = 4 + 0.1 × 54 = 9.4. הטעות הנפוצה היא להחיל את ה-20% על כל הגישות במקום רק על אלה שהגיעו ל-L2. ה-miss rate הגלובלי של L2 הוא 2% בלבד.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "16 threads מגדילים `std::atomic<uint64_t>` משותף אחד עם `fetch_add(1, relaxed)`. מעבר מ-4 threads ל-16 כמעט לא משנה את קצב ההגדלות הכולל. מה ההסבר ומה הפתרון?",
+      "choices": [
+        "relaxed איטי. מעבר ל-seq_cst יאפשר למעבד לסדר טוב יותר",
+        "זה true sharing: כל fetch_add צריך את ה-line במצב Modified, וה-line עובר בין cores אחד-אחד, כך שהקצב חסום במהירות ההעברה. פתרון: מונה מרופד לכל thread וסכימה בזמן קריאה",
+        "זה false sharing, ו-alignas(64) על המונה יפתור את זה",
+        "האטומי ממומש עם mutex פנימי, וצריך לבדוק is_lock_free"
+      ],
+      "answer": 1,
+      "explanation": "כאן כולם כותבים לאותו משתנה בדיוק, ולכן padding לא עוזר. lock xadd מבוצע על line בבעלות בלעדית, וההעברה בין cores עולה עשרות ns, כך שהקצב הכולל הוא בסדר גודל של עשרות מיליוני פעולות בשנייה, בלי קשר למספר ה-threads. ב-x86 עם seq_cst ו-relaxed זו אותה הוראה. sharding פר-thread הופך כל הגדלה לגישה מקומית ב-L1.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "lookup אקראי בטבלה של 256MB. מעבר ל-huge pages של 2MB מאיץ את הקוד בכ-30%, אף על פי שמספר ה-LLC misses כמעט לא השתנה. מה ההסבר?",
+      "choices": [
+        "huge pages מגדילים את ה-L3",
+        "huge pages מבטלים את ה-RFO",
+        "עם דפים של 4KB, ה-TLB מכסה רק כמה MB (למשל 1536 × 4KB = 6MB ב-STLB של Skylake), ולכן כמעט כל lookup הוא גם TLB miss עם page walk. עם 2MB הכיסוי גדל פי 512 וה-page walks כמעט נעלמים",
+        "huge pages מאפשרים ל-prefetcher לחצות גבולות דף, ולכן lookup אקראי נעשה רציף"
+      ],
+      "answer": 2,
+      "explanation": "page walk הוא עד 4 גישות זיכרון נוספות (בטבלאות של 4 רמות), שחלקן גם הן misses. עם 2MB יש רמה אחת פחות בטבלה, והרבה פחות רשומות. ה-cache misses על הנתונים עצמם נשארים כמו שהם, ולכן ה-LLC-load-misses לא משתנה, אבל dTLB-load-misses יורד דרמטית. ה-prefetcher אכן מוגבל לגבולות דף, אבל בגישה אקראית אין לו מה לחזות.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-x86, `int x = 0, y = 0;` (רגילים, לא atomic, אבל נניח שהקומפיילר לא משנה סדר). Thread A: `x = 1; r1 = y;`. Thread B: `y = 1; r2 = x;`. האם התוצאה r1 == 0 ו-r2 == 0 אפשרית בחומרה, ולמה?",
+      "choices": [
+        "לא, MESI מבטיח שכל core רואה את הערך העדכני",
+        "לא, x86 הוא sequentially consistent",
+        "כן, אבל רק במערכות עם כמה sockets",
+        "כן. כל store ממתין ב-store buffer של ה-core שלו, וה-load שאחריו (לכתובת אחרת) מבוצע לפני שה-store הגיע ל-cache. זה StoreLoad reordering, שמותר ב-TSO. צריך mfence או seq_cst"
+      ],
+      "answer": 3,
+      "explanation": "coherence חל על lines שכבר ב-cache. ה-store buffer נמצא לפני ה-cache, ולכן coherence לא רואה אותו. TSO של x86 מבטיח סדר StoreStore, LoadLoad ו-LoadStore, אבל לא StoreLoad. זה הבסיס לכך שאלגוריתם Dekker או Peterson נשבר ב-x86 בלי מחסום, ולכך ש-store עם seq_cst מתורגם ל-xchg (או mov ואחריו mfence). בקוד C++ אמיתי, גם הקומפיילר רשאי לשנות סדר, וזה data race, כך שחייבים atomics.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "על Intel, הלולאה (מווקטרת ב-AVX, 8 floats בכל איטרציה) `b[i] = a[i] * 2.0f` רצה פי 2 לאט מהצפוי. ידוע ש-(b - a) mod 4096 שווה 32 בתים בלבד. הקצאה מחדש של b בכתובת שבה ההפרש mod 4096 גדול בהרבה פותרת את הבעיה. יש רק 2 streams, כך שאין בעיית associativity. מה המנגנון?",
+      "choices": [
+        "4K aliasing: בדיקת התלות המהירה בין loads ל-stores משווה רק את 12 הביטים הנמוכים. ה-load של a[i+8..i+15] נראה זהה ל-store הקודם ל-b[i..i+7], ולכן הוא מעוכב כאילו הוא תלוי בו",
+        "conflict misses ב-L1, כי a ו-b באותו set",
+        "false sharing בין a ל-b",
+        "ה-TLB לא יכול להחזיק שני דפים עם אותו offset"
+      ],
+      "answer": 0,
+      "explanation": "כדי להריץ loads לפני ש-stores קודמים סיימו, המעבד בודק במהירות התאמה חלקית של כתובות. כאן a + 4(i+8) ו-b + 4i נבדלים בכפולה של 4096, ולכן ה-load באיטרציה הבאה מתנגש ב-store של האיטרציה הקודמת ונדחה (Intel מתעד זאת כ-4K aliasing, ויש לכך מונה ב-perf). שני streams לא ממלאים 8 ways, ולכן זה לא conflict. אין threads, כך שאין false sharing. allocators נוטים להחזיר באפרים גדולים מיושרים לדף, ולכן הפרשים קטנים mod 4096 קורים בפועל.",
+      "lesson": "sys.caches",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.caches.q31",
+      "level": 5,
+      "type": "oral",
+      "prompt": "צריך מוני סטטיסטיקה (packets, bytes, drops) ל-pipeline של 10 Mpps על 32 cores, ו-thread ניטור קורא אותם פעם בשנייה. תכנן את המבנה והסבר את ה-trade-offs.",
+      "modelAnswer": "מונה משותף אחד הוא true sharing: 10M fetch_add בשנייה על line אחד שקופץ בין 32 cores הוא צוואר בקבוק ודאי. לכן sharding: מבנה מונים לכל worker, מיושר ל-128 בתים (בגלל ה-adjacent line prefetcher ב-Intel), כך שכל עדכון הוא גישה מקומית ב-L1. כל worker כותב רק למבנה שלו, ולכן אין צורך ב-RMW אטומי: מספיק load ו-store רגילים עם std::atomic ו-memory_order_relaxed, כדי שלא יהיה data race עם הקורא ושלא יהיו torn reads (64-bit מיושר הוא אטומי בפלטפורמות 64-bit, ו-atomic מבטיח את זה גם ב-32-bit). אפשר גם לצבור ב-batch ברגיסטר ולפרסם פעם ב-N חבילות כדי לחסוך stores. הקורא עובר על 32 מבנים ומסכם: הוא גורם ל-HITM פעם בשנייה על 32 lines, וזה זניח. הערכים לא עקביים ביניהם (packets ו-bytes מרגעים מעט שונים), וזה בסדר לניטור. אם צריך עקביות, seqlock פר-worker. ב-NUMA מקצים כל מבנה על ה-node של ה-worker (first touch על ידי ה-worker). מונים חייבים להיות monotonic ו-64-bit כדי שלא יגלשו, והקורא מחשב קצב כהפרש. מאמתים עם perf c2c שאין HITM בנתיב החם.",
+      "rubric": [
+        "מזהה true sharing במונה משותף ובוחר sharding פר-worker",
+        "padding ל-64 או 128 עם נימוק",
+        "relaxed atomic load/store במקום fetch_add, ומסביר torn reads ו-data race",
+        "דן בעקביות בין מונים (מקובל לניטור, או seqlock) ובעלות הקריאה",
+        "NUMA, מונים של 64-bit, ומדידה עם perf c2c"
+      ],
+      "explanation": "השאלה בודקת אם אפשר לחבר coherence, memory model וארכיטקטורה לתכנון אחד, כמו שעושים ב-DPDK ובמערכות רשת.",
       "lesson": "sys.caches",
       "tags": [
         "nvidia"

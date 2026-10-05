@@ -35,7 +35,149 @@
         "בזמן-אמת: closures עם הקצאה ב-std::function הם בעיה. משתמשים ב-inplace_function עם קיבולת קבועה או ב-templates",
         "C++23 deducing this: lambda רקורסיבית בלי std::function, ו-std::move_only_function לcallables שהם move-only"
       ],
-      "diagram": "[x, &y](int a){...}\n   ==>\nstruct __lambda {\n  int x;  int& y;\n  auto operator()(int a) const;\n};"
+      "diagram": "[x, &y](int a){...}\n   ==>\nstruct __lambda {\n  int x;  int& y;\n  auto operator()(int a) const;\n};",
+      "details": [
+        {
+          "title": "מה הקומפיילר בונה מ-lambda",
+          "body": "ביטוי lambda מורכב מ-capture list בסוגריים מרובעים, רשימת פרמטרים, specifiers אופציונליים (`mutable`, `constexpr`, `noexcept`), return type אופציונלי אחרי `->`, וגוף. הקומפיילר מתרגם אותו ל-class אנונימי (closure type) ויוצר ממנו אובייקט (closure object) במקום שבו הביטוי כתוב.\n\n- כל משתנה שנלכד by value הופך ל-data member שמאותחל בהעתקה ברגע יצירת ה-closure, לא בכל קריאה.\n- כל משתנה שנלכד by reference נשמר כ-reference (בפועל בדרך כלל pointer). התקן לא מגדיר איך, ולכן sizeof של closure עם captures by reference הוא פרט מימוש.\n- הגוף הופך ל-`operator()`, שהוא const כברירת מחדל. `mutable` מסיר את ה-const.\n- לכל ביטוי lambda יש טיפוס ייחודי, גם אם שני ביטויים זהים בתו. לכן שומרים lambda ב-`auto`, ב-template parameter, או ב-`std::function`.\n\nreturn type: אם לא כתוב, הוא מוסק מה-return statements כמו ב-auto function. אם יש כמה return עם טיפוסים שונים (int ו-double), זו שגיאת קומפילציה. פותרים עם `-> double`.\n\nIIFE (Immediately Invoked Function Expression): lambda שנקראת מיד, עם `()` אחרי הגוף. משמשת לאתחול משתנה `const` שהחישוב שלו דורש לולאה או if, בלי להשאיר אותו לא-const."
+        },
+        {
+          "title": "captures: by value, by reference, init capture ו-this",
+          "body": "- `[x]` מעתיק את x. אם x הוא reference (`int& r`), מועתק האובייקט שהוא מתייחס אליו, וה-member הוא int ולא reference.\n- `[&x]` לוכד by reference. כל גישה קוראת את הערך העדכני. ה-closure לא יכול לחיות יותר זמן מהמשתנה.\n- `[=]` ו-`[&]` הם default captures: לוכדים אוטומטית רק את מה שהגוף משתמש בו. אפשר לשלב: `[=, &out]` או `[&, x]`.\n- init capture (C++14): `[name = expr]` יוצר member חדש שמאותחל מ-expr ברגע היצירה. משמש להעברת משאבים move-only (`[p = std::move(ptr)]`), להעתקת member יחיד (`[v = value_]`), או לחישוב ערך פעם אחת. גם `[&r = expr]` אפשרי.\n\nמה לא נלכד: רק משתנים עם automatic storage duration (locals ופרמטרים) נלכדים. משתנים גלובליים, static locals ו-thread_local נגישים ישירות, גם עם `[=]`, ולכן ה-lambda רואה את הערך העדכני שלהם בזמן הקריאה.\n\nreference שנלכד by reference: אם r הוא reference לאובייקט x ולוכדים `[&r]`, הגוף ניגש ל-x ישירות ולא ל-r עצמו. לכן מותר להחזיר lambda כזו מפונקציה שקיבלה r כפרמטר reference, כל עוד x עצמו חי.\n\nthis: בתוך member function, שימוש ב-member הוא בעצם `this->member`. `[this]` לוכד את ה-pointer בלבד. `[=]` לכד את this במרומז (הוצא משימוש ב-C++20, צריך לכתוב `[=, this]`), ולכן `[=]` לא מעתיק members. `[*this]` (C++17) מעתיק את כל האובייקט לתוך ה-closure.\n\nstructured bindings: ב-C++17 אסור ללכוד אותם. C++20 מתיר. ב-C++17 עוקפים עם init capture."
+        },
+        {
+          "title": "state בתוך closure: mutable, עותקים ו-static",
+          "body": "עם `mutable`, closure שלכד by value יכול לשנות את העותק שלו, והשינוי נשמר בין קריאות. זה הופך lambda ל-generator או למונה קטן.\n\nאבל ה-state שייך ל-closure object, ולא ל-lambda כמושג. העתקה של ה-closure (`auto g = f;`, או העברה by value לאלגוריתם) יוצרת state נפרד. אלגוריתמים כמו `std::for_each` מקבלים את ה-function object by value ועלולים לעבוד על עותק. for_each מחזיר את העותק שלו בסוף, ולכן אפשר לקרוא ממנו את התוצאה.\n\nמשתנה `static` בתוך הגוף שונה לגמרי: הוא שייך ל-`operator()`, כלומר לטיפוס. כל העותקים של אותו closure חולקים אותו. ב-generic lambda, ה-operator() הוא template, ולכל instantiation (int, double) יש static משלו. שני ביטויי lambda שונים הם טיפוסים שונים עם static נפרד."
+        },
+        {
+          "title": "generic lambdas, constexpr ו-C++20",
+          "body": "generic lambda: פרמטר מטיפוס `auto` הופך את `operator()` ל-template. `[](auto a, auto b){ return a + b; }` עובדת עם int, double ו-std::string. ב-C++20 אפשר לכתוב template parameters במפורש: `[]<class T>(std::vector<T>& v){...}`, כדי לתת שם לטיפוס או לדרוש ששני פרמטרים יהיו מאותו טיפוס.\n\nconstexpr: מ-C++17, operator() של lambda הוא constexpr אוטומטית אם הגוף עומד בדרישות, ולכן אפשר להשתמש בתוצאה ב-`static_assert` או בגודל מערך.\n\nשינויים ב-C++20:\n- closure בלי captures הוא default constructible ו-copy assignable. לפני C++20 ה-default constructor היה deleted.\n- lambdas מותרות ב-unevaluated context, למשל `decltype([](int a, int b){ return a > b; })` כפרמטר comparator של `std::set`.\n- closure עם captures עדיין לא default constructible.\n- מותר ללכוד structured bindings ו-parameter packs ב-init capture.\n\nC++23: deducing this (explicit object parameter, `this auto self`) מאפשר lambda רקורסיבית בלי std::function. `std::move_only_function` מחזיק callables שהם move-only."
+        },
+        {
+          "title": "function pointers, std::function ו-templates",
+          "body": "lambda בלי captures ממירה במרומז ל-function pointer עם אותה חתימה, כי אין לה state. זה מה שמאפשר להעביר אותה ל-C APIs כמו qsort או pthread_create. lambda עם captures לא ממירה, גם אם ה-captures const.\n\nשלוש דרכים לקבל callable כפרמטר:\n- template (`template<class F> void apply(F f)` או `auto f` ב-C++20): הטיפוס המדויק ידוע, הקריאה ישירה ועוברת inlining. אפס overhead, אבל הקוד חייב להיות ב-header ונוצר instantiation לכל טיפוס.\n- `std::function<R(Args...)>`: type erasure. מחזיק כל callable שמתאים לחתימה, בטיפוס אחד. הקריאה עקיפה (דרך pointer לפונקציית invoker), בדרך כלל בלי inlining. closure שגדול מה-small buffer (16 בתים ב-libstdc++, sizeof(std::function) שם הוא 32) מוקצה ב-heap. דורש callable שהוא CopyConstructible.\n- `function_ref` (C++26, או ספריות): view לא-בעלים על callable, שני pointers, בלי הקצאה. מתאים לפרמטר שלא נשמר.\n\nבזמן-אמת נמנעים מ-std::function שמקצה. חלופות: templates, `inplace_function` עם קיבולת קבועה שנבדקת בקומפילציה, או function_ref."
+        },
+        {
+          "title": "lifetime: הבאגים הקלאסיים",
+          "body": "כמעט כל באג של lambda הוא באג lifetime. ה-closure נשמר ורץ מאוחר יותר, בזמן שמה שהוא מצביע עליו כבר מת:\n\n- החזרת lambda שלוכדת local by reference מפונקציה: אחרי ה-return ה-local נהרס.\n- callback אסינכרוני (thread, event bus, timer) עם `[&]` או `[this]`: האובייקט יכול להיהרס לפני שה-callback רץ.\n- לולאה שיוצרת threads עם `[&]`: כל ה-threads חולקים את משתנה הלולאה, יש data race על הקריאה שלו, וב-dangling אחרי סוף הלולאה.\n\nכללי אצבע: lambda שנשמרת או רצה במקום אחר לוכדת by value. אם צריך גישה לאובייקט שאולי ייהרס, לוכדים `weak_ptr` (או `shared_from_this()` כדי להאריך חיים) ובודקים עם `lock()`. אחרת, unsubscribe ב-destructor עם handle מסוג RAII. lambda שרצה מיד ולא נשמרת (predicate של אלגוריתם) יכולה ללכוד by reference בבטחה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מה נוצר מ-`[x, &y](int a){ return x + y + a; }`",
+          "body": "נניח x=2 ו-y=10 כשה-lambda נוצרת.\n\n- הקומפיילר יוצר class עם member בשם x מטיפוס int (ערך 2) ו-member שמתייחס ל-y.\n- operator()(int a) const מחזיר x + y + a.\n- קריאה עם a=1 מחזירה 13.\n- עכשיו משנים y=20 ו-x=5 בחוץ. קריאה עם a=1 מחזירה 2+20+1 = 23: x הוא העותק הישן, y נקרא מחדש.\n- אם הפונקציה שבה y מוגדר חוזרת וה-closure ממשיך לחיות, הקריאה הבאה היא UB."
+        },
+        {
+          "title": "דוגמה: מונה mutable ועותקים",
+          "body": "`auto f = [n = 0]() mutable { return ++n; };`\n\n- f() מחזיר 1. ה-n של f הוא 1.\n- `auto g = f;` מעתיק את ה-closure כולל n=1.\n- f() מחזיר 2, f() מחזיר 3.\n- g() מחזיר 2, כי g ממשיך מהעותק שלו.\n\nאם במקום member היה `static int n` בגוף, f ו-g היו חולקים אותו, כי static שייך ל-operator() של הטיפוס. ב-generic lambda עם static, קריאה עם int וקריאה עם double היו משתמשות בשני static שונים."
+        },
+        {
+          "title": "דוגמה: callback שחי יותר מהאובייקט",
+          "body": "Sensor רושם ל-bus את `[=] { handle(value_); }` מתוך member function.\n\n- [=] לא מעתיק את value_. הוא לוכד this, כי value_ הוא this->value_.\n- t=0: Sensor נוצר בכתובת 0x1000 ורושם callback.\n- t=5: Sensor נהרס. ב-bus עדיין יש closure שמחזיק this=0x1000.\n- t=6: ה-bus מפעיל את ה-callback. handle נקראת על זיכרון משוחרר. UB, ולעתים קרובות קריסה אקראית הרחק מהבאג.\n\nתיקונים: unsubscribe ב-destructor, `[w = weak_from_this()]` ובדיקת lock() בתוך ה-callback, או `[v = value_]` אם צריך רק את הערך."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "closure type ו-closure object",
+          "def": "closure type הוא ה-class האנונימי שהקומפיילר יוצר מביטוי lambda. closure object הוא המופע שנוצר בזמן ריצה. לכל ביטוי lambda טיפוס ייחודי."
+        },
+        {
+          "term": "capture list",
+          "def": "הסוגריים המרובעים בתחילת lambda: מה נלקח מה-scope ואיך (by value, by reference, init capture, this)."
+        },
+        {
+          "term": "capture by value",
+          "def": "`[x]`: עותק של x נשמר כ-member ברגע יצירת ה-closure. אם x הוא reference, מועתק האובייקט שהוא מתייחס אליו."
+        },
+        {
+          "term": "capture by reference",
+          "def": "`[&x]`: ה-closure ניגש למשתנה המקורי ורואה ערכים עדכניים. מסוכן כשה-closure חי יותר מהמשתנה."
+        },
+        {
+          "term": "default capture",
+          "def": "`[=]` או `[&]`: לוכד אוטומטית את כל המשתנים שהגוף משתמש בהם, by value או by reference בהתאמה."
+        },
+        {
+          "term": "init capture",
+          "def": "C++14: `[name = expr]` יוצר member חדש מאותחל מ-expr. מאפשר move של משאבים (`[p = std::move(ptr)]`) ושינוי שם."
+        },
+        {
+          "term": "mutable",
+          "def": "מסיר את ה-const מ-operator() של ה-closure, כך שאפשר לשנות עותקים שנלכדו. השינוי נשמר בין קריאות של אותו closure object."
+        },
+        {
+          "term": "automatic storage duration",
+          "def": "משתנים מקומיים ופרמטרים, שנהרסים ביציאה מה-scope. רק הם נלכדים. גלובליים ו-static נגישים ישירות."
+        },
+        {
+          "term": "[this] מול [*this]",
+          "def": "[this] לוכד pointer לאובייקט, ולכן תלוי ב-lifetime שלו. [*this] (C++17) מעתיק את האובייקט כולו. [=] לכד את this במרומז, ו-C++20 הוציא זאת משימוש."
+        },
+        {
+          "term": "generic lambda",
+          "def": "lambda עם פרמטר `auto`, שה-operator() שלה הוא template. מ-C++20 גם `[]<class T>(T x)` עם template parameters מפורשים."
+        },
+        {
+          "term": "IIFE",
+          "def": "Immediately Invoked Function Expression: lambda שנקראת מיד עם `()` אחרי הגוף. משמשת לאתחול משתנה const שדורש לוגיקה."
+        },
+        {
+          "term": "return type deduction",
+          "def": "בלי `->`, ה-return type מוסק מה-return statements. כמה return עם טיפוסים שונים זו שגיאה."
+        },
+        {
+          "term": "constexpr lambda",
+          "def": "מ-C++17 operator() הוא constexpr אוטומטית כשהגוף מתאים, ואפשר להשתמש בתוצאה בזמן קומפילציה."
+        },
+        {
+          "term": "lambda ב-unevaluated context",
+          "def": "C++20 מתיר lambda בתוך decltype או sizeof, למשל `std::set<int, decltype([](int a, int b){ return a > b; })>`. עובד כי closure בלי captures הוא default constructible מ-C++20."
+        },
+        {
+          "term": "המרה ל-function pointer",
+          "def": "lambda בלי captures ממירה במרומז ל-pointer לפונקציה עם אותה חתימה. עם captures אין המרה, כי pointer לא יכול לשאת state."
+        },
+        {
+          "term": "std::function",
+          "def": "wrapper עם type erasure לכל callable בחתימה נתונה. קריאה עקיפה, ייתכן הקצאה, ודורש callable שאפשר להעתיק."
+        },
+        {
+          "term": "type erasure",
+          "def": "הסתרת הטיפוס הקונקרטי מאחורי interface אחיד בזמן ריצה, בדרך כלל עם pointers לפונקציות. המחיר: indirection ואובדן inlining."
+        },
+        {
+          "term": "SBO (small buffer optimization)",
+          "def": "buffer פנימי בתוך std::function (או std::string) שמחזיק אובייקטים קטנים בלי heap. callable גדול ממנו מוקצה דינמית. הגודל תלוי במימוש."
+        },
+        {
+          "term": "function_ref ו-inplace_function",
+          "def": "function_ref: view לא-בעלים על callable, בלי הקצאה (C++26). inplace_function: כמו std::function עם קיבולת קבועה בתוך האובייקט, אף פעם לא מקצה."
+        },
+        {
+          "term": "std::move_only_function",
+          "def": "C++23: כמו std::function אבל לא דורש copy, ולכן מחזיק closures עם unique_ptr."
+        },
+        {
+          "term": "deducing this",
+          "def": "C++23 explicit object parameter: `[](this auto self, int n)`. ה-lambda מקבלת את עצמה כפרמטר, וכך יכולה לקרוא לעצמה רקורסיבית בלי std::function."
+        },
+        {
+          "term": "dangling capture",
+          "def": "closure שמחזיק reference או pointer לאובייקט שכבר נהרס. הבאג הנפוץ ביותר עם lambdas, בעיקר ב-callbacks, threads ו-lambda שמוחזרת מפונקציה."
+        },
+        {
+          "term": "weak_ptr ב-callback",
+          "def": "לוכדים weak_ptr לאובייקט, ובתחילת ה-callback קוראים ל-lock(). אם האובייקט מת מקבלים nullptr ומדלגים. lock הוא פעולה אטומית ולכן עולה משהו."
+        },
+        {
+          "term": "data race",
+          "def": "שתי גישות במקביל לאותו memory location, לפחות אחת כתיבה, בלי סנכרון. UB. קורה כש-threads לוכדים משתנה לולאה by reference."
+        },
+        {
+          "term": "running sum ו-drift",
+          "def": "ממוצע נע שמחסיר את הישן ומוסיף את החדש צובר שגיאת עיגול ב-floating point לאורך זמן. מתקנים בחישוב מחדש תקופתי או ב-Kahan summation."
+        }
+      ]
     }
   ],
   "questions": [
@@ -363,6 +505,184 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "cpp.lambdas.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה עושה הקוד `const int total = [&] { int s = 0; for (int x : v) s += x; return s; }();`?",
+      "choices": [
+        "מגדיר את total כ-lambda שתחושב בכל גישה",
+        "שגיאת קומפילציה: אי אפשר לאתחל const מ-lambda",
+        "מגדיר lambda ושומר אותה ב-total, בלי לקרוא לה",
+        "יוצר lambda וקורא לה מיד (בגלל ה-`()` בסוף), ו-total מאותחל מהתוצאה. כך אפשר לאתחל const עם לוגיקה מורכבת"
+      ],
+      "answer": 3,
+      "explanation": "זה IIFE: ה-`()` שאחרי הגוף קורא ל-closure מיד, ו-total הוא int רגיל. היתרון: המשתנה נשאר const, ואין צורך להגדיר אותו לא-const ולמלא אותו בלולאה. בלי ה-`()`, total היה closure ולא int, והקוד לא היה מתקמפל, כי אי אפשר לאתחל int מ-closure.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-lambda `[t](int x) { return x > t; }`, מה התפקיד של `[t]` ומה של `(int x)`?",
+      "choices": [
+        "[t] הוא פרמטר אופציונלי ו-(int x) הוא פרמטר חובה",
+        "[t] לוכד את המשתנה t מה-scope שבו ה-lambda נוצרת, ו-(int x) הוא רשימת הפרמטרים שמועברים בכל קריאה",
+        "[t] מגדיר את ה-return type ו-(int x) את הפרמטר",
+        "שניהם פרמטרים, ו-[t] מועבר by reference"
+      ],
+      "answer": 1,
+      "explanation": "ה-capture list קובעת אילו משתנים מהסביבה נכנסים ל-closure, וכאן t מועתק פעם אחת ביצירה. הפרמטרים מגיעים מהקורא בכל קריאה, למשל מאלגוריתם כמו count_if. return type כותבים אחרי `->`, או שהוא מוסק מה-return.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה שם ה-class בספרייה הסטנדרטית (header `<functional>`) שיכול להחזיק כל callable בחתימה נתונה, למשל lambda, function pointer או functor, תחת טיפוס אחד?",
+      "accept": [
+        "std::function",
+        "function"
+      ],
+      "explanation": "`std::function<int(int)>` מחזיק כל callable שמקבל int ומחזיר int, בעזרת type erasure. זה מאפשר לשמור lambdas שונות (שלכל אחת טיפוס ייחודי) באותו vector. המחיר: קריאה עקיפה, ולפעמים הקצאה.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "auto add = [](auto a, auto b) { return a + b; };\nstd::cout << add(1, 2) << add(std::string(\"a\"), \"b\");",
+      "choices": [
+        "3ab",
+        "שגיאת קומפילציה: auto לא מותר בפרמטר של lambda",
+        "3, ואז שגיאת קומפילציה בקריאה השנייה כי הטיפוסים שונים",
+        "12ab"
+      ],
+      "answer": 0,
+      "explanation": "זו generic lambda (C++14): operator() שלה הוא template, ולכל קריאה נוצר instantiation נפרד. בראשונה a ו-b הם int והתוצאה 3. בשנייה a הוא std::string ו-b הוא const char*, ו-operator+ ביניהם מחזיר \"ab\". auto בפרמטרים של פונקציה רגילה מותר רק מ-C++20, אבל ב-lambda מ-C++14.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה קורה עם `auto f = [](bool b) { if (b) return 1; return 2.5; };`?",
+      "choices": [
+        "מתקמפל, וה-return type הוא double",
+        "מתקמפל, וה-return type הוא int, כי הוא נקבע לפי ה-return הראשון",
+        "שגיאת קומפילציה: ה-return type מוסק מכל ה-return statements, והם נותנים int ו-double. פותרים עם `-> double`",
+        "מתקמפל, ו-f(false) מחזיר 2"
+      ],
+      "answer": 2,
+      "explanation": "בלי return type מפורש, כל return מסיק טיפוס, וכולם חייבים להסכים. אין קידום אוטומטי ל-טיפוס המשותף כמו באופרטור ?:. התיקון: `[](bool b) -> double {...}`, או `return 1.0;`.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int x = 1;\nint& r = x;\nauto f = [r] { return r; };\nx = 5;\nstd::cout << f();",
+      "choices": [
+        "5",
+        "1",
+        "שגיאת קומפילציה: אי אפשר ללכוד reference by value",
+        "UB"
+      ],
+      "answer": 1,
+      "explanation": "לכידה by value של reference מעתיקה את האובייקט שהוא מתייחס אליו. ה-member בתוך ה-closure הוא int עם הערך 1, ולא int&. מי שרוצה את הערך העדכני צריך `[&r]` (או `[&x]`). זו מלכודת נפוצה כשמניחים שה-closure 'זוכר' שזה היה reference.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה קורה בקוד הזה ב-C++17?\n\n```cpp\nconstexpr auto sq = [](int x) { return x * x; };\nstatic_assert(sq(4) == 16);\nint arr[sq(3)];\n```",
+      "choices": [
+        "מתקמפל: מ-C++17 ה-operator() של lambda הוא constexpr אוטומטית כשהגוף עומד בדרישות, ולכן sq(4) ו-sq(3) הם constant expressions",
+        "שגיאה: lambda לא יכולה להיות constexpr",
+        "שגיאה: חייבים לכתוב `[](int x) constexpr`",
+        "מתקמפל, אבל arr הוא VLA ולא מערך רגיל"
+      ],
+      "answer": 0,
+      "explanation": "C++17 הוסיף constexpr lambdas: אפשר לכתוב constexpr במפורש אחרי הפרמטרים, אבל זה לא חובה, כי הקומפיילר מסמן את operator() כ-constexpr כשאפשר. sq(3) הוא 9 בזמן קומפילציה, ולכן arr הוא מערך רגיל בגודל 9. ב-C++14 זה לא היה מתקמפל.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q27",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int i = 0;\nauto f = [j = i++] { return j; };\ni += 10;\nstd::cout << f() << i;",
+      "choices": [
+        "111",
+        "010",
+        "1011",
+        "011"
+      ],
+      "answer": 3,
+      "explanation": "ה-init capture מוערך פעם אחת, ברגע יצירת ה-closure: j מאותחל מ-i++ ולכן מקבל 0, ו-i הופך ל-1. אחר כך i גדל ב-10 ל-11. f() מחזיר את j שנשמר, 0. הביטוי ב-init capture רץ ביצירה, לא בקריאה.",
+      "lesson": "cpp.lambdas",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.lambdas.q28",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על closure types נכונות ב-C++20?",
+      "choices": [
+        "closure בלי captures הוא default constructible, ולכן `std::set<int, decltype([](int a, int b){ return a > b; })>` מתקמפל",
+        "closure עם captures by value הוא default constructible",
+        "מותר להשתמש בביטוי lambda בתוך decltype",
+        "שני ביטויי lambda זהים בתו באותו קובץ הם מאותו טיפוס",
+        "closure בלי captures הוא copy assignable"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "עד C++20, ל-closure היה default constructor ו-copy assignment מחוקים, ו-lambda לא הייתה מותרת ב-unevaluated context. C++20 שינה את שניהם, אבל רק ל-closures בלי captures. closure עם captures עדיין לא default constructible, כי אין ממה לבנות את ה-members. כל ביטוי lambda יוצר טיפוס ייחודי, גם עם טקסט זהה.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q29",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "auto f = [] { static int c = 0; return ++c; };\nauto g = f;\nf();\ng();\nauto h = [](auto) { static int c = 0; return ++c; };\nh(1);\nstd::cout << f() << h(2) << h(1.0);",
+      "choices": [
+        "222",
+        "121",
+        "321",
+        "323"
+      ],
+      "answer": 2,
+      "explanation": "static בגוף שייך ל-operator() של ה-closure type, לא ל-closure object. g הוא עותק מאותו טיפוס, ולכן f ו-g חולקים את c: אחרי f() ו-g() הוא 2, והקריאה הבאה מחזירה 3. ב-h, operator() הוא template, ולכל instantiation יש static משלו: עם int מגיעים ל-2, ועם double זו הקריאה הראשונה ולכן 1. זה שונה מ-member שנלכד עם mutable, שבו לכל עותק state נפרד.",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "id": "cpp.lambdas.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "נתון:\n\n```cpp\nint counter = 0;  // global\nauto make(int& c) {\n  return [&c] { return ++c; };\n}\nint main() {\n  auto inc = make(counter);\n  inc(); inc();\n  std::cout << counter;\n}\n```\n\nמה נכון?",
+      "choices": [
+        "UB: c הוא פרמטר של make, וה-closure מחזיק reference אליו אחרי ש-make חזרה",
+        "מדפיס 0, כי ה-closure עובד על עותק",
+        "שגיאת קומפילציה: אי אפשר ללכוד פרמטר שהוא reference",
+        "מדפיס 2: כש-reference נלכד by reference, השימוש בגוף מתייחס לאובייקט שה-reference קשור אליו (counter) ולא ל-reference עצמו, ולכן אין dangling כל עוד counter חי"
+      ],
+      "answer": 3,
+      "explanation": "התקן קובע ש-odr-use של reference שנלכד by reference מתייחס ישירות לאובייקט שהוא קשור אליו. c הוא רק שם נוסף ל-counter, ו-counter הוא גלובלי. אילו make הייתה מקבלת int by value ולוכדת אותו by reference, זה היה dangling. ההבחנה חשובה ב-code review: לא כל `[&param]` הוא באג.",
+      "lesson": "cpp.lambdas"
     }
   ]
 }

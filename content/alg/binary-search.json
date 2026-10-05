@@ -36,7 +36,149 @@
         "בבעיות של שני מערכים (median) – לחפש partition ולא ערך, ולבחור את המערך הקצר",
         "ביצועים: binary search על מערך גדול הוא cache-unfriendly; layout כמו Eytzinger או B-tree משפר משמעותית"
       ],
-      "diagram": "pred: F F F F T T T\n      ^       ^     ^\n      lo      ans   hi\ninvariant: [0,lo) = F, [hi,n) = T"
+      "diagram": "pred: F F F F T T T\n      ^       ^     ^\n      lo      ans   hi\ninvariant: [0,lo) = F, [hi,n) = T",
+      "details": [
+        {
+          "title": "הרעיון: predicate מונוטוני ו-invariant",
+          "body": "binary search לא דורש 'מערך ממוין' אלא **predicate מונוטוני** על טווח: false, false, ..., false, true, ..., true. בכל צעד בודקים את האמצע, ולפי התשובה יודעים בוודאות באיזה חצי נמצא המעבר מ-false ל-true. אחרי log₂ n צעדים נשאר איבר אחד: מיליון איברים דורשים כ-20 השוואות, מיליארד כ-30.\n\nמערך ממוין הוא מקרה פרטי: ה-predicate 'a[i] ≥ x' מונוטוני. אבל אותו מנגנון עובד על פונקציות, על טווח תשובות, ועל מספרים ממשיים.\n\nהתבנית העמידה ביותר: טווח **half-open** [lo, hi) עם invariant: כל אינדקס לפני lo הוא false, וכל אינדקס מ-hi והלאה הוא true. מתחילים lo = 0, hi = n. כל עוד lo < hi: mid = lo + (hi − lo) / 2; אם pred(mid) אז hi = mid, אחרת lo = mid + 1. בסוף lo == hi, וזה האינדקס הראשון שבו pred true (או n אם אין).\n\nלמה זה מסתיים: mid מקיים lo ≤ mid < hi, ולכן גם hi = mid וגם lo = mid + 1 מקטינים את הטווח ממש. שני הענפים לא סימטריים בכוונה: hi = mid (ולא mid − 1), כי mid עצמו עשוי להיות התשובה.\n\nהסגנון הסגור [lo, hi] עם while (lo <= hi) ו-hi = mid − 1 עובד גם הוא, בעיקר לחיפוש ערך מדויק עם return באמצע. הבעיה היא לערבב: hi = mid − 1 בתוך תבנית half-open מפספס את התשובה, ו-lo = mid עם mid מעוגל למטה נתקע."
+        },
+        {
+          "title": "lower_bound, upper_bound ומקבילות ב-Python",
+          "body": "- std::lower_bound(first, last, x): iterator לאיבר הראשון ≥ x, או last אם אין. זה מקום ההכנסה של x שלא שובר את הסדר. הוא **לא** מחזיר last כש-x חסר; צריך לבדוק it != last && *it == x.\n- std::upper_bound: האיבר הראשון > x. upper_bound − lower_bound הוא מספר המופעים של x, ב-O(log n). std::equal_range מחזיר את שניהם יחד.\n- std::binary_search מחזיר **bool** בלבד – כן או לא, בלי מיקום.\n- std::partition_point(first, last, pred): הכללה – האיבר הראשון שבו pred **false**, בהנחה שהטווח מחולק (כל ה-true לפני כל ה-false).\n- ב-Python: bisect.bisect_left מקביל ל-lower_bound, ו-bisect.bisect_right ל-upper_bound. שניהם מחזירים מקום הכנסה ולעולם לא −1.\n\nעל רשימה מקושרת ממוינת binary search לא נותן O(log n): הגעה לאמצע עולה O(n) כי אין random access, וסך הסריקות n/2 + n/4 + ... = O(n). לכן עצי חיפוש ו-skip lists קיימים."
+        },
+        {
+          "title": "באגים קלאסיים: overflow, לולאה אינסופית, off-by-one",
+          "body": "**Overflow ב-mid**: (lo + hi) / 2 עם int יכול לעבור את 2³¹ − 1 כשהאינדקסים מעל 2³⁰ – signed overflow הוא undefined behavior, ובפועל mid שלילי. זה הבאג שנמצא ב-Arrays.binarySearch של Java ב-2006. התיקון: lo + (hi − lo) / 2.\n\n**לולאה אינסופית ב-'האחרון שמקיים'**: כשמחפשים את האינדקס **האחרון** שבו pred true, הענף המתקדם הוא lo = mid. אם mid מעוגל למטה, בטווח באורך 2 (hi = lo + 1) מתקבל mid = lo ואין התקדמות. התיקון: mid = lo + (hi − lo + 1) / 2 (עיגול למעלה), יחד עם hi = mid − 1 בענף השני. כלל: הענף שמשאיר את mid בטווח קובע את כיוון העיגול.\n\n**ערבוב סגנונות**: בתבנית half-open, hi = mid − 1 זורק את mid גם כשהוא התשובה. בתבנית סגורה, hi = mid עם lo <= hi יכול להיתקע.\n\n**כפילויות**: binary search 'רגיל' שמחזיר כשמוצא a[mid] == x מחזיר מופע כלשהו, לא בהכרח הראשון. לראשון צריך lower_bound."
+        },
+        {
+          "title": "Binary search on answer",
+          "body": "הרבה בעיות לא נראות כמו חיפוש: 'מה המהירות המינימלית', 'מה הקיבולת המינימלית', 'מה המרחק המקסימלי'. הסימן: אפשר לבדוק בקלות 'האם תשובה x אפשרית', והבדיקה מונוטונית ב-x. אז מחפשים בינארית על **טווח התשובות**.\n\n- **Koko Eating Bananas**: 'אפשר לסיים במהירות k?' – אם כן, כל k גדול יותר גם כן. טווח [1, max(piles)]; הבדיקה סוכמת ceil(p / k) ב-O(n). ceil בלי float: p / k + (p % k != 0).\n- **Capacity To Ship Packages Within D Days** ו-**Split Array Largest Sum** (minimize the maximum): טווח [max(a), sum(a)]. הבדיקה greedy: ממלאים חלק עד שהחבילה הבאה לא נכנסת, וסופרים חלקים. אם ≤ k (או ≤ D), התשובה אפשרית. הגבול התחתון max(a) חשוב – מתחתיו איבר בודד לא נכנס.\n- **Aggressive Cows / Magnetic Force Between Two Balls** (maximize the minimum): 'אפשר להציב m כדורים כך שהמרחק המינימלי ≥ d?' – מונוטוני הפוך: אם d אפשרי, כל d קטן יותר אפשרי. ממיינים את המיקומים ומציבים greedy משמאל. מחפשים את ה-d **האחרון** שאפשרי (mid מעוגל למעלה).\n- **ספירה עם 'מדרגות'**: Kth Smallest in a Sorted Matrix – binary search על ערך v וספירת איברים ≤ v ב-O(n) מהפינה השמאלית-תחתונה. ה-v המינימלי עם count ≥ k הוא נקודת קפיצה של פונקציית מדרגות ולכן ערך שקיים במטריצה.\n- **ממוצע מקסימלי** (Maximum Average Subarray II, אורך ≥ k): binary search על הממוצע x. 'קיים תת-מערך עם ממוצע ≥ x' שקול ל-'קיים תת-מערך באורך ≥ k עם סכום (a[i] − x) ≥ 0', שבודקים עם prefix sums: לכל j משווים את P[j] למינימום של P[0..j−k]. O(n) לבדיקה.\n\nהסיבוכיות: O(log V) צעדים כפול עלות הבדיקה, למשל O(n log V). עם n עד 10⁵ וערכים עד 10⁹ זה בערך 3·10⁶."
+        },
+        {
+          "title": "מערכים ממוינים חלקית: rotated, peak, דו-ממד",
+          "body": "**Rotated sorted array** (למשל [4, 5, 6, 7, 0, 1, 2]): בכל טווח לפחות חצי אחד ממוין. אם a[lo] ≤ a[mid] השמאלי ממוין: אם a[lo] ≤ x < a[mid] הולכים שמאלה, אחרת ימינה. אחרת הימני ממוין ובודקים באופן סימטרי. O(log n).\n\n**Find Minimum in Rotated**: משווים את a[mid] ל-a[hi]. אם a[mid] > a[hi] המינימום מימין ל-mid (lo = mid + 1), אחרת ב-mid או משמאלו (hi = mid). השוואה ל-a[lo] לא מבחינה בין 'סיבוב' ל-'לא מסובב בכלל'.\n\n**עם כפילויות** (Rotated II): כש-a[lo] == a[mid] == a[hi] אי אפשר לדעת איזה חצי ממוין, ומכווצים lo++ ו-hi−−. worst-case Θ(n) – וזה חסם תחתון, כי חיפוש 0 יחיד בין אחדות דורש לבדוק הכול.\n\n**Find Peak Element** (a[i] ≠ a[i+1], מחוץ לגבולות −∞): אם a[mid] < a[mid+1] יש שיא מימין – הולכים 'בעלייה', ובסוף יורדים או מגיעים לקצה. המערך לא ממוין, אבל ה-predicate 'יש שיא בצד הזה' מספיק.\n\n**מטריצה דו-ממדית**:\n- Search a 2D Matrix (כל שורה ממוינת והאיבר הראשון בשורה גדול מהאחרון בקודמת): זה מערך ממוין אחד באורך m·n. אינדקס k מתאים ל-(k / n, k % n). O(log(mn)).\n- Search a 2D Matrix II (שורות ועמודות ממוינות בנפרד): 'מדרגות' מהפינה הימנית-עליונה – אם האיבר גדול מ-x יורדים עמודה שמאלה, אם קטן יורדים שורה. O(m + n)."
+        },
+        {
+          "title": "Median of Two Sorted Arrays: חיפוש על חלוקה",
+          "body": "במקום לחפש ערך, מחפשים **חלוקה**: לוקחים i איברים ראשונים מ-A ו-j = (m + n + 1) / 2 − i מ-B, כך שיחד הם 'החצי השמאלי'. החלוקה תקינה אם A[i−1] ≤ B[j] ו-B[j−1] ≤ A[i] (עם ±∞ מחוץ לגבולות). אם A[i−1] > B[j], לקחנו יותר מדי מ-A ומקטינים את i; אחרת מגדילים.\n\nהחציון: אם m + n אי-זוגי, max(A[i−1], B[j−1]); אחרת הממוצע שלו עם min(A[i], B[j]).\n\nמחפשים על **המערך הקצר** (m ≤ n): כך j תמיד בטווח [0, n] לכל i ב-[0, m], והסיבוכיות O(log min(m, n)). חלופות: merge עד האמצע O(m + n); binary search על ערכים עם ספירה O(log(range) · log(m+n)); 'זריקת חצי מכל מערך' נכונה רק בגדלים שווים."
+        },
+        {
+          "title": "מספרים ממשיים וביצועים בפועל",
+          "body": "**Bisection** על double: חציית טווח עד שהוא קטן מספיק. epsilon מוחלט (hi − lo > 1e-9) מסוכן: ליד 10¹² ה-ULP של double הוא כ-10⁻⁴, הטווח לא יקטן מתחת ל-1e-9 לעולם, ו-mid יהיה שווה ל-lo או ל-hi – לולאה אינסופית. פתרונות: מספר איטרציות קבוע (100 חציות מספיקות), עצירה יחסית, עצירה כש-mid == lo או mid == hi, או binary search על ה-bit pattern (ל-double חיוביים הייצוג כ-int64 מונוטוני). bisection גאומטרי (sqrt(lo · hi)) מתכנס מהר יותר בשגיאה יחסית כשהטווח חוצה סדרי גודל.\n\n**Cache**: על מערך ענק, כל אחד מהצעדים הראשונים של binary search נוחת על cache line אחרת – cache miss כמעט בכל צעד, ובנוסף branch misprediction (50/50). שיפורים:\n- **Eytzinger layout**: מאחסנים את המערך בסדר BFS של עץ חיפוש בינארי מרומז (הילדים של k ב-2k ו-2k + 1). הרמות העליונות צפופות ונשארות ב-cache, וכל הצאצאים בכמה רמות קדימה רציפים, כך שאפשר prefetch שלהם. בשילוב חיפוש branchless זה מהיר פי כמה ממערך ממוין רגיל.\n- **B-tree / S-tree**: כמה מפתחות בכל צומת (בגודל cache line), כך שכל cache miss מתקדם log₂(B) רמות ולא אחת.\n\nחלופות לפי הבעיה: heap ל-k-th smallest (O(k log n)), DP ל-Split Array (O(k·n²)) – binary search on answer לרוב מהיר יותר כשהבדיקה לינארית."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: lower_bound של 4 ב-[1, 3, 3, 5, 8, 9]",
+          "body": "half-open, lo = 0, hi = 6. ה-predicate: a[i] ≥ 4.\n\n- mid = 3: a[3] = 5 ≥ 4 → hi = 3.\n- mid = 1: a[1] = 3 < 4 → lo = 2.\n- mid = 2: a[2] = 3 < 4 → lo = 3.\n- lo == hi == 3, עוצרים.\n\nהתשובה 3: מקום ההכנסה של 4, לפני ה-5. גם אם 4 לא קיים, lower_bound לא מחזיר 'לא נמצא' אלא את המקום. upper_bound של 3 היה מחזיר גם הוא 3 (הראשון > 3), ו-lower_bound של 3 מחזיר 1, כך שיש 3 − 1 = 2 מופעים של 3."
+        },
+        {
+          "title": "דוגמה: Koko עם piles = [3, 6, 7, 11] ו-h = 8",
+          "body": "טווח [1, 11]. hours(k) = Σ ceil(p / k).\n\n- mid = 6: 1 + 1 + 2 + 2 = 6 ≤ 8 → אפשרי, hi = 6.\n- mid = 3: 1 + 2 + 3 + 4 = 10 > 8 → לא, lo = 4.\n- mid = 5: 1 + 2 + 2 + 3 = 8 ≤ 8 → hi = 5.\n- mid = 4: 1 + 2 + 2 + 3 = 8 ≤ 8 → hi = 4.\n- lo == hi == 4.\n\nהתשובה 4. ארבע בדיקות של O(n) במקום לנסות כל k מ-1 עד 11. עם ערכים עד 10⁹ זה כ-30 בדיקות."
+        },
+        {
+          "title": "דוגמה: חיפוש 0 ב-[4, 5, 6, 7, 0, 1, 2]",
+          "body": "סגנון סגור, lo = 0, hi = 6.\n\n- mid = 3, a = 7. a[lo] = 4 ≤ 7, ולכן השמאלי [4..7] ממוין. האם 4 ≤ 0 < 7? לא → lo = 4.\n- mid = 5, a = 1. a[lo] = 0 ≤ 1, השמאלי [0, 1] ממוין. האם 0 ≤ 0 < 1? כן → hi = 4.\n- mid = 4, a = 0 → נמצא באינדקס 4.\n\nבכל צעד בדקנו רק את החצי הממוין, כי שם קל לדעת לפי הקצוות אם x בפנים."
+        },
+        {
+          "title": "דוגמה: 'האחרון שמקיים' – שורש שלם של 17",
+          "body": "מחפשים את ה-x האחרון עם x² ≤ 17, בטווח [0, 17]. הענף המתקדם הוא lo = mid, ולכן mid מעוגל למעלה.\n\n- mid = 9: 81 > 17 → hi = 8.\n- mid = 4: 16 ≤ 17 → lo = 4.\n- mid = 6: 36 > 17 → hi = 5.\n- mid = 5: 25 > 17 → hi = 4.\n- lo == hi == 4.\n\nאם היינו מעגלים למטה, במצב lo = 4, hi = 5 היה יוצא mid = 4, lo = 4 שוב – לולאה אינסופית."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Monotonic predicate",
+          "def": "פונקציה בוליאנית על טווח שהיא false עד נקודה מסוימת ו-true מאז (או להפך). זה התנאי ההכרחי היחיד ל-binary search."
+        },
+        {
+          "term": "Half-open [lo, hi) ו-invariant",
+          "def": "התבנית lo = 0, hi = n, while (lo < hi), hi = mid או lo = mid + 1. invariant: לפני lo הכול false, מ-hi והלאה הכול true. בסוף lo הוא ה-true הראשון."
+        },
+        {
+          "term": "lower_bound / upper_bound / equal_range",
+          "def": "האיבר הראשון ≥ x / הראשון > x / שניהם יחד. ההפרש הוא מספר המופעים. מחזירים מקום הכנסה, לא 'לא נמצא'."
+        },
+        {
+          "term": "std::binary_search",
+          "def": "מחזיר bool בלבד: האם x קיים. למיקום משתמשים ב-lower_bound."
+        },
+        {
+          "term": "std::partition_point",
+          "def": "האיבר הראשון שבו predicate נעשה false, בטווח מחולק. הכללה של lower_bound לכל predicate."
+        },
+        {
+          "term": "bisect_left / bisect_right",
+          "def": "המקבילות ב-Python ל-lower_bound ול-upper_bound. מחזירים אינדקס הכנסה, לעולם לא −1."
+        },
+        {
+          "term": "Overflow של mid",
+          "def": "(lo + hi) / 2 גולש כשהאינדקסים גדולים; signed overflow הוא UB. כותבים lo + (hi − lo) / 2."
+        },
+        {
+          "term": "Round-up mid",
+          "def": "כשהענף המתקדם הוא lo = mid (חיפוש 'האחרון שמקיים'), mid = lo + (hi − lo + 1) / 2, אחרת לולאה אינסופית בטווח באורך 2."
+        },
+        {
+          "term": "Binary search on answer",
+          "def": "חיפוש על טווח התשובות עם בדיקה 'האם x אפשרי' מונוטונית. O(log V · check). מופיע ב-minimize the maximum / maximize the minimum."
+        },
+        {
+          "term": "Koko Eating Bananas",
+          "def": "המהירות המינימלית לסיים ערימות תוך h שעות. טווח [1, max], בדיקה Σ ceil(p / k)."
+        },
+        {
+          "term": "Split Array Largest Sum / Capacity To Ship Packages",
+          "def": "חלוקה ל-k חלקים רציפים עם מקסימום מינימלי. טווח [max(a), sum(a)], בדיקה greedy שסופרת חלקים."
+        },
+        {
+          "term": "Aggressive Cows / Magnetic Force",
+          "def": "maximize the minimum distance: בדיקה greedy שמציבה משמאל, ומחפשים את ה-d האחרון האפשרי."
+        },
+        {
+          "term": "Rotated sorted array",
+          "def": "מערך ממוין שסובב. בכל טווח לפחות חצי אחד ממוין. עם כפילויות ה-worst-case יורד ל-Θ(n)."
+        },
+        {
+          "term": "Find Peak Element",
+          "def": "מציאת איבר גדול משכניו במערך לא ממוין ב-O(log n): הולכים לכיוון השכן הגבוה, כי שם מובטח שיא."
+        },
+        {
+          "term": "Search a 2D Matrix / Staircase search",
+          "def": "מטריצה שכולה ממוינת כרצף: binary search על m·n עם (k / n, k % n). מטריצה עם שורות ועמודות ממוינות: מדרגות מפינה ב-O(m + n)."
+        },
+        {
+          "term": "Kth Smallest in a Sorted Matrix",
+          "def": "binary search על ערכים וספירת ≤ v במדרגות ב-O(n). התשובה היא נקודת קפיצה של הספירה ולכן ערך קיים."
+        },
+        {
+          "term": "Median of Two Sorted Arrays",
+          "def": "binary search על נקודת החלוקה במערך הקצר, עם התנאי A[i−1] ≤ B[j] ו-B[j−1] ≤ A[i]. O(log min(m, n))."
+        },
+        {
+          "term": "Maximum Average Subarray II",
+          "def": "binary search על הממוצע x; הבדיקה: האם קיים תת-מערך באורך ≥ k עם סכום (a[i] − x) ≥ 0, עם prefix sums ומינימום רץ."
+        },
+        {
+          "term": "Bisection ו-ULP",
+          "def": "חציית טווח ממשי. ULP הוא המרחק בין שני double סמוכים וגדל עם הערך, ולכן epsilon מוחלט עלול לא להתקיים לעולם. משתמשים במספר איטרציות קבוע או בעצירה יחסית."
+        },
+        {
+          "term": "Binary search על רשימה מקושרת",
+          "def": "אין random access, ולכן הגעה לאמצע עולה O(n) וסך הכול O(n). זו הסיבה לעצי חיפוש ול-skip list."
+        },
+        {
+          "term": "Eytzinger layout",
+          "def": "סידור מערך ממוין בסדר BFS של עץ בינארי מרומז (ילדים של k ב-2k, 2k + 1). ידידותי ל-cache ול-prefetch, ובשילוב branchless מהיר פי כמה."
+        },
+        {
+          "term": "B-tree / S-tree layout",
+          "def": "כמה מפתחות בצומת בגודל cache line, כך שכל cache miss מתקדם כמה רמות בבת אחת."
+        },
+        {
+          "term": "Branch misprediction",
+          "def": "כשהמעבד מנחש לא נכון את כיוון ה-if הוא זורק עבודה (~15–20 מחזורים). ב-binary search הכיוון אקראי, ולכן גרסה branchless (עם cmov) עוזרת."
+        }
+      ]
     }
   ],
   "questions": [
@@ -60,7 +202,11 @@
       "level": 1,
       "type": "short",
       "prompt": "כמה השוואות לכל היותר צריך binary search על מערך ממוין של 1,000,000 איברים (בערך)?",
-      "accept": ["20", "~20", "21"],
+      "accept": [
+        "20",
+        "~20",
+        "21"
+      ],
       "explanation": "2²⁰ ≈ 1,048,576, ולכן אחרי כ-20 חציות נשאר איבר אחד. זה ההבדל הדרמטי בין O(log n) ל-O(n): 20 מול מיליון.",
       "lesson": "alg.binary-search"
     },
@@ -86,7 +232,12 @@
       "lang": "cpp",
       "code": "std::vector<int> v{1, 2, 2, 2, 5};\nauto lb = std::lower_bound(v.begin(), v.end(), 2);\nauto ub = std::upper_bound(v.begin(), v.end(), 2);\nstd::cout << (lb - v.begin()) << ' ' << (ub - v.begin());",
       "prompt": "מה יודפס?",
-      "choices": ["1 3", "0 4", "1 4", "2 4"],
+      "choices": [
+        "1 3",
+        "0 4",
+        "1 4",
+        "2 4"
+      ],
       "answer": 2,
       "explanation": "lower_bound מצביע על ה-2 הראשון (אינדקס 1), ו-upper_bound על האיבר הראשון שגדול מ-2, ה-5 (אינדקס 4). ההפרש, 3, הוא מספר המופעים של 2 – כך סופרים מופעים ב-O(log n). '1 3' מתקבל אם חושבים ש-upper_bound מחזיר את ה-2 האחרון.",
       "lesson": "alg.binary-search"
@@ -108,7 +259,9 @@
       "answer": 1,
       "explanation": "זה הבאג המפורסם שנמצא ב-Arrays.binarySearch של Java ב-2006, אחרי כמעט עשור. עם lo ו-hi קרובים ל-1.5·10⁹ הסכום עובר את 2³¹ − 1. הסגנון הסגור [lo, hi] עם lo <= hi עקבי ונכון, ו-hi = −1 הוא מצב חוקי שפשוט מסיים את הלולאה.",
       "lesson": "alg.binary-search",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.binary-search.q06",
@@ -117,7 +270,12 @@
       "lang": "python",
       "code": "import bisect\na = [1, 3, 3, 5]\nprint(bisect.bisect_left(a, 4), bisect.bisect_right(a, 3))",
       "prompt": "מה יודפס?",
-      "choices": ["2 3", "3 3", "3 2", "-1 3"],
+      "choices": [
+        "2 3",
+        "3 3",
+        "3 2",
+        "-1 3"
+      ],
       "answer": 1,
       "explanation": "bisect_left(a, 4) מחזיר את מקום ההכנסה של 4 – לפני ה-5, אינדקס 3; הוא לא מחזיר −1 כשהערך חסר. bisect_right(a, 3) מחזיר את המקום אחרי ה-3 האחרון – גם אינדקס 3. אלה המקבילות של lower_bound ו-upper_bound.",
       "lesson": "alg.binary-search"
@@ -136,7 +294,9 @@
       "answer": 3,
       "explanation": "ה-predicate הוא false עבור k קטנים ו-true מנקודה מסוימת, ולכן מחפשים את ה-true הראשון בטווח [1, max(piles)]. הערימות לא צריכות להיות ממוינות – הבדיקה עוברת על כולן ב-O(n). זה binary search on answer.",
       "lesson": "alg.binary-search",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.binary-search.q08",
@@ -152,7 +312,9 @@
       "answer": 1,
       "explanation": "בכל טווח של מערך מסובב, לפחות אחד החצאים ממוין, ובחצי ממוין קל לבדוק אם x בתוכו לפי הקצוות. השוואה ל-a[mid] בלבד נכשלת כי הסדר שבור בנקודת הסיבוב. אפשר גם למצוא את נקודת הסיבוב ב-binary search ואז לחפש – גם O(log n), אבל לא בסריקה לינארית.",
       "lesson": "alg.binary-search",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.binary-search.q09",
@@ -170,7 +332,9 @@
       ],
       "explanation": "max(piles) תמיד מספיק כי h ≥ n. סכום השעות יכול להגיע ל-10⁴·10⁹, ולכן long long.",
       "lesson": "alg.binary-search",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.binary-search.q10",
@@ -219,7 +383,9 @@
       "answer": 3,
       "explanation": "דוגמה: [1,1,1,1,1,0,1] ו-[1,0,1,1,1,1,1] נראים זהים בשלוש נקודות הדגימה, אבל ה-0 בצדדים שונים. כל אלגוריתם חייב לבדוק Ω(n) איברים במקרה הגרוע (חיפוש 0 בין אחדות). הסרת כפילויות עצמה O(n). זו follow-up קלאסית: המועמד צריך לזהות את ההידרדרות ולא רק 'לתקן את התנאי'.",
       "lesson": "alg.binary-search",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.binary-search.q13",
@@ -235,7 +401,9 @@
       "answer": 0,
       "explanation": "החלוקה מגדירה 'חצי שמאלי' משותף, והתנאי על ארבעת הקצוות מבטיח שכל השמאלי ≤ כל הימני. merge נכון אבל לינארי. החיפוש על ערכים עובד (למספרים שלמים) אבל איטי יותר ותלוי בטווח. זריקת חצי מכל מערך נכונה רק כשהגדלים שווים; בגדלים שונים צריך לזרוק כמות שווה משני הצדדים, אחרת החציון זז.",
       "lesson": "alg.binary-search",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.binary-search.q14",
@@ -251,7 +419,9 @@
       "answer": 0,
       "explanation": "'האם אפשר עם מקסימום ≤ mid' מונוטוני, והבדיקה הגרידית (ממלאים חלק עד שאי אפשר) אופטימלית לבדיקה הזו: היא משתמשת במינימום חלקים. אם צריך ≤ k חלקים, mid אפשרי (תמיד אפשר לפצל עוד). DP נכון אבל O(k·n²). חיתוך לפי sum/k לא אופטימלי. הגבול התחתון max(a) חשוב: מתחתיו הבדיקה תיכשל על איבר בודד.",
       "lesson": "alg.binary-search",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.binary-search.q15",
@@ -312,7 +482,9 @@
       ],
       "explanation": "שאלה שמחברת binary search ל-numerical analysis, תחום חזק של מהנדסי DSP. מראיינים ב-NVIDIA אוהבים לראות הבנה של floating point ולא רק של אלגוריתמים.",
       "lesson": "alg.binary-search",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.binary-search.q19",
@@ -327,6 +499,180 @@
       ],
       "answer": 3,
       "explanation": "ב-[1,2,3,4,5] (סיבוב באפס), השוואה ל-a[lo] אומרת 'שמאל ממוין, לך ימינה' ומפספסת את 1. עם a[hi]: אם a[mid] < a[hi] הטווח [mid, hi] ממוין והמינימום שלו הוא a[mid], ולכן hi = mid; אחרת lo = mid + 1. אפשר לתקן גם את גרסת a[lo] עם בדיקה מקדימה 'הטווח כבר ממוין', אבל השוואה ל-a[hi] נקייה יותר.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו מהבעיות הבאות היא דוגמה ל-binary search on answer?",
+      "choices": [
+        "מציאת זוג במערך לא ממוין שסכומו target",
+        "הקיבולת המינימלית של משאית כדי לשלוח את כל החבילות, לפי הסדר, תוך D ימים",
+        "בדיקה אם מחרוזת היא palindrome",
+        "ספירת מספר הערכים השונים במערך"
+      ],
+      "answer": 1,
+      "explanation": "בבעיית הקיבולת אפשר לבדוק ב-O(n) 'האם קיבולת C מספיקה', והבדיקה מונוטונית: קיבולת גדולה יותר תמיד מספיקה אם קטנה מספיקה. לכן מחפשים בינארית בטווח [max(w), sum(w)]. שאר הבעיות נפתרות ב-hash map, ב-two pointers או ב-hash set.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה binary search על רשימה מקושרת ממוינת לא משיג O(log n)?",
+      "choices": [
+        "כי רשימה מקושרת לא יכולה להיות ממוינת",
+        "כי ההשוואות ברשימה מקושרת יקרות יותר",
+        "כי אין random access: כדי להגיע לאיבר האמצעי צריך לעבור על חצי מהרשימה, וסך הסריקות הוא O(n)",
+        "זה כן O(log n), אם שומרים pointer לזנב"
+      ],
+      "answer": 2,
+      "explanation": "binary search מניח גישה ב-O(1) לכל אינדקס. ברשימה, ההגעה לאמצע עולה n/2 צעדים, ואחר כך n/4 וכן הלאה – סך הכול O(n), כמו חיפוש לינארי. pointer לזנב לא עוזר להגיע לאמצע. עצי חיפוש ו-skip lists פותרים בדיוק את הבעיה הזו.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "מחפשים בינארית את השורש השלם של 30, כלומר ה-x הגדול ביותר עם x·x ≤ 30. מה התשובה?",
+      "accept": [
+        "5"
+      ],
+      "explanation": "5² = 25 ≤ 30 ו-6² = 36 > 30. ה-predicate 'x² ≤ 30' הוא true ואז false, ולכן מחפשים את ה-true האחרון – עם mid מעוגל למעלה.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "code": "def isqrt(n):\n    lo, hi = 0, n\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        if mid * mid <= n:\n            lo = mid\n        else:\n            hi = mid - 1\n    return lo\n\nprint(isqrt(17), isqrt(1))",
+      "prompt": "מה יודפס?",
+      "choices": [
+        "4 0",
+        "5 1",
+        "4 1",
+        "לולאה אינסופית"
+      ],
+      "answer": 2,
+      "explanation": "עבור 17: mid = 9 → hi = 8; mid = 4 → lo = 4; mid = 6 → hi = 5; mid = 5 → hi = 4; תוצאה 4. עבור 1: lo = 0, hi = 1, mid = 1, 1 ≤ 1 → lo = 1. אין לולאה אינסופית כי mid מעוגל למעלה (+1), ולכן lo = mid תמיד מתקדם.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מחזיר std::binary_search(v.begin(), v.end(), x) על vector ממוין?",
+      "choices": [
+        "bool: האם x נמצא בטווח",
+        "iterator ל-x, או v.end() אם אינו קיים",
+        "את האינדקס של x, או −1",
+        "iterator לאיבר הראשון ≥ x"
+      ],
+      "answer": 0,
+      "explanation": "std::binary_search מחזיר רק bool. כדי לקבל מיקום משתמשים ב-lower_bound (האיבר הראשון ≥ x) ובודקים *it == x. std::find מחזיר iterator או end, אבל בחיפוש לינארי. −1 הוא מוסכמה של מימושים ידניים, לא של ה-STL.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Search a 2D Matrix: מטריצה m×n שבה כל שורה ממוינת, והאיבר הראשון בכל שורה גדול מהאחרון בשורה הקודמת. מה הדרך היעילה?",
+      "choices": [
+        "binary search על כל שורה – O(m log n)",
+        "מדרגות מהפינה הימנית-עליונה – O(m + n), שזה האופטימום",
+        "binary search על אינדקס וירטואלי k ∈ [0, m·n), כשהאיבר הוא matrix[k / n][k % n] – O(log(m·n))",
+        "binary search על העמודה הראשונה בלבד – O(log m)"
+      ],
+      "answer": 2,
+      "explanation": "בגלל שהשורות 'ממשיכות' זו את זו, המטריצה היא מערך ממוין אחד באורך m·n, והמרת האינדקס היא חילוק ושארית. מדרגות ב-O(m + n) מתאימות לגרסה החלשה (II), שבה רק השורות והעמודות ממוינות בנפרד. חיפוש בעמודה הראשונה רק מוצא את השורה – צריך עוד חיפוש בתוכה.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "code": "std::vector<int> v{2, 4, 8, 16, 32};\nauto it = std::partition_point(v.begin(), v.end(),\n                               [](int x) { return x < 10; });\nstd::cout << (it - v.begin()) << ' ' << *it;",
+      "prompt": "מה יודפס?",
+      "choices": [
+        "2 8",
+        "3 16",
+        "4 32",
+        "3 8"
+      ],
+      "answer": 1,
+      "explanation": "partition_point מחזיר את האיבר הראשון שבו ה-predicate false – כאן הראשון שאינו קטן מ-10, כלומר 16 באינדקס 3. זה בדיוק lower_bound(10) בגרסה כללית. 2 8 מתקבל אם מחפשים את ה-true האחרון.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Magnetic Force Between Two Balls: מיקומי סלים (לא ממוינים) ו-m כדורים; רוצים למקסם את המרחק המינימלי בין כל שני כדורים. מה הפתרון?",
+      "choices": [
+        "ממיינים, ומפזרים את הכדורים במרווחים שווים לפי (max − min) / (m − 1)",
+        "binary search על d עם בדיקה 'אפשר להציב עם מרחק מינימלי ≤ d', ומחפשים את ה-d הראשון שבו true",
+        "DP על (סל, כדורים) – O(n²·m), שזה האופטימום",
+        "ממיינים, binary search על d עם בדיקה greedy: מציבים כדור בסל הראשון, וכל כדור הבא בסל הראשון שרחוק ≥ d מהקודם; מחפשים את ה-d האחרון שבו אפשר להציב m – O(n log n + n log V)"
+      ],
+      "answer": 3,
+      "explanation": "'אפשר עם מרחק ≥ d' מונוטוני יורד: אם d אפשרי גם כל d קטן יותר. הבדיקה הגרידית אופטימלית, כי הצבה הכי שמאלית אפשרית רק משאירה יותר מקום לבאים. מחפשים את ה-true האחרון, ולכן mid מעוגל למעלה. מרווחים שווים לא מתחשבים במיקומי הסלים האמיתיים. 'מרחק מינימלי ≤ d' הוא ה-predicate הלא נכון – הוא true תמיד עבור d גדול.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q28",
+      "level": 4,
+      "type": "bug",
+      "lang": "python",
+      "code": "def first_ge(a, x):\n    lo, hi = 0, len(a)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if a[mid] >= x:\n            hi = mid - 1\n        else:\n            lo = mid + 1\n    return lo",
+      "bugLine": 6,
+      "prompt": "הפונקציה אמורה להחזיר את האינדקס הראשון עם a[i] ≥ x (כמו bisect_left). על a = [1, 3, 5, 7] ו-x = 5 היא מחזירה 1. איפה הבאג?",
+      "choices": [
+        "mid צריך להיות מעוגל למעלה",
+        "התנאי צריך להיות lo <= hi",
+        "hi = mid − 1 זורק את mid, שעשוי להיות התשובה; בתבנית half-open צריך hi = mid",
+        "צריך להתחיל עם hi = len(a) − 1"
+      ],
+      "answer": 2,
+      "explanation": "בתבנית [lo, hi), כש-a[mid] ≥ x, mid הוא מועמד והוא צריך להישאר בטווח. עם hi = mid − 1: mid = 2 (a = 5) → hi = 1, ואז האינדקס 2 אבד. עיגול למעלה דרוש רק כשהענף הוא lo = mid. lo <= hi יגרום לגישה ל-a[len(a)]. hi = len(a) − 1 משנה את ה-invariant אבל לא מתקן את הענף.",
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "binary search על מערך ממוין של 10⁸ int32 (400MB) איטי בהרבה ממה ש-27 השוואות מרמזות. מימוש עם Eytzinger layout מהיר פי כמה. מה ההסבר?",
+      "choices": [
+        "Eytzinger משנה את הסיבוכיות ל-O(log log n)",
+        "במערך ממוין כל צעד בחלק הראשון של החיפוש נוחת על cache line אחרת (cache miss), והכיוון של ה-branch אקראי. ב-Eytzinger (סדר BFS של עץ מרומז, ילדים ב-2k ו-2k+1) הרמות העליונות צפופות ב-cache, הצאצאים כמה רמות קדימה רציפים ואפשר לעשות להם prefetch, והחיפוש נכתב branchless",
+        "Eytzinger דוחס את המפתחות ולכן המערך קטן פי 2",
+        "Eytzinger מאפשר SIMD שמשווה את כל המערך בבת אחת"
+      ],
+      "answer": 1,
+      "explanation": "הסיבוכיות נשארת O(log n); ההבדל הוא בקבוע של זיכרון. במערך ממוין, הצעדים הראשונים קופצים מרחקים של מאות MB, וכל אחד הוא cache miss של ~100ns. ב-Eytzinger, 16 הצאצאים ברמה 4 קדימה הם רציפים (cache line של 64B), ולכן prefetch בצעד k מסתיר את ה-latency של צעד k + 4. branchless מבטל ~50% misprediction. אין דחיסה, ו-SIMD על כל המערך הוא O(n).",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.binary-search"
+    },
+    {
+      "id": "alg.binary-search.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Maximum Average Subarray II: למצוא את הממוצע המקסימלי של תת-מערך רציף באורך ≥ k (n עד 10⁵, ממשיים). עושים binary search על הממוצע x. מה הבדיקה הנכונה ל-'האם קיים תת-מערך עם ממוצע ≥ x'?",
+      "choices": [
+        "sliding window באורך k בדיוק עם הממוצע המקסימלי – O(n)",
+        "Kadane על a[i] − x, ובדיקה שהתוצאה ≥ 0",
+        "מפחיתים x מכל איבר, בונים prefix sums P, ולכל j ≥ k בודקים אם P[j] − min(P[0..j−k]) ≥ 0, עם מינימום רץ – O(n)",
+        "binary search לא תקף כאן כי הממוצע אינו מונוטוני באורך"
+      ],
+      "answer": 2,
+      "explanation": "ממוצע ≥ x שקול לסכום של (a[i] − x) ≥ 0. מגבלת האורך ≥ k אומרת שנקודת ההתחלה i חייבת להיות ≤ j − k, ולכן מחזיקים מינימום רץ של P עד j − k. Kadane מתעלם ממגבלת האורך. חלון באורך k בדיוק מפספס תתי-מערכים ארוכים יותר עם ממוצע גבוה יותר. ה-binary search הוא על x (הבדיקה מונוטונית ב-x), לא על האורך, ולכן הוא תקף. עם כ-50–100 איטרציות על double, או לפי דיוק נדרש.",
       "lesson": "alg.binary-search"
     }
   ]

@@ -35,7 +35,157 @@
         "sharded counters ו-padding ל-cache line לסטטיסטיקות בקצב גבוה",
         "atomic שאינו lock-free לא בטוח ל-signal handlers ולזיכרון משותף בין processes"
       ],
-      "diagram": "x = x + 1 (two ops):\nT1: load 5 ........ store 6\nT2:    load 5 .. store 6\n=> 6, one update lost\n\nfetch_add (one RMW):\nT1: [5->6]   T2: [6->7] => 7"
+      "diagram": "x = x + 1 (two ops):\nT1: load 5 ........ store 6\nT2:    load 5 .. store 6\n=> 6, one update lost\n\nfetch_add (one RMW):\nT1: [5->6]   T2: [6->7] => 7",
+      "details": [
+        {
+          "title": "אטומיות מול סדר: שתי הבטחות שונות",
+          "body": "כשמדברים על std::atomic מערבבים בקלות שתי הבטחות נפרדות. הראשונה היא **אטומיות**: כל פעולה על המשתנה נראית לשאר ה-threads כאילו קרתה ברגע אחד. אין מצב ביניים, אין חצי ערך, ואין עדכון שהולך לאיבוד בתוך פעולה אחת. השנייה היא **סדר** (ordering): מה הפעולה הזו מבטיחה לגבי גישות זיכרון **אחרות** שלפניה ואחריה. האטומיות שייכת לטיפוס, הסדר נקבע בפרמטר ה-memory order של כל פעולה.\n\n**data race** מוגדר בתקן כך: שני threads ניגשים לאותו מקום בזיכרון, לפחות אחד כותב, לפחות אחת הגישות אינה אטומית, ואין ביניהן יחס happens-before. data race הוא undefined behavior, לא רק תוצאה לא צפויה: הקומפיילר רשאי להניח שהוא לא קורה, ולכן יכול למשל להוציא קריאה מלולאה ולהשאיר את הערך ברגיסטר לנצח. גישות מקבילות ל-std::atomic אינן data race בהגדרה, גם עם relaxed.\n\n**tearing** הוא קריאה שמחזירה חצי מערך ישן וחצי מערך חדש, למשל משתנה של 64 ביט שנכתב בשתי הוראות של 32 ביט על מעבד 32 ביט, או struct גדול שמועתק במספר צעדים. atomic מבטיח שאין tearing. משתנה רגיל לא מבטיח את זה, גם אם על x86-64 קריאה מיושרת של 8 בתים בפועל אטומית.\n\nלכל משתנה אטומי יש **modification order**: סדר כולל אחד של כל הכתיבות אליו, שכל ה-threads מסכימים עליו. **coherence** אומר שאם thread קרא ערך מסוים, קריאה מאוחרת יותר שלו מאותו משתנה לא תחזיר ערך מוקדם יותר בסדר הזה. ההבטחה הזו היא פר-משתנה בלבד: אין שום הבטחה, ב-relaxed, לגבי הסדר שבו thread אחר רואה כתיבות לשני משתנים **שונים**."
+        },
+        {
+          "title": "פעולות read-modify-write ו-CAS",
+          "body": "פעולת **RMW** (read-modify-write) קוראת ערך, מחשבת ממנו ערך חדש וכותבת, הכול כפעולה אטומית אחת: fetch_add, fetch_sub, fetch_and, fetch_or, fetch_xor, exchange ו-compare_exchange. כולן מחזירות את הערך **הישן**. ++x ו-x += n על atomic הם fetch_add. לעומת זאת x = x + 1 הם שתי פעולות נפרדות (load ואז store), וביניהן thread אחר יכול לכתוב. RMW תמיד קורא את הערך האחרון ב-modification order, ולכן גם fetch_add עם relaxed לא מאבד עדכונים.\n\nלגבי טיפוסים שלמים עם סימן, התקן מגדיר שחשבון אטומי עוטף כמו unsigned (two's complement). לכן fetch_add על atomic<int> שמחזיק INT_MAX נותן INT_MIN, וזה **לא** UB, בניגוד ל-int רגיל.\n\n**compare_exchange (CAS)** מקבל expected ו-desired. אם הערך הנוכחי שווה ל-expected, הוא כותב desired ומחזיר true. אחרת הוא לא כותב, **מעדכן את expected לערך שראה**, ומחזיר false. העדכון הזה הוא הלב של **CAS loop**: קוראים פעם אחת, מחשבים ערך חדש, מנסים CAS, ואם נכשל, expected כבר מחזיק את הערך העדכני ומחשבים מחדש. ההשוואה היא לפי ייצוג בזיכרון (כמו memcmp), לא לפי ==. לכן -0.0 ו-+0.0 שונים, ו-NaN עם אותם bits שווה לעצמו.\n\n**weak מול strong**: compare_exchange_weak רשאי להיכשל **spuriously**, כלומר להחזיר false גם כשהערך שווה ל-expected. בארכיטקטורות **LL/SC** (load-linked / store-conditional, למשל ARM בלי LSE, POWER, RISC-V) ה-CAS בנוי מקריאה שמסמנת reservation על ה-cache line וכתיבה מותנית שנכשלת אם ה-reservation אבד מכל סיבה: interrupt, פינוי ה-line, כתיבה של core אחר לאותה line גם לכתובת אחרת. strong חייב להסתיר את זה בלולאה פנימית. כלל אצבע: weak כשממילא יש לולאה, strong לניסיון בודד.\n\n**check-then-act** הוא הבאג הקלאסי: load, החלטה, ואז RMW נפרד. כל פעולה אטומית לחוד, אבל ההחלטה מבוססת על ערך שאולי כבר לא נכון. הפתרון הוא לאחד את הבדיקה והכתיבה ל-CAS אחד."
+        },
+        {
+          "title": "מה קורה בחומרה: cache lines, MESI ו-lock prefix",
+          "body": "המעבד לא עובד מול הזיכרון ישירות אלא מול cache, ביחידות של **cache line** (64 בתים ב-x86 וברוב ה-ARM). פרוטוקול **MESI** (Modified, Exclusive, Shared, Invalid) דואג שלכל line יהיה בכל רגע לכל היותר core אחד שמחזיק אותה במצב כתיבה (M או E). כדי לכתוב, core צריך לקבל בעלות בלעדית ולבטל (invalidate) את העותקים אצל כל השאר.\n\nב-x86 פעולת RMW היא הוראה עם **lock prefix** (lock xadd, lock cmpxchg, ו-xchg שהוא locked תמיד). ה-core תופס את ה-line במצב M, מונע מאחרים לקחת אותה עד סוף ההוראה, ומבצע קריאה וכתיבה. ה-lock prefix הוא גם full barrier ב-x86, ולכן relaxed RMW לא זול יותר מ-seq_cst RMW על x86. אם המשתנה **לא מיושר** וחוצה שני cache lines, המעבד נאלץ לנעול את כל ה-bus (**split lock**), וזה עולה אלפי מחזורים ומאט את כל המכונה. Linux יודע לזהות split locks ולהזהיר או להעניש. std::atomic מיישר את הטיפוס כדי שזה לא יקרה.\n\nב-x86, שהוא **TSO** (total store order), load רגיל הוא כבר acquire ו-store רגיל הוא כבר release. לכן load מכל סוג וגם store relaxed או release הם mov פשוט. רק store עם seq_cst דורש xchg או mov ואחריו mfence, כדי למנוע את ה-reordering היחיד ש-x86 מרשה: store ואחריו load לכתובת אחרת. ב-ARMv8 יש הוראות ldar ו-stlr ל-acquire ו-release, ו-ARMv8.1 הוסיף **LSE** (הוראות atomic ישירות כמו ldadd ו-cas) במקום לולאות LL/SC.\n\n**contention**: כשהרבה cores כותבים לאותה line, היא קופצת ביניהם (cache line bouncing). כל העברה היא עשרות עד מאות ns, ופעולות על אותה line מתבצעות בטור. לכן throughput של מונה אטומי משותף לא גדל, ולרוב יורד, כשמוסיפים threads."
+        },
+        {
+          "title": "ביצועים: false sharing, padding ו-sharding",
+          "body": "**false sharing** קורה כששני משתנים בלתי תלויים, שכל אחד נכתב על ידי thread אחר, יושבים באותה cache line. אין שום שיתוף לוגי, אבל החומרה מעבירה את ה-line הלוך ושוב כאילו יש. התסמין: קוד שאמור להתרחב ליניארית עם מספר ה-threads נשאר שטוח.\n\nהפתרון הוא **padding**: alignas(64) על כל מונה או struct פר-thread, כך שכל אחד מקבל line משלו. C++17 מגדיר std::hardware_destructive_interference_size כקבוע לגודל המינימלי שמונע false sharing, אבל הוא תלוי קומפיילר ודגלי קומפילציה, ולכן הרבה צוותים כותבים 64 (או 128 במעבדים שמביאים זוג lines יחד, כמו חלק מה-Intel עם adjacent line prefetch, ו-Apple M עם lines של 128).\n\n**sharding**: במקום מונה משותף אחד, מונה לכל thread (או לכל core), כל אחד ב-line משלו. הכותב מגדיל רק את שלו, ובלי תחרות זה זול מאוד. הקורא סוכם את כולם. המחיר: הקריאה יקרה יותר, והסכום הוא לא snapshot של רגע אחד. לסטטיסטיקות זה מקובל.\n\nעוד טריק: אל תכתוב אם לא צריך. לולאת CAS של max שבודקת קודם אם הערך כבר גדול מספיק לא מלכלכת את ה-line ולא מעבירה אותה למצב M."
+        },
+        {
+          "title": "lock-free או לא, ומה מותר לשים ב-atomic",
+          "body": "std::atomic<T> דורש ש-T יהיה **trivially copyable** (אפשר להעתיק אותו כ-bytes, בלי copy constructor מותאם). לכן atomic<std::string> אסור. atomic עצמו **לא ניתן להעתקה ולא להזזה**: העתקה של atomic לאחר דורשת לקרוא אחד ולכתוב לשני, ואלה לא פעולה אטומית אחת, אז התקן מוחק את ה-copy constructor. כותבים b{a.load()} במפורש.\n\nאם החומרה לא תומכת בפעולה אטומית בגודל של T, המימוש משתמש ב-**lock פנימי**. ב-GCC זה libatomic, עם טבלת locks לפי hash של הכתובת. הפעולות עדיין אטומיות ונכונות בין threads של אותו process, אבל: הן לא בטוחות ב-**signal handler** (אם ה-signal קטע thread שמחזיק את ה-lock, ה-handler ייתקע), והן לא עובדות בין שני processes שחולקים shared memory, כי לכל process טבלה משלו. is_lock_free() בודק בזמן ריצה, is_always_lock_free בזמן קומפילציה. רק **atomic_flag** מובטח lock-free בכל פלטפורמה. ב-x86-64 יש cmpxchg16b ל-16 בתים, אבל GCC בכל זאת מדווח atomic של 16 בתים כלא lock-free, בין היתר כי load באמצעות cmpxchg16b כותב לזיכרון ולא עובד על דף read-only.\n\nתוספות חשובות בתקנים חדשים: C++20 הוסיף fetch_add ו-fetch_sub ל-atomic של floating point, **atomic_ref** (פעולות אטומיות על אובייקט רגיל קיים, בתנאי שבזמן חייו כל הגישות המקבילות אליו עוברות דרך atomic_ref ושהוא מיושר ל-required_alignment), **atomic<shared_ptr<T>>**, ו-**wait/notify**. C++26 מוסיף fetch_max ו-fetch_min.\n\nshared_ptr: מונה ההפניות ב-control block אטומי, ולכן עותקים שונים שחולקים אותו אובייקט בטוחים. אבל אובייקט shared_ptr **אחד** שאחד כותב אליו ואחר קורא ממנו הוא data race, כי הוא שני pointers שמתעדכנים בנפרד."
+        },
+        {
+          "title": "memory order בקצרה, ו-wait/notify",
+          "body": "כל פעולה אטומית מקבלת memory order. **relaxed**: רק אטומיות ו-coherence, בלי שום סדר מול גישות אחרות. מתאים למונים ולסטטיסטיקות. **acquire** (בקריאה) ו-**release** (בכתיבה): אם thread B קרא ב-acquire ערך שנכתב ב-release על ידי A, כל מה ש-A כתב לפני ה-release נראה ל-B אחרי ה-acquire. זה נקרא synchronizes-with, והוא יוצר happens-before. זה מה ש-mutex עושה: lock הוא acquire ו-unlock הוא release. **seq_cst** (ברירת המחדל): acquire/release ועוד סדר גלובלי אחד לכל פעולות ה-seq_cst. הנושא הזה מפורט בשיעור memory-order. לענייננו: spinlock עם relaxed אינו spinlock, כי שום דבר לא מונע מהגישות של ה-critical section לזלוג מחוץ לו.\n\n**wait/notify (C++20)**: a.wait(old) חוסם כל עוד הערך שווה ל-old (השוואת bits). הוא רשאי להתעורר spuriously מבפנים, אבל חוזר רק אחרי שראה ערך שונה. a.notify_one ו-notify_all מעירים ממתינים. ב-Linux עבור 4 בתים זה ממומש מעל **futex**: syscall שמרדים thread על כתובת בזיכרון רק אם הערך בה עדיין שווה לערך הצפוי, ובכך נמנע lost wakeup. מלכודת: אם הערך השתנה וחזר ל-old לפני שהממתין בדק (בעיית ABA), הממתין ימשיך לישון."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: עדכון אבוד ב-x = x + 1 מול fetch_add",
+          "body": "x מתחיל ב-5. שני threads מבצעים x = x + 1 (load ואז store נפרדים).\n\n- t1: T1 קורא 5\n- t2: T2 קורא 5\n- t3: T1 כותב 6\n- t4: T2 כותב 6\n\nשתי הגדלות, תוצאה 6. כל גישה אטומית לחוד, אז אין UB, אבל עדכון אחד אבד. עם fetch_add: T1 מבצע RMW 5 ל-6 כפעולה אחת, ה-line נשארת אצלו במצב M עד סוף ההוראה. T2 לא יכול לקרוא באמצע, הוא מקבל 6 וכותב 7. מה לומדים: אטומיות של כל גישה לא נותנת אטומיות של הצירוף."
+        },
+        {
+          "title": "דוגמה: CAS loop של atomic_max עם שני threads",
+          "body": "a = 10. T1 רוצה max עם 15, T2 רוצה max עם 12.\n\n- T1: cur = 10. 10 < 15, מנסה CAS(10 ל-15).\n- T2: cur = 10. 10 < 12, מנסה CAS(10 ל-12).\n- T2 מנצח: a = 12. ה-CAS של T1 נכשל, ו-cur שלו מתעדכן ל-12.\n- T1: 12 < 15, מנסה CAS(12 ל-15) ומצליח. a = 15.\n\nאם הסדר הפוך (T1 מנצח ו-a = 15), ה-CAS של T2 נכשל, cur שלו מתעדכן ל-15, ו-15 < 12 שקרי, אז T2 יוצא **בלי לכתוב**. זה בדיוק למה התנאי נבדק בכל סיבוב: כך לא דורסים ערך גדול יותר, ולא מלכלכים cache line בכתיבה מיותרת."
+        },
+        {
+          "title": "דוגמה: check-then-act על slots",
+          "body": "slots = 1, ושני threads רוצים לקחת slot: בודקים load() > 0 ואז fetch_sub(1).\n\n- T1: load מחזיר 1, התנאי נכון\n- T2: load מחזיר 1, התנאי נכון\n- T1: fetch_sub, slots = 0\n- T2: fetch_sub, slots = -1\n\nשניהם קיבלו slot. עם CAS: שניהם קוראים cur = 1 ומנסים CAS(1 ל-0). רק אחד מצליח. השני נכשל, cur שלו מתעדכן ל-0, התנאי cur > 0 שקרי, והוא מחזיר false."
+        },
+        {
+          "title": "דוגמה: CAS על double עם -0.0",
+          "body": "a מחזיק -0.0 (ביט סימן 1, שאר הביטים 0). expected הוא +0.0 (כל הביטים 0). לפי == הם שווים, אבל CAS משווה bytes: הביט העליון שונה, ולכן ה-CAS נכשל. a נשאר -0.0, ו-expected מקבל את ייצוג הערך שנראה, כלומר -0.0, כך ש-signbit(expected) הוא 1. ההפך עם NaN: שני NaN עם אותו ייצוג יצליחו ב-CAS, למרות ש-NaN == NaN שקרי."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "std::atomic<T>",
+          "def": "טיפוס שכל פעולה עליו אטומית וגישה מקבילית אליו אינה data race. T חייב להיות trivially copyable. לא ניתן להעתקה."
+        },
+        {
+          "term": "data race",
+          "def": "שתי גישות מקבילות לאותו מקום, לפחות אחת כתיבה ולפחות אחת לא אטומית, בלי happens-before ביניהן. undefined behavior בתקן C++."
+        },
+        {
+          "term": "tearing",
+          "def": "קריאה שמחזירה חלק מערך ישן וחלק מערך חדש, כי הכתיבה או הקריאה בוצעו בכמה צעדים. atomic מונע את זה."
+        },
+        {
+          "term": "RMW (read-modify-write)",
+          "def": "פעולה שקוראת, מחשבת וכותבת כיחידה אטומית אחת: fetch_add, exchange, compare_exchange ועוד. מחזירה את הערך הישן."
+        },
+        {
+          "term": "compare_exchange (CAS)",
+          "def": "כותב desired רק אם הערך שווה ל-expected (השוואת bits). בכישלון מעדכן את expected לערך הנוכחי ומחזיר false."
+        },
+        {
+          "term": "spurious failure",
+          "def": "כישלון של compare_exchange_weak למרות שהערך שווה ל-expected. נובע מ-LL/SC ומטופל בלולאה."
+        },
+        {
+          "term": "LL/SC",
+          "def": "load-linked / store-conditional: זוג הוראות (למשל ldxr/stxr ב-ARM) שבו הכתיבה מצליחה רק אם ה-reservation על ה-cache line לא אבד מאז הקריאה."
+        },
+        {
+          "term": "LSE",
+          "def": "Large System Extensions ב-ARMv8.1: הוראות atomic ישירות (ldadd, cas, swp) שמחליפות לולאות LL/SC ומתרחבות טוב יותר בתחרות."
+        },
+        {
+          "term": "lock prefix",
+          "def": "קידומת הוראה ב-x86 שהופכת RMW לאטומי על ידי החזקת ה-cache line בבלעדיות. היא גם full barrier."
+        },
+        {
+          "term": "split lock",
+          "def": "פעולה אטומית על כתובת שחוצה שני cache lines. ב-x86 היא נועלת את כל ה-bus ועולה אלפי מחזורים."
+        },
+        {
+          "term": "MESI",
+          "def": "פרוטוקול cache coherence עם מצבים Modified, Exclusive, Shared, Invalid. כתיבה דורשת בעלות בלעדית על ה-line."
+        },
+        {
+          "term": "cache line bouncing / contention",
+          "def": "cache line שעוברת שוב ושוב בין cores שכותבים אליה. כל העברה עולה עשרות עד מאות ns והפעולות מתבצעות בטור."
+        },
+        {
+          "term": "false sharing",
+          "def": "משתנים בלתי תלויים באותה cache line שנכתבים על ידי threads שונים, וגורמים ל-bouncing למרות שאין שיתוף לוגי."
+        },
+        {
+          "term": "sharding / padding",
+          "def": "מונה פר-thread שמיושר ל-cache line משלו (alignas(64)), והקורא סוכם. מבטל תחרות על חשבון קריאה יקרה יותר."
+        },
+        {
+          "term": "check-then-act",
+          "def": "קריאה, החלטה ואז פעולה נפרדת. בין הקריאה לפעולה הערך יכול להשתנות. מתקנים ב-CAS אחד שמאחד בדיקה וכתיבה."
+        },
+        {
+          "term": "modification order",
+          "def": "סדר כולל אחד של כל הכתיבות למשתנה אטומי מסוים, שכל ה-threads מסכימים עליו."
+        },
+        {
+          "term": "coherence",
+          "def": "ההבטחה שקריאות של אותו משתנה באותו thread לא חוזרות אחורה ב-modification order. פר-משתנה בלבד."
+        },
+        {
+          "term": "memory order",
+          "def": "הפרמטר שקובע מה פעולה אטומית מבטיחה לגבי סדר גישות אחרות: relaxed, acquire, release, acq_rel, seq_cst."
+        },
+        {
+          "term": "acquire / release",
+          "def": "קריאת acquire שרואה ערך של כתיבת release רואה גם את כל מה שנכתב לפני ה-release. זה הבסיס של mutex ושל פרסום נתונים."
+        },
+        {
+          "term": "TSO",
+          "def": "Total Store Order, מודל הזיכרון של x86: ה-reordering היחיד המותר הוא store ואחריו load לכתובת אחרת. לכן load ו-store רגילים הם כבר acquire ו-release."
+        },
+        {
+          "term": "volatile",
+          "def": "מבטיח שהקומפיילר יבצע כל גישה, לצורך MMIO. לא נותן אטומיות ולא סדר בין threads, וגישה מקבילית אליו היא data race."
+        },
+        {
+          "term": "is_lock_free / atomic_flag",
+          "def": "is_lock_free אומר אם המימוש משתמש בהוראות חומרה או ב-lock פנימי. רק atomic_flag מובטח lock-free תמיד."
+        },
+        {
+          "term": "libatomic lock table",
+          "def": "המימוש של GCC ל-atomic שאינו lock-free: locks לפי hash של כתובת. לא signal-safe ולא עובד בין processes."
+        },
+        {
+          "term": "atomic_ref",
+          "def": "C++20: פעולות אטומיות על אובייקט רגיל קיים. כל הגישות המקבילות אליו בזמן החיים של ה-ref חייבות לעבור דרך atomic_ref, והאובייקט חייב להיות מיושר ל-required_alignment."
+        },
+        {
+          "term": "wait / notify ו-futex",
+          "def": "C++20: wait(old) חוסם עד שהערך שונה מ-old. ב-Linux ממומש מעל futex, syscall שישן על כתובת רק אם הערך בה עדיין הצפוי."
+        },
+        {
+          "term": "ABA",
+          "def": "ערך שהשתנה מ-A ל-B וחזר ל-A. מי שמשווה רק ערכים לא מבחין שמשהו קרה. ב-wait/notify זה גורם לממתין להמשיך לישון."
+        }
+      ]
     }
   ],
   "questions": [
@@ -338,6 +488,236 @@
       ],
       "answer": 1,
       "explanation": "compare_exchange משווה את ייצוג האובייקט בזיכרון (כמו memcmp), לא עם `==`. -0.0 ו-+0.0 שווים לפי `==` אבל שונים בביט הסימן, ולכן ה-CAS נכשל, a נשאר -0 (cout מדפיס -0), ו-e מתעדכן ל--0.0 כך ש-signbit מחזיר 1. באותו אופן, NaN עם אותם bits כן יצליח בהשוואה, למרות ש-NaN == NaN הוא false.",
+      "lesson": "conc.atomics",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.atomics.q18",
+      "level": 1,
+      "type": "short",
+      "prompt": "איך נקרא המצב שבו שני threads ניגשים לאותו משתנה לא-אטומי במקביל, לפחות אחד מהם כותב, ואין ביניהם סנכרון? (שתי מילים באנגלית)",
+      "accept": [
+        "data race",
+        "datarace",
+        "race"
+      ],
+      "explanation": "זה data race, ובתקן C++ הוא undefined behavior. הקומפיילר רשאי להניח שהוא לא קורה, ולכן התוצאה יכולה להיות גרועה הרבה יותר מסתם ערך לא צפוי. גישות מקבילות ל-std::atomic אינן data race בהגדרה.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו מהפעולות הבאות על `std::atomic<unsigned>` היא פעולת read-modify-write?",
+      "choices": [
+        "`a.load()`",
+        "`a.fetch_or(4)`",
+        "`a.store(4)`",
+        "`a.is_lock_free()`"
+      ],
+      "answer": 1,
+      "explanation": "fetch_or קורא את הערך, מחשב OR עם 4 וכותב, הכול כפעולה אטומית אחת, ומחזיר את הערך הישן. load רק קורא, store רק כותב, ו-is_lock_free בכלל לא ניגש לערך אלא מדווח על המימוש.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה tearing?",
+      "choices": [
+        "מצב שבו thread נקטע על ידי ה-scheduler באמצע critical section",
+        "פינוי של cache line מה-L1 בגלל כתיבה של core אחר",
+        "כישלון של compare_exchange_weak בלי סיבה",
+        "קריאה שמחזירה חלק מהערך הישן וחלק מהערך החדש, כי הכתיבה או הקריאה בוצעו בכמה צעדים"
+      ],
+      "answer": 3,
+      "explanation": "tearing קורה למשל כשמשתנה של 64 ביט נכתב בשתי הוראות של 32 ביט, וקורא באמצע רואה חצי-חצי. std::atomic מבטיח שאין tearing. כישלון בלי סיבה של weak נקרא spurious failure, ופינוי line בגלל כתיבה של אחר הוא invalidation.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q21",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "std::atomic<int> a{5};\nint r = a.fetch_add(3);\nstd::cout << r << ' ' << a;",
+      "choices": [
+        "8 8",
+        "5 5",
+        "5 8",
+        "8 5"
+      ],
+      "answer": 2,
+      "explanation": "כל פעולות fetch_* מחזירות את הערך **שלפני** השינוי, ולכן r הוא 5, ו-a אחרי ההוספה הוא 8. אם צריך את הערך החדש כותבים `a.fetch_add(3) + 3` או `a += 3`, שמחזיר את הערך החדש.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה עושה `int old = a.exchange(7);` על `std::atomic<int> a`?",
+      "choices": [
+        "כותב 7 רק אם a שווה ל-old",
+        "מחליף את הערכים של a ושל old, כמו std::swap",
+        "כותב 7 ל-a ומחזיר את הערך שהיה בו קודם, כפעולה אטומית אחת",
+        "קורא את a, ואם הוא שונה מ-7 כותב 7"
+      ],
+      "answer": 2,
+      "explanation": "exchange הוא RMW בלתי מותנה: כותב תמיד ומחזיר את הערך הקודם. הוא שימושי למשל ב-spinlock (exchange(true) והחזרה false אומרת שתפסת) או ל-\"קח את כל העבודה שהצטברה ואפס\". כתיבה מותנית היא compare_exchange.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q23",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הקוד הבא לא מתקמפל. למה?",
+      "lang": "cpp",
+      "code": "std::atomic<int> a{1};\n\nvoid snapshot() {\n  std::atomic<int> b = a;\n  std::cout << b.load();\n}",
+      "bugLine": 4,
+      "choices": [
+        "צריך לציין memory order בהעתקה",
+        "ה-copy constructor של std::atomic מחוק, כי העתקה של atomic לאחר אינה פעולה אטומית אחת. כותבים `std::atomic<int> b{a.load()};`",
+        "atomic מקומי (על ה-stack) אסור",
+        "אי אפשר לקרוא ל-load על atomic שאינו גלובלי"
+      ],
+      "answer": 1,
+      "explanation": "העתקה של atomic דורשת לקרוא מאחד ולכתוב לשני, ושתי הפעולות האלה לא אטומיות יחד, ולכן התקן מוחק copy ו-move. זה גם הסיבה ש-`std::vector<std::atomic<int>>` לא יכול לגדול עם push_back. atomic מקומי חוקי לגמרי.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q24",
+      "level": 3,
+      "type": "multi",
+      "prompt": "8 threads, לכל אחד `std::atomic<uint64_t>` משלו בתוך מערך `counters[8]`, וכל thread מגדיל רק את שלו. ה-throughput לא גדל עם מספר ה-threads. אילו טענות נכונות?",
+      "choices": [
+        "כל 8 המונים יושבים באותה cache line של 64 בתים, ולכן היא קופצת בין ה-cores (false sharing)",
+        "הבעיה היא ה-memory order. מעבר ל-relaxed יגרום לזה להתרחב",
+        "`alignas(64)` על struct שעוטף כל מונה ייתן לכל מונה line משלו",
+        "`std::hardware_destructive_interference_size` הוא קבוע של C++17 לגודל שמונע false sharing, אבל ערכו תלוי במימוש",
+        "כיוון שכל thread כותב רק למונה שלו, החומרה לא מעבירה את ה-line בין cores"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "8 מונים של 8 בתים הם בדיוק 64 בתים, line אחת. ה-coherence עובד ברמת line, לא ברמת משתנה, ולכן כל כתיבה דורשת בעלות בלעדית על כל ה-line, למרות שאין שיתוף לוגי. relaxed לא עוזר, כי ב-x86 ה-RMW נשאר lock xadd וה-line עדיין קופצת. padding ל-64 (או 128 במעבדים שמביאים זוגות lines) פותר.",
+      "lesson": "conc.atomics",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.atomics.q25",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "std::atomic<int> a{10};\nint e = 7;\nbool r1 = a.compare_exchange_strong(e, 20);\nbool r2 = a.compare_exchange_strong(e, 30);\nstd::cout << r1 << r2 << ' ' << a << ' ' << e;",
+      "choices": [
+        "01 30 10",
+        "00 10 10",
+        "01 30 30",
+        "11 30 7"
+      ],
+      "answer": 0,
+      "explanation": "ה-CAS הראשון: a (10) שונה מ-e (7), לכן נכשל, a לא משתנה, ו-e מתעדכן ל-10. ה-CAS השני: a (10) שווה ל-e (10), לכן מצליח ו-a נהיה 30. בהצלחה expected **לא** משתנה, ולכן e נשאר 10. זה בדיוק מה שמאפשר CAS loop בלי load נוסף.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q26",
+      "level": 4,
+      "type": "bug",
+      "prompt": "spinlock שמגן על `int balance` לא-אטומי. בבדיקות על ARM מתקבלים ערכים שגויים. איפה הבאג?",
+      "lang": "cpp",
+      "code": "std::atomic_flag f = ATOMIC_FLAG_INIT;\nint balance = 0;\n\nvoid deposit(int v) {\n  while (f.test_and_set(std::memory_order_relaxed)) {}\n  balance += v;\n  f.clear(std::memory_order_release);\n}",
+      "bugLine": 5,
+      "choices": [
+        "test_and_set לא אטומי, ולכן שני threads יכולים לתפוס את ה-lock יחד",
+        "צריך להשתמש ב-atomic<bool> במקום atomic_flag",
+        "relaxed בתפיסה לא יוצר happens-before מול ה-release של המשחרר הקודם. הקריאה של balance יכולה לראות ערך ישן או לזלוג לפני התפיסה. התפיסה צריכה acquire",
+        "clear צריך seq_cst, אחרת הכתיבה ל-balance לא תגיע לזיכרון"
+      ],
+      "answer": 2,
+      "explanation": "הדדיות (רק אחד בפנים) נשמרת גם ב-relaxed, כי test_and_set הוא RMW. אבל מה שהקודם כתב ל-balance לפני release נראה רק למי שקורא את הדגל ב-**acquire**. בלי זה, על ARM הקריאה של balance יכולה להתבצע לפני שהלולאה ראתה את הדגל פנוי, ולהחזיר ערך ישן. ב-x86 הבאג כנראה לא יתגלה, כי כל RMW שם הוא full barrier. release ב-clear מספיק, seq_cst לא נחוץ.",
+      "lesson": "conc.atomics",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.atomics.q27",
+      "level": 4,
+      "type": "multi",
+      "prompt": "C++20: thread A מבצע `flag.wait(0);` על `std::atomic<int> flag`. אילו טענות נכונות?",
+      "choices": [
+        "wait חוזר רק אחרי שראה ערך שונה מ-0. התעוררויות spurious פנימיות מטופלות בתוכו",
+        "אם B כותב 1 ומיד אחר כך 0, ורק אז קורא ל-notify_one, ייתכן ש-A ימשיך לישון",
+        "wait תמיד ממומש כ-busy-wait, ולכן לא חוסך CPU",
+        "בלי notify_one או notify_all, אין הבטחה ש-A יתעורר אחרי שהערך השתנה",
+        "wait משווה עם operator== של הטיפוס"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "wait מבצע בלולאה: השוואה לערך הישן, ואם שווה חוסם עד notify או התעוררות spurious. לכן הוא חוזר רק כשראה ערך שונה. אם הערך חזר ל-0 לפני שהממתין בדק (ABA), הוא יחזור לישון. ההשוואה היא לפי ייצוג, לא לפי ==. ב-Linux המימוש מעל futex, ומימושים מסוימים מסתובבים מעט לפני שהם נרדמים, אבל זה לא busy-wait.",
+      "lesson": "conc.atomics"
+    },
+    {
+      "id": "conc.atomics.q28",
+      "level": 5,
+      "type": "output",
+      "prompt": "מה התוצאה (int של 32 ביט)?",
+      "lang": "cpp",
+      "code": "std::atomic<int> a{INT_MAX};\na.fetch_add(1);\nstd::cout << a.load();",
+      "choices": [
+        "undefined behavior בגלל signed overflow",
+        "2147483647, כי fetch_add על atomic רווי (saturating)",
+        "תלוי מימוש: מותר להדפיס כל ערך",
+        "-2147483648, וזה מוגדר היטב"
+      ],
+      "answer": 3,
+      "explanation": "התקן מגדיר שחשבון fetch_add ו-fetch_sub על atomic של טיפוס שלם עם סימן מתבצע כאילו ההמרה ל-unsigned, החישוב שם, וההמרה חזרה (two's complement). אין UB, בניגוד ל-`int x = INT_MAX; x + 1`. אין רוויה. זו הבחנה של standard-lawyer שמעניינת במונים שעשויים לגלוש.",
+      "lesson": "conc.atomics",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.atomics.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "יש `int hist[1024]` רגיל. בשלב מקבילי 16 threads מגדילים איברים דרך `std::atomic_ref<int>(hist[i]).fetch_add(1)`. מה דרישה של התקן כדי שזה יהיה תקין?",
+      "choices": [
+        "בזמן שקיים atomic_ref לאיבר, כל הגישות המקבילות אליו חייבות לעבור דרך atomic_ref, והאיבר חייב להיות מיושר ל-`atomic_ref<int>::required_alignment`",
+        "צריך להחזיק את אותו אובייקט atomic_ref לכל אורך התוכנית, אחרת האטומיות לא נשמרת",
+        "מותר לקרוא את hist[i] ישירות במקביל, כי רק כתיבות צריכות לעבור דרך atomic_ref",
+        "atomic_ref מותר רק על אובייקטים שהוקצו דינמית"
+      ],
+      "answer": 0,
+      "explanation": "atomic_ref לא משנה את האובייקט, הוא רק מבצע עליו פעולות אטומיות. אם thread אחר קורא אותו ישירות באותו זמן, זו גישה לא-אטומית מקבילית לכתיבה, כלומר data race. מותר ליצור atomic_ref זמניים רבים לאותו אובייקט, ואחרי שהשלב המקבילי הסתיים (ויש happens-before, למשל join) מותר לגשת ישירות. required_alignment יכול להיות גדול מ-alignof(T), במיוחד בטיפוסים לא סטנדרטיים בגודלם.",
+      "lesson": "conc.atomics",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.atomics.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "הסבר מה קורה בחומרה של x86 כש-`lock xadd` מבוצע על משתנה מיושר, מה משתנה כשהמשתנה חוצה גבול של cache line, ולמה זה רלוונטי למבני נתונים packed ברשת או ב-DMA buffers.",
+      "modelAnswer": "על משתנה מיושר בתוך line אחת: ה-core מבקש את ה-line במצב בלעדי (RFO, read-for-ownership) דרך פרוטוקול ה-coherence (MESI/MESIF), מבטל עותקים אצל אחרים, ואז 'נועל' את ה-line ב-cache שלו בזמן ההוראה: הוא לא עונה ל-snoop על ה-line עד שהקריאה והכתיבה הושלמו. זה cache lock, והוא מקומי: cores אחרים שעובדים על lines אחרות לא מושפעים. ה-lock prefix גם מרוקן את ה-store buffer ולכן הוא full barrier. כשהמשתנה חוצה שני lines, אין line אחת לנעול, והמעבד נופל ל-bus lock גלובלי: כל ה-cores נחסמים מגישה לזיכרון לאלפי מחזורים. זה split lock, ובמערכת מרובת-cores או מרובת-tenants זה DoS בפועל. Linux (split_lock_detect) יכול להזהיר, להאט את התהליך, או לשלוח SIGBUS, ו-Windows וה-hypervisors מתייחסים לזה דומה. ב-ARM גישה אטומית לא מיושרת פשוט נכשלת עם alignment fault. הרלוונטיות: struct עם __attribute__((packed)) לכותרות רשת, או מצביע לתוך buffer בהיסט שרירותי, יכולים לתת שדה לא מיושר. std::atomic מיישר את הטיפוס ולכן בטוח, אבל atomic_ref על שדה ב-struct packed, או cast של מצביע לא מיושר ל-atomic, יוצרים את הבעיה. הפתרון: להעתיק לשדה מיושר, או לתכנן layout מיושר.",
+      "rubric": [
+        "RFO ובעלות בלעדית על ה-line, cache lock מקומי בזמן ההוראה",
+        "lock prefix כ-full barrier (ריקון store buffer)",
+        "split lock: נפילה ל-bus lock גלובלי, מחיר על כל המכונה, זיהוי ב-Linux",
+        "קשר ל-packed structs, atomic_ref ומצביעים לא מיושרים, ו-alignment fault ב-ARM"
+      ],
+      "explanation": "תשובה חלשה עוצרת ב-\"ה-lock prefix נועל את ה-bus\", מה שנכון רק במקרה הלא מיושר. תשובה חזקה מבחינה בין cache lock ל-bus lock ומבינה את ההשפעה הרוחבית.",
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"

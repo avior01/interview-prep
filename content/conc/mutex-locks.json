@@ -34,7 +34,161 @@
         "בזמן-אמת: mutex עלול לחסום ל-זמן לא חסום, ולכן priority inheritance, try_lock או מבנים lock-free",
         "להבין איך futex עובד ולמה unlock עושה syscall רק כשיש ממתינים"
       ],
-      "diagram": "T1: lock --[critical]-- unlock\n                          |  release\n                          v  sync-with\nT2: lock(wait.......)----acquire--[critical]"
+      "diagram": "T1: lock --[critical]-- unlock\n                          |  release\n                          v  sync-with\nT2: lock(wait.......)----acquire--[critical]",
+      "details": [
+        {
+          "title": "מה mutex נותן: הדדיות ונראות",
+          "body": "**critical section** הוא קטע קוד שניגש למצב משותף וחייב לרוץ בלי שאף thread אחר ייגע באותו מצב באמצע. mutex (mutual exclusion) מבטיח שרק thread אחד מחזיק אותו בכל רגע, ולכן רק אחד נמצא ב-critical section.\n\nהבטחה שנייה, שפחות מדברים עליה אבל היא קריטית: **נראות זיכרון**. כל הפעולות lock ו-unlock על mutex מסוים נמצאות בסדר כולל אחד. unlock הוא פעולת **release**, ו-lock הוא **acquire**, וה-unlock synchronizes-with ה-lock הבא באותו סדר. לכן כל מה ש-thread A כתב לפני ה-unlock happens-before כל מה ש-B עושה אחרי ה-lock, על כל ארכיטקטורה. מכאן גם שלא כל משתנה חייב להיות פיזית בתוך ה-lock: מספיק שהגישות אליו מסודרות ב-happens-before. למשל A כותב data, ואז תחת lock כותב ready = true. B שראה ready == true תחת lock רשאי לקרוא data.\n\nמה mutex **לא** מבטיח: לא הוגנות או סדר FIFO בין ממתינים, לא שהמחזיק לא יעבור preemption, ולא היעדר deadlock. נעילה חוזרת של std::mutex מאותו thread היא UB (ב-glibc בפועל ה-thread נתקע), וגם unlock ממי שלא מחזיק, וגם thread שמסתיים כשהוא מחזיק mutex."
+        },
+        {
+          "title": "עטיפות RAII ומלכודות שלהן",
+          "body": "**RAII** (Resource Acquisition Is Initialization): המשאב נלקח בבנאי של אובייקט ומשוחרר ב-destructor שלו. ה-destructor רץ בכל יציאה מה-scope: return מוקדם, break, exception. לכן lock ו-unlock ידניים הם כמעט תמיד באג שמחכה לקרות: return מוקדם אחד וה-mutex נעול לנצח.\n\n- **lock_guard**: נועל בבנאי, משחרר ב-destructor. לא ניתן להזזה ולא לשחרור מוקדם. מושלם ל-scope פשוט.\n- **unique_lock**: גמיש. defer_lock (בונה בלי לנעול), try_to_lock (מנסה פעם אחת), adopt_lock (מניח שכבר נעול), unlock ו-lock ידניים, הזזה (move) בין scopes, owns_lock() לשאול אם מחזיק. condition_variable::wait דורש unique_lock כי הוא משחרר ונועל מחדש בעצמו.\n- **scoped_lock** (C++17): נועל כמה mutexes יחד באמצעות האלגוריתם של std::lock: נועל אחד, מנסה try_lock על השאר, ואם נכשל משחרר הכול ומתחיל מה-mutex שנכשל. כך אין deadlock גם אם thread אחר נועל אותם בסדר הפוך.\n- **shared_lock**: נעילה משותפת (קוראים) של shared_mutex.\n\nמלכודות קלאסיות:\n- **temporary בלי שם**: כתיבה של lock_guard עם סוגריים מסולסלים ובלי שם משתנה יוצרת אובייקט זמני שחי עד סוף ה-full-expression, כלומר עד הנקודה-פסיק. ה-mutex משתחרר מיד והשורה הבאה רצה בלי הגנה.\n- **mutex מקומי**: mutex שמוגדר בתוך הפונקציה נוצר מחדש בכל קריאה, ולכן כל thread נועל mutex אחר ואין הדדיות. mutex חייב לחיות באותו מקום כמו הנתונים שהוא מגן עליהם.\n- **החזרת reference** לנתון מוגן אחרי שה-lock שוחרר: הקורא מחזיק reference לנתון שאחרים משנים."
+        },
+        {
+          "title": "סוגי mutex: recursive, timed, shared",
+          "body": "**recursive_mutex**: אותו thread יכול לנעול כמה פעמים, וחייב לשחרר אותו מספר פעמים. מספר הרמות המקסימלי לא מוגדר בתקן, ומעבר לו lock זורק system_error ו-try_lock נכשל. הצורך בו הוא לרוב סימן לתכנון בעייתי: פונקציה ציבורית שנועלת קוראת לפונקציה ציבורית אחרת שנועלת. התיקון המקובל: פונקציה פרטית שמניחה שה-lock כבר מוחזק, ושתי הציבוריות קוראות לה. std::condition_variable לא עובד עם recursive_mutex כלל, ו-condition_variable_any ישחרר רק רמה אחת וייתקע.\n\n**timed_mutex**: מוסיף try_lock_for ו-try_lock_until.\n\n**shared_mutex** (readers-writer lock): הרבה קוראים יחד (lock_shared) או כותב אחד בלעדי (lock). כשכותב מבקש lock בזמן שיש קוראים, הוא מחכה שכולם יצאו. האם קוראים חדשים יכולים 'לעקוף' כותב שמחכה תלוי במימוש: מדיניות שמעדיפה קוראים עלולה להרעיב את הכותב, ומדיניות שמעדיפה כותבים חוסמת קוראים חדשים מרגע שכותב מחכה.\n\nמחיר נסתר: גם lock_shared מבצע RMW אטומי על מונה קוראים משותף. כש-32 cores עושים את זה על critical section של 50 ns, ה-cache line של המונה קופצת בין כולם והמערכת לא מתרחבת, לפעמים איטית יותר ממוטקס רגיל. למבנה שכמעט רק נקרא, החלופות הן RCU, seqlock, נתונים פר-CPU, או snapshot לא-משתנה שמוחלף דרך atomic shared_ptr."
+        },
+        {
+          "title": "איך std::mutex עובד ב-Linux: futex",
+          "body": "**futex** (fast userspace mutex) הוא syscall שמאפשר ל-thread לישון על כתובת בזיכרון. שתי פעולות עיקריות: FUTEX_WAIT(addr, val) מרדים את ה-thread **רק אם** הערך בכתובת עדיין שווה ל-val (הבדיקה וההרדמה אטומיות מול wake, וכך אין lost wake-up). FUTEX_WAKE(addr, n) מעיר עד n ישנים על הכתובת. ה-kernel מחזיק טבלת hash מכתובת לתור ממתינים.\n\nמימוש mutex טיפוסי (לפי המאמר Futexes Are Tricky של Drepper), עם שלושה מצבים: 0 פנוי, 1 נעול בלי ממתינים, 2 נעול ואולי יש ממתינים.\n- **lock, מסלול מהיר**: CAS מ-0 ל-1. אם הצליח, סיימנו, בלי syscall. זה כ-15–30 ns ל-lock ו-unlock יחד.\n- **lock, מסלול איטי**: exchange ל-2 (מסמן שיש ממתינים). אם הערך הקודם היה 0, תפסנו. אחרת FUTEX_WAIT(addr, 2), וכשמתעוררים חוזרים על ה-exchange(2).\n- **unlock**: מורידים ל-0. אם הערך הקודם היה 2, קוראים ל-FUTEX_WAKE(1).\n\nלמה מי שהתעורר כותב 2 ולא 1: הוא לא יודע אם נשארו ממתינים נוספים. אם יכתוב 1, ה-unlock שלו ידלג על ה-wake, והם יישנו לנצח. wake מיותר עולה syscall, wake חסר עולה deadlock.\n\n**הוגנות**: אחרי unlock, ה-thread שהתעורר צריך זמן עד שה-scheduler מריץ אותו. אם המשחרר מיד נועל שוב (בלולאה), הוא תופס את ה-lock לפני שהמתעורר הגיע, ושוב ושוב (barging). זה מכוון: handoff ישיר לממתין הוגן יותר אבל איטי בהרבה, כי כל העברה מחכה ל-context switch.\n\n**adaptive mutex**: מסתובב (spin) מעט לפני שהוא נרדם, בתקווה שהמחזיק רץ על core אחר ועומד לשחרר. ב-glibc זה PTHREAD_MUTEX_ADAPTIVE_NP. ל-**priority inheritance** יש futex נפרד (FUTEX_LOCK_PI) שבו ה-kernel יודע מי הבעלים ומעלה את העדיפות שלו."
+        },
+        {
+          "title": "spinlocks: TAS, ticket, MCS",
+          "body": "spinlock לא נרדם אלא מסתובב בלולאה עד שה-lock מתפנה. משתלם רק כשה-critical section קצר מאוד (עשרות ns) **והמחזיק בטוח רץ** כרגע על core אחר. ב-user space אין ערובה כזו: אם המחזיק עבר preemption (במיוחד כשיש יותר threads מ-cores, oversubscription), כל הממתינים שורפים time slice שלם. לכן ב-kernel spinlock מבטל preemption, וב-user space מעדיפים mutex או adaptive mutex.\n\n- **TAS / TTAS**: test-and-set על דגל. TTAS מסתובב על קריאה רגילה כדי שה-line תישאר Shared. לא הוגן.\n- **ticket lock**: שני מונים, next ו-serving. כל ממתין לוקח כרטיס (fetch_add על next) ומחכה ש-serving יגיע אליו. הוגן (FIFO). חיסרון 1: כל הממתינים מסתובבים על אותו serving, וכל שחרור מבטל את ה-line אצל כולם, תעבורה O(n) לכל העברה. חיסרון 2: אם הבא בתור עבר preemption, כולם תקועים מאחוריו גם כשה-lock פנוי.\n- **MCS lock**: כל ממתין מסתובב על דגל ב-node **משלו**, ו-tail אטומי מחבר אותם לתור. השחרור כותב רק לדגל של הבא בתור, כלומר line אחת. הוגן וסקלבילי במכונות NUMA גדולות. ה-qspinlock של Linux מבוסס עליו."
+        },
+        {
+          "title": "contention ותכנון: granularity, striping, ומה לא לעשות בתוך lock",
+          "body": "mutex בלי תחרות זול. **התחרות** היא שיקרה: syscalls, context switches, ו-cache line של ה-mutex שקופצת בין cores. כל מה שתחת lock גלובלי אחד מבוצע בטור (serialization), ולכן מעבר לכמה threads ה-throughput לא עולה (חוק Amdahl).\n\n**granularity**: lock גס (אחד לכל המבנה) פשוט אבל לא מתרחב. lock עדין (לכל bucket או node) מתרחב אבל מסובך ומגדיל סיכון ל-deadlock. ביניהם: **lock striping**, מערך של N mutexes שכל אחד מגן על קבוצת buckets לפי hash. חשוב לרפד: std::mutex ב-glibc על x86-64 הוא 40 בתים, אז בלי alignas(64) שניים חולקים cache line ומקבלים false sharing.\n\nמה לא עושים בתוך lock: I/O (כתיבה ללוג, דיסק, רשת), הקצאות זיכרון גדולות, וקריאה ל-callback של מישהו אחר (שעלול לנעול lock אחר, ואז deadlock, או לרוץ זמן לא ידוע). כשהמחזיק נתקע, כל ה-threads נערמים מאחוריו, וגם אחרי שהוא משחרר הם ממשיכים לנוע 'בשיירה' (lock convoy). התבנית הנכונה: תחת lock מעתיקים את מה שצריך, ואת העבודה הכבדה עושים בחוץ.\n\n**אתחול עצל**: double-checked locking עם pointer רגיל הוא data race (הקריאה בלי lock לא מסונכרנת עם הכתיבה). הפתרונות: static מקומי (magic statics, אתחול thread-safe מובטח מאז C++11), std::call_once, או atomic pointer עם acquire/release. ל-std::mutex יש בנאי constexpr, ולכן mutex גלובלי עובר constant initialization לפני כל קוד דינמי, ובטוח להשתמש בו מתוך בנאים של אובייקטים סטטיים אחרים, בלי static initialization order fiasco."
+        },
+        {
+          "title": "mutex בזמן-אמת: priority inversion ו-try_lock",
+          "body": "**priority inversion**: thread בעדיפות גבוהה H מחכה ל-mutex שמחזיק thread נמוך L. thread בינוני M, שלא צריך את ה-mutex, מקבל את ה-CPU במקום L, כי הוא בעדיפות גבוהה יותר מ-L. כך H מחכה בפועל ל-M, וזמן ההמתנה לא חסום. המקרה המפורסם: Mars Pathfinder ב-1997, שנכנס לסדרת resets.\n\nפתרונות: **priority inheritance**, כלומר בזמן ש-H מחכה, L יורש את העדיפות של H, M לא יכול לדחוק אותו, ו-L מסיים ומשחרר מהר. ב-POSIX זה pthread_mutexattr_setprotocol עם PTHREAD_PRIO_INHERIT. std::mutex לא חושף את זה: הוא pthread mutex עם attributes ברירת מחדל, ואי אפשר לשנות protocol אחרי אתחול. לכן עוטפים pthread_mutex_t במחלקה עם lock, unlock ו-try_lock (דרישות Lockable), וכך היא עובדת עם lock_guard ו-unique_lock. חלופה: **priority ceiling** (PTHREAD_PRIO_PROTECT), שבו מי שנועל מקבל מיד עדיפות קבועה גבוהה.\n\nעדיף עוד יותר להוציא את ה-lock מהמסלול הקריטי: atomics, SPSC queue, seqlock או double buffer, שבהם ה-RT thread לא מחכה לעולם. או **try_lock**: אם תפוס, מדלגים על העדכון הזה. שימו לב: התקן מתיר ל-try_lock להיכשל spuriously (גם כשאף אחד לא מחזיק), ולכן אסור להסיק מכישלון שמישהו מחזיק, ו-try_lock שנכשל לא נותן שום סנכרון.\n\n**robust mutex** (PTHREAD_MUTEX_ROBUST): אם process או thread מת כשהוא מחזיק את ה-mutex, הנועל הבא מקבל EOWNERDEAD ויכול לתקן את המצב. רלוונטי בעיקר ל-mutex ב-shared memory בין processes. std::mutex לא מספק את זה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: return מוקדם עם lock ידני",
+          "body": "get(k) נועל m, מחפש ב-cache, ואם לא נמצא מחזיר -1 בלי unlock.\n\n- t1: T1 קורא get(5), נועל, 5 לא נמצא, חוזר. m נשאר נעול\n- t2: T2 קורא get(7) ונתקע ב-lock\n- t3: כל thread שייגע ב-cache נתקע. אין crash, אין הודעה, רק עצירה\n\nעם lock_guard: ב-return ה-destructor רץ ומשחרר. זה נכון גם אם find זורק exception. לקח: כל יציאה מפונקציה היא נקודה שבה lock ידני יכול לדלוף."
+        },
+        {
+          "title": "דוגמה: futex עם שלושה מצבים ושלושה threads",
+          "body": "state = 0.\n\n- T1: CAS 0 ל-1 מצליח. נועל בלי syscall\n- T2: CAS נכשל. exchange(2) מחזיר 1, כלומר תפוס. FUTEX_WAIT(addr, 2): הערך 2, נרדם\n- T3: exchange(2) מחזיר 2, תפוס. FUTEX_WAIT, נרדם\n- T1 unlock: exchange(0) מחזיר 2, ולכן FUTEX_WAKE(1). T2 מתעורר\n- T2: exchange(2) מחזיר 0, תפס. state = 2\n- T2 unlock: exchange(0) מחזיר 2, ולכן FUTEX_WAKE(1). T3 מתעורר ותופס\n\nאם T2 היה תופס עם CAS(0 ל-1), state היה 1, ה-unlock של T2 היה רואה 1 ולא קורא ל-wake, ו-T3 היה ישן לנצח. ואם בין ה-exchange של T2 ל-FUTEX_WAIT שלו T1 כבר שחרר (state = 0), FUTEX_WAIT רואה ש-0 שונה מ-2 וחוזר מיד, בלי להירדם."
+        },
+        {
+          "title": "דוגמה: priority inversion בציר זמן",
+          "body": "L (עדיפות 10), M (50), H (90), core אחד.\n\n- t=0: L נועל את m ומתחיל critical section של 1 ms\n- t=0.2: H מתעורר, דוחק את L, מנסה לנעול את m ונחסם\n- t=0.3: M מתעורר. L מוכן לרוץ, אבל M בעדיפות גבוהה יותר. M רץ 50 ms\n- t=50.3: M מסיים. L ממשיך, ב-t=51.1 משחרר\n- t=51.1: H סוף סוף רץ\n\nH, בעדיפות הגבוהה ביותר, חיכה 51 ms לעבודה של M שבכלל לא קשורה ל-m. עם priority inheritance: ב-t=0.2 L יורש עדיפות 90, M לא יכול לדחוק אותו, L משחרר ב-t=1.0, ו-H נכנס מיד. ההמתנה של H חסומה באורך ה-critical section."
+        },
+        {
+          "title": "דוגמה: lock striping עם מספרים",
+          "body": "hash map עם lock גלובלי, 32 threads, כל פעולה מחזיקה את ה-lock 100 ns. ה-throughput המקסימלי הוא פעולה אחת כל 100 ns, כלומר 10 מיליון בשנייה, בלי קשר למספר ה-threads, ובפועל פחות בגלל קפיצות ה-cache line.\n\nעם 64 stripes (lock לפי hash mod 64), בפיזור אחיד ההסתברות ששני threads מתנגשים על אותו stripe קטנה, ותיאורטית התקרה עולה לעד 64 פעולות במקביל, כלומר כמעט כל 32 ה-threads עובדים יחד. אם ה-mutexes לא מרופדים, 40 בתים כל אחד, שניים יושבים באותה line, ו-threads שנועלים stripes שונים עדיין מתנגשים בחומרה (false sharing). פעולות על כל המבנה, כמו resize או size, צריכות לנעול את כל ה-stripes בסדר קבוע."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "critical section",
+          "def": "קטע קוד שניגש למצב משותף וחייב לרוץ בלי התערבות של threads אחרים באותו מצב."
+        },
+        {
+          "term": "mutex",
+          "def": "מנגנון mutual exclusion: רק thread אחד מחזיק אותו. unlock הוא release ו-lock הוא acquire, ולכן הוא גם נותן נראות זיכרון."
+        },
+        {
+          "term": "RAII",
+          "def": "לקיחת משאב בבנאי ושחרורו ב-destructor, כך שהשחרור קורה בכל יציאה מה-scope, כולל exceptions."
+        },
+        {
+          "term": "lock_guard",
+          "def": "עטיפת RAII פשוטה: נועל בבנאי ומשחרר ב-destructor. לא ניתנת להזזה ולא לשחרור מוקדם."
+        },
+        {
+          "term": "unique_lock",
+          "def": "עטיפת RAII גמישה: defer_lock, try_to_lock, adopt_lock, unlock ו-lock ידניים, הזזה, owns_lock. נדרשת ל-condition_variable."
+        },
+        {
+          "term": "scoped_lock / std::lock",
+          "def": "נעילת כמה mutexes יחד בלי deadlock, עם try_lock ונסיגה כשאחד תפוס."
+        },
+        {
+          "term": "recursive_mutex",
+          "def": "מאפשר לאותו thread לנעול שוב. חייב שחרור לפי מספר הנעילות. לרוב סימן לתכנון שכדאי לפצל."
+        },
+        {
+          "term": "shared_mutex",
+          "def": "readers-writer lock: קוראים רבים יחד או כותב אחד. גם קוראים מבצעים RMW על מונה משותף, ולכן לא תמיד מהיר."
+        },
+        {
+          "term": "writer starvation",
+          "def": "כותב שלא מקבל את ה-lock כי קוראים חדשים ממשיכים להיכנס. תלוי במדיניות המימוש של ה-rwlock."
+        },
+        {
+          "term": "futex",
+          "def": "syscall של Linux לשינה על כתובת: FUTEX_WAIT ישן רק אם הערך עדיין הצפוי, FUTEX_WAKE מעיר. הבסיס של std::mutex, condvar ו-atomic::wait."
+        },
+        {
+          "term": "fast path / slow path",
+          "def": "מסלול מהיר: CAS ב-user space בלי syscall כשאין תחרות. מסלול איטי: futex syscall כשיש תחרות."
+        },
+        {
+          "term": "lost wake-up",
+          "def": "ממתין שנרדם אחרי שההתראה כבר נשלחה, ולכן ישן לנצח. futex מונע את זה בבדיקת הערך בתוך ה-kernel, ו-mutex בשלושה מצבים מונע את זה ב-unlock."
+        },
+        {
+          "term": "barging / fairness",
+          "def": "thread שמשחרר ומיד נועל שוב תופס לפני הממתין שהתעורר. std::mutex לא מבטיח הוגנות או FIFO."
+        },
+        {
+          "term": "adaptive mutex",
+          "def": "mutex שמסתובב קצת לפני שהוא נרדם, בתקווה שהמחזיק ישחרר מיד."
+        },
+        {
+          "term": "spinlock",
+          "def": "lock שמסתובב בלולאה במקום להירדם. טוב רק ל-critical section קצר מאוד כשהמחזיק בטוח רץ."
+        },
+        {
+          "term": "ticket lock / MCS lock",
+          "def": "ticket: FIFO עם מונה כרטיסים, כל הממתינים על אותה line. MCS: כל ממתין מסתובב על node משלו, שחרור נוגע ב-line אחת."
+        },
+        {
+          "term": "oversubscription",
+          "def": "יותר threads מוכנים לרוץ מאשר cores. אז spinlock מבזבז time slices על מחזיק שלא רץ."
+        },
+        {
+          "term": "contention / serialization",
+          "def": "תחרות על lock: threads מחכים זה לזה והעבודה תחתיו מתבצעת בטור, כך שה-throughput לא עולה עם threads."
+        },
+        {
+          "term": "lock striping",
+          "def": "מערך של mutexes שכל אחד מגן על חלק מהמבנה לפי hash. מחלק את התחרות. דורש padding נגד false sharing."
+        },
+        {
+          "term": "lock convoy",
+          "def": "threads שנערמים מאחורי מחזיק איטי (למשל I/O תחת lock) וממשיכים לנוע בשיירה גם אחרי שהוא משחרר."
+        },
+        {
+          "term": "double-checked locking / magic statics",
+          "def": "בדיקה בלי lock ואז עם lock. עם pointer רגיל זה data race. static מקומי (thread-safe מאז C++11) ו-call_once הם הפתרון הפשוט."
+        },
+        {
+          "term": "constant initialization",
+          "def": "ל-std::mutex יש בנאי constexpr, ולכן mutex גלובלי מאותחל לפני כל קוד דינמי ובטוח לשימוש מבנאים סטטיים אחרים."
+        },
+        {
+          "term": "priority inversion",
+          "def": "thread גבוה מחכה ל-lock של thread נמוך, שנדחק על ידי thread בינוני. זמן ההמתנה לא חסום."
+        },
+        {
+          "term": "priority inheritance / ceiling",
+          "def": "inheritance: המחזיק יורש את העדיפות של הממתין הגבוה (PTHREAD_PRIO_INHERIT). ceiling: מי שנועל מקבל מיד עדיפות קבועה גבוהה (PTHREAD_PRIO_PROTECT)."
+        },
+        {
+          "term": "try_lock (spurious failure)",
+          "def": "ניסיון נעילה בלי המתנה. התקן מתיר לו להיכשל גם כשה-mutex פנוי, וכישלון לא נותן שום סנכרון."
+        },
+        {
+          "term": "robust mutex",
+          "def": "POSIX mutex שאם המחזיק מת, הנועל הבא מקבל EOWNERDEAD ויכול לתקן. std::mutex לא מספק את זה."
+        }
+      ]
     }
   ],
   "questions": [
@@ -334,6 +488,222 @@
       ],
       "explanation": "התקן מתיר במפורש ל-try_lock להיכשל באופן ספורדי, ולכן אסור להסיק מכישלון שמישהו מחזיק את ה-lock ובוודאי לא לבנות על זה סנכרון. try_lock מאותו thread על std::mutex הוא הפרת precondition ו-UB, לא false מובטח. thread שמסתיים בזמן שהוא מחזיק mutex הוא UB. robust mutexes של POSIX (PTHREAD_MUTEX_ROBUST) מטפלים במקרה הזה, אבל std::mutex לא.",
       "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה critical section?",
+      "choices": [
+        "קטע קוד שרץ בעדיפות גבוהה",
+        "קטע קוד שהקומפיילר לא מבצע עליו אופטימיזציות",
+        "קטע קוד שניגש למצב משותף וחייב לרוץ בלי ש-thread אחר ייגע באותו מצב באמצע",
+        "פונקציה שמותר לקרוא לה רק מה-main thread"
+      ],
+      "answer": 2,
+      "explanation": "critical section מוגדר לפי המצב שהוא נוגע בו: אם שני threads ירוצו בו יחד, ה-invariant של המבנה יכול להישבר. mutex הוא הכלי הסטנדרטי לוודא שרק אחד נמצא בו בכל רגע. אין קשר לעדיפות או לאופטימיזציות.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה משתמשים ב-`std::lock_guard` במקום לקרוא ל-`m.lock()` ו-`m.unlock()` ידנית?",
+      "choices": [
+        "ה-destructor שלו משחרר את ה-mutex בכל יציאה מה-scope, כולל return מוקדם ו-exception (RAII)",
+        "הוא מהיר יותר מ-lock ידני",
+        "הוא מונע deadlock בין שני mutexes",
+        "הוא מאפשר לנעול את אותו mutex פעמיים מאותו thread"
+      ],
+      "answer": 0,
+      "explanation": "RAII קושר את חיי ה-lock ל-scope. עם lock ידני, כל return או exception שמדלג על ה-unlock משאיר את ה-mutex נעול לנצח. מבחינת ביצועים זה אותו דבר, והוא לא מונע deadlock בין mutexes שונים ולא מאפשר נעילה חוזרת.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "על איזה מנגנון של ה-kernel ב-Linux בנוי std::mutex (ו-pthread_mutex), שמאפשר נעילה בלי syscall כשאין תחרות?",
+      "accept": [
+        "futex",
+        "futexes",
+        "fast userspace mutex"
+      ],
+      "explanation": "futex: ה-lock עצמו הוא מילה בזיכרון שמשנים ב-CAS ב-user space. רק כשיש תחרות נכנסים ל-kernel עם FUTEX_WAIT כדי לישון, וה-unlock קורא ל-FUTEX_WAKE רק אם יש ממתינים.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q21",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "std::mutex m;\nstd::unique_lock<std::mutex> lk(m, std::defer_lock);\nstd::cout << lk.owns_lock();\nlk.lock();\nstd::cout << lk.owns_lock();\nauto lk2 = std::move(lk);\nstd::cout << lk.owns_lock() << lk2.owns_lock();",
+      "choices": [
+        "0111",
+        "1101",
+        "0101",
+        "0110"
+      ],
+      "answer": 2,
+      "explanation": "defer_lock בונה בלי לנעול, ולכן 0. אחרי lock(), 1. הזזה מעבירה את הבעלות: lk2 מחזיק את ה-lock (1) ו-lk כבר לא קשור לשום mutex (0). ה-destructor של lk לא ישחרר כלום, ושל lk2 ישחרר. זה מה שמאפשר להחזיר unique_lock מפונקציה.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שלושה threads מחזיקים `shared_lock` על `std::shared_mutex`, ו-thread רביעי קורא ל-`lock()` (בלעדי). מה קורה?",
+      "choices": [
+        "הכותב נכנס מיד, והקוראים נחסמים בפעולה הבאה שלהם",
+        "הכותב מחכה עד שכל הקוראים ישחררו. האם קוראים חדשים יכולים להיכנס לפניו בזמן שהוא מחכה תלוי במדיניות המימוש",
+        "נזרק exception כי יש קוראים פעילים",
+        "הכותב מקבל את ה-lock יחד עם הקוראים, כי הוא באותו process"
+      ],
+      "answer": 1,
+      "explanation": "lock בלעדי מחכה שאין אף מחזיק, משותף או בלעדי. התקן לא קובע מדיניות עדיפות: מימוש שמעדיף קוראים יכול להרעיב כותב כשהקוראים מגיעים ברצף, ומימוש שמעדיף כותבים חוסם קוראים חדשים מרגע שכותב מחכה.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q23",
+      "level": 2,
+      "type": "bug",
+      "prompt": "כמה threads קוראים ל-`add`, והסכום יוצא שגוי. מה הבאג?",
+      "lang": "cpp",
+      "code": "long total = 0;\n\nvoid add(long v) {\n  std::mutex m;\n  std::lock_guard<std::mutex> lk(m);\n  total += v;\n}",
+      "bugLine": 4,
+      "choices": [
+        "lock_guard צריך להיות unique_lock",
+        "total צריך להיות volatile",
+        "חסר unlock בסוף הפונקציה",
+        "ה-mutex מקומי: כל קריאה יוצרת mutex חדש משלה, ולכן אין שום הדדיות בין threads. ה-mutex צריך לחיות לצד total (גלובלי או static או חבר במחלקה)"
+      ],
+      "answer": 3,
+      "explanation": "הדדיות קיימת רק בין threads שנועלים **אותו** אובייקט mutex. כאן לכל thread יש mutex פרטי על ה-stack שלו, ונעילתו תמיד מצליחה מיד. lock_guard משחרר לבד ב-destructor, ו-volatile לא נותן סנכרון.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q24",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי `std::recursive_mutex`?",
+      "choices": [
+        "thread שנעל אותו k פעמים חייב לשחרר k פעמים לפני ש-thread אחר יוכל לנעול",
+        "`std::condition_variable` יכול לחכות על `std::unique_lock<std::recursive_mutex>`",
+        "הצורך בו מעיד לרוב על פונקציה ציבורית שנועלת וקוראת לפונקציה ציבורית אחרת שנועלת. הפתרון המקובל: פונקציה פרטית שמניחה שה-lock כבר מוחזק",
+        "thread אחר יכול לנעול אותו כשהבעלים נמצא ברמה 2 ומעלה",
+        "מספר הרמות המקסימלי לא מוגדר בתקן, ומעבר לו lock זורק system_error"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "std::condition_variable עובד רק עם unique_lock<std::mutex>. condition_variable_any יקבל recursive_mutex, אבל ישחרר רק רמה אחת, ואז ה-thread ישן כשהוא עדיין מחזיק את ה-mutex וזה deadlock. recursive_mutex בלעדי מול threads אחרים בכל רמה. הרמה המקסימלית לא מוגדרת, ו-try_lock מעבר לה נכשל.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "profiler מראה ש-threads מבלים רוב הזמן בהמתנה ל-mutex. ה-critical section מעדכן map ואחר כך כותב שורת לוג לקובץ עם fprintf. מה התיקון הנכון?",
+      "choices": [
+        "להחליף ל-spinlock כדי לחסוך את ההירדמות",
+        "להחליף ל-recursive_mutex",
+        "להעביר את ה-map ל-shared_mutex",
+        "לעדכן את ה-map ולהכין את הנתונים ללוג תחת ה-lock, לשחרר, ורק אז לכתוב לקובץ"
+      ],
+      "answer": 3,
+      "explanation": "I/O תחת lock מאריך את ה-critical section בסדרי גודל, ואם הכתיבה נחסמת (דיסק איטי, באפר מלא), כל ה-threads נערמים מאחור (lock convoy). spinlock היה מחמיר: הממתינים ישרפו CPU בזמן ה-I/O. shared_mutex לא עוזר כי מדובר בעדכונים.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "T1 מריץ לולאה הדוקה: lock, עבודה קצרה, unlock, וחוזר. T2 מנסה לנעול את אותו std::mutex ומצליח רק לעתים נדירות מאוד. מה ההסבר?",
+      "choices": [
+        "ה-unlock של T1 מעיר את T2, אבל עד שה-scheduler מריץ את T2, T1 כבר נעל שוב במסלול המהיר. std::mutex לא מבטיח הוגנות, והמימוש מעדיף throughput על פני handoff ישיר",
+        "glibc נותן עדיפות ל-thread שנעל ראשון",
+        "T2 נרדם עם FUTEX_WAIT ולא מקבל wake לעולם",
+        "זה deadlock חלקי שנובע מסדר נעילה"
+      ],
+      "answer": 0,
+      "explanation": "זה barging: ה-lock פנוי לרגע, ו-T1 שכבר רץ תופס אותו לפני ש-T2 התעורר. T2 כן מקבל wake, אבל מגיע מאוחר. handoff הוגן היה מחייב context switch בכל העברה ומוריד throughput. תיקונים: לעשות את רוב העבודה מחוץ ל-lock, להכניס נקודת המתנה, או להשתמש ב-lock הוגן (ticket) כשהוגנות באמת נדרשת.",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "id": "conc.mutex-locks.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך priority inheritance ל-mutex שמשותף בין RT thread ל-thread רגיל, בקוד C++ שמשתמש ב-lock_guard. מה הדרך הנכונה?",
+      "choices": [
+        "לקרוא ל-pthread_mutexattr_setprotocol על native_handle() של std::mutex קיים",
+        "std::mutex תומך ב-priority inheritance כברירת מחדל ב-Linux",
+        "לעטוף pthread_mutex_t שאותחל עם attribute של PTHREAD_PRIO_INHERIT במחלקה עם lock, unlock ו-try_lock, וכך היא עובדת עם lock_guard ו-unique_lock",
+        "להשתמש ב-std::recursive_mutex, שמממש inheritance"
+      ],
+      "answer": 2,
+      "explanation": "protocol הוא attribute שנקבע באתחול ה-mutex, ו-std::mutex מאותחל עם ברירות מחדל (בלי PI). native_handle נותן גישה ל-pthread_mutex_t, אבל אי אפשר לשנות את ה-protocol שלו אחרי שאותחל. lock_guard ו-unique_lock עובדים עם כל טיפוס שעומד בדרישות BasicLockable או Lockable, ולכן עטיפה פשוטה מספיקה. ב-kernel זה ממומש עם FUTEX_LOCK_PI.",
+      "lesson": "conc.mutex-locks",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.mutex-locks.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "`std::mutex g_m;` מוגדר כגלובלי ב-a.cpp. בנאי של אובייקט גלובלי ב-b.cpp נועל את g_m. האם זה בטוח מבחינת סדר האתחול הסטטי?",
+      "choices": [
+        "לא: סדר האתחול בין יחידות תרגום לא מוגדר, ו-g_m עלול להיות לא מאותחל",
+        "כן: לבנאי ברירת המחדל של std::mutex יש constexpr, ולכן g_m עובר constant initialization לפני כל אתחול דינמי",
+        "כן, אבל רק אם a.cpp מקושר ראשון",
+        "לא, mutex גלובלי חייב להיות static מקומי בפונקציה"
+      ],
+      "answer": 1,
+      "explanation": "static initialization order fiasco חל על אתחול **דינמי**. אובייקטים שעוברים constant initialization מאותחלים לפני שום קוד דינמי, ולכן בנאי ב-b.cpp כבר רואה mutex תקין. זו דרישה מפורשת בתקן ל-std::mutex. זה לא נכון לכל טיפוס: למשל std::recursive_mutex ו-std::shared_mutex לא מחויבים לבנאי constexpr.",
+      "lesson": "conc.mutex-locks",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.mutex-locks.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "על מכונת NUMA עם 128 cores, ticket lock מתנהג גרוע תחת תחרות, ו-MCS lock מתרחב הרבה יותר טוב. מה ההסבר העיקרי?",
+      "choices": [
+        "ticket lock לא הוגן, ו-MCS הוגן",
+        "MCS lock לא מבצע שום פעולה אטומית",
+        "ticket lock דורש syscall בכל העברה",
+        "ב-ticket lock כל הממתינים מסתובבים על אותו מונה serving, וכל שחרור מבטל את ה-line אצל כולם (תעבורה ביחס למספר הממתינים). ב-MCS כל ממתין מסתובב על node משלו, והשחרור כותב רק ל-line של הבא בתור"
+      ],
+      "answer": 3,
+      "explanation": "שניהם הוגנים (FIFO). ההבדל הוא בתעבורת coherence: ב-ticket כל העברה גורמת ל-invalidate ול-reload אצל כל הממתינים, וחלקם על socket אחר. ב-MCS כל ממתין קורא line מקומית שרק הקודם לו כותב אליה. MCS עדיין משתמש ב-exchange על ה-tail ו-CAS בשחרור. ה-qspinlock של Linux בנוי על הרעיון הזה.",
+      "lesson": "conc.mutex-locks",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "conc.mutex-locks.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תאר מקצה לקצה מה קורה ב-`m.lock()` ו-`m.unlock()` של std::mutex ב-Linux, במקרה בלי תחרות ובמקרה עם תחרות, כולל מה קורה ב-kernel. למה המקרה בלי תחרות לוקח כ-20 ns ומקרה עם תחרות יכול לקחת מיקרו-שניות?",
+      "modelAnswer": "std::mutex הוא pthread_mutex_t, שבלב שלו יש מילה של 32 ביט (futex word). בלי תחרות: lock הוא CAS מ-0 ל-1 (ב-x86 lock cmpxchg), ו-unlock הוא exchange או decrement ל-0 ובדיקה שלא היו ממתינים. שתי פעולות אטומיות על line שכבר אצלנו, ללא syscall, בערך 20 ns. עם תחרות: ה-thread שלא הצליח מסמן שיש ממתינים (מצב 2) וקורא ל-futex(FUTEX_WAIT, addr, 2). ה-kernel מחשב hash של הכתובת לתור, נועל את ה-bucket, בודק שוב שהערך עדיין 2 (אחרת חוזר מיד, וכך נמנע lost wake-up), מכניס את ה-thread לתור ומרדים אותו: context switch. glibc יכול לפני כן להסתובב מעט (adaptive). ב-unlock, אם המצב היה 2, הוא קורא ל-futex(FUTEX_WAKE, 1): syscall, ה-kernel מוציא ממתין מהתור ומסמן אותו runnable. ה-thread המתעורר צריך שה-scheduler יריץ אותו (אולי על core אחר, IPI, cache קר), ואז מנסה שוב לתפוס עם exchange(2), ועלול להפסיד ל-thread שהגיע בינתיים (barging). מחיר: שני syscalls (מאות ns כל אחד), context switches (מיקרו-שניות), ו-cache misses. ב-PI mutex המסלול שונה: FUTEX_LOCK_PI, ה-kernel רושם את הבעלים ב-futex word (TID) ומעלה את העדיפות שלו, ולכן גם ה-unlock עם ממתינים חייב לעבור דרך ה-kernel.",
+      "rubric": [
+        "מסלול מהיר: CAS ב-user space על futex word, בלי syscall",
+        "מסלול איטי: FUTEX_WAIT עם בדיקת ערך ב-kernel (מניעת lost wake-up), תור לפי hash",
+        "unlock קורא ל-FUTEX_WAKE רק כשיש ממתינים, ומצב 'יש ממתינים'",
+        "מקורות המחיר: syscall, context switch, wake-up latency, barging, cache",
+        "בונוס: adaptive spinning ו-PI futex"
+      ],
+      "explanation": "תשובה חזקה מבחינה בין המסלולים ומסבירה למה מדובר ב-'fast userspace mutex'. תשובה חלשה אומרת ש-mutex תמיד עושה syscall.",
+      "lesson": "conc.mutex-locks",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

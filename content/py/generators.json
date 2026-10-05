@@ -34,7 +34,161 @@
         "לדבר על ניקוי משאבים: contextlib.closing, with בתוך generator, ומה קורה כשה-generator נאסף",
         "לדעת ש-generators הם הבסיס ההיסטורי של coroutines ו-asyncio"
       ],
-      "diagram": "read_lines -> parse -> filter -> batch\n   pull <-- pull <-- pull <-- for loop\none item in flight, O(1) memory"
+      "diagram": "read_lines -> parse -> filter -> batch\n   pull <-- pull <-- pull <-- for loop\none item in flight, O(1) memory",
+      "details": [
+        {
+          "title": "iterable מול iterator: מי מחזיק את המצב",
+          "body": "ההבחנה הזאת היא לב הנושא. **iterable** הוא כל אובייקט שאפשר לבקש ממנו iterator דרך `__iter__` — רשימה, tuple, dict, set, מחרוזת, range. **iterator** הוא האובייקט שבאמת מייצר ערכים: יש לו `__next__` שמחזיר את האיבר הבא וזורק `StopIteration` כשנגמר, ו-`__iter__` שמחזיר את עצמו. לכן כל iterator הוא גם iterable, אבל לא להפך.\n\nההבדל המעשי הוא בעלות על המצב (position). רשימה לא זוכרת \"איפה אנחנו\"; כל `iter(lst)` מחזיר iterator טרי שמתחיל מההתחלה, ולכן אפשר לעבור עליה שוב ושוב. iterator לעומת זאת מחזיק מונה פנימי: הוא **חד-פעמי** (one-shot). אחרי שמיצו אותו, כל `next` נוסף זורק `StopIteration` מיד, ומעבר שני יחזיר רשימה ריקה.\n\n- `for x in obj` עושה מאחורי הקלעים `it = iter(obj)` פעם אחת, ואז `next(it)` שוב ושוב עד `StopIteration`.\n- קבצים, `map`, `zip`, `filter`, `enumerate` ו-generators הם iterators (חד-פעמיים). רשימות, dicts ו-`range` הם iterables שנותנים iterator חדש כל פעם.\n- מלכודת תכנון API: אם פונקציה מקבלת iterable וצריכה לעבור עליו פעמיים, היא חייבת לממש זאת (`list(...)` פעם אחת) או לדרוש מהקורא iterable שאפשר לעבור עליו שוב — כי iterator שקיבלה כבר לא יתן מעבר שני."
+        },
+        {
+          "title": "מחזור החיים של generator: lazy, suspension ו-frame",
+          "body": "פונקציה שמכילה `yield` אינה פונקציה רגילה אלא **generator function**. קריאה אליה *לא מריצה אף שורה מהגוף* — היא רק בונה אובייקט generator ומחזירה אותו. הגוף מתחיל לרוץ רק ב-`next()` הראשון, ורץ עד שהוא פוגע ב-`yield`.\n\nב-`yield` קורים שני דברים: הערך שאחרי `yield` מוחזר לקורא, וה-**frame** של הפונקציה (המשתנים המקומיים ומצביע ההוראה) מוקפא ונשמר. ב-`next()` הבא הביצוע ממשיך מהשורה שאחרי אותו `yield`, עם אותם מקומיים. זה מה שמאפשר מצב פנימי בלי מחלקה ובלי משתנים גלובליים.\n\nהעצלות (laziness) היא התכונה המרכזית: generator מחשב ערך רק כשמבקשים אותו, ולכן אפשר לייצג סדרות אינסופיות (`count()`) ולעבד קבצים של GB-ים בזיכרון קבוע. המחיר הוא תקורה של עשרות ננו-שניות לכל איבר (החלפת frame), ולכן ללולאות מספריות כבדות עדיף NumPy שעובד על בלוקים.\n\n- `yield` באמצע ביטוי הופך את כל הפונקציה ל-generator, גם אם הוא בתוך `if` שלא מתקיים.\n- כשה-generator מגיע לסוף הגוף (או ל-`return`), הוא זורק `StopIteration` והופך למיצה; אי אפשר \"להריץ אותו מחדש\"."
+        },
+        {
+          "title": "Generator expression מול list comprehension",
+          "body": "`[f(x) for x in xs]` בונה **רשימה שלמה** בזיכרון מיד. `(f(x) for x in xs)` בונה **generator** שמחשב כל ערך בזמן האיטרציה. ההבדל קריטי בזיכרון: `sum(x*x for x in range(10**8))` רץ בזיכרון O(1), בעוד הגרסה עם הסוגריים המרובעים מנסה לאחסן 10^8 אובייקטים ועלולה למוטט את התהליך.\n\nפרט עדין שאוהבים לשאול עליו: ב-generator expression ה-**iterable הראשון** (ה-`for` החיצוני ביותר) מחושב *מיד* בזמן היצירה ומועבר כארגומנט, כדי ששגיאות בו יתגלו במקום ההגדרה. כל השאר — הביטוי, התנאים, ו-for-ים פנימיים — מחושב בעצלות בזמן האיטרציה.\n\nמכאן נובע ה-**late binding**: משתנים חופשיים בתוך הביטוי (כמו `x` ב-`(x+i for i in rng)`) נקראים בזמן האיטרציה, לא בזמן היצירה. אם `x` משתנה בין היצירה לצריכה, ה-generator ישתמש בערך החדש. זו אותה תופעה שמפילה אנשים עם `lambda` בתוך לולאה.\n\n- ברשימות קטנות list comprehension מעט *מהיר* יותר (אין תקורת frame לכל איבר) וגם מאפשר מעבר חוזר.\n- להעברה לפונקציה שמקבלת iterable יחיד מותר להשמיט את הסוגריים: `sum(x*x for x in xs)`."
+        },
+        {
+          "title": "תקשורת דו-כיוונית: send, throw, close ו-yield from",
+          "body": "`yield` הוא גם ביטוי: `x = yield v` מחזיר `v` לקורא, וב-`send(w)` הערך `w` הופך לתוצאת ה-`yield` וממשיך את הריצה. לפני ה-`send` הראשון חובה \"לחמם\" את ה-generator ב-`next()` (או `send(None)`); `send` עם ערך שאינו None ל-generator שלא התחיל זורק `TypeError`.\n\n`throw(exc)` זורק חריג *בנקודת ה-yield* — אפשר לתפוס אותו ב-`try/except` בתוך ה-generator ולהמשיך. `close()` זורק שם `GeneratorExit`: אם ה-generator תופס אותו וממשיך לעשות `yield`, מתקבל `RuntimeError`; אחרת ה-`finally` רץ וה-generator נסגר.\n\n`yield from sub` מאציל ל-sub-generator: הוא מעביר החוצה את כל הערכים של `sub`, מעביר `send` ו-`throw` פנימה אל `sub`, ו**ערך החזרה** של ה-`yield from` הוא ה-`return` של `sub` (שנישא ב-`StopIteration.value`). זה הבסיס לקומפוזיציה של coroutines, ובהיסטוריה — הבסיס ל-`async`/`await`.\n\n- send/throw/yield from הם מה שהפך generators מ-\"pull בלבד\" לדו-כיווניים, והם השורש של asyncio.\n- `return value` בתוך generator לא \"מחזיר\" לקורא של `next`; הוא רק קובע את `StopIteration.value`, שנגיש דרך `yield from`."
+        },
+        {
+          "title": "ניקוי משאבים, PEP 479 ומלכודות נפוצות",
+          "body": "כי `yield` מקפיא את ה-frame כולו, כל `with` או `try/finally` פתוח נשאר פתוח כל זמן שה-generator מושהה. generator שעושה `yield` מתוך `with lock:` **מחזיק את ה-lock** כל עוד הצרכן מעבד, ואם הצרכן עושה `break` ושומר הפניה ל-generator — ה-lock מוחזק עד `close()` או עד איסוף הזבל. `threading.Lock` גם אינו reentrant, כך שאפשר להגיע ל-deadlock. הכלל: לאסוף נתונים תחת ה-lock, ולעשות `yield` *מחוץ* לו.\n\nבגלל שה-`finally` של generator רץ רק ב-`close()` או באיסוף, לא רצוי להסתמך על איסוף דטרמיניסטי (ב-CPython זה refcount, אבל לא בכל מימוש). עוטפים ב-`contextlib.closing` או מנהלים את המשאב מבחוץ.\n\n**PEP 479**: החל מ-Python 3.7, `StopIteration` שדולף מתוך גוף generator מומר ל-`RuntimeError`. בעבר `next(it)` פנימי שנגמר היה מסיים את ה-generator בשקט ומסתיר באגים. הדרך הנכונה: `next(it, default)` או לולאת `for`.\n\n- מלכודת: מעבר כפול על אותו generator → רשימה ריקה בפעם השנייה.\n- מלכודת: `itertools.groupby` מקבץ רק רצפים *סמוכים*; צריך למיין לפי ה-key קודם."
+        },
+        {
+          "title": "itertools ו-pipelines בזיכרון קבוע",
+          "body": "`itertools` הוא ארגז הכלים לבניית pipelines עצלים. `islice(it, n)` לוקח n ראשונים בלי לבנות רשימה; `chain(a, b)` משרשר; `count`, `cycle`, `repeat` הם מקורות אינסופיים; `pairwise` (3.10) נותן זוגות סמוכים; `batched` (3.12) מחלק ל-batches; `tee` משכפל iterator לכמה ענפים.\n\nhדפוס המרכזי הוא **pipeline**: `read_lines -> parse -> filter -> batch`, שכל שלב הוא generator שמושך מהקודם. רק איבר אחד \"בתנועה\" בכל רגע, ולכן הזיכרון O(batch) בלי קשר לגודל הקלט, והקוד קומפוזבילי ונבדק בקלות.\n\nכמה מלכודות ביצועים: `tee` חייב לאגור (buffer) את הפריטים שענף מוביל כבר צרך וענף אחר עוד לא — אם מרוקנים ענף אחד לגמרי לפני השני, `tee` מאחסן את כל הרצף ומאבד את יתרון ה-lazy. כדי לממש חלון נע (sliding window) בזיכרון O(n) משתמשים ב-`collections.deque` עם `maxlen` — הוספה דוחפת את האיבר הישן ב-O(1).\n\n- לכתיבה חוזרת ולמעבר כפול: `list(it)` פעם אחת, לא `tee` שמרוקנים לא במקביל.\n- generators הם single-threaded ו-pull סינכרוני; ל-I/O מקבילי משלבים thread pool או asyncio, ול-CPU-bound עם ה-GIL עוברים ל-multiprocessing על chunks לפי offsets."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מעקב אחרי send ב-generator של צבירה",
+          "body": "ניקח generator `acc` עם `total=0` ולולאה אינסופית `x = yield total; total += x`. נעקוב צעד-צעד:\n\n- `g = acc()` — נוצר אובייקט generator, שום שורה לא רצה. `total` עוד לא קיים.\n- `next(g)` — הגוף רץ: `total=0`, מגיע ל-`yield total` ומחזיר **0**. הריצה קפואה על ה-yield, מחכה לערך.\n- `g.send(5)` — ה-5 הופך לתוצאת ה-`yield`, כלומר `x=5`. ממשיך: `total = 0+5 = 5`, חוזר ללולאה, `yield total` מחזיר **5**.\n- `g.send(3)` — `x=3`, `total = 5+3 = 8`, מחזיר **8**.\n\nהפלט הוא `0 5 8`. שימו לב: לולו היינו קוראים `g.send(5)` לפני `next(g)`, היינו מקבלים `TypeError` כי אי אפשר לשלוח ערך ל-generator שעוד לא עצר על yield."
+        },
+        {
+          "title": "דוגמה: zip על אותו iterator מחלק לזוגות",
+          "body": "נתון `it = iter([1,2,3,4])` ואז `zip(it, it)`. שני הארגומנטים הם *אותו* iterator עם *אותו* מצב. `zip` בונה כל tuple בכך שהוא קורא `next` על הארגומנט הראשון ואז על השני:\n\n- tuple ראשון: `next(it)` → 1 (ראשון), `next(it)` → 2 (שני) ⇒ `(1, 2)`.\n- tuple שני: `next(it)` → 3, `next(it)` → 4 ⇒ `(3, 4)`.\n- tuple שלישי: `next(it)` זורק StopIteration ⇒ zip עוצר.\n\nהתוצאה `[(1, 2), (3, 4)]` — idiom מוכר לחלוקה לזוגות. אותו טריק עם `[iter(xs)]*n` ב-`zip` נותן חלוקה ל-n-יות (ה-grouper recipe). לו היו שני iterators נפרדים על אותה רשימה, היינו מקבלים `[(1,1),(2,2),(3,3),(4,4)]`."
+        },
+        {
+          "title": "דוגמה: yield from וערך ההחזרה דרך StopIteration.value",
+          "body": "`inner` עושה `yield 1` ואז `return \"done\"`. `outer` עושה `r = yield from inner(); yield r`. נעקוב על `list(outer())`:\n\n- האיטרציה הראשונה נכנסת ל-`outer`, מגיעה ל-`yield from inner()`. `inner` רץ עד `yield 1` — הערך **1** יוצא החוצה דרך שתי השכבות אל הרשימה.\n- איטרציה הבאה ממשיכה את `inner`: הוא פוגע ב-`return \"done\"`, שמתורגם ל-`StopIteration(\"done\")`. `yield from` תופס זאת, וערך ההחזרה (`\"done\"`) הופך לתוצאת הביטוי, כלומר `r = \"done\"`.\n- `outer` ממשיך ל-`yield r` ומוציא **'done'**. איטרציה נוספת מסיימת את `outer`.\n\nהתוצאה `[1, 'done']`. הלקח: `return` ב-generator אינו מוחזר ל-`next` הרגיל — הוא נגיש רק דרך `yield from` (או `StopIteration.value` ידנית)."
+        },
+        {
+          "title": "דוגמה: חלון נע בזיכרון O(n) עם deque",
+          "body": "נממש `windows([1,2,3,4], n=2)` עם `deque(maxlen=2)`. ה-deque עם `maxlen` זורק אוטומטית את האיבר הישן כשמוסיפים מעבר לגבול:\n\n- טוענים `islice(it, 2)` → ה-deque הוא `[1,2]`. אורכו 2 = n, אז עושים `yield tuple([1,2])` ⇒ `(1,2)`.\n- `append(3)` דוחף את 1 החוצה → deque `[2,3]`, `yield (2,3)`.\n- `append(4)` דוחף את 2 → deque `[3,4]`, `yield (3,4)`.\n\nהתוצאה `[(1,2),(2,3),(3,4)]`, בזיכרון O(n) בלבד. קריטי לעשות `yield tuple(win)` ולא `yield win`: ה-deque *משתנה* בכל צעד, אז החזרת האובייקט עצמו הייתה גורמת לכל החלונות שנשמרו להצביע על אותו תוכן מתעדכן. על קלט קצר מ-n (`windows([1], 2)`) ה-deque קצר מ-n ומחזירים כלום."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "iterable",
+          "def": "אובייקט שאפשר לבקש ממנו iterator דרך __iter__ (רשימה, tuple, dict, מחרוזת, range). אפשר לעבור עליו ב-for, ולרוב גם פעם אחר פעם."
+        },
+        {
+          "term": "iterator",
+          "def": "אובייקט עם __next__ שמחזיר את האיבר הבא וזורק StopIteration בסוף, ועם __iter__ שמחזיר את עצמו. חד-פעמי: אחרי מיצוי אין מעבר שני."
+        },
+        {
+          "term": "__iter__",
+          "def": "המתודה שמחזירה iterator. ב-iterable של container היא מחזירה iterator חדש; ב-iterator היא מחזירה self."
+        },
+        {
+          "term": "__next__",
+          "def": "המתודה שמייצרת את האיבר הבא של iterator, או זורקת StopIteration כשאין עוד. הפונקציה next(it) קוראת לה."
+        },
+        {
+          "term": "StopIteration",
+          "def": "החריג שמסמן שה-iterator נגמר. for תופס אותו בשקט ועוצר. מ-Python 3.7 (PEP 479) דליפתו מגוף generator הופכת ל-RuntimeError."
+        },
+        {
+          "term": "generator function",
+          "def": "פונקציה שמכילה yield. קריאה אליה מחזירה אובייקט generator בלי להריץ את הגוף; הגוף רץ בעצלות ב-next()."
+        },
+        {
+          "term": "generator object",
+          "def": "ה-iterator שמוחזר מ-generator function. מחזיק את ה-frame (מקומיים ומיקום) בין קריאות, ותומך ב-send/throw/close."
+        },
+        {
+          "term": "yield",
+          "def": "משהה את ה-generator ומחזיר ערך לקורא; הריצה ממשיכה מהנקודה הזו ב-next הבא. כביטוי, x = yield v מקבל את הערך שנשלח ב-send."
+        },
+        {
+          "term": "lazy evaluation",
+          "def": "חישוב ערך רק כשמבקשים אותו. מאפשר סדרות אינסופיות וזיכרון קבוע, במחיר תקורה קטנה לכל איבר."
+        },
+        {
+          "term": "generator expression",
+          "def": "ביטוי (f(x) for x in xs) שבונה generator. ה-iterable החיצוני ביותר מחושב מיד, השאר בעצלות."
+        },
+        {
+          "term": "list comprehension",
+          "def": "[f(x) for x in xs] שבונה רשימה מלאה בזיכרון מיד. ניתן לעבור עליה שוב; צורכת O(n) זיכרון."
+        },
+        {
+          "term": "exhaustion",
+          "def": "מיצוי: אחרי שעברו על iterator פעם אחת הוא ריק, ומעבר נוסף מחזיר כלום. iterable כמו רשימה נותן iterator חדש כל פעם."
+        },
+        {
+          "term": "send(v)",
+          "def": "מחדש generator מושהה ונותן ל-yield את הערך v כתוצאה. דורש next() ראשון לחימום; אחרת TypeError."
+        },
+        {
+          "term": "throw(exc)",
+          "def": "זורק חריג בנקודת ה-yield של ה-generator, כך שאפשר לתפוס אותו ב-try/except פנימי ולהמשיך."
+        },
+        {
+          "term": "close()",
+          "def": "זורק GeneratorExit בנקודת ה-yield כדי שה-finally ירוץ וה-generator ייסגר באופן דטרמיניסטי."
+        },
+        {
+          "term": "GeneratorExit",
+          "def": "החריג ש-close() זורק לתוך generator. אם ה-generator עושה yield אחרי שתפס אותו, מתקבל RuntimeError."
+        },
+        {
+          "term": "yield from",
+          "def": "מאציל ל-sub-generator: מעביר החוצה את ערכיו, מעביר send/throw פנימה, וערכו הוא ה-return של ה-sub (דרך StopIteration.value)."
+        },
+        {
+          "term": "PEP 479",
+          "def": "השינוי מ-Python 3.7: StopIteration שדולף מגוף generator מומר ל-RuntimeError, כדי שלא יסתיר באגים."
+        },
+        {
+          "term": "late binding",
+          "def": "משתנים חופשיים בתוך generator/lambda נקראים בזמן הריצה ולא בזמן ההגדרה; אם השתנו בינתיים, משתמשים בערך החדש."
+        },
+        {
+          "term": "itertools",
+          "def": "ספריית כלים ל-iterators עצלים: islice, chain, tee, groupby, count, cycle, pairwise (3.10), batched (3.12) ועוד."
+        },
+        {
+          "term": "islice",
+          "def": "itertools.islice(it, n) לוקח עד n איברים מ-iterator בעצלות, בלי לבנות רשימת ביניים."
+        },
+        {
+          "term": "tee",
+          "def": "itertools.tee משכפל iterator לכמה ענפים עצמאיים; חייב לאגור פריטים שענף מוביל צרך וענף אחר עוד לא — עלול להגיע ל-O(n) זיכרון."
+        },
+        {
+          "term": "groupby",
+          "def": "itertools.groupby מקבץ רק רצפים סמוכים עם אותו key (כמו uniq), לכן צריך למיין לפי ה-key קודם לקיבוץ גלובלי."
+        },
+        {
+          "term": "deque(maxlen)",
+          "def": "collections.deque עם maxlen דוחף אוטומטית את האיבר הישן כשמוסיפים מעבר לגבול; בסיס לחלון נע בזיכרון O(n) והוספה O(1)."
+        },
+        {
+          "term": "contextlib.closing",
+          "def": "עוטף אובייקט עם close() ב-with כדי להבטיח סגירה דטרמיניסטית, למשל של generator שמחזיק משאב."
+        },
+        {
+          "term": "pipeline",
+          "def": "שרשרת generators (read -> parse -> filter -> batch) שכל שלב מושך מהקודם. איבר אחד בתנועה, זיכרון O(batch), קומפוזבילי."
+        },
+        {
+          "term": "GIL",
+          "def": "ה-Global Interpreter Lock של CPython: רק thread אחד מריץ bytecode בכל רגע. ללולאות CPU-bound ב-Python עוברים ל-multiprocessing."
+        }
+      ]
     }
   ],
   "questions": [
@@ -338,6 +492,219 @@
       ],
       "explanation": "מחפשים גם את הכוח של generators (זיכרון, קומפוזיציה) וגם את המגבלות שלהם (סדרתיות, GIL, טיפול בכשלים).",
       "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין iterable ל-iterator?",
+      "choices": [
+        "iterable הוא אובייקט שאפשר לבקש ממנו iterator (יש לו __iter__); iterator הוא זה שמייצר ערכים עם __next__ ומחזיק מצב. כל iterator הוא iterable, אבל לא להפך",
+        "אין הבדל, שתי המילים מתארות את אותו דבר",
+        "iterable חד-פעמי; iterator אפשר לעבור עליו אינסוף פעמים",
+        "iterator חייב להיות רשימה; iterable יכול להיות כל דבר"
+      ],
+      "answer": 0,
+      "explanation": "iterable (רשימה, dict, range) נותן iterator חדש בכל iter(); ה-iterator (עם __next__) הוא שמחזיק את ה-position וחד-פעמי. ההיפך מהנאמר באפשרות על החד-פעמיות: דווקא ה-iterator חד-פעמי. iterator לא חייב להיות רשימה — generator הוא iterator שאינו רשימה.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה מחזירה קריאה לפונקציה שמכילה `yield`, ברגע הקריאה?",
+      "choices": [
+        "את הערך הראשון שה-yield מייצר",
+        "רשימה עם כל הערכים",
+        "אובייקט generator, בלי להריץ אף שורה מגוף הפונקציה עדיין",
+        "None, והגוף רץ עד הסוף"
+      ],
+      "answer": 2,
+      "explanation": "נוכחות yield הופכת את הפונקציה ל-generator function: הקריאה בונה אובייקט generator ומחזירה אותו מיד, בלי להריץ את הגוף. הגוף מתחיל לרוץ רק ב-next() הראשון, ואז רץ עד ה-yield הראשון.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה חריג (שם המחלקה) מסמן ל-for-loop שה-iterator נגמר?",
+      "accept": [
+        "StopIteration"
+      ],
+      "explanation": "iterator זורק StopIteration כשאין עוד איברים, ו-for תופס אותו בשקט ועוצר. מ-Python 3.7 דליפה שלו מתוך גוף generator הופכת ל-RuntimeError (PEP 479).",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q22",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "xs = [1, 2, 3]\nit = iter(xs)\nprint(sum(it))\nprint(sum(it))",
+      "choices": [
+        "6 ואז 0",
+        "6 ואז 6",
+        "6 ואז TypeError",
+        "0 ואז 0"
+      ],
+      "answer": 0,
+      "explanation": "sum הראשון מרוקן את ה-iterator (6=1+2+3). ה-iterator חד-פעמי, ולכן sum השני מקבל StopIteration מיד וסוכם רשימה ריקה ⇒ 0. לו עבדנו ישירות על xs (רשימה), כל sum היה מקבל iterator חדש ומחזיר 6.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "it = iter([10, 20])\nprint(next(it), next(it), next(it, -1))",
+      "choices": [
+        "10 20 StopIteration",
+        "10 20 None",
+        "10 20 -1",
+        "10 20 0"
+      ],
+      "answer": 2,
+      "explanation": "שתי הקריאות הראשונות מחזירות 10 ו-20. הקריאה השלישית ל-next עם ארגומנט ברירת מחדל (-1) לא זורקת StopIteration אלא מחזירה את ברירת המחדל כשה-iterator נגמר. בלי הארגומנט השני הייתה עולה StopIteration.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מייצר `for line in open('big.txt'):` מבחינת זיכרון והתנהגות?",
+      "choices": [
+        "קורא את כל הקובץ לזיכרון ואז מפצל לשורות",
+        "קורא שורה-שורה בעצלות; אובייקט הקובץ הוא iterator שמחזיר שורה אחת בכל איטרציה (כולל תו השורה)",
+        "מחזיר תווים בודדים, לא שורות",
+        "זורק שגיאה, קובץ אינו iterable"
+      ],
+      "answer": 1,
+      "explanation": "אובייקט קובץ הוא iterator בעצמו: הוא מחזיר שורה אחת בכל next (כולל ה-newline), בזיכרון קבוע תלוי buffer ולא בגודל הקובץ. הוא גם חד-פעמי — מעבר שני דורש seek(0). לכן אפשר לעבד קבצים ענקיים בלולאת for פשוטה.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "from itertools import count, islice\nprint(list(islice(count(10, 2), 3)))",
+      "choices": [
+        "[10, 11, 12]",
+        "[0, 2, 4]",
+        "[10, 12, 14]",
+        "[12, 14, 16]"
+      ],
+      "answer": 2,
+      "explanation": "count(10, 2) הוא מקור אינסופי 10, 12, 14, 16, ... islice לוקח את 3 הראשונים בעצלות ⇒ [10, 12, 14]. בלי islice, list(count(...)) היה רץ לנצח. זה הדפוס לקטיעת iterator אינסופי.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "from itertools import tee\na, b = tee([1, 2, 3])\nprint(next(a), next(a), next(b))",
+      "choices": [
+        "1 2 3",
+        "שגיאה: לא ניתן לצרוך tee פעמיים",
+        "1 2 1",
+        "1 2 2"
+      ],
+      "answer": 2,
+      "explanation": "tee יוצר שני iterators עצמאיים מעל אותו מקור. צריכת a (1, 2) לא מזיזה את b, ולכן next(b) מחזיר 1. מאחורי הקלעים tee מאגר את 1 ו-2 עבור b עד שיצרוך אותם — מחיר הזיכרון של העצמאות.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q27",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את שלבי ה-pipeline לעיבוד קובץ לוג ושליחה ב-batches, מהמקור אל הצרכן.",
+      "items": [
+        "פתיחת הקובץ ו-yield של כל שורה",
+        "parsing כל שורה לרשומה מובנית",
+        "סינון רשומות לפי תנאי",
+        "קיבוץ הרשומות ל-batches בגודל קבוע",
+        "שליחת כל batch ל-API"
+      ],
+      "explanation": "ב-pipeline של generators כל שלב מושך מהקודם: המקור (שורות) -> parse -> filter -> batch -> שליחה. רק איבר/batch אחד בתנועה, ולכן הזיכרון O(batch) בלי קשר לגודל הקובץ.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q28",
+      "level": 4,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "הפונקציה אמורה להחזיר את האיבר הראשון, שאר האיברים, וסכומם. מה הבאג?",
+      "code": "def first_and_rest(seq):\n    g = (x for x in seq)\n    first = next(g)\n    rest = list(g)\n    total = sum(g)\n    return first, rest, total",
+      "bugLine": 5,
+      "choices": [
+        "`sum(g)` יחזיר תמיד 0 כי `list(g)` כבר מיצה את ה-generator; צריך לסכם את `rest`",
+        "`next(g)` זורק TypeError כי אי אפשר לקרוא next על generator expression",
+        "`list(g)` כולל גם את `first`, ולכן rest שגוי",
+        "הפונקציה תיכשל תמיד ב-StopIteration על קלט לא ריק"
+      ],
+      "answer": 0,
+      "explanation": "generator חד-פעמי: אחרי next (לוקח את first) ו-list (לוקח את כל השאר), ה-generator מיצה, ולכן sum(g) סוכם רשימה ריקה ⇒ 0 תמיד. התיקון: total = sum(rest). next כן עובד על generator, ו-list לא כולל את first כי כבר נצרך.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q29",
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "prompt": "כתוב generator בשם `chunked(iterable, n)` שמחזיר רשימות של עד n איברים כל אחת (ה-batch האחרון יכול להיות קצר יותר). חייב לעבוד על iterables אינסופיים ובזיכרון O(n), בלי לממש מראש את כל הקלט.",
+      "starter": "def chunked(iterable, n):\n    ...",
+      "modelAnswer": "from itertools import islice\n\ndef chunked(iterable, n):\n    if n < 1:\n        raise ValueError(\"n must be >= 1\")\n    it = iter(iterable)\n    while True:\n        chunk = list(islice(it, n))\n        if not chunk:\n            return\n        yield chunk",
+      "rubric": [
+        "iter() פעם אחת כדי לתמוך בכל iterable כולל אינסופי",
+        "islice(it, n) מושך עד n איברים בלי לבנות את כל הקלט",
+        "עצירה כשה-chunk ריק (לא StopIteration שדולף)",
+        "ה-batch האחרון יכול להיות קצר מ-n",
+        "זיכרון O(n) לכל batch; טיפול ב-n<1"
+      ],
+      "explanation": "הדפוס הקלאסי: iter פעם אחת ואז islice בלולאה עד chunk ריק. מ-Python 3.12 יש itertools.batched שעושה בדיוק את זה. חשוב return (לא raise StopIteration) כדי לא להיתקל ב-PEP 479.",
+      "lesson": "py.generators",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "py.generators.q30",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "def g():\n    try:\n        yield 1\n    except ValueError:\n        yield 99\n    yield 2\n\nit = g()\nprint(next(it))\nprint(it.throw(ValueError))\nprint(next(it))",
+      "choices": [
+        "1, 99, 2",
+        "1, ואז ValueError, 2",
+        "1, 99, StopIteration",
+        "1, 2, 99"
+      ],
+      "answer": 0,
+      "explanation": "next(it) מחזיר 1 ומשהה על ה-yield בתוך ה-try. throw(ValueError) זורק את החריג בנקודת ההשהיה; ה-except תופס אותו ועושה yield 99. next הבא ממשיך אחרי ה-try/except ל-yield 2. כך throw מאפשר להזריק חריג ולהמשיך את ה-generator.",
+      "lesson": "py.generators"
+    },
+    {
+      "id": "py.generators.q31",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "משתמשים ב-`a, b = tee(gen)` ואז צורכים את כל `a` עד הסוף לפני שנוגעים ב-`b`. מה קורה לזיכרון?",
+      "choices": [
+        "אין עלות זיכרון נוספת; tee עובד תמיד בזיכרון קבוע",
+        "tee זורק שגיאה אם לא צורכים את שני הענפים במקביל",
+        "הזיכרון נשאר O(1) כי שני הענפים חולקים את אותו מצב",
+        "tee חייב לאגור (buffer) את כל הפריטים ש-a צרך ו-b עוד לא; צריכת a עד הסוף מאחסנת את כל הרצף בזיכרון ומאבדת את יתרון ה-lazy"
+      ],
+      "answer": 3,
+      "explanation": "tee נותן ענפים עצמאיים, ולכן הוא חייב לשמור כל פריט שהענף המוביל כבר צרך עד שגם האחרים יצרכו אותו. אם מרוקנים את a לגמרי קודם, tee מאחסן את כל ה-gen — O(n). הענפים לא חולקים מצב (זה לא O(1)), ו-tee לא דורש צריכה מקבילה ולא זורק שגיאה. אם צריך מעבר כפול, עדיף list() פעם אחת.",
+      "lesson": "py.generators",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

@@ -35,7 +35,177 @@
         "מתי vDSO נופל ל-syscall אמיתי",
         "כלים: strace מול perf trace ו-bpftrace, ומחיר המדידה"
       ],
-      "diagram": "user:   read(fd,buf,n)\n          | glibc wrapper\n          v  rax=0 (SYS_read)\n        [syscall] --------------+\nkernel:  entry -> sys_read      |\n          -> copy_to_user       |\n        [sysret] <--------------+\n          rax = bytes or -errno"
+      "diagram": "user:   read(fd,buf,n)\n          | glibc wrapper\n          v  rax=0 (SYS_read)\n        [syscall] --------------+\nkernel:  entry -> sys_read      |\n          -> copy_to_user       |\n        [sysret] <--------------+\n          rax = bytes or -errno",
+      "details": [
+        {
+          "title": "מה קורה במעבר ל-kernel mode",
+          "body": "המעבד רץ בשתי רמות הרשאה: **user mode** (ב-x86 ring 3) שבו אסור לגעת בחומרה ובמבני הקרנל, ו-**kernel mode** (ring 0). syscall היא הדרך המבוקרת לעבור ביניהן.\n\nב-x86-64 ב-Linux:\n- מספר ה-syscall נכנס ל-**rax** (למשל 0 = read, 1 = write), והארגומנטים ל-rdi, rsi, rdx, r10, r8, r9.\n- ההוראה `syscall` מעבירה את המעבד ל-ring 0 ולנקודת כניסה קבועה שהקרנל הגדיר. אי אפשר לקפוץ לשום מקום אחר בקרנל.\n- הקרנל שומר את רגיסטרי ה-user, עובר ל-kernel stack של ה-thread, ומריץ את ה-handler מטבלת ה-syscalls לפי המספר.\n- נתונים עוברים בין הזיכרונות רק דרך `copy_from_user` ו-`copy_to_user`, שבודקים שהכתובת שייכת ל-user ומטפלים ב-page faults.\n- התוצאה חוזרת ב-rax: מספר אי-שלילי בהצלחה, או **‎-errno** בכישלון. `sysret` מחזיר ל-ring 3.\n\n**mode switch אינו context switch**: syscall שלא נחסם נשאר באותו thread, רק ברמת הרשאה אחרת. context switch קורה רק אם ה-thread נחסם (למשל read על socket ריק) או שה-scheduler מחליט להחליף.\n\n**עלות**: syscall ריק הוא בסדר גודל של 50–100ns בלי mitigations, ומאות ns עם mitigations. **KPTI** (נגד Meltdown) מוציא את רוב הקרנל מטבלאות הדפים של user, ולכן כל כניסה ויציאה מחליפה **CR3**. בלי **PCID** זה גם מרוקן את ה-TLB. mitigations של Spectre מוסיפים עוד עלות בכניסה. מעבדים חדשים שאינם פגיעים ל-Meltdown לא צריכים KPTI. המסקנה: לצמצם את מספר ה-syscalls, לא רק את העבודה בכל אחד."
+        },
+        {
+          "title": "errno, EINTR ו-short reads",
+          "body": "**ה-wrapper של glibc**: אם הקרנל החזיר ‎-errno, ה-wrapper שם את הערך ב-`errno` ומחזיר -1. **errno הוא thread-local**, ומשמעותי רק אחרי שהקריאה דיווחה על כישלון: קריאה מוצלחת לא מאפסת אותו, ומותר לה אפילו לשנות אותו. לכן תמיד בודקים קודם את ערך ההחזרה.\n\n**signal handler** רץ על אותו thread, ולכן חולק את אותו errno. handler שקורא ל-syscall (גם async-signal-safe כמו waitpid) עלול לדרוס את errno בין הכישלון לבדיקה בקוד הראשי. הכלל: לשמור errno בכניסה ל-handler ולשחזר ביציאה.\n\n**EINTR**: signal נתפס בזמן שקריאה חוסמת חיכתה, לפני שהועברו נתונים. אם כבר הועברו נתונים, הקריאה מחזירה את מספר הבתים (short read או write). עם **SA_RESTART** קריאות כמו read ו-write על התקנים איטיים מתחדשות אוטומטית. אבל יש קריאות שלעולם לא מתחדשות, לפי signal(7): epoll_wait, poll, select, nanosleep ועוד. לכן לולאות אירועים תמיד בודקות EINTR.\n\n**short read / write**: read מחזיר את מה שזמין (ב-sockets, pipes, טרמינלים), ו-write יכול לכתוב חלק (signal באמצע, socket לא חוסם, דיסק מלא). **read שמחזיר 0 הוא EOF**. בנוסף, ב-Linux קריאת read או write אחת מעבירה לכל היותר **0x7ffff000** בתים (כ-2GB), גם לקובץ רגיל. לכן write_all ו-read_exact בלולאה הם חובה בקוד מערכות."
+        },
+        {
+          "title": "חסימה, O_NONBLOCK, epoll ו-io_uring",
+          "body": "קריאה **חוסמת** מכניסה את ה-thread ל-wait queue של האובייקט (socket, pipe) ומרדימה אותו, וה-scheduler מריץ אחר. עם **O_NONBLOCK**, במקום להיחסם הקריאה מחזירה -1 עם **EAGAIN** (או EWOULDBLOCK). 0 שמור ל-EOF.\n\nכדי לחכות להרבה fds ביחד:\n- **select / poll**: מעבירים את כל הרשימה בכל קריאה, והקרנל סורק את כולה: O(n) לכל קריאה. select מוגבל גם ל-FD_SETSIZE (1024).\n- **epoll**: הרישום נשמר בקרנל (epoll_ctl), ו-epoll_wait מחזיר רק fds מוכנים: העלות פרופורציונלית למספר המוכנים. מתאים לאלפי חיבורים שרובם idle.\n- **level-triggered** (ברירת מחדל): epoll מדווח כל עוד יש נתונים. **edge-triggered** (EPOLLET): מדווח רק כשמצב משתנה (נתונים חדשים הגיעו). ב-ET חייבים לקרוא בלולאה עד EAGAIN, אחרת נתונים שנשארו לא יגרמו לאירוע חדש וה-fd נתקע.\n\n**קבצים רגילים** הם תמיד \"מוכנים\" מבחינת epoll ו-poll: O_NONBLOCK לא משפיע עליהם, ו-read שמחכה לדיסק פשוט נחסם (במצב D). epoll_ctl על קובץ רגיל נכשל עם EPERM. הפתרונות: **io_uring**, thread pool, או `preadv2` עם RWF_NOWAIT (מחזיר EAGAIN אם הנתונים לא ב-page cache).\n\n**io_uring**: שתי טבעות בזיכרון משותף בין האפליקציה לקרנל. האפליקציה כותבת בקשות ל-**submission queue** וקוראת תוצאות מה-**completion queue**. `io_uring_enter` אחד מגיש הרבה בקשות. במצב **SQPOLL** thread של הקרנל מסתובב על ה-SQ, ובמצב יציב אין syscalls בכלל (במחיר core)."
+        },
+        {
+          "title": "להימנע מ-syscalls: vDSO, batching ו-zero-copy",
+          "body": "**vDSO**: הקרנל ממפה לכל process קוד קטן ודף נתונים (vvar) עם בסיס זמן וכיול. `clock_gettime` ו-`gettimeofday` קוראים את ה-**TSC** ומחשבים זמן ב-user space, בכ-20ns. זה עובד רק אם ה-**clocksource** קריא מ-user space (tsc, ובתוך VM גם kvm-clock או hyperv_clocksource). עם hpet או acpi_pm, למשל כשה-TSC סומן לא יציב, כל קריאה נופלת ל-syscall אמיתי, ובתוך VM גם ל-VM exit. בודקים ב-/sys/devices/system/clocksource/clocksource0/current_clocksource.\n\n**batching**: `readv` ו-`writev` (כמה באפרים בקריאה אחת), `recvmmsg` ו-`sendmmsg` (כמה חבילות UDP בקריאה אחת). העלות הקבועה מתחלקת על הרבה פריטים.\n\n**zero-copy**: `read` ואז `write` לשליחת קובץ ב-socket מעתיקים קרנל ל-user ובחזרה. `sendfile` ו-`splice` משאירים את הנתונים בקרנל. `mmap` ממפה קובץ ישירות, אבל משלם ב-page faults וב-TLB shootdowns ב-munmap.\n\n**kernel bypass**: DPDK או AF_XDP מעבירים את ה-driver או את התורים ל-user space, ומבטלים syscalls בנתיב החם לגמרי."
+        },
+        {
+          "title": "page cache, fsync ו-O_DIRECT",
+          "body": "write לקובץ רגיל בדרך כלל רק מעתיק ל-**page cache** ומסמן את הדפים dirty. הקריאה חוזרת בהצלחה לפני שהנתונים בדיסק. **writeback** של הקרנל כותב אותם מאוחר יותר (בדרך כלל תוך שניות). אם החשמל נופל קודם, הנתונים אבדו.\n\n- **fsync** מחכה עד שהנתונים והמטא-דאטה בדיסק. **fdatasync** מדלג על מטא-דאטה שלא נחוצה לקריאה. שניהם יקרים (מילי-שניות בדיסק רגיל), ולכן קובעים מדיניות: כל N רשומות או כל T זמן.\n- **O_DIRECT** עוקף את ה-page cache: הנתונים עוברים ב-DMA ישירות מהבאפר שלך. דורש יישור של הבאפר, ה-offset והגודל (בדרך כלל ל-512 בתים או 4KB). שימושי להקלטה רציפה של נפח גדול, כדי לא לזהם את ה-page cache. O_DIRECT לבדו לא מבטיח עמידות לנפילת חשמל (ה-cache של הדיסק), ועדיין צריך fsync או O_DSYNC.\n- כשיש יותר מדי דפים dirty, הקרנל מאט את הכותבים (balance_dirty_pages), ו-write \"מהיר\" נחסם פתאום לכמה מילי-שניות. לכן thread RT לא כותב לקובץ ישירות."
+        },
+        {
+          "title": "מדידה, אבטחה וזמן בלולאות RT",
+          "body": "**strace** מבוסס **ptrace**: הקרנל עוצר את ה-thread בכל כניסה ויציאה מ-syscall ומחכה ל-strace. זה מאט פי עשרות ומשנה תזמון. `strace -c` נותן סיכום. **perf trace** ו-**bpftrace** (eBPF) אוספים בתוך הקרנל לבאפר בלי לעצור את התוכנית, עם overhead קטן בהרבה.\n\n**seccomp**: מסנן BPF שה-process מתקין (או שה-runtime מתקין בשבילו) ומחליט לכל syscall אם לאפשר, להחזיר שגיאה או להרוג. Docker מתקין פרופיל ברירת מחדל שחוסם syscalls מסוכנים (למשל perf_event_open), ולכן תוכנית בקונטיינר יכולה לקבל EPERM גם כ-root. Chrome ו-systemd משתמשים בזה לבידוד.\n\n**זמן ושינה בלולאה מחזורית**: `nanosleep` יחסי של period אחרי כל עבודה מצטבר: זמן העבודה וה-wakeup latency מתווספים בכל סיבוב, וה-period האמיתי ארוך מהמתוכנן. `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next)` עם `next += period` מתעורר בזמנים מוחלטים, כך שהשגיאה לא מצטברת ו-EINTR לא דורש חישוב מחדש. **CLOCK_MONOTONIC** לא קופץ כשמשנים את השעון (בניגוד ל-CLOCK_REALTIME). ל-threads רגילים יש **timer slack** של 50µs כברירת מחדל: הקרנל רשאי לאחר התעוררות בטווח הזה כדי לאחד timers. ל-threads RT ה-slack הוא 0, ואפשר לשנות עם PR_SET_TIMERSLACK."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מחיר syscall לכל חבילה מול batching",
+          "body": "מקלט UDP, מיליון חבילות בשנייה. נניח עלות קבועה לכל syscall (כניסה, יציאה, mitigations) של 300ns, ועבודה לכל חבילה (מחסנית, העתקה) של 400ns.\n\n- **recvfrom לכל חבילה:** 1M × (300 + 400) ns = 0.7 שניות של CPU בכל שנייה, 70% של core.\n- **recvmmsg עם 32 חבילות לקריאה:** 31,250 syscalls × 300ns ≈ 9ms, ועוד 1M × 400ns = 400ms. סך הכול כ-41% של core.\n- **kernel bypass:** אין syscalls ואין מחסנית, נשארים עם עיבוד החבילה עצמה.\n\nמה לומדים: batching מעלים את העלות הקבועה, אבל לא את העבודה לכל חבילה. כדי להוריד גם אותה צריך לעקוף את המחסנית."
+        },
+        {
+          "title": "דוגמה: short write ב-pipe",
+          "body": "write_all של 100KB ל-pipe חוסם בגודל 64KB, כשהקורא איטי.\n\n1. write(100KB): הקרנל מעתיק 64KB וה-pipe מלא. ה-thread נרדם ומחכה למקום.\n2. בזמן השינה מגיע SIGALRM עם handler (בלי SA_RESTART). כבר הועברו נתונים, ולכן write מחזיר 65536 ולא -1 עם EINTR.\n3. הלולאה מקדמת את המצביע ב-65536 וממשיכה עם 36KB.\n4. write(36KB) נחסם עד שהקורא מפנה מקום, וחוזר עם 36864.\n5. n = 0, הלולאה מסתיימת בהצלחה.\n\nאילו הקוד היה מניח ש-write אחד כותב הכול, 36KB היו נעלמים בשקט. ואילו ה-signal היה מגיע לפני שהועבר אפילו בית, היינו מקבלים EINTR, והלולאה הייתה מנסה שוב."
+        },
+        {
+          "title": "דוגמה: שינה יחסית מול מוחלטת",
+          "body": "לולאה שצריכה לרוץ כל 1ms. העבודה לוקחת 200µs, וה-wakeup latency כ-50µs.\n\n**nanosleep(1ms) אחרי העבודה:**\n- סיבוב: 200µs עבודה + 1000µs שינה + 50µs התעוררות = 1.25ms.\n- אחרי 1000 סיבובים עברו 1.25 שניות במקום שנייה: הלולאה מפגרת ב-250ms, וקצב הדגימה שגוי ב-20%.\n\n**clock_nanosleep עם TIMER_ABSTIME:**\n- next = התחלה + 1ms, + 2ms, וכו'. אחרי עבודה של 200µs, השינה היא רק עד next, כלומר כ-800µs.\n- ה-wakeup latency מופיע כ-jitter של כ-50µs בכל סיבוב, אבל לא מצטבר. אחרי 1000 סיבובים עברה שנייה אחת בדיוק.\n\nבנוסף, אם signal קוטע את השינה, פשוט קוראים שוב עם אותו next."
+        },
+        {
+          "title": "דוגמה: vDSO שנפל ל-syscall",
+          "body": "RT loop קורא ל-clock_gettime פעמיים לכל בלוק, 500,000 פעמים בשנייה.\n\n- **עם vDSO ו-tsc:** כ-20ns לקריאה. 500,000 × 20ns = 10ms בשנייה, 1% של core.\n- **בתוך VM עם clocksource של hpet:** כל קריאה היא syscall ועוד גישה לחומרה מדומה, נניח 1µs. 500,000 × 1µs = 0.5 שניות בשנייה, 50% של core.\n\nאותו קוד בדיוק, ו-perf מראה פתאום זמן רב בקרנל. הבדיקה: current_clocksource. התיקון: clocksource שתומך ב-vDSO (kvm-clock או tsc יציב), או למדוד פחות פעמים."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "system call",
+          "def": "בקשה מתוכנית ב-user space לקרנל לבצע פעולה מוגנת, דרך הוראה ייעודית ונקודת כניסה קבועה."
+        },
+        {
+          "term": "user mode / kernel mode (rings)",
+          "def": "רמות הרשאה של המעבד: ring 3 לתוכניות, ring 0 לקרנל. רק בקרנל מותר לגשת לחומרה ולמבנים מוגנים."
+        },
+        {
+          "term": "syscall ABI ב-x86-64",
+          "def": "מספר ב-rax, ארגומנטים ב-rdi, rsi, rdx, r10, r8, r9, ההוראה syscall, והתוצאה ב-rax (שלילי = ‎-errno)."
+        },
+        {
+          "term": "copy_from_user / copy_to_user",
+          "def": "פונקציות הקרנל שמעבירות נתונים בין זיכרון user לזיכרון קרנל, עם בדיקת כתובות וטיפול ב-faults."
+        },
+        {
+          "term": "mode switch / context switch",
+          "def": "mode switch: מעבר הרשאה בתוך אותו thread. context switch: החלפת ה-thread שרץ. syscall שלא נחסם הוא רק mode switch."
+        },
+        {
+          "term": "KPTI, Meltdown ו-PCID",
+          "def": "KPTI מפריד טבלאות דפים של user וקרנל כדי לחסום Meltdown, ומחליף CR3 בכל מעבר. PCID מתייג רשומות TLB כדי לא לרוקן אותו."
+        },
+        {
+          "term": "errno",
+          "def": "משתנה thread-local עם קוד השגיאה האחרון. תקף רק אחרי שהקריאה דיווחה על כישלון."
+        },
+        {
+          "term": "EINTR ו-SA_RESTART",
+          "def": "EINTR: קריאה חוסמת נקטעה על ידי signal לפני שהועברו נתונים. SA_RESTART מחדש חלק מהקריאות אוטומטית, אבל לא epoll_wait, poll, select ו-nanosleep."
+        },
+        {
+          "term": "short read / write",
+          "def": "read או write שהעבירו פחות בתים מהמבוקש. נורמלי ב-sockets, pipes וטרמינלים, ומחייב לולאה."
+        },
+        {
+          "term": "EOF",
+          "def": "read שמחזיר 0: אין ולא יהיו עוד נתונים (הצד השני סגר, או סוף קובץ)."
+        },
+        {
+          "term": "MAX_RW_COUNT",
+          "def": "ב-Linux read או write בודד מעביר לכל היותר 0x7ffff000 בתים. כתיבה גדולה יותר מחזירה פחות מהמבוקש."
+        },
+        {
+          "term": "O_NONBLOCK ו-EAGAIN",
+          "def": "במצב לא חוסם, פעולה שהייתה נחסמת מחזירה -1 עם EAGAIN. לא משפיע על קבצים רגילים."
+        },
+        {
+          "term": "select / poll / epoll",
+          "def": "המתנה להרבה fds. select ו-poll סורקים את כל הרשימה בכל קריאה, epoll מחזיק רישום בקרנל ומחזיר רק מוכנים."
+        },
+        {
+          "term": "level-triggered / edge-triggered",
+          "def": "LT מדווח כל עוד יש נתונים. ET (EPOLLET) מדווח רק על שינוי, ולכן חייבים לקרוא עד EAGAIN."
+        },
+        {
+          "term": "RWF_NOWAIT",
+          "def": "דגל של preadv2: מחזיר EAGAIN במקום להיחסם אם הנתונים לא נמצאים ב-page cache."
+        },
+        {
+          "term": "io_uring ו-SQPOLL",
+          "def": "טבעות submission ו-completion בזיכרון משותף עם הקרנל. io_uring_enter מגיש הרבה בקשות, ו-SQPOLL מבטל גם אותו בעזרת thread של הקרנל."
+        },
+        {
+          "term": "vDSO, vvar ו-TSC",
+          "def": "קוד ודף נתונים שהקרנל ממפה לכל process, שמחשבים זמן מה-TSC בלי syscall."
+        },
+        {
+          "term": "clocksource",
+          "def": "מקור הזמן של הקרנל (tsc, kvm-clock, hpet, acpi_pm). רק חלקם תומכים ב-vDSO, והשאר הופכים את clock_gettime ל-syscall."
+        },
+        {
+          "term": "readv / writev, recvmmsg / sendmmsg",
+          "def": "קריאות batching: כמה באפרים או כמה חבילות ב-syscall אחד."
+        },
+        {
+          "term": "sendfile / splice",
+          "def": "העברת נתונים בין fds בתוך הקרנל, בלי העתקה ל-user space ובחזרה."
+        },
+        {
+          "term": "kernel bypass",
+          "def": "DPDK או AF_XDP: עבודה ישירה מול תורי ה-NIC מ-user space, בלי syscalls ומחסנית רשת בנתיב החם."
+        },
+        {
+          "term": "page cache ו-writeback",
+          "def": "write לקובץ מעתיק לדפים בזיכרון ומסמן dirty. הקרנל כותב אותם לדיסק מאוחר יותר, ומאט כותבים כשיש יותר מדי dirty."
+        },
+        {
+          "term": "fsync / fdatasync",
+          "def": "מחכים עד שהנתונים (ו-fsync גם המטא-דאטה) נמצאים באחסון יציב. בלעדיהם write מוצלח יכול ללכת לאיבוד בנפילת חשמל."
+        },
+        {
+          "term": "O_DIRECT",
+          "def": "I/O שעוקף את ה-page cache ומעביר ב-DMA מהבאפר. דורש יישור של באפר, offset וגודל, ולא מבטיח עמידות בלי fsync."
+        },
+        {
+          "term": "strace ו-ptrace",
+          "def": "strace עוצר את ה-thread בכל syscall דרך ptrace, ולכן מאט פי עשרות ומשנה תזמון."
+        },
+        {
+          "term": "perf trace / bpftrace / eBPF",
+          "def": "כלים שאוספים אירועים בתוך הקרנל בלי לעצור את התוכנית, עם overhead נמוך בהרבה מ-strace."
+        },
+        {
+          "term": "seccomp",
+          "def": "מסנן BPF על syscalls של process. Docker מתקין פרופיל ברירת מחדל שחוסם syscalls מסוכנים ומחזיר EPERM."
+        },
+        {
+          "term": "clock_nanosleep ו-TIMER_ABSTIME",
+          "def": "שינה עד זמן מוחלט. בלולאה מחזורית מונעת הצטברות של שגיאה, בניגוד לשינה יחסית."
+        },
+        {
+          "term": "CLOCK_MONOTONIC / CLOCK_REALTIME",
+          "def": "MONOTONIC לא קופץ כשמשנים את השעון ומתאים למדידת זמן ותזמון. REALTIME הוא שעון הקיר."
+        },
+        {
+          "term": "timer slack",
+          "def": "איחור מותר בהתעוררות כדי לאחד timers: 50µs כברירת מחדל ל-threads רגילים, 0 ל-RT. PR_SET_TIMERSLACK משנה אותו."
+        },
+        {
+          "term": "async-signal-safe",
+          "def": "פונקציות שמותר לקרוא להן מ-signal handler. גם הן עלולות לשנות errno, ולכן שומרים ומשחזרים אותו."
+        }
+      ]
     }
   ],
   "questions": [
@@ -316,6 +486,212 @@
       "answer": 1,
       "explanation": "errno הוא thread-local, אבל ה-handler רץ על אותו thread ולכן חולק את אותו errno. waitpid הוא async-signal-safe ומותר ב-handler, אבל הוא עלול לשנות את errno. הכלל: `int saved = errno; ...; errno = saved;` בכל handler.",
       "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "האם כל syscall גורם ל-context switch?",
+      "choices": [
+        "כן, תמיד מוחלף ה-thread שרץ",
+        "כן, כי הקרנל רץ כ-process נפרד",
+        "לא. syscall הוא mode switch: אותו thread ממשיך לרוץ, רק ב-kernel mode. context switch קורה רק אם ה-thread נחסם או שה-scheduler מחליט להחליף",
+        "לא, syscalls רצים תמיד על core נפרד"
+      ],
+      "answer": 2,
+      "explanation": "getpid או write מהיר ל-page cache נכנסים לקרנל וחוזרים באותו thread. read על socket ריק כן מרדים את ה-thread, ואז יש context switch. הקרנל ב-Linux אינו process נפרד: הוא רץ בהקשר של ה-thread שקרא לו.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו מהפעולות הבאות נכנסת לקרנל בכל קריאה?",
+      "choices": [
+        "`write(fd, buf, n)`",
+        "`strlen(s)`",
+        "`memcpy(dst, src, n)`",
+        "`std::sort` על vector"
+      ],
+      "answer": 0,
+      "explanation": "write הוא wrapper דק סביב syscall. strlen, memcpy ו-sort רצים לגמרי ב-user space על זיכרון שכבר שייך ל-process. גם printf בדרך כלל רק כותב לבאפר, וקורא ל-write רק כשהבאפר מתרוקן.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "ב-Linux על x86-64, באיזה רגיסטר נמצא מספר ה-syscall בזמן ההוראה `syscall`?",
+      "accept": [
+        "rax",
+        "eax"
+      ],
+      "explanation": "rax מחזיק את המספר (0 = read, 1 = write, 60 = exit), והארגומנטים ב-rdi, rsi, rdx, r10, r8, r9. התוצאה חוזרת גם היא ב-rax. r10 מחליף את rcx מה-calling convention הרגיל, כי ההוראה syscall דורסת את rcx.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q21",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שרת מחזיק 10,000 חיבורים פתוחים, ורק כמה עשרות מהם פעילים בכל רגע. למה epoll מתאים יותר מ-select?",
+      "choices": [
+        "select לא תומך ב-sockets",
+        "epoll לא דורש syscalls",
+        "select מהיר יותר, אבל epoll פשוט יותר לכתיבה",
+        "select מקבל את כל הרשימה בכל קריאה והקרנל סורק את כולה (O(n)), והוא גם מוגבל ל-1024 fds. ב-epoll הרישום נשמר בקרנל, ו-epoll_wait מחזיר רק את המוכנים"
+      ],
+      "answer": 3,
+      "explanation": "עם 10,000 fds, select ו-poll מעתיקים וסורקים 10,000 רשומות בכל סבב, גם כשרק 20 מוכנים. epoll משלם על הרישום פעם אחת, וכל epoll_wait עולה בערך לפי מספר האירועים שהוא מחזיר. גם epoll דורש syscalls, אבל הרבה פחות עבודה בכל אחד.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q22",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את השלבים של `read(fd, buf, n)` ב-Linux על x86-64 (כשיש נתונים זמינים):",
+      "items": [
+        "ה-wrapper של glibc שם 0 ב-rax ואת הארגומנטים ברגיסטרים",
+        "ההוראה syscall מעבירה ל-ring 0 ולנקודת הכניסה של הקרנל",
+        "הקרנל שומר את רגיסטרי ה-user ומריץ את ה-handler של read לפי הטבלה",
+        "copy_to_user מעתיק את הנתונים ל-buf",
+        "sysret חוזר ל-user mode עם מספר הבתים ב-rax",
+        "ה-wrapper מחזיר את הערך, או 1- ו-errno אם הערך שלילי"
+      ],
+      "explanation": "המסלול זהה לכל syscall: הכנה ברגיסטרים, כניסה מבוקרת, טבלה, עבודה עם העתקות בין הזיכרונות, יציאה. התרגום של ‎-errno ל-errno ו-1- נעשה ב-user space על ידי ה-wrapper, לא בקרנל.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שרת קבצים שולח קבצים גדולים ל-sockets בלולאה של read לבאפר ואז write ל-socket. איזו קריאה חוסכת את ההעתקה דרך user space?",
+      "choices": [
+        "readv",
+        "sendfile, שמעביר את הנתונים מה-page cache ל-socket בתוך הקרנל",
+        "fsync",
+        "O_NONBLOCK על ה-socket"
+      ],
+      "answer": 1,
+      "explanation": "בלולאת read ו-write כל בית מועתק מהקרנל ל-user ובחזרה, ויש שני syscalls לכל chunk. sendfile (ו-splice באופן כללי) משאירים את הנתונים בקרנל. readv רק מאחד כמה באפרים לקריאה אחת, ו-fsync קשור לעמידות בדיסק.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q24",
+      "level": 3,
+      "type": "bug",
+      "prompt": "socket לא חוסם רשום ב-epoll עם `EPOLLIN | EPOLLET`. לפעמים חיבור נתקע: יש נתונים ב-socket אבל לא מגיעים אירועים חדשים. איפה הבאג?",
+      "lang": "cpp",
+      "code": "void on_readable(int fd) {\n  char buf[4096];\n  ssize_t r = read(fd, buf, sizeof buf);\n  if (r > 0) handle(buf, r);\n  else if (r == 0) close(fd);\n}",
+      "bugLine": 3,
+      "choices": [
+        "צריך recv במקום read",
+        "הבאפר קטן מדי",
+        "צריך לבדוק EINTR",
+        "ב-edge-triggered האירוע מגיע רק כשנכנסים נתונים חדשים. read אחד של 4KB משאיר את השאר ב-socket, ולא יגיע אירוע נוסף עליהם. צריך לקרוא בלולאה עד EAGAIN"
+      ],
+      "answer": 3,
+      "explanation": "ב-level-triggered הקוד הזה היה עובד, כי epoll היה מדווח שוב כל עוד יש נתונים. ב-ET האחריות לרוקן היא על הקורא. הגדלת הבאפר רק מקטינה את הסיכוי. הלולאה הנכונה: לקרוא עד ש-read מחזיר -1 עם EAGAIN, לטפל ב-0 כ-EOF וב-EINTR כניסיון חוזר.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "logger כותב כל רשומה עם `write` וכל קריאה מחזירה הצלחה. אחרי נפילת חשמל, הרשומות של כמה השניות האחרונות חסרות. למה?",
+      "choices": [
+        "write לקובץ רק מעתיק ל-page cache ומחזיר הצלחה. הקרנל כותב לדיסק מאוחר יותר. כדי להבטיח עמידות צריך fsync או fdatasync (או O_DSYNC), במחיר latency",
+        "write נכשל בשקט כשהדיסק איטי",
+        "ה-filesystem מחק את הרשומות האחרונות בזמן התיקון",
+        "צריך O_DIRECT, שמבטיח כתיבה לדיסק"
+      ],
+      "answer": 0,
+      "explanation": "הצלחת write אומרת שהנתונים אצל הקרנל, לא בדיסק. writeback מתבצע בדרך כלל תוך שניות. fsync בכל רשומה יקר (מילי-שניות), ולכן מקובל לקבץ: fsync כל N רשומות או כל T זמן. O_DIRECT עוקף את ה-page cache, אבל לא מבטיח שה-cache של הדיסק עצמו נכתב, ולכן לבדו אינו ערובה לעמידות.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "כלי profiling שעובד על המכונה נכשל בתוך קונטיינר Docker עם `perf_event_open: Operation not permitted`, אף על פי שהוא רץ כ-root בתוך הקונטיינר. מה ההסבר הסביר?",
+      "choices": [
+        "ה-kernel של הקונטיינר שונה מזה של המכונה",
+        "root בקונטיינר אינו root בכלל",
+        "Docker מתקין פרופיל seccomp ברירת מחדל שחוסם syscalls מסוכנים, וביניהם perf_event_open, ומחזיר EPERM. אפשר להריץ עם פרופיל מותאם, או לשנות את kernel.perf_event_paranoid ולתת את ההרשאות הנדרשות",
+        "perf_event_open לא קיים ב-Linux בתוך namespaces"
+      ],
+      "answer": 2,
+      "explanation": "seccomp מסנן syscalls לפי מספר וארגומנטים, לפני שהקרנל בכלל בודק הרשאות. גם capabilities חסרות יכולות לגרום ל-EPERM, אבל פרופיל ה-seccomp של Docker הוא הסיבה הנפוצה. כל הקונטיינרים משתמשים באותו kernel של המכונה. root בקונטיינר הוא root, אבל עם פחות capabilities ועם סינון.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-Linux, `write(fd, buf, 3ULL << 30)` לקובץ רגיל בדיסק עם הרבה מקום מחזיר 2147479552 ולא 3GB. למה?",
+      "choices": [
+        "הדיסק כתב רק חלק",
+        "Linux מגביל read או write בודד ל-0x7ffff000 בתים (כ-2GB פחות דף). זה short write חוקי, וקוד נכון ממשיך בלולאה",
+        "ssize_t לא יכול להחזיק 3GB",
+        "ה-page cache מלא"
+      ],
+      "answer": 1,
+      "explanation": "הקרנל חותך כל העברה ל-MAX_RW_COUNT. 2147479552 = 0x7ffff000. ssize_t של 64 ביט יכול להחזיק 3GB בלי בעיה. זו עוד סיבה שגם בקבצים רגילים צריך write_all בלולאה, ולא להניח ש-short write קורה רק ב-sockets.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "event loop מבוסס epoll רוצה לקרוא קבצים מדיסק איטי בלי לחסום. פותחים את הקובץ עם O_NONBLOCK ורושמים אותו ב-epoll. מה קורה?",
+      "choices": [
+        "זה עובד: read מחזיר EAGAIN עד שהדיסק מוכן",
+        "epoll מדווח רק כשהנתונים ב-page cache",
+        "O_NONBLOCK הופך את הקריאה ל-asynchronous עם signal בסיום",
+        "epoll_ctl נכשל עם EPERM, כי קבצים רגילים תמיד נחשבים מוכנים. O_NONBLOCK לא משפיע עליהם, ו-read שמחכה לדיסק נחסם. החלופות: io_uring, thread pool, או preadv2 עם RWF_NOWAIT ונפילה ל-thread אם מקבלים EAGAIN"
+      ],
+      "answer": 3,
+      "explanation": "מודל ה-readiness של epoll מתאים לאובייקטים שבהם נתונים מגיעים מבחוץ (sockets, pipes). לקובץ רגיל אין מצב 'לא מוכן', ולכן הוא לא נתמך ב-epoll. זו הסיבה ש-libuv ו-Node משתמשים ב-thread pool לקבצים, וש-io_uring נבנה בין השאר כדי לפתור את זה.",
+      "lesson": "sys.syscalls",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.syscalls.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "לולאה שצריכה לרוץ כל 1ms עושה עבודה ואז `nanosleep` של 1ms. אחרי דקה היא מפגרת במאות מילי-שניות אחרי השעון. מה התיקון הנכון?",
+      "choices": [
+        "להקטין את השינה ל-0.8ms",
+        "להעביר את ה-thread ל-SCHED_FIFO",
+        "`clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next)` עם `next += period` בכל סיבוב, כך שזמן העבודה וה-wakeup latency לא מצטברים, ו-EINTR מטופל פשוט בקריאה חוזרת עם אותו next",
+        "להשתמש ב-usleep במקום nanosleep"
+      ],
+      "answer": 2,
+      "explanation": "שינה יחסית מוסיפה את זמן העבודה ואת ה-latency של ההתעוררות לכל סיבוב, ולכן השגיאה מצטברת. קיצור השינה תלוי בזמן העבודה, שמשתנה. SCHED_FIFO מקטין את ה-latency אבל לא מבטל את ההצטברות. עם זמן מוחלט, כל איחור מופיע כ-jitter של סיבוב אחד בלבד. CLOCK_MONOTONIC חשוב כדי ששינוי של שעון המערכת לא יקפיץ את הלולאה.",
+      "lesson": "sys.syscalls",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.syscalls.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "אפליקציית SDR צריכה להקליט 1.6 GB/s של דגימות ל-NVMe, בלי שה-thread של ה-RX ייחסם אף פעם ובלי לשרוף הרבה CPU. אילו syscalls ומנגנוני I/O תבחר, ולמה?",
+      "modelAnswer": "הפרדה: ה-RX thread לא נוגע בקבצים. הוא מעביר בלוקים מלאים (pointers מ-pool מוקצה מראש) דרך תור SPSC ל-thread כתיבה. כך שום חסימה בדיסק (writeback throttling, journal, GC של ה-SSD) לא מגיעה ל-RX. הכתיבה: write רגיל עובר דרך ה-page cache, מעתיק כל בית פעם נוספת (1.6 GB/s של memcpy), מזהם את ה-cache, ובסוף balance_dirty_pages חוסם את הכותב כשיש יותר מדי dirty pages. לכן O_DIRECT: DMA ישירות מהבאפרים, דורש יישור של באפר, offset וגודל ל-4KB (באפרים מ-aligned allocation או huge pages). גודל כתיבה גדול, למשל 1–8MB, כך שמספר ה-syscalls קטן (200–1600 בשנייה). כדי שיהיו כמה כתיבות בתור במקביל (NVMe צריך queue depth), io_uring עם כמה SQEs בטיסה, או כמה threads עם pwrite. io_uring עם registered buffers חוסך pinning בכל פעולה, ו-SQPOLL יכול לבטל את io_uring_enter אם יש core פנוי. fallocate מראש לגודל הקובץ, כדי שה-filesystem לא יקצה extents בזמן אמת. עמידות: O_DIRECT לבד לא מבטיח, ולכן fdatasync תקופתי (למשל כל שנייה) ב-thread הכתיבה, או לקבל שאיבוד של שנייה אחרונה בנפילת חשמל. ניטור: עומק התור בין RX לכותב, ו-overflow אם הדיסק מפגר (ואז זורקים ומסמנים, לא חוסמים את RX). לוודא שה-NVMe מחזיק 1.6 GB/s ברצף לאורך זמן, אחרי שה-SLC cache שלו מתמלא.",
+      "rubric": [
+        "הפרדת RX מכתיבה עם תור ו-pool, ומדיניות overflow",
+        "O_DIRECT ונימוק: בלי העתקה, בלי זיהום cache ובלי dirty throttling, ודרישות היישור",
+        "כתיבות גדולות ו-queue depth: io_uring (registered buffers, SQPOLL) או כמה threads",
+        "fallocate ומדיניות fdatasync לעמידות",
+        "מודעות לביצועי ה-SSD לאורך זמן ומדידה"
+      ],
+      "explanation": "השאלה מחברת syscalls, page cache ו-RT. מועמד חזק מסביר למה write פשוט נכשל בקצב הזה, ולא רק מציין io_uring.",
+      "lesson": "sys.syscalls",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

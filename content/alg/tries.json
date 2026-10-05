@@ -35,7 +35,141 @@
         "Node pool עם אינדקסים int32 במקום pointers – פחות זיכרון ו-locality טוב יותר",
         "Autocomplete ב-scale: top-k בכל צומת, sharding לפי prefix, caching"
       ],
-      "diagram": "words: to, tea, ted, ten\n      (root)\n        |\n        t\n       / \\\n      o*  e\n        / | \\\n       a* d* n*\n(* = end of word)"
+      "diagram": "words: to, tea, ted, ten\n      (root)\n        |\n        t\n       / \\\n      o*  e\n        / | \\\n       a* d* n*\n(* = end of word)",
+      "details": [
+        {
+          "title": "המבנה ושלוש הפעולות",
+          "body": "Trie הוא עץ שבו השורש מייצג את המחרוזת הריקה, וכל קשת מסומנת בתו. המסלול מהשורש לצומת מאיית prefix, ולכן לכל prefix יש לכל היותר צומת אחד, ומילים עם prefix משותף חולקות את אותו מסלול. בכל צומת יש דגל end שאומר אם מילה שהוכנסה מסתיימת בדיוק כאן.\n\n- insert(w): מתחילים בשורש. לכל תו, אם אין ילד מתאים יוצרים אותו, ומתקדמים. בסוף מסמנים end.\n- search(w): הולכים לפי התווים. אם ילד חסר, false. בסוף מחזירים את end של הצומת, לא סתם true: אחרי insert(\"apple\") המסלול a-p-p קיים, אבל \"app\" לא הוכנסה.\n- startsWith(p): כמו search, אבל מחזירים true אם הגענו לצומת.\n\nכל פעולה היא O(L), כאשר L אורך המילה, בלי תלות במספר המילים N. בהשוואה: hash set נותן חיפוש מילה מלאה ב-O(L) בממוצע, אבל אין לו מבנה של prefixes (hash מערבב את המפתחות), ולכן startsWith דורש לסרוק את כל המילים או לשמור כל prefix בנפרד. vector ממוין עם lower_bound על ה-prefix נותן O(P log N) לשאילתה, וחסכוני בזיכרון.\n\nספירת צמתים: כל צומת הוא prefix ייחודי. אחרי car, cat, cart יש 5 צמתים (c, ca, car, cat, cart) מלבד השורש. DFS על trie עם ילדים מסודרים לפי האלפבית עובר על המילים בסדר לקסיקוגרפי."
+        },
+        {
+          "title": "ייצוג צמתים וזיכרון",
+          "body": "שלוש אפשרויות לילדים:\n- מערך של 26 מצביעים: גישה O(1) ופשוטה. במערכת 64-bit זה 208 בתים, ועם דגל bool ו-padding כ-216 בתים לצומת, גם כשיש ילד אחד.\n- hash map (unordered_map): תומך בכל alphabet (Unicode), חוסך בצמתים דלילים, אבל איטי יותר, ול-map ריק יש overhead של עשרות בתים ועוד הקצאה לכל ילד.\n- vector ממוין של (char, child): קומפקטי, חיפוש ליניארי או בינארי בין מעט ילדים. ביניים טוב.\n\nבקנה מידה: 10^6 מילים אקראיות באורך 10 יכולות לייצר קרוב ל-10^7 צמתים, כ-2GB עם מערכים. שיפורים:\n- node pool: vector<Node> ואינדקסים int32 במקום pointers. הצומת קטן בערך בחצי (26·4 + 4 = 108 בתים), ההקצאה אחת, וה-locality טוב יותר.\n- radix tree (compressed trie, Patricia): שרשרת של צמתים עם ילד יחיד מתכווצת לקשת אחת עם תווית מחרוזת. כל צומת פנימי מתפצל, ולכן יש פחות מ-2N צמתים. החיפוש עדיין O(L), ודגל end עדיין נחוץ. נפוץ בטבלאות routing.\n\nניהול זיכרון ב-C++: unique_ptr לילדים משחרר אוטומטית בלי דליפות. אבל ה-destructor רקורסיבי: כל צומת משחרר את ילדו, שמשחרר את ילדו. מחרוזת באורך 10^6 נותנת שרשרת של 10^6 קריאות מקוננות ו-stack overflow. פתרון: destructor איטרטיבי עם stack מפורש, או node pool שמשתחרר בבת אחת."
+        },
+        {
+          "title": "הרחבות: מונים, מחיקה ו-wildcards",
+          "body": "מונה prefix: בכל צומת שומרים כמה מילים עוברות בו (מוגדל ב-insert לאורך כל המסלול). countWordsStartingWith(p) הוא הליכה ל-p וקריאת המונה, O(P), במקום DFS על כל תת-העץ.\n\nמחיקה: מאפסים את end של הצומת האחרון, ואז עולים מלמטה למעלה ומוחקים צמתים שאין להם ילדים ושאינם end של מילה אחרת. עוצרים בצומת הראשון שלא עומד בתנאי. מחיקה של כל המסלול הורסת מילים אחרות (מחיקת app הורסת את apple). עם מוני מעבר, מוחקים כל צומת שהמונה שלו הגיע ל-0.\n\nWildcard search (Add and search word, '.' מתאים לכל תו): DFS על ה-trie. תו רגיל מתקדם לילד אחד; '.' מנסה את כל הילדים. במקרה הגרוע (הרבה נקודות) העבודה עד 26^(מספר הנקודות), אבל בפועל היא חסומה במספר הצמתים בעומקים הרלוונטיים.\n\nשימושים נוספים:\n- Replace words: מחליפים כל מילה במשפט בשורש הקצר ביותר מהמילון שהוא prefix שלה. הולכים ב-trie ועוצרים ב-end הראשון.\n- Longest common prefix של כל המילים: הולכים מהשורש כל עוד לצומת יש ילד אחד בדיוק ואינו end.\n- Prefix and suffix search: מכניסים לכל מילה את כל המחרוזות 'suffix#word' ל-trie אחד, ושאילתה (prefix, suffix) הופכת ל-startsWith של 'suffix#prefix'.\n- ספירת substrings שונים: trie של כל ה-suffixes; כל צומת הוא substring שונה. O(n^2) צמתים, ולכן ל-n גדול משתמשים ב-suffix array או suffix automaton."
+        },
+        {
+          "title": "Binary trie ו-XOR",
+          "body": "Binary trie שומר מספרים כמחרוזות של B ביטים מה-MSB ל-LSB, עם שני ילדים לכל צומת. Maximum XOR של זוג: לכל מספר x הולכים מהשורש, ובכל ביט מנסים ללכת לענף עם הביט ההפוך (שנותן 1 ב-XOR), ואם אין, לאותו ביט. O(n·B).\n\nלמה מה-MSB: הביט ה-i שווה יותר מכל הביטים שמתחתיו יחד (2^i > 2^i - 1), ולכן ההחלטה החמדנית בביט הגבוה נכונה בלי להתחשב בהמשך. סדר הסריקה בשאילתה חייב להיות זהה לסדר הרמות ב-trie.\n\nמה לא עובד: XOR של שני המספרים הגדולים (8 ו-9 נותנים 1, אבל 7 ו-8 נותנים 15); זוגות סמוכים אחרי מיון נותנים את ה-XOR המינימלי, לא המקסימלי.\n\nוריאנטים:\n- עם מחיקות (multiset, חלון נע): מונה בכל צומת, הכנסה מגדילה ומחיקה מקטינה, והשאילתה נכנסת רק לילד עם מונה > 0.\n- עם אילוץ a ≤ m לכל שאילתה: offline (ממיינים שאילתות ומספרים לפי m ומכניסים בהדרגה), או online עם המינימום של תת-העץ בכל צומת, כדי לא להיכנס לענף שכולו גדול מ-m. 'לדלג על עלים גדולים' לא עובד, כי הבחירה החמדנית למעלה כבר נעשתה.\n\nLongest prefix match ב-routing: binary trie על ביטי כתובת ה-IP; בכל צומת שמסומן כ-prefix של route זוכרים אותו, והתשובה היא האחרון שנפגש במסלול."
+        },
+        {
+          "title": "Trie לחיפוש הרבה מילים: Word Search II ו-Aho-Corasick",
+          "body": "Word Search II: trie על כל המילים, ו-DFS מכל תא ב-board שמתקדם במקביל ב-trie. כשאין ילד לתו הבא, גוזמים. כך כל המילים עם prefix משותף חולקות עבודה. אחרי שמוצאים מילה מוחקים את סימן ה-end שלה וגוזמים צמתים שהתרוקנו.\n\nAho-Corasick: מחפשים k patterns בטקסט באורך n במעבר אחד. בונים trie על ה-patterns, ומוסיפים לכל צומת failure link: הצומת של ה-suffix הארוך ביותר של המחרוזת שלו (לא כולה) שהוא גם prefix של pattern כלשהו, כלומר צומת ב-trie. זה בדיוק פונקציית ה-prefix של KMP, מוכללת לעץ. בונים את ה-links ב-BFS לפי עומק. בזמן הסריקה, כשאין מעבר לתו הבא, הולכים בשרשרת ה-failure links.\n\nלדיווח על כל ההתאמות (pattern שהוא suffix של pattern אחר) משתמשים ב-output links (dictionary suffix links), שמצביעים ישירות ל-end הבא בשרשרת. הסיבוכיות O(n + Σ|patterns| + z), כאשר z מספר ההתאמות. בלי output links, הליכה בשרשרת ה-failure בכל תו כדי לחפש ends יכולה להיות יקרה. z עצמו יכול להיות גדול (למשל patterns a, aa, aaa על טקסט של a), ואז גם הפלט גדול. שימושים: grep -F עם הרבה מחרוזות, סורקי signatures ו-IDS."
+        },
+        {
+          "title": "Autocomplete במערכת אמיתית",
+          "body": "לכל prefix מחזירים את k ההשלמות הפופולריות. DFS בכל הקשה איטי, ולכן שומרים בכל צומת את top-k של תת-העץ, מחושב מראש. שאילתה היא O(P) ועוד קריאת רשימה. המחיר: זיכרון של k מחרוזות (או מצביעים) לכל צומת.\n\nעדכון: לא בכל הקשה. אוספים לוגים, מחשבים ספירות ב-batch, בונים trie חדש ומחליפים אטומית (double buffering). טריות מגיעה משכבת trending קטנה שממוזגת בזמן שאילתה. Scale: sharding לפי prefix עם איזון לפי עומס (התפלגות האותיות לא אחידה), replicas, ו-cache ל-prefixes קצרים שהם רוב התנועה. בצד הלקוח: debounce וביטול בקשות ישנות."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: בניית trie על to, tea, ted, ten, i, in",
+          "body": "- to: יוצרים t, o; end על to.\n- tea: t קיים; יוצרים e, a; end על tea.\n- ted, ten: משתפים t-e, ומוסיפים d ו-n עם end.\n- i: ילד חדש של השורש עם end. in: מוסיף n מתחת ל-i עם end.\nלשורש 2 ילדים (t, i), ל-t שניים (o, e), ל-te שלושה (a, d, n). ל-t ול-te אין end, כי אף מילה לא מסתיימת שם. search(\"te\") מחזיר false, ו-startsWith(\"te\") מחזיר true."
+        },
+        {
+          "title": "דוגמה: Replace words",
+          "body": "שורשים: cat, bat, rat, ca. משפט: the cattle was rattled by the battery.\n- the: אין t בשורש של ה-trie, נשאר the.\n- cattle: c, אחר כך a, והצומת ca הוא end. עוצרים ב-end הראשון: ca (ולא cat).\n- rattled: r-a-t, ו-rat הוא end: rat.\n- battery: bat.\nהתוצאה: the ca was rat by the bat. עצירה ב-end הראשון היא מה שמבטיח את השורש הקצר ביותר."
+        },
+        {
+          "title": "דוגמה: Max XOR עם binary trie",
+          "body": "מספרים 3, 10, 5, 25, 2, 8 (5 ביטים): 00011, 01010, 00101, 11001, 00010, 01000.\nשאילתה עבור 5 (00101):\n- ביט 4: ל-5 יש 0, רוצים 1; יש (25). XOR=10000.\n- ביט 3: ל-5 יש 0, רוצים 1; תחת 1 יש רק 11001, הביט שלו 1. XOR=11000.\n- ביט 2: ל-5 יש 1, רוצים 0; ל-25 יש 0. XOR=11100.\n- ביט 1: ל-5 יש 0, רוצים 1; ל-25 יש 0, אין ברירה.\n- ביט 0: ל-5 יש 1, רוצים 0; ל-25 יש 1, אין ברירה.\nהתוצאה 11100 = 28 = 5 XOR 25, וזה המקסימום על כל הזוגות."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "trie (prefix tree)",
+          "def": "עץ שבו כל מסלול מהשורש מאיית prefix, ומילים עם prefix משותף חולקות צמתים. פעולות ב-O(L)."
+        },
+        {
+          "term": "end flag (isWord)",
+          "def": "דגל בצומת שמסמן שמילה שהוכנסה מסתיימת בו. מבדיל בין מילה לבין prefix של מילה אחרת."
+        },
+        {
+          "term": "insert / search / startsWith",
+          "def": "שלוש הפעולות הבסיסיות. search בודק end בסוף; startsWith רק את קיום המסלול."
+        },
+        {
+          "term": "prefix count",
+          "def": "מונה בכל צומת של מספר המילים שעוברות בו. ספירת מילים עם prefix ב-O(P)."
+        },
+        {
+          "term": "children array / hash map / sorted vector",
+          "def": "שלושה ייצוגים לילדים: מערך מהיר וכבד, hash map גמיש עם overhead, vector ממוין קומפקטי."
+        },
+        {
+          "term": "node pool",
+          "def": "כל הצמתים ב-vector אחד, וילדים כאינדקסים int32. פחות זיכרון, הקצאה אחת, locality טוב, ושחרור בבת אחת."
+        },
+        {
+          "term": "radix tree / Patricia",
+          "def": "trie דחוס: שרשראות של צמתים עם ילד יחיד הופכות לקשת עם תווית מחרוזת. פחות מ-2N צמתים."
+        },
+        {
+          "term": "recursive destructor",
+          "def": "ב-trie עם unique_ptr, השחרור רקורסיבי לפי עומק המסלול. מסלול באורך 10^6 גורם ל-stack overflow."
+        },
+        {
+          "term": "binary trie",
+          "def": "trie על ביטים של מספרים, מה-MSB. בסיס ל-maximum XOR ול-longest prefix match ב-IP."
+        },
+        {
+          "term": "maximum XOR pair",
+          "def": "לכל מספר הולכים ב-binary trie לביט ההפוך כשאפשר. O(n·B), נכון כי ביט גבוה שווה יותר מכל הנמוכים."
+        },
+        {
+          "term": "MSB / LSB",
+          "def": "הביט המשמעותי ביותר והפחות משמעותי. greedy על XOR חייב להתחיל מה-MSB."
+        },
+        {
+          "term": "longest prefix match",
+          "def": "ב-routing: בחירת ה-route עם ה-prefix הארוך ביותר שמתאים לכתובת. binary trie או radix tree."
+        },
+        {
+          "term": "offline queries",
+          "def": "כשכל השאילתות ידועות מראש, ממיינים אותן ומכניסים נתונים בהדרגה, כך שהמבנה מכיל בדיוק את מה שמותר לשאילתה."
+        },
+        {
+          "term": "Word Search II",
+          "def": "חיפוש הרבה מילים ב-board: trie על המילים ו-DFS משותף, עם גיזום לפי prefix וגיזום צמתים שנמצאו."
+        },
+        {
+          "term": "Aho-Corasick",
+          "def": "חיפוש k patterns בטקסט במעבר אחד: trie עם failure links ו-output links. O(n + Σ|patterns| + z)."
+        },
+        {
+          "term": "failure link",
+          "def": "מצביע מצומת לצומת של ה-suffix הארוך ביותר שלו שהוא גם prefix של pattern. מקביל לפונקציית ה-prefix של KMP."
+        },
+        {
+          "term": "KMP prefix function",
+          "def": "לכל מיקום ב-pattern: אורך ה-prefix הארוך ביותר שהוא גם suffix. מאפשר להמשיך התאמה בלי לחזור אחורה בטקסט."
+        },
+        {
+          "term": "output (dictionary) links",
+          "def": "מצביע מצומת ל-end הקרוב בשרשרת ה-failure, כדי לדווח על patterns שהם suffix של אחרים בלי לסרוק את כל השרשרת."
+        },
+        {
+          "term": "wildcard search",
+          "def": "חיפוש עם '.' שמתאים לכל תו: DFS שמנסה את כל הילדים בכל נקודה."
+        },
+        {
+          "term": "Replace words",
+          "def": "החלפת כל מילה בשורש הקצר ביותר שהוא prefix שלה: הליכה ב-trie ועצירה ב-end הראשון."
+        },
+        {
+          "term": "Bloom filter",
+          "def": "מבנה הסתברותי לבדיקת חברות בזיכרון קטן, עם false positives ובלי false negatives. לא תומך ב-prefix queries."
+        },
+        {
+          "term": "suffix tree / suffix array",
+          "def": "מבנים על כל ה-suffixes של טקסט, לשאילתות substring. trie נאיבי של כל ה-suffixes הוא O(n^2) צמתים."
+        },
+        {
+          "term": "autocomplete top-k",
+          "def": "שמירת k ההשלמות הפופולריות בכל צומת מראש, כך ששאילתה היא O(P). מעדכנים ב-batch ומחליפים אטומית."
+        }
+      ]
     }
   ],
   "questions": [
@@ -45,7 +179,12 @@
       "lesson": "alg.tries",
       "type": "mcq",
       "prompt": "Trie מכיל N מילים. מה סיבוכיות search של מילה באורך L?",
-      "choices": ["O(log N)", "O(N·L)", "O(L)", "O(N)"],
+      "choices": [
+        "O(log N)",
+        "O(N·L)",
+        "O(L)",
+        "O(N)"
+      ],
       "answer": 2,
       "explanation": "עוברים צומת אחד לכל תו, ולכן O(L) ללא תלות במספר המילים (עם מערך ילדים או hash map בגישה O(1)). O(N·L) הוא סריקה של כל המילים. O(log N) מתאים לחיפוש בינארי ברשימה ממוינת (ועוד O(L) להשוואת מחרוזות)."
     },
@@ -70,7 +209,9 @@
       "lesson": "alg.tries",
       "type": "short",
       "prompt": "מכניסים ל-trie ריק את car, cat, cart. כמה צמתים יש בו, לא כולל השורש?",
-      "accept": ["5"],
+      "accept": [
+        "5"
+      ],
       "explanation": "car יוצרת c, a, r (3). cat משתפת את c-a ומוסיפה t (1). cart משתפת את c-a-r ומוסיפה t מתחת ל-r (1). סך הכל 5. ה-t של cat וה-t של cart הם צמתים שונים, כי ה-prefix שלהם שונה."
     },
     {
@@ -81,7 +222,12 @@
       "lang": "python",
       "prompt": "מה הקוד מדפיס?",
       "code": "root = {}\nfor w in ['to', 'tea', 'ted', 'ten', 'i', 'in']:\n    node = root\n    for ch in w:\n        node = node.setdefault(ch, {})\n    node['$'] = True\nprint(len(root), len(root['t']), len(root['t']['e']))",
-      "choices": ["2 2 4", "6 2 3", "2 1 3", "2 2 3"],
+      "choices": [
+        "2 2 4",
+        "6 2 3",
+        "2 1 3",
+        "2 2 3"
+      ],
       "answer": 3,
       "explanation": "לשורש יש שני ילדים: t ו-i. ל-t יש o ו-e (2). ל-te יש a, d, n (3). הסימון '$' נוסף רק בסוף מילה: לא ב-t ולא ב-te, כי אף מילה לא מסתיימת שם – לכן לא 4. '6' סופר מילים ולא ילדים של השורש."
     },
@@ -147,7 +293,9 @@
       ],
       "answer": 2,
       "explanation": "הביט הגבוה שווה יותר מכל הביטים שמתחתיו יחד, ולכן greedy מה-MSB נכון: בכל רמה מעדיפים 1 ב-XOR. זוגות סמוכים אחרי מיון נותנים את ה-XOR המינימלי (טענה ידועה), לא המקסימלי. במערך [7,8,9] שני הגדולים, 8 (1000) ו-9 (1001), נותנים 1, אבל 7 (0111) ו-8 נותנים 15.",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.tries.q09",
@@ -163,7 +311,9 @@
       ],
       "answer": 0,
       "explanation": "ה-trie מאפשר לחלוק את העבודה בין כל המילים עם prefix משותף, ולגזום מסלול ברגע שה-prefix לא קיים באף מילה. חיפוש נפרד לכל מילה מכפיל את העבודה ב-W. hash set לא מאפשר גיזום לפי prefix, ולכן נסרקים כל המסלולים. מספר המסלולים ב-board אקספוננציאלי – trie שלהם לא ישים.",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.tries.q10",
@@ -182,7 +332,9 @@
         "מזכיר אימות קלט (תווים מחוץ ל-a-z) או destructor רקורסיבי על מילים ארוכות מאוד"
       ],
       "explanation": "unique_ptr משחרר את כל העץ אוטומטית. לביצועים גבוהים: vector<Node> עם אינדקסים int במקום pointers.",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.tries.q11",
@@ -197,7 +349,11 @@
         "Maximum XOR של זוג מספרים",
         "בדיקת חברות של מחרוזת שלמה עם זיכרון מינימלי, בלי שאילתות prefix"
       ],
-      "answer": [0, 1, 3],
+      "answer": [
+        0,
+        1,
+        3
+      ],
       "explanation": "autocomplete ו-longest prefix match הם שימושי trie קלאסיים (ב-routing – binary trie על ביטי הכתובת). max XOR עובד עם binary trie. range sum הוא prefix sums או Fenwick/segment tree. לחברות בלבד, hash set או Bloom filter חסכוניים יותר."
     },
     {
@@ -243,9 +399,15 @@
         "hash map בכל צומת תמיד חסכוני יותר ממערך של 26",
         "trie תמיד חסכוני יותר מ-hash set של המחרוזות, כי הוא משתף prefixes"
       ],
-      "answer": [0, 1, 2],
+      "answer": [
+        0,
+        1,
+        2
+      ],
       "explanation": "26·8 = 208, ועוד bool מעוגל ל-alignment של 8 – 216. 10^7 צמתים · 216 בתים ≈ 2.2GB. אינדקסים של 4 בתים: 26·4+4 = 108 בתים, ו-pool רציף משפר cache. unordered_map ריק תופס עשרות בתים ועוד הקצאה לכל ילד, כך שבצמתים צפופים הוא גרוע יותר. כשה-prefixes לא משותפים, trie צורך פי כמה יותר מ-hash set של המחרוזות (כ-10 בתים למילה ועוד overhead).",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.tries.q15",
@@ -262,7 +424,9 @@
         "trade-offs של זיכרון וטריות"
       ],
       "explanation": "שאלת system design קלאסית של Microsoft/Bing. ה-trie הוא רק הבסיס; העיקר הוא precomputation, עדכון ו-scale.",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.tries.q16",
@@ -323,7 +487,215 @@
       ],
       "answer": 3,
       "explanation": "השחרור של unique_ptr קורא ל-delete על הילד, שקורא ל-destructor של המערך שלו, וכן הלאה – רקורסיה בעומק המסלול. עם stack של כמה MB ומיליון frames זו קריסה. אין דליפה ואין double free – הבעלות ייחודית. פתרון: destructor איטרטיבי שמנתק ילדים ל-stack מפורש לפני השחרור, או node pool ב-vector שמשתחרר בבת אחת. אותה בעיה קיימת ב-linked list ארוכה עם unique_ptr.",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "alg.tries.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה מייצג המסלול מהשורש של trie לצומת כלשהו?",
+      "choices": [
+        "מילה שלמה שהוכנסה, תמיד",
+        "prefix של לפחות מילה אחת שהוכנסה",
+        "suffix של מילה שהוכנסה",
+        "את מספר המילים שהוכנסו עד כה"
+      ],
+      "answer": 1,
+      "explanation": "כל צומת נוצר בזמן הכנסה של מילה שעוברת בו, ולכן המסלול אליו הוא prefix של מילה כזו. הוא מילה שלמה רק אם end מסומן בו. suffixes שייכים ל-suffix trie, שבו מכניסים את כל ה-suffixes. מספר המילים נשמר אולי כמונה, לא כמסלול.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "מכניסים ל-trie ריק את המילים a, ab, abc. בכמה צמתים (לא כולל השורש) מסומן end?",
+      "accept": [
+        "3"
+      ],
+      "explanation": "יש שלושה צמתים: a, ab, abc, וכל אחד הוא סוף של מילה שהוכנסה, ולכן לשלושתם end. זה מראה שמילה יכולה להסתיים בצומת פנימי שיש לו ילדים, ולכן אי אפשר לזהות סוף מילה לפי 'אין ילדים'.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q22",
+      "level": 1,
+      "type": "multi",
+      "prompt": "אילו טענות על trie נכונות?",
+      "choices": [
+        "מילים עם prefix משותף חולקות את הצמתים של ה-prefix",
+        "זמן search תלוי במספר המילים שהוכנסו",
+        "השורש מייצג את המחרוזת הריקה",
+        "DFS שעובר על הילדים בסדר אלפביתי מחזיר את המילים בסדר לקסיקוגרפי",
+        "trie תמיד חוסך זיכרון לעומת שמירת המילים ב-hash set"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "שיתוף prefixes הוא כל הרעיון, והשורש הוא prefix באורך 0. בגלל שכל prefix קודם לכל ההמשכים שלו, DFS לפי הסדר נותן סדר לקסיקוגרפי. search הוא O(L) בלי תלות ב-N. כשה-prefixes לא משותפים, trie עם מערך של 26 מצביעים בכל צומת צורך הרבה יותר זיכרון מ-hash set.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה הקוד מדפיס?",
+      "code": "roots = [\"cat\", \"bat\", \"rat\", \"ca\"]\ntrie = {}\nfor r in roots:\n    node = trie\n    for ch in r:\n        node = node.setdefault(ch, {})\n    node['$'] = True\n\ndef replace(word):\n    node = trie\n    for i, ch in enumerate(word):\n        if ch not in node:\n            return word\n        node = node[ch]\n        if '$' in node:\n            return word[:i + 1]\n    return word\n\nprint(' '.join(replace(w) for w in \"the cattle was rattled by the battery\".split()))",
+      "choices": [
+        "the cat was rat by the bat",
+        "the ca was rat by the bat",
+        "the cattle was rattled by the battery",
+        "the ca was rattled by the bat"
+      ],
+      "answer": 1,
+      "explanation": "הפונקציה עוצרת ב-end הראשון במסלול, כלומר בשורש הקצר ביותר. עבור cattle זה ca, ולא cat. rattled עובר דרך r-a-t ונעצר ב-rat, ו-battery ב-bat. the ו-was לא מתחילים באף שורש ונשארים. 'cat' היה מתקבל אם היינו ממשיכים לשורש הארוך ביותר.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q24",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את השלבים של insert(word) ב-trie.",
+      "items": [
+        "מתחילים בצומת השורש",
+        "לוקחים את התו הבא של המילה",
+        "אם אין לצומת הנוכחי ילד עבור התו, יוצרים אותו",
+        "מתקדמים לילד",
+        "אחרי התו האחרון מסמנים end בצומת הנוכחי"
+      ],
+      "explanation": "לכל תו יש בדיקה, יצירה אם צריך, והתקדמות. end מסומן רק בסוף, ולכן prefixes של המילה לא מסומנים כמילים. אם מחזיקים מונה prefix, מגדילים אותו בכל צומת שעוברים בו.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Longest common prefix של רשימת מילים בעזרת trie: מכניסים את כולן והולכים מהשורש. מתי עוצרים?",
+      "choices": [
+        "כשמגיעים לצומת עם יותר מילד אחד, או לצומת שמסומן end",
+        "רק כשמגיעים לצומת עם יותר מילד אחד",
+        "כשמגיעים לעומק של אורך המילה הארוכה ביותר",
+        "כשמגיעים לעלה"
+      ],
+      "answer": 0,
+      "explanation": "פיצול אומר שהמילים נבדלות בתו הבא. אבל גם end עוצר: עבור flow ו-flower אין פיצול אחרי flow, ובכל זאת flow היא מילה שלמה ואי אפשר להמשיך מעבר לה. בלי בדיקת end התשובה הייתה flower בטעות. עצירה בעלה נותנת את המילה הארוכה, לא את ה-prefix המשותף.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q26",
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "prompt": "ממש WordDictionary עם add_word(word) ו-search(word), כש-search מקבל גם '.' שמתאים לכל תו אחד.",
+      "starter": "class WordDictionary:\n    def add_word(self, word: str) -> None: ...\n    def search(self, word: str) -> bool: ...",
+      "modelAnswer": "class WordDictionary:\n    def __init__(self):\n        self.root = {}\n\n    def add_word(self, word):\n        node = self.root\n        for ch in word:\n            node = node.setdefault(ch, {})\n        node['$'] = True\n\n    def search(self, word):\n        def dfs(node, i):\n            if i == len(word):\n                return '$' in node\n            ch = word[i]\n            if ch == '.':\n                return any(dfs(child, i + 1)\n                           for key, child in node.items() if key != '$')\n            return ch in node and dfs(node[ch], i + 1)\n        return dfs(self.root, 0)",
+      "rubric": [
+        "trie עם סימן סוף מילה, ו-search שבודק אותו בסוף",
+        "'.' מנסה את כל הילדים (ומדלג על הסימון '$' עצמו)",
+        "עצירה מוקדמת: any מחזיר true בהתאמה הראשונה",
+        "סיבוכיות: add O(L); search O(L) בלי נקודות ועד מספר הצמתים בעומקים הרלוונטיים במקרה הגרוע",
+        "מקרי קצה: מילה ריקה, מילה ארוכה יותר מכל מה שהוכנס, נקודה אחרונה"
+      ],
+      "explanation": "אחרי הכנסת bad, dad ו-mad: search(\"pad\") false, search(\".ad\") true, search(\"b..\") true, search(\"b.\") false. ב-C++ אותו דבר עם מערך של 26 ילדים ולולאה על כולם ב-'.'.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "רוצים לספור כמה substrings שונים יש למחרוזת באורך n. מכניסים ל-trie את כל ה-suffixes שלה. מה נכון?",
+      "choices": [
+        "מספר הצמתים ב-trie (לא כולל השורש) שווה למספר ה-substrings השונים, ויכול להגיע ל-Θ(n^2), ולכן ל-n גדול עוברים ל-suffix array או suffix automaton",
+        "מספר הצמתים שווה ל-n, כי יש n suffixes",
+        "מספר ה-end flags שווה למספר ה-substrings השונים",
+        "trie לא מתאים, כי substrings אינם prefixes"
+      ],
+      "answer": 0,
+      "explanation": "כל substring הוא prefix של suffix כלשהו, ולכן כל אחד מתאים לצומת יחיד, וכל צומת הוא substring שונה. במחרוזת עם תווים שונים יש n(n+1)/2 כאלה. end מסומן רק בסופי ה-suffixes, n בסך הכל. n צמתים היה נכון רק אם כל ה-suffixes חולקים כמעט הכל. suffix automaton או suffix array עם LCP פותרים את אותה ספירה ב-O(n) או O(n log n).",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Prefix and suffix search: לכל שאילתה (prefix, suffix) מחזירים את האינדקס הגדול ביותר של מילה שמתחילה ב-prefix ומסתיימת ב-suffix. מילים באורך עד 7, עד 10^4 מילים והרבה שאילתות. איזו גישה נכונה?",
+      "choices": [
+        "trie רגיל על המילים, ובשאילתה DFS מצומת ה-prefix ובדיקת suffix לכל מילה בתת-העץ",
+        "מכניסים לכל מילה w את כל המחרוזות suffix + '#' + w ל-trie אחד, ושומרים בכל צומת את האינדקס המקסימלי; שאילתה היא הליכה על suffix + '#' + prefix",
+        "שני hash sets, אחד של prefixes ואחד של suffixes, וחיתוך",
+        "מיון המילים ו-binary search על ה-prefix בלבד"
+      ],
+      "answer": 1,
+      "explanation": "המחרוזת suffix#word מאחדת את שני התנאים ל-prefix אחד: הליכה על 'suffix#prefix' מגיעה בדיוק למילים שמסתיימות ב-suffix ומתחילות ב-prefix. כל מילה מוסיפה עד L+1 מחרוזות באורך עד 2L+1, וזה זול כש-L ≤ 7. האינדקס המקסימלי נשמר בכל צומת בזמן ההכנסה. DFS מה-prefix יכול לעבור על כל המילים בכל שאילתה. חיתוך sets דורש לשמור קבוצות אינדקסים ומתפוצץ.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "Binary trie למקסימום XOR על multiset שמשתנה (הכנסות ומחיקות, למשל חלון נע). מה המימוש הנכון?",
+      "choices": [
+        "מחיקה של מספר מנתקת את העלה שלו בלבד, והשאילתה נשארת ללא שינוי",
+        "אי אפשר למחוק מ-binary trie, ולכן בונים אותו מחדש לכל חלון",
+        "מונה בכל צומת: הכנסה מגדילה ומחיקה מקטינה את כל המונים לאורך המסלול; השאילתה נכנסת לענף עם הביט ההפוך רק אם המונה שלו > 0",
+        "שומרים set של מספרים מחוקים ובודקים בסוף השאילתה אם התוצאה שייכת למספר מחוק"
+      ],
+      "answer": 2,
+      "explanation": "השאילתה מחליטה בכל רמה לאיזה ענף להיכנס, ולכן היא צריכה לדעת אם בענף נשאר מספר חי כלשהו. מונה בכל צומת עונה על זה ב-O(1). ניתוק העלה בלבד משאיר צמתים פנימיים ריקים שהשאילתה עלולה להיכנס אליהם ולהיתקע. בדיקה בסוף מאוחרת מדי: הבחירות החמדניות כבר נעשו לענף ריק. כפילויות מטופלות בטבעיות, כי המונה סופר מופעים.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "Aho-Corasick על k patterns בסך אורך m וטקסט באורך n. אילו טענות נכונות?",
+      "choices": [
+        "את ה-failure links בונים ב-BFS לפי עומק, כי ה-link של צומת תלוי ב-links של צמתים רדודים יותר",
+        "בלי output links, דיווח על כל ההתאמות בכל מיקום דורש ללכת בשרשרת ה-failure עד השורש, וזה יכול להיות יקר",
+        "הסיבוכיות היא O(n + m + z), כאשר z מספר ההתאמות, ו-z יכול להיות גדול מאוד (למשל patterns a, aa, aaa על טקסט של a)",
+        "ה-failure link של צומת תמיד מצביע לצומת בעומק קטן ב-1",
+        "Aho-Corasick דורש לסרוק את הטקסט k פעמים, פעם לכל pattern"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "ה-link של צומת s+c מחושב מה-link של s, שהוא רדוד יותר, ולכן BFS מבטיח שהוא מוכן. output links מקצרים את החיפוש של ends בשרשרת. z הוא גודל הפלט, ולכן לא ניתן לרדת ממנו. ה-failure link מצביע ל-suffix הארוך ביותר שקיים ב-trie, בכל עומק קטן יותר, לא דווקא ב-1. כל הרעיון הוא מעבר יחיד על הטקסט לכל ה-patterns יחד.",
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q31",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "Maximum XOR pair עם binary trie על מספרים של 31 ביט. insert הולך מביט 30 עד 0. על [3,10,5,25,2,8] הפונקציה מחזירה מספר עצום במקום 28. איפה הבאג?",
+      "code": "int queryMax(Node* root, int x) {\n    Node* cur = root;\n    int res = 0;\n    for (int i = 0; i <= 30; ++i) {\n        int b = (x >> i) & 1;\n        if (cur->ch[b ^ 1]) {\n            res |= 1 << i;\n            cur = cur->ch[b ^ 1];\n        } else {\n            cur = cur->ch[b];\n        }\n    }\n    return res;\n}",
+      "bugLine": 4,
+      "choices": [
+        "b ^ 1 צריך להיות ~b",
+        "הלולאה עוברת מה-LSB ל-MSB: רמה d ב-trie מייצגת את ביט 30-d, ולכן ההליכה משווה ביט i של x לביט אחר של המספרים; בנוסף, greedy נכון רק מה-MSB. צריך i מ-30 עד 0",
+        "צריך לבדוק ש-cur אינו nullptr לפני cur->ch[b]",
+        "res |= 1 << i גולש עבור i = 30"
+      ],
+      "answer": 1,
+      "explanation": "ה-trie בנוי מה-MSB, אז ברמה הראשונה הילדים מייצגים את ביט 30, אבל השאילתה בודקת שם את ביט 0 של x. התוצאה היא מספר שלא שייך לאף זוג. גם אם היינו בונים מה-LSB, greedy מה-LSB שגוי, כי ביט נמוך לא שווה יותר מכל הגבוהים. ~b נותן -1 או -2 ולא אינדקס. cur לא יכול להיות nullptr: אם ch[b^1] חסר, ch[b] קיים, כי לכל צומת פנימי יש ילד. 1 << 30 נכנס ב-int.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.tries"
     }
   ]
 }

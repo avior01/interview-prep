@@ -35,7 +35,157 @@
         "aligned new (C++17) לטיפוסים over-aligned, והקצאה מיושרת ל-DMA או hugepages",
         "NUMA ו-first-touch: איפה הזיכרון מוקצה פיזית לעומת ה-thread שמשתמש בו"
       ],
-      "diagram": "struct { char c; int i; char d; }\noffset: 0  1  2  3  4  5  6  7  8  9 10 11\n        [c][pad....][  i  .....][d][pad...]\nsizeof = 12, alignof = 4"
+      "diagram": "struct { char c; int i; char d; }\noffset: 0  1  2  3  4  5  6  7  8  9 10 11\n        [c][pad....][  i  .....][d][pad...]\nsizeof = 12, alignof = 4",
+      "details": [
+        {
+          "title": "sizeof, alignof ו-padding: הכללים",
+          "body": "כל טיפוס מוגדר על ידי שני מספרים: `sizeof(T)`, כמה בתים הוא תופס, ו-`alignof(T)`, חזקה של 2 שכל כתובת של אובייקט מטיפוס T חייבת להתחלק בה. ב-x86-64 (גם Linux וגם Windows): char 1, short 2, int ו-float 4, double, long long ו-pointers 8. `sizeof(char)` הוא 1 בהגדרה.\n\nlayout של struct נבנה כך:\n1. members מוקצים לפי סדר ההצהרה (מ-C++23 מובטח לכולם, קודם רק בתוך אותו access section, ובפועל תמיד).\n2. כל member מוצב ב-offset הראשון שמתחלק ב-alignof שלו. הפער שנוצר הוא padding.\n3. alignof של ה-struct הוא המקסימום של ה-members.\n4. sizeof מעוגל כלפי מעלה לכפולה של alignof (tail padding), כדי שבמערך גם האיבר השני יהיה מיושר.\n\nלכן אותם members בסדר שונה נותנים גדלים שונים. כלל אצבע: מסדרים מה-alignment הגדול לקטן. הקומפיילר לא יסדר מחדש בשבילך. `offsetof(S, m)` מחזיר את ה-offset של member, ומוגדר היטב רק ל-standard-layout types.\n\n`alignas(N)` מגדיל את דרישת היישור של משתנה או טיפוס: `struct alignas(16) V { float x, y, z; }` הופך ל-alignof 16 ו-sizeof 16 (12 עם padding). struct שמכיל V יורש את ה-alignment הזה. `#pragma pack(1)` עושה ההפך: מבטל padding, ולכן members לא מיושרים, הגישה איטית או לא חוקית בחלק מהמעבדים, ו-pointer ל-member כזה מסוכן.\n\nה-padding מכיל ערכים לא מוגדרים. לכן `memcmp` על שני structs עלול להחזיר 'שונה' כשכל ה-members שווים. משווים member אחר member, או עם `operator==` שהוגדר `= default` (C++20)."
+        },
+        {
+          "title": "אובייקטים ריקים, EBO ו-[[no_unique_address]]",
+          "body": "לכל אובייקט שלם חייבת להיות כתובת ייחודית, ולכן `sizeof` של struct ריק הוא לפחות 1 (בפועל 1). כ-member, ה-byte הזה ועוד padding יכולים להגדיל את ה-struct: `struct A { Empty e; int x; }` הוא 8.\n\nempty base optimization (EBO): base class ריק לא חייב לתפוס מקום, ולכן `struct B : Empty { int x; }` הוא 4. כך ספריות מחזיקות allocators, comparators ו-deleters ריקים בלי עלות. המגבלה: שני subobjects מאותו טיפוס לא יכולים לשבת באותה כתובת. אם ה-member הראשון של ה-derived הוא גם מטיפוס Empty, ה-base וה-member חייבים כתובות שונות, וה-EBO לא עוזר.\n\n`[[no_unique_address]]` (C++20) מאפשר ל-member ריק לחלוק כתובת עם members אחרים, כמו EBO אבל בלי ירושה. אותה מגבלה חלה: שני members ריקים מאותו טיפוס עדיין צריכים כתובות שונות זה מזה. MSVC מתעלם מה-attribute הסטנדרטי ודורש `[[msvc::no_unique_address]]`.\n\nכך `std::unique_ptr<T>` עם deleter ברירת מחדל הוא בגודל pointer אחד."
+        },
+        {
+          "title": "סיווגי טיפוסים: trivially copyable ו-standard-layout",
+          "body": "trivially copyable: אין copy/move constructors, copy/move assignment או destructor שהמשתמש סיפק (`= default` בהצהרה הראשונה נחשב טריוויאלי), אין virtual functions ואין virtual bases, וכל ה-members וה-bases בעצמם trivially copyable. רק לטיפוסים כאלה מותר `memcpy`, והם מה ש-`std::bit_cast` דורש. struct עם `std::vector` לא: memcpy היה משכפל את ה-pointer ל-heap ומוביל ל-double free. struct עם virtual function לא: צריך לאתחל vptr.\n\nstandard-layout: layout צפוי, כמו struct של C. התנאים העיקריים: לכל ה-non-static data members אותה access control, אין virtual functions או virtual bases, וכל ה-data members מוגדרים במחלקה אחת בהיררכיה (או ב-derived או ב-base, לא בשניהם). base ריק מותר. במחלקה כזו `offsetof` מוגדר, ו-pointer לאובייקט ניתן להמרה עם reinterpret_cast ל-pointer ל-member הראשון (pointer-interconvertible).\n\nPOD (מונח ישן): trivial וגם standard-layout. מונח POD של C++03 עדיין משפיע על ה-ABI: Itanium ABI משתמש מחדש ב-tail padding של base רק אם ה-base אינו POD לפי C++03. למשל אם ל-A יש constructor שהמשתמש כתב, member של derived יכול להיכנס לתוך ה-padding בסוף A. MSVC לא עושה את זה, ולכן sizeof שונה בין המהדרים."
+        },
+        {
+          "title": "אזורי הזיכרון של תהליך",
+          "body": "- .text: קוד המכונה, read-only ו-executable.\n- .rodata: קבועים ו-string literals. כתיבה אליהם גורמת ל-segfault.\n- .data: משתנים עם static storage (globals, static locals, static members) שיש להם initializer שאינו אפס. תופסים מקום בקובץ.\n- .bss: משתנים עם static storage שמאותחלים לאפס. בקובץ נשמר רק הגודל, ובטעינה מקבלים דפים מאופסים.\n- heap: זיכרון דינמי מ-new ו-malloc. משותף לכל ה-threads.\n- stack: אחד לכל thread. locals, פרמטרים, כתובות חזרה. הגודל קבוע מראש: 8MB כברירת מחדל ל-main thread ב-Linux (לפי ulimit -s), ו-1MB ב-Windows. threads נוספים מקבלים stack לפי הגדרות ה-thread library. חריגה היא stack overflow ו-segfault, למשל מערך מקומי של 16MB או רקורסיה עמוקה.\n- TLS: משתני `thread_local`, עותק לכל thread.\n\nstatic local בתוך פונקציה (`static int calls = 0;`) נמצא ב-.data או ב-.bss, לא על ה-stack. הוא חי עד סוף התוכנית, ואם יש לו אתחול דינמי, האתחול קורה בפעם הראשונה שהביצוע מגיע להצהרה, ומ-C++11 הוא thread-safe.\n\nזיכרון וירטואלי: malloc גדול (ב-glibc מעל 128KB) משתמש ב-mmap ומקבל כתובות בלבד. דפים פיזיים מוקצים רק בגישה הראשונה (page fault, 'first touch'). ב-NUMA, מדיניות first-touch שמה את הדף ב-node של ה-core שנגע בו ראשון. hugepages (2MB במקום 4KB) מקטינים TLB misses."
+        },
+        {
+          "title": "cache lines, false sharing ו-AoS מול SoA",
+          "body": "הזיכרון עובר בין RAM ל-cache ביחידות של cache line, 64 בתים ב-x86 (128 ב-Apple M1). גישה ל-L1 עולה כ-1 ns, ל-RAM כ-80 עד 100 ns. ה-prefetcher מזהה גישה רציפה ומביא lines מראש. לכן מה שקובע ביצועים של לולאה על הרבה נתונים הוא כמה bytes שימושיים יש בכל line שנטען.\n\nAoS (Array of Structs): `std::vector<Sample>` כשכל Sample מכיל i, q, ts ו-flags. נוח, אבל לולאה שצריכה רק i ו-q מושכת גם את ts ו-flags לכל line. SoA (Structure of Arrays): מערך נפרד לכל שדה. לולאה על i ו-q קוראת רק אותם, ברצף, ומתאימה לטעינות SIMD (8 floats ב-AVX) ול-coalesced access ב-GPU. AoSoA הוא פשרה: בלוקים קטנים של SoA.\n\nfalse sharing: פרוטוקול ה-coherence (MESI) מנהל בעלות ברמת line. אם core A כותב ל-x ו-core B כותב ל-y, ו-x ו-y באותו line, ה-line קופץ בין ה-cores בכל כתיבה. אין באג לוגי, אבל זה יכול להאט פי 10 ויותר. הפתרון: `alignas(64)` לכל משתנה חם, `std::hardware_destructive_interference_size` (C++17, קבוע של זמן קומפילציה, ולכן בעייתי ל-ABI), או מונה מקומי לכל thread וצבירה בסוף. כמה ספריות משתמשות ב-128, כי Intel מביא lines בזוגות (adjacent-line prefetch)."
+        },
+        {
+          "title": "יישור בהקצאה דינמית ו-buffers בינאריים",
+          "body": "malloc ו-new מחזירים זיכרון מיושר ל-`alignof(std::max_align_t)`, שהוא 16 ב-x86-64. טיפוס over-aligned (alignas גדול מ-16, כמו 64 לטיפוסי AVX או ל-cache line) לא היה מיושר בהקצאה דינמית עד C++14. C++17 הוסיף aligned new: הקומפיילר מזהה טיפוס over-aligned וקורא ל-`operator new(size_t, std::align_val_t)`. גם `std::aligned_alloc` (שבו size חייב להיות כפולה של align) ו-`posix_memalign` קיימים. מימוש ידני מעל malloc מקצה עודף, מעגל עם mask (`(x + a - 1) & ~(a - 1)`) ושומר את ה-pointer המקורי ממש לפני הכתובת המוחזרת.\n\nפענוח buffer בינארי (פרוטוקול, קובץ, DMA): reinterpret_cast של `uint8_t*` ל-`uint32_t*` או ל-struct הוא UB משני כיוונים: strict aliasing (אין שם אובייקט מהטיפוס הזה) ו-alignment (offset אי-זוגי). x86 סובל גישה לא מיושרת, ARM ו-SIMD מיושר לא. בנוסף צריך לטפל ב-padding של ה-struct וב-endianness (רשת היא big-endian, x86 הוא little-endian). הדרך הנכונה: `std::memcpy` לאובייקט מקומי (מתקמפל ל-mov יחיד), ואחר כך המרת byte order (`ntohl`, `std::byteswap` ב-C++23)."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: layout של `struct P { char a; double b; char c; int d; }`",
+          "body": "x86-64, alignof(double) = 8.\n\n- a: offset 0 (1 byte). הבא הוא double, צריך offset שמתחלק ב-8, ולכן padding של 7 (offsets 1 עד 7).\n- b: offsets 8 עד 15.\n- c: offset 16. הבא הוא int, צריך כפולה של 4, ולכן padding של 3 (17 עד 19).\n- d: offsets 20 עד 23.\n- סך הכל 24, וזה כבר כפולה של 8, אין tail padding.\n\n10 מתוך 24 בתים הם padding. בסדר double, int, char, char: b ב-0, d ב-8, a ב-12, c ב-13, סך הכל 14, מעוגל ל-16. במערך של 10M איברים זה 80MB פחות."
+        },
+        {
+          "title": "דוגמה: false sharing בארבעה מונים",
+          "body": "`std::atomic<long> counters[4]` הם 32 בתים רצופים, כולם ב-cache line אחד.\n\n- thread 0 מגדיל את counters[0]. core 0 צריך את ה-line במצב Modified, ולכן ה-line מבוטל אצל cores 1 עד 3.\n- thread 1 מגדיל את counters[1]. core 1 מבקש את ה-line, core 0 מוסר אותו ומאבד את העותק.\n- כך בכל הגדלה: ה-line נודד בין ארבעה cores, וכל הגדלה מחכה עשרות ns במקום ns בודד.\n\nהתיקון: `struct alignas(64) Padded { std::atomic<long> v; };` ומערך של 4 כאלה, 256 בתים, line לכל מונה. או מונה מקומי לכל thread שנכתב ל-counters רק בסוף."
+        },
+        {
+          "title": "דוגמה: AoS מול SoA ב-10M samples",
+          "body": "`struct S { float i, q; uint64_t ts; uint32_t flags; }` הוא 24 בתים (4 בתים של padding בסוף). הלולאה מחשבת i·i + q·q.\n\n- AoS: 10M · 24 = 240MB נקראים מהזיכרון, מתוכם 80MB שימושיים. בכל line של 64 בתים יש 2.67 samples, ו-i ו-q מפוזרים בקפיצות של 24. vectorization דורש gather.\n- SoA: מערך i של 40MB ומערך q של 40MB. 80MB נקראים, כולם שימושיים. כל טעינת AVX מביאה 8 ערכי i רצופים.\n\nבלולאה שמוגבלת ב-bandwidth (נניח 20GB/s), זה ההבדל בין 12ms ל-4ms, עוד לפני ה-SIMD."
+        },
+        {
+          "title": "דוגמה: stack overflow מ-buffer מקומי",
+          "body": "פונקציית עיבוד מגדירה `float buf[4'000'000];` כ-local.\n\n- 4M · 4 בתים = 16MB.\n- ה-stack של ה-main thread ב-Linux הוא 8MB (ulimit -s). ב-Windows 1MB.\n- ה-stack pointer יורד 16MB ונוגע ב-guard page מתחת ל-stack: segfault מיידי, לפעמים בשורה שנראית לא קשורה.\n\nהתיקון: `std::vector<float> buf(4'000'000)` (heap), buffer שהוקצה פעם אחת ב-init, או static אם הפונקציה לא reentrant."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "sizeof",
+          "def": "מספר הבתים שאובייקט מהטיפוס תופס, כולל padding. תמיד כפולה של alignof. `sizeof(char)` הוא 1 בהגדרה."
+        },
+        {
+          "term": "alignof ו-alignment",
+          "def": "חזקה של 2 שכל כתובת של הטיפוס חייבת להתחלק בה. ב-x86-64: int 4, double ו-pointer 8. של struct הוא המקסימום של ה-members."
+        },
+        {
+          "term": "padding",
+          "def": "בתים שהקומפיילר מוסיף בין members (כדי ליישר את הבא) ובסוף struct (כדי שמערך יישאר מיושר). ערכם לא מוגדר."
+        },
+        {
+          "term": "tail padding",
+          "def": "padding בסוף struct שמעגל את sizeof לכפולה של alignof. Itanium ABI משתמש בו ל-members של derived כשה-base אינו POD."
+        },
+        {
+          "term": "offsetof",
+          "def": "מאקרו שמחזיר את ה-offset בבתים של member בתוך struct. מוגדר היטב ל-standard-layout types."
+        },
+        {
+          "term": "alignas",
+          "def": "specifier שמגדיל את דרישת היישור של משתנה או טיפוס, למשל `alignas(64)` למניעת false sharing או ל-SIMD."
+        },
+        {
+          "term": "#pragma pack",
+          "def": "הרחבה של המהדר שמבטלת או מקטינה padding. גורמת ל-members לא מיושרים: גישה איטית, ובחלק מהמעבדים fault."
+        },
+        {
+          "term": "empty base optimization (EBO)",
+          "def": "base class ריק לא תופס מקום ב-derived. לא חל כששני subobjects מאותו טיפוס ריק היו צריכים אותה כתובת."
+        },
+        {
+          "term": "[[no_unique_address]]",
+          "def": "C++20: מאפשר ל-member ריק לחלוק כתובת עם members אחרים. שני members ריקים מאותו טיפוס עדיין צריכים כתובות שונות. MSVC דורש [[msvc::no_unique_address]]."
+        },
+        {
+          "term": "trivially copyable",
+          "def": "טיפוס שמותר להעתיק עם memcpy: בלי copy/move/destructor שהמשתמש סיפק, בלי virtual, וכל ה-members כאלה. דרישה של bit_cast."
+        },
+        {
+          "term": "standard-layout",
+          "def": "טיפוס עם layout צפוי כמו struct של C: אותה access control לכל ה-data members, בלי virtual, וכל ה-data members במחלקה אחת בהיררכיה."
+        },
+        {
+          "term": "POD",
+          "def": "Plain Old Data: trivial וגם standard-layout. המונח הישן (C++03) עדיין קובע ב-Itanium ABI אם מותר להשתמש ב-tail padding של base."
+        },
+        {
+          "term": ".text, .rodata, .data, .bss",
+          "def": "sections בקובץ ELF: קוד, קבועים ו-literals, globals עם initializer שאינו אפס, ו-globals מאותחלים לאפס (בלי מקום בקובץ)."
+        },
+        {
+          "term": "stack",
+          "def": "אזור לכל thread עבור locals, פרמטרים וכתובות חזרה. גודל קבוע: 8MB ל-main thread ב-Linux, 1MB ב-Windows. חריגה היא stack overflow."
+        },
+        {
+          "term": "heap",
+          "def": "זיכרון דינמי מ-new או malloc, משותף לכל ה-threads, משתחרר רק במפורש (או דרך RAII)."
+        },
+        {
+          "term": "static local",
+          "def": "משתנה `static` בתוך פונקציה: static storage (data או bss), חי עד סוף התוכנית, ומאותחל (אם דינמית) בפעם הראשונה שמגיעים אליו, באופן thread-safe מ-C++11."
+        },
+        {
+          "term": "cache line",
+          "def": "יחידת ההעברה בין RAM ל-cache, 64 בתים ב-x86. גישה ל-byte אחד מביאה את כל ה-line."
+        },
+        {
+          "term": "false sharing",
+          "def": "threads שכותבים למשתנים שונים באותו cache line, כך שה-line נודד בין cores בכל כתיבה. בעיית ביצועים, לא נכונות."
+        },
+        {
+          "term": "MESI",
+          "def": "פרוטוקול cache coherence: כל line במצב Modified, Exclusive, Shared או Invalid. כתיבה דורשת בעלות בלעדית ומבטלת עותקים אצל cores אחרים."
+        },
+        {
+          "term": "hardware_destructive_interference_size",
+          "def": "קבוע C++17: ההפרדה המינימלית כדי להימנע מ-false sharing. בדרך כלל 64 ב-x86. קבוע של זמן קומפילציה, ולכן ערך שונה בין גרסאות הוא בעיית ABI."
+        },
+        {
+          "term": "AoS, SoA, AoSoA",
+          "def": "Array of Structs: כל אובייקט ברצף. Structure of Arrays: מערך לכל שדה, מתאים ל-SIMD ול-GPU. AoSoA: בלוקים קטנים של SoA, פשרה בין השניים."
+        },
+        {
+          "term": "max_align_t",
+          "def": "הטיפוס עם ה-alignment הגדול ביותר שמובטח ל-malloc ול-new רגיל. 16 ב-x86-64."
+        },
+        {
+          "term": "aligned new",
+          "def": "C++17: new לטיפוס over-aligned (alignment מעל __STDCPP_DEFAULT_NEW_ALIGNMENT__) קורא ל-operator new עם std::align_val_t ומחזיר זיכרון מיושר."
+        },
+        {
+          "term": "endianness",
+          "def": "סדר הבתים של מספר בזיכרון. x86 ו-ARM ברירת מחדל: little-endian. פרוטוקולי רשת: big-endian. ממירים עם ntohl או std::byteswap (C++23)."
+        },
+        {
+          "term": "first touch ו-NUMA",
+          "def": "ב-Linux דף פיזי מוקצה רק בגישה הראשונה. במכונת NUMA הוא מוקצה על ה-node של ה-core שנגע בו ראשון, ולכן מי שמאתחל את ה-buffer קובע איפה הוא יושב."
+        },
+        {
+          "term": "hugepages",
+          "def": "דפים של 2MB (או 1GB) במקום 4KB. פחות כניסות ב-TLB ופחות TLB misses על buffers גדולים."
+        }
+      ]
     }
   ],
   "questions": [
@@ -349,6 +499,190 @@
         "acquire/release על האינדקסים, ו-layout של הנתונים לפי שלב העיבוד"
       ],
       "explanation": "השאלה מחברת layout, cache, מקביליות ומערכות. זה בדיוק התחום שבו הפרויקט של ה-SDR שלך נותן יתרון, אז כדאי לחבר את התשובה לניסיון שלך.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של `alignof(int) == 4`?",
+      "choices": [
+        "כל אובייקט int חייב לשבת בכתובת שמתחלקת ב-4",
+        "int תופס 4 bytes",
+        "אפשר להחזיק לכל היותר 4 int ב-cache line",
+        "int מיושר ל-4 רק כשהוא בתוך struct"
+      ],
+      "answer": 0,
+      "explanation": "alignof הוא דרישת היישור של הטיפוס: כתובת כל אובייקט מהטיפוס היא כפולה שלו. הוא קשור ל-sizeof אבל לא זהה לו: ל-`struct { char c[5]; }` יש sizeof 5 ו-alignof 1. הדרישה חלה בכל מקום, גם במשתנים מקומיים ובהקצאה דינמית.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה הגודל בבתים של cache line במעבדי x86 מודרניים?",
+      "accept": [
+        "64",
+        "64 bytes",
+        "64B"
+      ],
+      "explanation": "ב-Intel וב-AMD ה-line הוא 64 בתים. זו יחידת ההעברה בין RAM ל-cache, ובה מנוהל ה-coherence בין cores, ולכן היא קובעת גם את ניצול רוחב הפס וגם את false sharing. ב-Apple M1 ה-line הוא 128 בתים.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין AoS ל-SoA?",
+      "choices": [
+        "AoS שומר את הנתונים ב-heap ו-SoA על ה-stack",
+        "SoA הוא שם אחר ל-std::vector של structs",
+        "AoS מתאים ל-SIMD ו-SoA לא",
+        "AoS (Array of Structs) הוא מערך שבו כל איבר הוא struct שלם. SoA (Structure of Arrays) הוא struct שמחזיק מערך נפרד לכל שדה"
+      ],
+      "answer": 3,
+      "explanation": "ב-AoS השדות של אותו אובייקט צמודים, וזה נוח כשמשתמשים בכל השדות יחד. ב-SoA ערכים של אותו שדה צמודים, ולכן לולאה שצריכה רק חלק מהשדות קוראת רק אותם, ברצף, וזה מה ש-SIMD ו-GPU צריכים.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-x86-64?",
+      "code": "struct P { char a; double b; int c; };\nstd::cout << offsetof(P, b) << ' '\n          << offsetof(P, c) << ' ' << sizeof(P);",
+      "choices": [
+        "1 9 13",
+        "8 16 20",
+        "8 16 24",
+        "4 12 16"
+      ],
+      "answer": 2,
+      "explanation": "a ב-0. b הוא double ודורש offset שמתחלק ב-8, ולכן 7 בתים של padding ו-b ב-8. c ב-16 (כבר מתחלק ב-4). סוף ה-members ב-20, וה-sizeof מעוגל לכפולה של alignof(P) = 8, כלומר 24.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q24",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בפונקציה מוגדר `static int calls = 0;` ובכל קריאה עושים `++calls`. איפה נשמר calls ומה ה-lifetime שלו?",
+      "choices": [
+        "על ה-stack, ונוצר מחדש עם 0 בכל קריאה",
+        "ב-heap, ומשתחרר כשהפונקציה חוזרת",
+        "ב-TLS, עותק נפרד לכל thread",
+        "static storage (ב-.bss, כי מאותחל ל-0): קיים פעם אחת לכל התוכנית ושומר את ערכו בין קריאות"
+      ],
+      "answer": 3,
+      "explanation": "static local נגיש רק בתוך הפונקציה, אבל ה-storage שלו כמו של global. אתחול לאפס נכנס ל-.bss, ואתחול לערך אחר ל-.data. הוא משותף לכל ה-threads, ולכן ++calls מכמה threads הוא data race. עותק לכל thread מקבלים עם thread_local.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-x86-64?",
+      "code": "struct alignas(16) V { float x, y, z; };\nstruct W { char c; V v; };\nstd::cout << sizeof(V) << ' ' << alignof(V) << ' '\n          << sizeof(W);",
+      "choices": [
+        "12 16 28",
+        "16 16 32",
+        "12 4 16",
+        "16 16 17"
+      ],
+      "answer": 1,
+      "explanation": "alignas(16) מעלה את alignof(V) ל-16, ולכן sizeof(V) מעוגל מ-12 ל-16. ב-W, v צריך offset שמתחלק ב-16: c ב-0, padding של 15, v ב-16 עד 31. alignof(W) הוא 16 ו-sizeof הוא 32. ה-alignment עובר כלפי מעלה לכל struct שמכיל את V.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "קוד משווה שני `struct Cfg { char mode; int rate; }` עם `memcmp(&a, &b, sizeof(Cfg)) == 0`. לפעמים הוא מחזיר 'שונה' כשכל השדות שווים. למה, ומה הפתרון?",
+      "choices": [
+        "memcmp לא עובד על structs",
+        "ב-Cfg יש 3 בתים של padding אחרי mode, והתוכן שלהם לא מוגדר ולא מועתק בהכרח בהשמה של שדות. משווים שדה אחר שדה, או מגדירים `bool operator==(const Cfg&) const = default;` (C++20)",
+        "צריך memcmp עם sizeof(char) + sizeof(int)",
+        "int מאוחסן ב-big-endian ולכן ההשוואה נכשלת"
+      ],
+      "answer": 1,
+      "explanation": "ה-padding מכיל כל מה שהיה בזיכרון לפני כן: אובייקט על ה-stack מכיל זבל, והשמה של שדות לא נוגעת בו. defaulted operator== משווה רק members. memset לאפס לפני ההשמה עובד בפועל, אבל לא מובטח שהקומפיילר ישמור על ה-padding אחרי העתקה. אותה בעיה קיימת ב-hash על bytes של struct.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q27",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו מהטיפוסים הבאים הם standard-layout?",
+      "choices": [
+        "`struct S1 { int a; char b; };`",
+        "`struct S2 { virtual void f(); int a; };`",
+        "`struct S3 { int a; private: int b; };`",
+        "`struct B0 {}; struct S4 : B0 { int a; int b; };`",
+        "`struct B1 { int z; }; struct S5 : B1 { int a; };`"
+      ],
+      "answer": [
+        0,
+        3
+      ],
+      "explanation": "virtual function מוסיפה vptr ומבטלת standard-layout. members עם access control שונה (public ו-private) מבטלים אותו. כל ה-data members חייבים להיות מוגדרים במחלקה אחת בהיררכיה: base ריק עם data רק ב-derived מותר, אבל data גם ב-base וגם ב-derived לא. רק ב-standard-layout offsetof מוגדר, ו-pointer לאובייקט שקול ל-pointer ל-member הראשון.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "פונקציה על Linux מגדירה `float buf[4'000'000];` כמשתנה מקומי, ו-segfault קורה בכניסה לפונקציה, עוד לפני שימוש ב-buf. מה ההסבר?",
+      "choices": [
+        "מערך מקומי חייב להיות קטן מ-64KB לפי התקן",
+        "float לא מיושר",
+        "buf תופס 16MB, יותר מגודל ה-stack של ה-main thread (ברירת מחדל 8MB לפי ulimit -s), והגישה הראשונה פוגעת ב-guard page. מעבירים ל-heap (std::vector) או ל-buffer שמוקצה פעם אחת",
+        "המערך לא מאותחל, וקריאה ממנו היא UB"
+      ],
+      "answer": 2,
+      "explanation": "גודל ה-stack נקבע מראש ולא גדל לפי הצורך מעבר לגבול. 4M floats הם 16MB. הקומפיילר מזיז את ה-stack pointer בבת אחת, והגישה הראשונה (לפעמים probe שהקומפיילר הוסיף) נופלת. ב-Windows ה-stack הוא 1MB, כך שגם מערך של 2MB נופל. threads נוספים מקבלים stack לפי הגדרות ה-thread library.",
+      "lesson": "cpp.memory-layout",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.memory-layout.q29",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט עם GCC או Clang על x86-64?",
+      "code": "struct E {};\nstruct D  : E { E e; int x; };\nstruct D2 : E { int x; };\nstruct S {\n  [[no_unique_address]] E a;\n  [[no_unique_address]] E b;\n  int x;\n};\nstd::cout << sizeof(D) << ' ' << sizeof(D2) << ' ' << sizeof(S);",
+      "choices": [
+        "4 4 4",
+        "8 4 8",
+        "8 8 8",
+        "8 4 4"
+      ],
+      "answer": 3,
+      "explanation": "ב-D, ה-base E וה-member e הם שני subobjects מאותו טיפוס, ואסור להם אותה כתובת. ה-base ב-0, e ב-1, ו-x ב-4, ולכן 8. ב-D2 ה-EBO עובד ו-sizeof הוא 4. ב-S, a ו-b מאותו טיפוס צריכים כתובות שונות זה מזה (0 ו-1), אבל מותר להם לחפוף ל-x שהוא מטיפוס אחר, ולכן 4. ב-MSVC, שמתעלם מה-attribute הסטנדרטי, S יוצא גדול יותר.",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "id": "cpp.memory-layout.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "שרת NUMA עם שני sockets. ה-main thread עושה `float* buf = (float*)malloc(1 << 30);` ואז `memset(buf, 0, 1 << 30);`, ואחר כך 32 worker threads (16 על כל socket) מעבדים כל אחד חלק מ-buf. אילו טענות נכונות ב-Linux עם מדיניות ברירת המחדל?",
+      "choices": [
+        "malloc בגודל כזה רק שומר טווח כתובות וירטואלי (mmap). דפים פיזיים מוקצים בגישה הראשונה לכל דף",
+        "מדיניות first-touch מקצה כל דף על ה-NUMA node של ה-core שנגע בו ראשון",
+        "בגלל ה-memset ב-main thread, כל ה-buffer יושב על ה-node של ה-main, וה-workers בסוקט השני ניגשים לזיכרון מרוחק",
+        "calloc במקום malloc ו-memset תמיד כותב פיזית לכל הדפים, ולכן לא היה משנה את התמונה",
+        "hugepages מגדילים את מספר ה-TLB misses"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "הקצאה גדולה ב-glibc עוברת ל-mmap, והקרנל מקצה דף פיזי ב-page fault הראשון. first-touch שם אותו ליד מי שנגע. ה-memset של ה-main נגע בהכל, ולכן חצי מה-workers קוראים דרך ה-interconnect, עם latency גבוה יותר ורוחב פס נמוך יותר. הפתרון: כל worker מאתחל את החלק שלו. calloc גדול מקבל דפים מאופסים מה-mmap בלי לגעת בהם, ולכן הדפים היו מוקצים אצל ה-workers. hugepages מקטינים TLB misses.",
       "lesson": "cpp.memory-layout",
       "tags": [
         "nvidia"

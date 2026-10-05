@@ -35,7 +35,157 @@
         "-fno-exceptions ב-embedded, games ו-GPU: מה משתנה (new שנכשל קורא ל-abort, ה-STL לא זורק)",
         "error codes, std::expected ו-exceptions: לפי שכיחות השגיאה, מי מטפל בה, ודרישות זמן-אמת"
       ],
-      "diagram": "main: try { a() } catch(E&)  <-- handler\n  a(): Lock l;  b()      ~l runs\n    b(): Buf x; c()      ~x runs\n      c(): throw E{}  ---^ unwind"
+      "diagram": "main: try { a() } catch(E&)  <-- handler\n  a(): Lock l;  b()      ~l runs\n    b(): Buf x; c()      ~x runs\n      c(): throw E{}  ---^ unwind",
+      "details": [
+        {
+          "title": "throw, catch ו-stack unwinding",
+          "body": "`throw expr` יוצר exception object: עותק (או move) של expr, מהטיפוס הסטטי של הביטוי. האובייקט לא יושב ב-stack frame של הפונקציה שזרקה, כי ה-frame הזה עומד להיהרס. ב-Itanium ABI הוא מוקצה ב-`__cxa_allocate_exception`, בדרך כלל עם malloc.\n\nמכאן מתחיל חיפוש handler: בכל frame, מלמטה למעלה, בודקים בלוקי try ואת ה-catch שלהם לפי סדר הכתיבה. ה-handler הראשון שמתאים נבחר, לא המתאים ביותר. catch מתאים אם הטיפוס זהה, או שהוא base class ציבורי וחד-משמעי של הטיפוס שנזרק (by reference או by value), או pointer מתאים. אין המרות אחרות: `throw 1` לא נתפס ב-`catch (long)`. ירושה private לא נחשבת. `catch (...)` תופס הכל.\n\nstack unwinding: בדרך מנקודת ה-throw ל-handler, כל אובייקט מקומי שנבנה במלואו נהרס, בסדר הפוך לבנייה. זה מה שהופך RAII לעובד: lock_guard משחרר את ה-mutex, unique_ptr מוחק, קבצים נסגרים.\n\nאם אין handler בכלל, נקרא `std::terminate` (ברירת מחדל: abort). התקן משאיר ל-implementation להחליט אם התבצע unwinding לפני כן. ב-GCC ו-Clang שלב החיפוש (search phase) קודם לשלב הניקוי (cleanup phase), ואם לא נמצא handler, ה-destructors לא רצים בכלל."
+        },
+        {
+          "title": "תפיסה נכונה, rethrow ו-slicing",
+          "body": "הכלל: throw by value, catch by const reference. תפיסה by value יוצרת עותק חדש מהטיפוס שב-catch: אם זרקו runtime_error ותפסו `std::exception e`, נשאר רק חלק ה-base (slicing), ו-`what()` מחזיר הודעה כללית. תפיסה by reference נותנת גישה לאובייקט המקורי, עם הטיפוס הדינמי שלו.\n\nסדר ה-handlers: ספציפי לפני כללי. `catch (const std::exception&)` לפני `catch (const std::out_of_range&)` הופך את השני לקוד מת.\n\nrethrow: `throw;` בלי ביטוי זורק מחדש את אותו exception object, בלי העתקה ועם הטיפוס המקורי. `throw e;` יוצר exception object חדש מהטיפוס הסטטי של e, כלומר slicing. שינוי של האובייקט דרך reference ב-catch (למשל הוספת הקשר) נשמר כשעושים `throw;`, כי זה אותו אובייקט. `throw;` כשאין exception פעיל קורא ל-std::terminate.\n\nאורך החיים של exception object: עד שה-handler האחרון שתופס אותו יוצא שלא דרך rethrow, וכל עוד יש `std::exception_ptr` שמחזיק אותו. reference ל-e שנשמר אחרי סוף ה-catch הוא dangling.\n\nהיררכיה: `std::exception` עם `what()` הוירטואלי. `std::logic_error` (באגים בקוד: `invalid_argument`, `out_of_range`, `length_error`) ו-`std::runtime_error` (תנאי סביבה: `system_error`, `overflow_error`). `std::bad_alloc` נזרק מ-new שנכשל. `vector::at` בודק גבולות וזורק out_of_range, ו-`operator[]` לא בודק ומחוץ לגבולות הוא UB."
+        },
+        {
+          "title": "רמות exception safety",
+          "body": "לכל פעולה מגדירים מה מובטח אם היא נכשלת:\n\n- nothrow (no-fail): הפעולה לא זורקת בכלל. נדרש מ-destructors, swap, move operations ופעולות rollback. בלעדיהן אי אפשר לבנות את השאר.\n- strong: commit or rollback. אם הפעולה נכשלת, המצב הנצפה זהה למה שהיה לפניה.\n- basic: אין דליפות וה-invariants נשמרים, כך שהאובייקט תקין ואפשר להרוס או להקצות לו מחדש, אבל הערך שלו עשוי להשתנות.\n- בלי הבטחה: דליפות או אובייקט שבור. זה באג.\n\nאיך משיגים strong:\n- copy-and-swap: מבצעים את כל העבודה על עותק, ואז `swap` שהוא noexcept. אם העבודה זורקת, המקור לא נגע.\n- סדר נכון: קודם כל מה שעלול לזרוק, אחר כך שינויים שלא זורקים.\n- rollback ידני: כל צעד strong בפני עצמו, ובכשל של צעד מאוחר מבטלים את הקודמים עם פעולות nothrow (`pop_back`) ועושים `throw;`.\n\n`vector::push_back` נותן strong guarantee אם T הוא copyable או שה-move constructor שלו noexcept. בזמן reallocation ה-vector משתמש ב-`move_if_noexcept`: אם move עלול לזרוק ויש copy, הוא מעתיק, כדי שהמקור יישאר שלם. אם T הוא move-only עם move שזורק, ההבטחה יורדת וההשפעה unspecified."
+        },
+        {
+          "title": "exceptions ב-constructors וב-destructors",
+          "body": "constructor שנכשל: אין ערך החזרה, ולכן זריקה היא הדרך הטבעית לדווח. אם constructor זורק, האובייקט מעולם לא התקיים, וה-destructor שלו לא נקרא. מה שכן נהרס: כל ה-members וה-bases שכבר נבנו במלואם, בסדר הפוך. לכן `Pair() : a_(new int[100]), b_(new int[100])` עם raw pointers דולף אם השני נכשל: ל-`int*` אין destructor. עם `unique_ptr` או `vector` כ-members, הראשון משתחרר אוטומטית.\n\nfunction-try-block: `S() try : m() { } catch (...) { }` תופס exceptions גם מה-member initializers. בסוף ה-handler ה-exception נזרק מחדש אוטומטית, כי אין אובייקט תקין להחזיר. אפשר לעשות logging או לזרוק טיפוס אחר, אבל לא לבלוע. אסור לגשת ל-members שם, הם כבר נהרסו.\n\ndestructors: מ-C++11 כל destructor הוא `noexcept` במרומז (אלא אם member או base מסומן `noexcept(false)`). throw שיוצא מ-destructor כזה קורא ל-std::terminate, גם אם יש catch בחוץ. גם destructor שסומן `noexcept(false)` מסוכן: אם הוא זורק בזמן unwinding של exception אחר, יש שני exceptions פעילים, וזה std::terminate. לכן destructors לא זורקים. מי שצריך לדווח על כשל ב-cleanup (למשל close שנכשל) מספק `close()` מפורש, ו-destructor שבולע. `std::uncaught_exceptions()` מאפשר לדעת אם ה-destructor רץ בגלל unwinding."
+        },
+        {
+          "title": "noexcept: specifier, אופרטור ומערכת הטיפוסים",
+          "body": "ל-noexcept שני תפקידים:\n\n- specifier: `void f() noexcept` מבטיח שהפונקציה לא תזרוק. `noexcept(cond)` הופך את ההבטחה לתלויה בתנאי של זמן קומפילציה. הקומפיילר לא מאמת את ההבטחה. אם exception מגיע לגבול הפונקציה בזמן ריצה, נקרא std::terminate, והתקן מתיר לא לבצע unwinding בכלל. זה מאפשר לקומפיילר לא לייצר landing pads.\n- אופרטור: `noexcept(expr)` מחזיר bool בזמן קומפילציה: האם הביטוי מוצהר כלא-זורק. הביטוי לא מורץ (unevaluated operand), ולכן גם לא צריך הגדרה של הפונקציות. הצירוף `noexcept(noexcept(a.swap(b)))` הוא specifier שמשתמש באופרטור.\n\nמה noexcept במרומז: destructors, ופונקציות מיוחדות שהוגדרו `= default` או נוצרו אוטומטית, לפי ה-members וה-bases שלהן.\n\nלמה זה חשוב: הספרייה בודקת noexcept כדי לבחור אלגוריתם. vector מזיז ב-reallocation רק אם move הוא noexcept, ולכן move constructor בלי noexcept הופך כל גדילה להעתקה.\n\nמ-C++17 noexcept הוא חלק מטיפוס הפונקציה: pointer לפונקציה noexcept ממיר ל-pointer רגיל, אבל לא להפך, ואי אפשר overload רק על noexcept. dynamic exception specifications (`throw(X)`) ו-`std::unexpected` הוסרו ב-C++17."
+        },
+        {
+          "title": "עלות, threads וחלופות",
+          "body": "zero-cost model (Itanium ABI, וגם x64 ב-Windows): בנתיב התקין אין הוראות נוספות. המידע על מה להרוס נמצא ב-unwind tables (`.eh_frame`) ו-LSDA, שמגדילות את הבינארי. throw יקר: הקצאה, שני מעברים על ה-stack (search ואז cleanup), פענוח טבלאות לכל frame והתאמת RTTI. סדר גודל של מיקרו-שניות, ולא דטרמיניסטי, ולכן לא מתאים לנתיב חם או לשגיאה שקורית הרבה.\n\n`-fno-exceptions`: נפוץ ב-embedded, משחקים וקוד GPU. אסור throw ו-try. ה-STL במקום לזרוק קורא ל-abort, ו-new שנכשל לא מחזיר nullptr (בשביל זה יש `new (std::nothrow)`). קוד device ב-CUDA לא תומך ב-exceptions בכלל. שגיאות חוזרות כ-`cudaError_t`.\n\nthreads: לכל thread stack משלו, ו-exception לא עובר thread מעצמו. exception שבורח מהפונקציה של std::thread גורם ל-terminate. להעברה: `std::current_exception()` בתוך catch מחזיר `std::exception_ptr`, ו-`std::rethrow_exception` זורק אותו ב-thread אחר. `std::promise` ו-`std::async` עושים את זה אוטומטית, וה-exception נזרק מ-`future::get()`.\n\nחלופות: error codes (`std::error_code`), ו-`std::expected<T, E>` (C++23) שמחזיק ערך או שגיאה, בלי הקצאה ובלי unwinding. `value()` על expected שמחזיק שגיאה זורק `std::bad_expected_access`. כלל אצבע: exception לשגיאה נדירה שהקורא הישיר לא יכול לטפל בה, expected או error code לכשל צפוי שהקורא מטפל בו מיד."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: unwinding דרך שלושה frames",
+          "body": "main קורא ל-a בתוך try עם `catch (const std::exception&)`. a יוצרת lock_guard L ואז קוראת ל-b. b יוצרת vector V ואז קוראת ל-c. c זורקת runtime_error.\n\n- נוצר exception object (runtime_error) מחוץ ל-stack.\n- search phase: ב-c אין try, ב-b אין, ב-a אין, ב-main יש handler מתאים (runtime_error יורש מ-exception).\n- cleanup phase: ה-frame של c נהרס. ב-b, V נהרס והזיכרון שלו משתחרר. ב-a, L נהרס וה-mutex משתחרר.\n- ה-handler ב-main רץ, ו-`e.what()` מחזיר את ההודעה המקורית, כי התפיסה by reference.\n- בסוף ה-handler ה-exception object משוחרר.\n\nאילו לא היה handler ב-main, ב-GCC אף destructor לא היה רץ וה-mutex לא היה משתחרר לפני ה-abort."
+        },
+        {
+          "title": "דוגמה: constructor שנכשל באמצע",
+          "body": "`struct P { X a{1}; X b{2}; X c{3}; };`, ו-X(2) זורק.\n\n- a נבנה במלואו (מדפיס +1).\n- b מתחיל להיבנות וזורק. b לא נבנה, ולכן ה-destructor שלו לא ירוץ.\n- c לא התחיל.\n- unwinding בתוך ה-constructor של P: נהרסים רק members שנבנו, כלומר a (מדפיס -1).\n- ה-destructor של P לא רץ, כי P מעולם לא התקיים.\n- ה-catch בחוץ תופס.\n\nהפלט +1-1 ואז ה-handler. אילו a היה `int*` מ-new, הוא היה דולף, כי ל-pointer אין destructor."
+        },
+        {
+          "title": "דוגמה: strong guarantee עם שני containers",
+          "body": "Registry מחזיק names (vector) ו-ids (unordered_map). מוסיפים \"rx\" עם id 7.\n\n- בודקים כפילות ב-ids. אם קיים, זורקים לפני שנגענו במשהו.\n- `names.push_back(\"rx\")`: אם זורק (bad_alloc), push_back עצמו strong, ושום דבר לא השתנה.\n- `ids.emplace(\"rx\", 7)`: אם זורק, emplace של איבר בודד לא השאיר שינוי. אבל names כבר מכיל \"rx\".\n- לכן עוטפים את השלב הזה ב-try, ובכשל עושים `names.pop_back()` (nothrow) ו-`throw;`.\n\nהטעות הנפוצה: rollback שמקצה זיכרון (למשל erase מ-map ואז insert מחדש), שיכול לזרוק בעצמו ולהשאיר מצב חצוי."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "exception object",
+          "def": "האובייקט שנוצר מ-throw, עותק של הביטוי מהטיפוס הסטטי שלו. נשמר מחוץ ל-stack (ב-Itanium: __cxa_allocate_exception) וחי עד שה-handler האחרון מסתיים או כל עוד exception_ptr מחזיק אותו."
+        },
+        {
+          "term": "handler matching",
+          "def": "ה-catch הראשון לפי סדר הכתיבה שמתאים נבחר. התאמה: אותו טיפוס, base ציבורי חד-משמעי, או pointer מתאים. אין המרות אריתמטיות, ו-base פרטי לא מתאים."
+        },
+        {
+          "term": "stack unwinding",
+          "def": "הריסת כל האובייקטים המקומיים שנבנו במלואם, בסדר הפוך, בדרך מה-throw ל-handler. מה שגורם ל-RAII לשחרר משאבים גם בשגיאה."
+        },
+        {
+          "term": "catch (...)",
+          "def": "handler שתופס כל exception. מתאים ל-cleanup ול-rethrow, או לגבולות של thread ומודול. אין דרך לדעת את הטיפוס, אלא עם current_exception ו-rethrow."
+        },
+        {
+          "term": "slicing ב-catch",
+          "def": "תפיסה by value מטיפוס base מעתיקה רק את חלק ה-base, וההודעה או הטיפוס הנגזר הולכים לאיבוד. לכן תופסים by const reference."
+        },
+        {
+          "term": "throw; מול throw e;",
+          "def": "`throw;` זורק מחדש את אותו אובייקט עם הטיפוס המקורי. `throw e;` יוצר עותק חדש מהטיפוס הסטטי של e (slicing). `throw;` בלי exception פעיל קורא ל-terminate."
+        },
+        {
+          "term": "std::terminate",
+          "def": "נקרא כשאין handler, כש-exception יוצא מפונקציה noexcept, כשנזרק exception בזמן unwinding, וכשבורח exception מ-thread. ברירת המחדל: abort."
+        },
+        {
+          "term": "nothrow guarantee",
+          "def": "הפעולה לא נכשלת. נדרשת מ-destructors, swap, move ו-rollback, כי עליהן בונים את ההבטחות האחרות."
+        },
+        {
+          "term": "strong guarantee",
+          "def": "commit or rollback: אם הפעולה נכשלת, המצב זהה למה שהיה. מושגת עם copy-and-swap או סדר פעולות ו-rollback שהוא nothrow."
+        },
+        {
+          "term": "basic guarantee",
+          "def": "אין דליפות וה-invariants נשמרים. האובייקט תקין, אבל הערך שלו עשוי להשתנות. המינימום הנדרש מכל קוד."
+        },
+        {
+          "term": "copy-and-swap",
+          "def": "מבצעים את העבודה על עותק, ואם הצליחה מחליפים עם swap שהוא noexcept. נותן strong guarantee במחיר העתקה."
+        },
+        {
+          "term": "move_if_noexcept",
+          "def": "vector ב-reallocation מזיז איברים רק אם ה-move constructor הוא noexcept (או שאין copy). אחרת מעתיק כדי לשמור על strong guarantee."
+        },
+        {
+          "term": "function-try-block",
+          "def": "`S() try : m() {...} catch (...) {...}`: try שעוטף גם את ה-member initializers. ב-constructor ה-exception נזרק מחדש אוטומטית בסוף ה-handler."
+        },
+        {
+          "term": "destructor noexcept במרומז",
+          "def": "מ-C++11 כל destructor הוא noexcept, אלא אם member או base מסומן noexcept(false). throw שיוצא ממנו קורא ל-terminate גם אם יש catch בחוץ."
+        },
+        {
+          "term": "std::uncaught_exceptions",
+          "def": "מחזיר כמה exceptions פעילים כרגע ב-thread. מאפשר ל-destructor לדעת אם הוא רץ בגלל unwinding (למשל ב-scope guards)."
+        },
+        {
+          "term": "noexcept specifier",
+          "def": "`noexcept` או `noexcept(cond)` על פונקציה: הבטחה שלא תזרוק. לא נבדקת בקומפילציה. הפרה בזמן ריצה קוראת ל-terminate."
+        },
+        {
+          "term": "noexcept operator",
+          "def": "`noexcept(expr)` מחזיר bool בזמן קומפילציה, האם הביטוי מוצהר כלא-זורק. הביטוי לא מורץ."
+        },
+        {
+          "term": "noexcept בטיפוס הפונקציה",
+          "def": "מ-C++17 noexcept הוא חלק מהטיפוס. pointer ל-noexcept ממיר ל-pointer רגיל ולא להפך, ואין overload רק על noexcept."
+        },
+        {
+          "term": "dynamic exception specification",
+          "def": "`void f() throw(X)` מ-C++98, עם std::unexpected. הוסר ב-C++17. היום משתמשים רק ב-noexcept."
+        },
+        {
+          "term": "zero-cost exceptions",
+          "def": "מודל שבו בנתיב התקין אין הוראות נוספות, והמידע על cleanup נמצא בטבלאות (unwind tables, LSDA). המחיר: גודל בינארי, ו-throw יקר ולא דטרמיניסטי."
+        },
+        {
+          "term": "landing pad",
+          "def": "קטע קוד שה-unwinder קופץ אליו כדי להריץ destructors או catch ב-frame מסוים. פונקציה noexcept יכולה לוותר עליהם."
+        },
+        {
+          "term": "-fno-exceptions",
+          "def": "קומפילציה בלי exceptions: throw ו-try אסורים, ה-STL קורא ל-abort במקום לזרוק, ו-new שנכשל לא מחזיר nullptr."
+        },
+        {
+          "term": "std::bad_alloc ו-new (std::nothrow)",
+          "def": "new רגיל זורק bad_alloc כשאין זיכרון. `new (std::nothrow) T` מחזיר nullptr במקום לזרוק."
+        },
+        {
+          "term": "std::exception_ptr",
+          "def": "handle עם בעלות משותפת על exception object. `current_exception()` לוכד, `rethrow_exception()` זורק מחדש, גם ב-thread אחר. promise, future ו-async משתמשים בו."
+        },
+        {
+          "term": "std::expected",
+          "def": "C++23: מחזיק T או שגיאה E, בלי הקצאה ובלי unwinding. `value()` על שגיאה זורק `bad_expected_access`. מתאים לכשלים צפויים."
+        },
+        {
+          "term": "logic_error ו-runtime_error",
+          "def": "שני הענפים הראשיים תחת std::exception. logic_error: הפרת תנאים מוקדמים (invalid_argument, out_of_range). runtime_error: תנאים בזמן ריצה (system_error, overflow_error)."
+        },
+        {
+          "term": "vector::at מול operator[]",
+          "def": "at בודק גבולות וזורק std::out_of_range. operator[] לא בודק, וגישה מחוץ לגבולות היא UB."
+        }
+      ]
     }
   ],
   "questions": [
@@ -366,6 +516,184 @@
         3
       ],
       "explanation": "noexcept(noexcept(expr)) הוא conditional noexcept: הפנימי מחזיר bool בלי להריץ את expr, והחיצוני משתמש בו כמפרט. הקומפיילר לא מאמת את ההבטחה, ולכל היותר מזהיר על throw ישיר. הפרה בזמן ריצה גורמת ל-terminate. ה-noexcept של destructors ופונקציות שהוגדרו = default מוסק מה-sub-objects.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה stack unwinding?",
+      "choices": [
+        "הדפסת ה-call stack כשנזרק exception",
+        "הריסה אוטומטית של כל האובייקטים המקומיים (בסדר הפוך לבנייה) בכל frame שבין נקודת ה-throw ל-catch שתופס",
+        "שחרור כל הזיכרון שהוקצה ב-heap מאז תחילת ה-try",
+        "חזרה לשורה שאחרי ה-throw אחרי שה-catch מסתיים"
+      ],
+      "answer": 1,
+      "explanation": "ה-unwinding קורא ל-destructors של locals שנבנו במלואם, וזה מה שגורם ל-RAII לעבוד גם בשגיאה. זיכרון heap משתחרר רק אם אובייקט מקומי (כמו unique_ptr או vector) הוא הבעלים שלו. raw pointer מ-new דולף. אחרי ה-catch הביצוע ממשיך אחרי בלוק ה-try-catch, לא בנקודת ה-throw.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה תופס `catch (...)`?",
+      "choices": [
+        "רק exceptions שיורשים מ-std::exception",
+        "רק exceptions שלא נתפסו ב-handlers קודמים באותה פונקציה וב-main",
+        "כל exception, מכל טיפוס, כולל int או טיפוסים שלא יורשים מ-std::exception",
+        "גם signals כמו SIGSEGV"
+      ],
+      "answer": 2,
+      "explanation": "catch (...) מתאים לכל טיפוס שנזרק, אבל אי אפשר לדעת בתוכו מה נתפס. משתמשים בו ל-cleanup ואחריו `throw;`, או בגבולות של thread ומודול. signals וגישה לא חוקית לזיכרון אינם C++ exceptions (חוץ מהרחבות כמו SEH ב-MSVC עם /EHa).",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזה exception (שם ה-class בלי `std::`) זורק `new` רגיל כשאין מספיק זיכרון?",
+      "accept": [
+        "bad_alloc",
+        "std::bad_alloc"
+      ],
+      "explanation": "operator new הרגיל אף פעם לא מחזיר nullptr: הוא זורק std::bad_alloc. מי שרוצה nullptr במקום exception כותב `new (std::nothrow) T`. בדיקה של `if (p == nullptr)` אחרי new רגיל היא קוד מת.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct T {\n  char c;\n  ~T() { std::cout << c; }\n};\nvoid f() {\n  T a{'a'};\n  T b{'b'};\n  throw 1;\n}\nint main() {\n  try { f(); }\n  catch (int) { std::cout << 'C'; }\n}",
+      "choices": [
+        "abC",
+        "C",
+        "Cba",
+        "baC"
+      ],
+      "answer": 3,
+      "explanation": "ה-handler נמצא ב-main, ולכן ה-frame של f עובר unwinding לפני שה-catch רץ. locals נהרסים בסדר הפוך לבנייה: b ואז a. רק אחר כך ה-handler מדפיס C.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q24",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::vector<int> v{7, 8, 9};\ntry {\n  std::cout << v.at(1);\n  v.at(3) = 1;\n  std::cout << 'X';\n}\ncatch (const std::out_of_range&) {\n  std::cout << 'R';\n}",
+      "choices": [
+        "8R",
+        "7R",
+        "8X",
+        "UB, כי אינדקס 3 מחוץ לגבולות"
+      ],
+      "answer": 0,
+      "explanation": "at(1) מחזיר 8. at(3) בודק גבולות (size הוא 3) וזורק std::out_of_range, ולכן X לא מודפס וה-handler מדפיס R. עם `v[3] = 1` לא הייתה בדיקה, וזה היה UB.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה קורה ב-C++11 ואילך?\n\n```cpp\nstruct D { ~D() { throw 1; } };\nint main() {\n  try { D d; }\n  catch (int) { std::cout << \"caught\"; }\n}\n```",
+      "choices": [
+        "מודפס caught",
+        "std::terminate נקרא: ה-destructor הוא noexcept במרומז, ולכן ה-exception לא יוצא ממנו, גם שיש catch בחוץ",
+        "שגיאת קומפילציה",
+        "ה-exception נבלע בשקט ולא מודפס כלום"
+      ],
+      "answer": 1,
+      "explanation": "מ-C++11 destructor בלי מפרט מקבל noexcept(true), אלא אם member או base מסומן noexcept(false). exception שמגיע לגבול שלו קורא ל-terminate. GCC מזהיר: throw will always call terminate. אפשר לסמן noexcept(false), אבל זה עדיין מסוכן, כי זריקה בזמן unwinding של exception אחר היא terminate בכל מקרה.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q26",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מתי `std::vector<T>::push_back` נותן strong guarantee (אם נזרק exception, ה-vector לא השתנה)?",
+      "choices": [
+        "תמיד, לכל T",
+        "רק כש-T הוא trivially copyable",
+        "אף פעם, push_back נותן רק basic guarantee",
+        "כש-T הוא copyable, או שה-move constructor של T הוא noexcept. ל-T שהוא move-only עם move שעלול לזרוק, ההשפעה unspecified"
+      ],
+      "answer": 3,
+      "explanation": "בזמן reallocation ה-vector צריך להעביר את האיברים הקיימים. אם move עלול לזרוק באמצע, חלק מהמקור כבר הוזז ואין דרך לשחזר. לכן הוא משתמש ב-move_if_noexcept: move כשהוא noexcept, copy אחרת (המקור נשאר שלם). כש-T move-only ו-move לא noexcept, אין ברירה, וההבטחה נחלשת.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q27",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct X {\n  int id;\n  X(int i) : id(i) {\n    if (i == 2) throw 0;\n    std::cout << '+' << id;\n  }\n  ~X() { std::cout << '-' << id; }\n};\nstruct P { X a{1}; X b{2}; X c{3}; };\n\nint main() {\n  try { P p; }\n  catch (int) { std::cout << 'C'; }\n}",
+      "choices": [
+        "+1C",
+        "+1-1-2C",
+        "+1-1C",
+        "+1+3-3-1C"
+      ],
+      "answer": 2,
+      "explanation": "members נבנים לפי סדר ההצהרה. a נבנה (+1). b זורק לפני שסיים, ולכן הוא לא נחשב בנוי, וה-destructor שלו לא ירוץ. c לא התחיל. ה-unwinding בתוך ה-constructor של P הורס רק את מה שנבנה במלואו: a (-1). ה-destructor של P לא רץ, כי P מעולם לא התקיים.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q28",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "פונקציה `parse_packet` נכשלת בערך ב-5% מהחבילות (CRC שגוי), והקורא הישיר תמיד מטפל בכשל (סופר ומדלג). מה מתאים יותר להחזרה ב-C++23, ולמה?",
+      "choices": [
+        "throw std::runtime_error, כי exceptions הם zero-cost",
+        "`std::expected<Packet, ParseError>`: הכשל צפוי ומטופל על ידי הקורא הישיר, ואין צורך ב-unwinding ובהקצאה. זריקה ב-5% מהחבילות הייתה עולה מיקרו-שניות לכל כשל",
+        "להחזיר Packet ריק ולבדוק שדה valid, כי expected מקצה זיכרון",
+        "std::optional<Packet>, כי expected לא יכול להחזיק טיפוס שגיאה מותאם"
+      ],
+      "answer": 1,
+      "explanation": "zero-cost מתייחס רק לנתיב שלא זורק. throw עולה הקצאה ושני מעברים על הטבלאות, ובקצב של אלפי חבילות זה משמעותי. expected מחזיק את הערך או את השגיאה בתוכו, בלי heap. optional לא מעביר את סיבת הכשל. אובייקט עם דגל valid עובד, אבל קל לשכוח לבדוק אותו.",
+      "lesson": "cpp.exceptions",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.exceptions.q29",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה קורה כשמריצים?",
+      "code": "struct D {\n  ~D() noexcept(false) { throw 2; }\n};\n\nint main() {\n  try {\n    D d;\n    throw 1;\n  }\n  catch (int i) { std::cout << i; }\n}",
+      "choices": [
+        "מודפס 1",
+        "מודפס 2",
+        "מודפס 12",
+        "std::terminate"
+      ],
+      "answer": 3,
+      "explanation": "throw 1 מתחיל unwinding, ובמהלכו ~D רץ וזורק 2. ה-destructor מותר לזרוק (noexcept(false)), אבל exception שיוצא מ-destructor שנקרא בזמן unwinding קורא ל-std::terminate, כי אי אפשר לטפל בשני exceptions במקביל. בלי ה-throw 1, ~D היה זורק בסיום רגיל של ה-scope, והפלט היה 2.",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "id": "cpp.exceptions.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו טענות על exception objects ו-handlers נכונות?",
+      "choices": [
+        "`throw;` כשאין exception פעיל קורא ל-std::terminate",
+        "שינוי של האובייקט דרך `catch (E& e)` ואחריו `throw;` נראה ל-handler החיצוני",
+        "ה-exception object נשמר ב-stack frame של הפונקציה שזרקה, ולכן הוא תקף רק עד שה-unwinding מגיע ל-frame הזה",
+        "`catch (Base&)` תופס Derived גם כש-Derived יורש מ-Base בירושה private",
+        "`std::exception_ptr` שהתקבל מ-current_exception משאיר את ה-exception object חי גם אחרי שה-handler הסתיים"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "explanation": "throw; זורק את אותו אובייקט, ולכן שינויים נשמרים. כשאין exception פעיל אין מה לזרוק, וזה terminate. האובייקט מוקצה מחוץ ל-stack (ב-Itanium דרך __cxa_allocate_exception), כי ה-frame של הזורק נהרס לפני שה-handler רץ. התאמה ל-base דורשת base ציבורי וחד-משמעי. exception_ptr הוא בעלות משותפת על האובייקט, וכך מעבירים exceptions בין threads.",
       "lesson": "cpp.exceptions"
     }
   ]

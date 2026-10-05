@@ -36,7 +36,149 @@
         "Heavy hitters ב-scale: count-min sketch + heap, או Misra-Gries, ומיזוג תוצאות בין shards",
         "Cache: heap במערך ידידותי יחסית, d-ary heap מקטין גובה ומשפר locality"
       ],
-      "diagram": "min-heap as array:\n idx: 0 1 2 3 4 5\n val: 1 3 2 7 4 5\n\n        1\n      /   \\\n     3     2\n    / \\   /\n   7   4 5"
+      "diagram": "min-heap as array:\n idx: 0 1 2 3 4 5\n val: 1 3 2 7 4 5\n\n        1\n      /   \\\n     3     2\n    / \\   /\n   7   4 5",
+      "details": [
+        {
+          "title": "המבנה: עץ שלם שחי במערך",
+          "body": "heap בינארי הוא עץ בינארי שלם: כל הרמות מלאות חוץ מהאחרונה, והאחרונה מתמלאת משמאל לימין. בגלל זה אפשר לשמור אותו במערך רציף בלי מצביעים: ב-0-based הילדים של i הם 2i+1 ו-2i+2, וההורה הוא (i-1)/2 בחלוקה שלמה. הגובה הוא floor(log2 n), ולכן כל מסלול משורש לעלה קצר.\n\nתכונת ה-heap (ב-min-heap): כל הורה קטן-או-שווה לכל אחד מילדיו. זה סדר חלקי בלבד. אין שום יחס בין אחים או בין ענפים שונים, ולכן:\n- המינימום תמיד בשורש, O(1).\n- המקסימום של min-heap נמצא באחד העלים, כלומר באינדקסים n/2 עד n-1. צריך לסרוק את כולם.\n- מערך שמייצג heap בדרך כלל לא ממוין, ואין עליו binary search. חיפוש ערך שרירותי הוא O(n).\n\nmax-heap הוא אותו דבר עם יחס הפוך. ב-C++ std::priority_queue הוא max-heap כברירת מחדל (std::less), וב-Python heapq הוא תמיד min-heap. ל-max-heap ב-Python דוחפים -x."
+        },
+        {
+          "title": "push, pop ו-heapify",
+          "body": "push: מוסיפים את האיבר בסוף המערך (המקום הפנוי הבא בעץ השלם), ואז sift-up: כל עוד הוא קטן מההורה, מחליפים ביניהם. לכל היותר גובה העץ החלפות, O(log n).\n\npop (הוצאת השורש): שומרים את השורש, מעבירים את האיבר האחרון למקום השורש ומקצרים את המערך, ואז sift-down: משווים לשני הילדים, ואם אחד מהם קטן יותר מחליפים עם הקטן מביניהם (לא עם הראשון שנמצא, אחרת הילד הגדול יעלה מעל אחיו הקטן). ממשיכים עד שתכונת ה-heap מתקיימת. O(log n).\n\nheapify (בניית heap ממערך קיים): עוברים מהצומת הפנימי האחרון (n/2-1) לאחור עד השורש ומבצעים sift-down לכל אחד. למה זה O(n): העלות של sift-down היא הגובה של הצומת מעל העלים. בערך n/2^(h+1) צמתים נמצאים בגובה h, והסכום Σ h·n/2^(h+1) מתכנס לכ-n. רוב הצמתים קרובים לתחתית ולכן זולים. לעומת זאת, n פעולות push (sift-up) עולות לפי העומק, ורוב הצמתים עמוקים, ולכן במקרה הגרוע O(n log n).\n\nפעולות נוספות: heapreplace / pushpop ב-Python מחליפות את השורש ב-O(log n) בפעולה אחת. std::priority_queue::pop() מחזיר void, לכן קוראים קודם top()."
+        },
+        {
+          "title": "Comparator: הכיוון שמבלבל את כולם",
+          "body": "ב-std::priority_queue ה-top הוא האיבר ה'גדול ביותר' לפי ה-comparator. עם std::less (ברירת המחדל) זה המקסימום. עם std::greater זה המינימום. comparator מותאם שמחזיר a.dist < b.dist נותן max-heap לפי dist; ל-Dijkstra צריך a.dist > b.dist.\n\nה-comparator חייב להיות strict weak ordering: Cmp(a,a) תמיד false, אנטי-סימטרי וטרנזיטיבי. comparator עם >= או <= מפר את הדרישה (Cmp(a,a) == true), וזה undefined behavior לפי התקן. במקרה הטוב הסדר משתבש בשקט, ובמקרה הרע (למשל ב-std::sort) יש קריאה מחוץ לגבולות.\n\nב-Python tuples מושווים לקסיקוגרפית. (priority, item) עם עדיפויות שוות משווה את item, ואם הוא dict או אובייקט בלי < נזרק TypeError כבר ב-push. הפתרון: (priority, counter, item) עם itertools.count, שגם שובר שוויון לפי סדר הכנסה (FIFO בין שווים)."
+        },
+        {
+          "title": "Top-k, k-way merge וחציון",
+          "body": "Top-k הגדולים: min-heap בגודל k. כל איבר נדחף, ואם הגודל עבר k מוציאים את הקטן. ה-heap שומר את k הגדולים שנראו עד כה, וה-top שלו הוא ה-k-th largest. זמן O(n log k), זיכרון O(k), מעבר אחד, ולכן מתאים ל-stream. ל-k הקטנים (למשל k closest points) משתמשים בהיפוך: max-heap בגודל k לפי המרחק. משווים מרחק בריבוע כדי לא לחשב sqrt.\n\nחלופות: heapify של הכל ואחריו k פעולות pop: O(n + k log n) זמן אבל O(n) זיכרון. quickselect (std::nth_element): O(n) בממוצע, דורש את כל הנתונים בזיכרון, והחלק העליון לא ממוין. bucket sort לפי תדירות ב-top k frequent: O(n), כי תדירות חסומה ב-n.\n\nk-way merge: מכניסים לראש ה-heap את האיבר הראשון של כל אחת מ-k הרשימות. בכל שליפה מוציאים את המינימום ודוחפים את האיבר הבא מאותה רשימה. ה-heap לא עולה על k, ולכן N איברים בסך הכל עולים O(N log k). אותו דפוס פותר kth smallest במטריצה ממוינת ו-K pairs with smallest sums (כל שורה i היא רשימה A[i]+B[j]).\n\nחציון של stream: max-heap לחצי התחתון ו-min-heap לחצי העליון. מכניסים לאחד מהם, ומאזנים כך שהפרש הגדלים לכל היותר 1 ושה-top של התחתון ≤ ה-top של העליון. החציון הוא top של הגדול, או ממוצע שני ה-tops. addNum O(log n), findMedian O(1)."
+        },
+        {
+          "title": "decrease-key, lazy deletion ו-Dijkstra",
+          "body": "Dijkstra צריך להקטין מרחק של צומת שכבר נמצא בתור. ל-std::priority_queue ול-heapq אין decrease-key (וגם לא מחיקה של איבר שרירותי). שתי אפשרויות:\n- Lazy deletion: דוחפים רשומה חדשה (dist, v), ובשליפה מדלגים על רשומה ש-dist שלה גדול מ-dist[v] הנוכחי (רשומה מיושנת). כל דחיפה נגרמת מ-relaxation מוצלח, ולכן יש לכל היותר בערך E רשומות. הזמן O(E log E) = O(E log V), כי log E ≤ 2 log V. הדילוג חשוב: בלעדיו התוצאה עדיין נכונה אבל רשימות שכנים נסרקות שוב ושוב.\n- Indexed heap או std::set: מחזיקים את מיקום כל צומת, ומבצעים decrease-key או erase+insert ב-O(log V). הגודל נשאר ≤ V.\n\nבגרף צפוף (E ≈ V^2) Dijkstra עם מערך פשוט וסריקה ליניארית, O(V^2), טוב מ-heap בינארי, O(V^2 log V). Fibonacci heap נותן O(E + V log V) תאורטית (insert ו-decrease-key ב-O(1) amortized), אבל הקבועים שלו גבוהים ובפועל הוא נדיר.\n\nLazy deletion ב-sliding window median: האיברים שיצאו מהחלון מסומנים ב-hash map ומוסרים רק כשהם מגיעים ל-top. האיזון חייב להתבסס על ספירת איברים תקפים, ו-size() הפיזי יכול לגדול ל-O(n). std::multiset עם erase של איבר ספציפי נותן O(n log k) נקי."
+        },
+        {
+          "title": "חסמים, וריאנטים ושיקולי מערכת",
+          "body": "חסם תחתון: priority queue מבוסס השוואות לא יכול לתת גם push וגם pop-min ב-O(1). אחרת אפשר היה למיין n איברים ב-O(n) (n דחיפות ו-n שליפות), בניגוד לחסם Ω(n log n) למיון מבוסס השוואות. לכן Fibonacci heap נותן insert ב-O(1) amortized אבל extract-min ב-O(log n).\n\nHeap sort: heapify ב-O(n), ואחריו n פעמים להחליף את השורש עם הסוף ולעשות sift-down. O(n log n) תמיד, in-place, אבל לא stable ולא ידידותי ל-cache.\n\nd-ary heap: לכל צומת d ילדים. הגובה log_d n, ולכן push (sift-up) מהיר יותר. pop דורש d-1 השוואות בכל רמה כדי למצוא את הילד הקטן, ולכן הוא יקר יותר כש-d גדל. ילדים רציפים בזיכרון משפרים locality. d=4 נפוץ בפועל, ומתאים ל-Dijkstra שבו יש הרבה decrease-key ומעט pop.\n\nבמערכות: טיימרים רבים מנוהלים ב-heap (O(log n) הוספה) או ב-timing wheel (O(1) הוספה וביטול, ברזולוציה של tick). Heavy hitters בהיקף גדול משלבים count-min sketch (ספירה הסתברותית בזיכרון קבוע) או Misra-Gries / Space-Saving עם heap בגודל k, ובמערכת מבוזרת מחלקים לפי hash של המפתח כדי שכל מפתח ייספר במקום אחד."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: push ו-pop על min-heap",
+          "body": "מתחילים מ-[1,3,2,7,4,5].\n- push(0): המערך [1,3,2,7,4,5,0]. האינדקס 6, ההורה (6-1)/2=2 עם הערך 2. 0<2, מחליפים: [1,3,0,7,4,5,2]. עכשיו באינדקס 2, ההורה 0 עם 1. 0<1, מחליפים: [0,3,1,7,4,5,2]. הגענו לשורש.\n- pop(): מוציאים 0. האחרון (2) עובר לשורש: [2,3,1,7,4,5]. הילדים של 0 הם 3 ו-1, הקטן הוא 1, ו-2>1 ולכן מחליפים: [1,3,2,7,4,5]. באינדקס 2 הילד היחיד הוא 5 (אינדקס 5), ו-2<5. עוצרים.\nשתי הפעולות נגעו בכ-log2(7) ≈ 2–3 רמות בלבד."
+        },
+        {
+          "title": "דוגמה: heapify של [5,3,8,1,9,2]",
+          "body": "n=6, הצומת הפנימי האחרון הוא 6/2-1 = 2.\n- i=2 (הערך 8): הילד היחיד הוא 2 (אינדקס 5). 2<8, מחליפים: [5,3,2,1,9,8].\n- i=1 (הערך 3): הילדים 1 ו-9. הקטן 1<3, מחליפים: [5,1,2,3,9,8]. באינדקס 3 אין ילדים.\n- i=0 (הערך 5): הילדים 1 ו-2. הקטן 1, מחליפים: [1,5,2,3,9,8]. באינדקס 1 הילדים 3 ו-9, הקטן 3<5, מחליפים: [1,3,2,5,9,8].\nהתוצאה [1,3,2,5,9,8] היא heap תקין, ולא ממוינת. זה בדיוק מה ש-heapq.heapify מחזיר על הקלט הזה."
+        },
+        {
+          "title": "דוגמה: top-3 בעזרת min-heap בגודל 3",
+          "body": "stream: 5, 1, 8, 3, 9, 2.\n- 5: [5]. 1: [1,5]. 8: [1,5,8].\n- 3: דוחפים, הגודל 4, מוציאים את 1. נשאר {3,5,8}.\n- 9: דוחפים, מוציאים את 3. נשאר {5,8,9}.\n- 2: דוחפים, מוציאים את 2 עצמו. נשאר {5,8,9}.\nה-top הוא 5, שזה ה-3rd largest. אילו השתמשנו ב-max-heap בגודל 3, היינו שומרים את 3 הקטנים {1,2,3}."
+        },
+        {
+          "title": "דוגמה: חציון עם שני heaps",
+          "body": "stream: 5, 15, 1, 3.\n- 5: low (max-heap)={5}, high={}. חציון 5.\n- 15: 15 > top(low), נכנס ל-high={15}. גדלים שווים. חציון (5+15)/2=10.\n- 1: נכנס ל-low={5,1}. low גדול ב-1. חציון top(low)=5.\n- 3: נכנס ל-low={5,3,1}, עכשיו low גדול ב-2, ולכן מעבירים את top(low)=5 ל-high={5,15}. low={3,1}. חציון (3+5)/2=4.\nבדיקה: הרצף הממוין 1,3,5,15, והחציון (3+5)/2=4."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "binary heap",
+          "def": "עץ בינארי שלם במערך שבו כל הורה ≤ ילדיו (min-heap) או ≥ (max-heap). top ב-O(1), push/pop ב-O(log n)."
+        },
+        {
+          "term": "priority queue",
+          "def": "ממשק מופשט: הכנס איבר עם עדיפות, הוצא את בעל העדיפות הגבוהה ביותר. heap הוא המימוש הנפוץ."
+        },
+        {
+          "term": "sift-up / sift-down",
+          "def": "sift-up מעלה איבר שהוכנס בסוף כל עוד הוא קטן מההורה. sift-down מוריד איבר מהשורש ומחליף אותו עם הילד הקטן מבין השניים עד שהסדר תקין."
+        },
+        {
+          "term": "heapify",
+          "def": "בניית heap ממערך קיים ב-sift-down מהצומת הפנימי האחרון לאחור. O(n), כי רוב הצמתים בגובה נמוך."
+        },
+        {
+          "term": "std::priority_queue",
+          "def": "adapter ב-STL, max-heap כברירת מחדל (std::less). std::greater נותן min-heap. pop() מחזיר void, אין decrease-key ואין erase."
+        },
+        {
+          "term": "heapq (Python)",
+          "def": "פונקציות על list רגיל, תמיד min-heap: heappush, heappop, heapify, heapreplace, nlargest. ל-max-heap דוחפים ערכים שליליים."
+        },
+        {
+          "term": "strict weak ordering",
+          "def": "הדרישה מ-comparator ב-STL: Cmp(a,a) false, אנטי-סימטרי, טרנזיטיבי. comparator עם <= או >= מפר אותה, וזה undefined behavior."
+        },
+        {
+          "term": "top-k",
+          "def": "k הגדולים מתוך n: min-heap בגודל k, O(n log k) זמן ו-O(k) זיכרון, מתאים ל-stream. ל-k הקטנים: max-heap בגודל k."
+        },
+        {
+          "term": "quickselect / nth_element",
+          "def": "מציאת האיבר ה-k במקומו ב-O(n) בממוצע, על ידי partition חוזר. דורש את כל הנתונים בזיכרון, ולא ממיין את k האיברים."
+        },
+        {
+          "term": "k-way merge",
+          "def": "מיזוג k רשימות ממוינות עם heap של הראשים. O(N log k). בסיס ל-kth smallest במטריצה ממוינת ול-K pairs with smallest sums."
+        },
+        {
+          "term": "חציון של stream (two heaps)",
+          "def": "max-heap לחצי התחתון, min-heap לחצי העליון, מאוזנים להפרש ≤ 1. addNum O(log n), findMedian O(1)."
+        },
+        {
+          "term": "decrease-key",
+          "def": "הקטנת העדיפות של איבר שכבר בתור. דורש לדעת את המיקום שלו (indexed heap). לא קיים ב-STL וב-heapq."
+        },
+        {
+          "term": "lazy deletion",
+          "def": "במקום למחוק או לעדכן, דוחפים רשומה חדשה ומדלגים על רשומות מיושנות כשהן מגיעות ל-top. ה-heap הפיזי גדל מעבר לגודל הלוגי."
+        },
+        {
+          "term": "Dijkstra",
+          "def": "מסלולים קצרים ממקור במשקלות אי-שליליים: שולפים את הצומת עם המרחק הקטן ומבצעים relaxation לשכנים. עם heap בינארי O(E log V); עם מערך O(V^2)."
+        },
+        {
+          "term": "Fibonacci heap",
+          "def": "heap תאורטי עם insert ו-decrease-key ב-O(1) amortized ו-extract-min ב-O(log n). נותן Dijkstra ב-O(E + V log V), אבל איטי בפועל."
+        },
+        {
+          "term": "d-ary heap",
+          "def": "heap עם d ילדים לכל צומת: גובה log_d n, push מהיר יותר, pop יקר יותר (d-1 השוואות לרמה), locality טוב יותר."
+        },
+        {
+          "term": "heap sort",
+          "def": "heapify ואחריו n הוצאות של השורש לסוף המערך. O(n log n) תמיד, in-place, לא stable."
+        },
+        {
+          "term": "stable",
+          "def": "מיון ששומר את הסדר המקורי בין איברים שווים. heap sort לא stable כי הוא מחליף איברים רחוקים."
+        },
+        {
+          "term": "bucket sort לפי תדירות",
+          "def": "ב-top k frequent: מערך של רשימות לפי תדירות (0..n), וסריקה מהסוף. O(n) כי התדירות חסומה ב-n."
+        },
+        {
+          "term": "itertools.count tie-breaker",
+          "def": "מונה עולה שמוכנס כאיבר שני ב-tuple: (priority, count, item). מונע השוואה של items לא ברי השוואה ושומר FIFO בין שווים."
+        },
+        {
+          "term": "std::multiset",
+          "def": "עץ מאוזן שמאפשר כפילויות, הכנסה, מחיקה של איבר ספציפי וגישה למינימום ולמקסימום ב-O(log n). חלופה ל-heap כשצריך מחיקה."
+        },
+        {
+          "term": "count-min sketch / Misra-Gries / Space-Saving",
+          "def": "מבנים לספירה משוערת של תדירויות בזיכרון קבוע, לזיהוי heavy hitters ב-stream ענק. משלבים אותם עם heap בגודל k."
+        },
+        {
+          "term": "IPO / greedy with heaps",
+          "def": "בעיות חמדניות שבהן בכל שלב בוחרים את האפשרות הטובה ביותר מבין הזמינות: ממיינים לפי תנאי הזמינות, ומחזיקים max-heap של הזמינים."
+        },
+        {
+          "term": "timing wheel",
+          "def": "מערך מעגלי של buckets לטיימרים: הוספה וביטול ב-O(1) ברזולוציה של tick. חלופה ל-heap כשיש מיליוני טיימרים."
+        }
+      ]
     }
   ],
   "questions": [
@@ -46,10 +188,17 @@
       "lesson": "alg.heaps",
       "type": "mcq",
       "prompt": "מה מחזיר top() של std::priority_queue<int> שהוכנסו אליו 5, 1, 9, 3 (בלי comparator מותאם)?",
-      "choices": ["1", "5", "3", "9"],
+      "choices": [
+        "1",
+        "5",
+        "3",
+        "9"
+      ],
       "answer": 3,
       "explanation": "ברירת המחדל של std::priority_queue היא std::less, שמייצרת max-heap, ולכן top() הוא 9. כדי לקבל min-heap מעבירים std::greater<int>. 5 הוא האיבר הראשון שהוכנס – heap אינו FIFO. 1 הוא מה שהיה מתקבל ב-Python heapq שהוא min-heap.",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.heaps.q02",
@@ -57,7 +206,12 @@
       "lesson": "alg.heaps",
       "type": "mcq",
       "prompt": "מה סיבוכיות בניית heap ממערך לא ממוין של n איברים בשיטת heapify (bottom-up)?",
-      "choices": ["O(n log n)", "O(n)", "O(log n)", "O(n^2)"],
+      "choices": [
+        "O(n log n)",
+        "O(n)",
+        "O(log n)",
+        "O(n^2)"
+      ],
       "answer": 1,
       "explanation": "heapify מבצע sift-down מהצמתים הפנימיים כלפי השורש, ורוב הצמתים קרובים לתחתית ולכן זזים מעט. הסכום הכולל חסום ב-O(n). O(n log n) הוא מה שמקבלים כשמכניסים n איברים אחד-אחד עם push."
     },
@@ -67,7 +221,9 @@
       "lesson": "alg.heaps",
       "type": "short",
       "prompt": "heap שמור במערך 0-based. מה האינדקס של ההורה של הצומת באינדקס 9?",
-      "accept": ["4"],
+      "accept": [
+        "4"
+      ],
       "explanation": "ההורה של i הוא (i-1)/2 בחלוקה שלמה: (9-1)/2 = 4. בדיקה: הילדים של 4 הם 2·4+1 = 9 ו-2·4+2 = 10."
     },
     {
@@ -78,7 +234,12 @@
       "lang": "python",
       "prompt": "מה הקוד מדפיס?",
       "code": "import heapq\nh = []\nfor x in [5, 1, 8, 3, 9, 2]:\n    heapq.heappush(h, x)\n    if len(h) > 3:\n        heapq.heappop(h)\nprint(sorted(h))",
-      "choices": ["[1, 2, 3]", "[3, 5, 8]", "[5, 8, 9]", "[2, 8, 9]"],
+      "choices": [
+        "[1, 2, 3]",
+        "[3, 5, 8]",
+        "[5, 8, 9]",
+        "[2, 8, 9]"
+      ],
       "answer": 2,
       "explanation": "heapq הוא min-heap, ולכן heappop מוציא את הקטן ביותר בכל פעם שהגודל עובר 3. מה שנשאר הוא 3 הגדולים: [5, 8, 9]. זה בדיוק דפוס top-k: min-heap בגודל k שומר את k הגדולים. [1, 2, 3] היה מתקבל עם max-heap בגודל k."
     },
@@ -90,7 +251,12 @@
       "lang": "cpp",
       "prompt": "מה הקוד מדפיס?",
       "code": "priority_queue<int, vector<int>, greater<int>> pq;\nfor (int x : {4, 1, 7, 3}) pq.push(x);\npq.pop();\ncout << pq.top();",
-      "choices": ["3", "4", "7", "1"],
+      "choices": [
+        "3",
+        "4",
+        "7",
+        "1"
+      ],
       "answer": 0,
       "explanation": "greater<int> הופך את התור ל-min-heap. pop מוציא את 1, ו-top הוא 3. 4 היה מתקבל אם חושבים שזה FIFO, ו-7 אם חושבים שזה max-heap (שם pop היה מוציא את 7 ו-top היה 4)."
     },
@@ -100,7 +266,12 @@
       "lesson": "alg.heaps",
       "type": "mcq",
       "prompt": "צריך את k האיברים הגדולים מתוך n, עם min-heap בגודל k. מה סיבוכיות הזמן?",
-      "choices": ["O(n log n)", "O(k log n)", "O(n log k)", "O(n·k)"],
+      "choices": [
+        "O(n log n)",
+        "O(k log n)",
+        "O(n log k)",
+        "O(n·k)"
+      ],
       "answer": 2,
       "explanation": "כל אחד מ-n האיברים עובר push ולכל היותר pop אחד על heap בגודל k, כל פעולה O(log k). לכן O(n log k), וכש-k קטן בהרבה מ-n זה קרוב לליניארי. O(k log n) מתאים ל-heapify של כל המערך (O(n)) ואחריו k פעולות pop."
     },
@@ -136,7 +307,9 @@
       ],
       "answer": 1,
       "explanation": "עם שני heaps, החציון הוא top של אחד מהם או הממוצע של שני ה-tops. כל הוספה היא push ולכל היותר העברה אחת בין ה-heaps – O(log n). במערך ממוין החיפוש הוא O(log n) אבל ההכנסה עצמה מזיזה איברים – O(n). heap יחיד לא נותן גישה לאמצע. quickselect הוא O(n) לכל קריאה.",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.heaps.q09",
@@ -144,10 +317,17 @@
       "lesson": "alg.heaps",
       "type": "mcq",
       "prompt": "ממזגים k רשימות מקושרות ממוינות עם N איברים בסך הכל, בעזרת min-heap שמחזיק את הראש של כל רשימה. מה הסיבוכיות?",
-      "choices": ["O(N log N)", "O(N·k)", "O(k log N)", "O(N log k)"],
+      "choices": [
+        "O(N log N)",
+        "O(N·k)",
+        "O(k log N)",
+        "O(N log k)"
+      ],
       "answer": 3,
       "explanation": "ה-heap לא מחזיק יותר מ-k איברים, וכל אחד מ-N האיברים נכנס ויוצא פעם אחת – O(log k) לכל אחד. O(N·k) הוא מיזוג נאיבי שסורק את k הראשים בכל צעד. אפשר גם divide and conquer (מיזוג זוגות) באותה סיבוכיות O(N log k).",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.heaps.q10",
@@ -162,7 +342,11 @@
         "std::priority_queue לא מספק decrease-key",
         "std::priority_queue::pop() מחזיר את האיבר שהוסר"
       ],
-      "answer": [0, 2, 3],
+      "answer": [
+        0,
+        2,
+        3
+      ],
       "explanation": "heap sort הוא O(n log n) תמיד ו-in-place אבל מחליף איברים רחוקים ולכן לא stable. heap מבטיח סדר רק בין הורה לילד, לא בין אחים, ולכן הוא לא ממוין ואין בו חיפוש בינארי – חיפוש הוא O(n). ב-STL אין decrease-key, ו-pop מחזיר void."
     },
     {
@@ -182,7 +366,9 @@
         "מקרי קצה: k שווה למספר הערכים השונים"
       ],
       "explanation": "ה-heap שומר את k השכיחים ביותר שראינו; כל ערך שנכנס וגורם לחריגה מוציא את הפחות שכיח. bucket sort לפי תדירות (התדירות ≤ n) נותן O(n).",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.heaps.q12",
@@ -190,7 +376,12 @@
       "lesson": "alg.heaps",
       "type": "mcq",
       "prompt": "Kth smallest element במטריצה n x n שבה כל שורה וכל עמודה ממוינות. מכניסים ל-min-heap את האיבר הראשון של כל שורה, ו-k פעמים מוציאים את המינימום ודוחפים את האיבר שמימינו באותה שורה. מה הסיבוכיות?",
-      "choices": ["O(n^2 log n)", "O(n + k log n)", "O(k)", "O(n log k)"],
+      "choices": [
+        "O(n^2 log n)",
+        "O(n + k log n)",
+        "O(k)",
+        "O(n log k)"
+      ],
       "answer": 1,
       "explanation": "heapify של n ראשי השורות הוא O(n), וה-heap לא עולה על n איברים, כך שכל אחת מ-k האיטרציות עולה O(log n). זה בדיוק k-way merge של n רשימות. אם k < n אפשר להכניס רק min(n,k) שורות. O(n^2 log n) הוא מיון כל המטריצה. חלופה: binary search על הערך עם ספירה ב-O(n) לכל צעד."
     },
@@ -223,7 +414,9 @@
       ],
       "answer": 1,
       "explanation": "כל דחיפה נגרמת מ-relaxation מוצלח של קשת, וכל קשת מתעדכנת לכל היותר פעם אחת כשהצומת שלה נשלף לראשונה. לכן יש לכל היותר E+1 רשומות. log E ≤ log V^2 = 2 log V, כך ש-O(E log E) = O(E log V). המחיר הוא זיכרון O(E) במקום O(V), שזה לרוב trade-off משתלם מול indexed heap עם decrease-key.",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "alg.heaps.q15",
@@ -238,7 +431,11 @@
         "nth_element מחזיר את k הגדולים ממוינים",
         "min-heap בגודל 100 הוא O(n log n) במקרה הגרוע, כי כל איבר יכול להיכנס ל-heap"
       ],
-      "answer": [0, 1, 2],
+      "answer": [
+        0,
+        1,
+        2
+      ],
       "explanation": "ב-stream אי אפשר לשמור 10^9 ערכים, ולכן heap בגודל k הוא הבחירה: כל פעולה O(log 100). quickselect מהיר יותר אסימפטוטית אבל דורש את כל הנתונים. nth_element רק מחלק סביב האיבר ה-k – החלק העליון לא ממוין. ה-heap לעולם לא עולה על k+1 איברים, אז הסיבוכיות היא O(n log k) גם במקרה הגרוע."
     },
     {
@@ -256,7 +453,9 @@
         "מדבר על trade-off דיוק/זיכרון/latency"
       ],
       "explanation": "שאלת system design קלאסית: ה-heap הוא רק החלק הקטן; העיקר הוא חלוקה, דיוק המיזוג, וזיכרון.",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.heaps.q17",
@@ -272,7 +471,9 @@
       ],
       "answer": 1,
       "explanation": "כל שורה i היא רשימה ממוינת A[i]+B[0..], וזה k-way merge של min(k,m) רשימות – כל זוג (i,j) נדחף רק מ-(i,j-1), ולכן בלי כפילויות. בגרסה עם שני שכנים, (1,1) נדחף גם מ-(0,1) וגם מ-(1,0), וה-heap לא מסיר כפילויות – חייבים set. אין צורך לדחוף שני שכנים כי הראשים של כל השורות כבר ב-heap. יצירת כל הזוגות מיותרת: מספיקות k שליפות.",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "alg.heaps.q18",
@@ -305,6 +506,260 @@
       ],
       "answer": 3,
       "explanation": "איבר שיצא מהחלון אבל יושב עמוק ב-heap לא מוסר עד שהוא עולה ל-top. למשל ברצף עולה, האיברים היוצאים הם הקטנים, והם נשארים בתחתית ה-max-heap של החצי התחתון – הם מצטברים. לכן size() לא משקף את החלון, וה-heap יכול להגיע ל-O(n). multiset (עץ מאוזן) תומך במחיקה של איבר ספציפי ב-O(log k). ל-priority_queue אין erase."
+    },
+    {
+      "id": "alg.heaps.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-min-heap בינארי עם n איברים, איפה בהכרח נמצא האיבר הגדול ביותר?",
+      "choices": [
+        "באחד העלים, באינדקסים n/2 עד n-1 (0-based)",
+        "באינדקס האחרון n-1",
+        "באחד הילדים של השורש",
+        "באמצע המערך, באינדקס n/2"
+      ],
+      "answer": 0,
+      "explanation": "לצומת פנימי יש ילד שגדול-או-שווה לו, ולכן המקסימום לא יכול להיות פנימי (אלא אם יש שוויון), והוא באחד העלים. העלים תופסים את חצי המערך האחרון, ובאף אחד מהם אין מיקום קבוע. האינדקס האחרון הוא רק העלה שהוכנס אחרון. הילדים של השורש הם המועמדים לאיבר השני הקטן ביותר.",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q21",
+      "level": 1,
+      "type": "short",
+      "prompt": "מה הגובה (במספר קשתות מהשורש לעלה העמוק ביותר) של heap בינארי עם 10 איברים?",
+      "accept": [
+        "3"
+      ],
+      "explanation": "heap הוא עץ שלם, והגובה הוא floor(log2 n) = floor(log2 10) = 3. רמות: אינדקס 0, אחר כך 1–2, אחר כך 3–6, ואז 7–9. זו הסיבה ש-push ו-pop הם O(log n).",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q22",
+      "level": 1,
+      "type": "multi",
+      "prompt": "אילו פעולות על heap בינארי עם n איברים רצות ב-O(log n) במקרה הגרוע?",
+      "choices": [
+        "push",
+        "pop של השורש",
+        "חיפוש ערך שרירותי",
+        "החלפת השורש באיבר חדש (heapreplace)",
+        "מציאת המקסימום ב-min-heap"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "push עושה sift-up ו-pop עושה sift-down, כל אחד לאורך גובה העץ. heapreplace מחליף את השורש ועושה sift-down אחד. חיפוש ערך שרירותי הוא O(n) כי heap לא ממוין. המקסימום של min-heap נמצא באחד מכ-n/2 עלים, ולכן O(n).",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה הקוד מדפיס?",
+      "code": "import heapq\nh = [5, 3, 8, 1, 9, 2]\nheapq.heapify(h)\nprint(h)",
+      "choices": [
+        "[1, 2, 3, 5, 8, 9]",
+        "[9, 5, 8, 1, 3, 2]",
+        "[1, 3, 2, 8, 9, 5]",
+        "[1, 3, 2, 5, 9, 8]"
+      ],
+      "answer": 3,
+      "explanation": "heapify עושה sift-down מאינדקס 2 לאחור: 8 מתחלף עם 2, אחר כך 3 מתחלף עם 1, ובסוף 5 יורד דרך 1 ואז 3. התוצאה [1, 3, 2, 5, 9, 8]. היא heap תקין אבל לא ממוינת. heapq לא בונה max-heap. [1, 3, 2, 8, 9, 5] הוא גם heap תקין, אבל heapify לא מגיע אליו: 8 כבר ירד בצעד הראשון לאינדקס 5, ו-5 ירד בסוף לאינדקס 3. ל-n ערכים יש הרבה heaps חוקיים, והאלגוריתם קובע איזה מהם מתקבל.",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q24",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את השלבים של pop (הוצאת המינימום) מ-min-heap שמור במערך.",
+      "items": [
+        "שומרים את הערך שבשורש כדי להחזיר אותו",
+        "מעבירים את האיבר האחרון במערך למקום השורש ומקצרים את המערך ב-1",
+        "משווים את האיבר הנוכחי לשני הילדים שלו ובוחרים את הילד הקטן",
+        "אם הילד הקטן קטן מהאיבר, מחליפים ביניהם וממשיכים מהמיקום החדש",
+        "עוצרים כשאין ילד קטן יותר או כשהגענו לעלה"
+      ],
+      "explanation": "העברת האחרון לשורש שומרת על צורת עץ שלם, ואז sift-down מתקן את הסדר. ההחלפה חייבת להיות עם הילד הקטן, אחרת הילד שעולה יהיה גדול מאחיו. מספר האיטרציות חסום בגובה, O(log n).",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Reorganize string: לסדר מחדש את התווים כך ששני תווים סמוכים לא יהיו זהים (פתרון חמדני עם max-heap לפי תדירות). מתי אין פתרון, עבור מחרוזת באורך n?",
+      "choices": [
+        "כשיש יותר מ-n/2 סוגי תווים שונים",
+        "כשהתדירות המקסימלית גדולה מ-(n+1)/2 (בחלוקה שלמה)",
+        "כשהתדירות המקסימלית גדולה מ-n/2 בחלוקה שלמה, גם ב-n אי-זוגי",
+        "כשיש שני תווים עם אותה תדירות מקסימלית"
+      ],
+      "answer": 1,
+      "explanation": "התו השכיח צריך לשבת במקומות לא סמוכים, ויש לכל היותר ceil(n/2) = (n+1)/2 מקומות כאלה (0, 2, 4, ...). למשל \"aab\": n=3, התדירות 2 ≤ 2, והפתרון \"aba\". עם n/2 בחלוקה שלמה היינו פוסלים בטעות את \"aab\". ריבוי סוגי תווים רק עוזר. שוויון תדירויות (\"aabb\" -> \"abab\") לא מונע פתרון.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הקוד מדפיס?",
+      "code": "using P = pair<int, string>;\npriority_queue<P, vector<P>, greater<P>> pq;\npq.push({2, \"b\"});\npq.push({1, \"z\"});\npq.push({2, \"a\"});\npq.push({1, \"y\"});\nwhile (!pq.empty()) {\n    cout << pq.top().second;\n    pq.pop();\n}",
+      "choices": [
+        "zyba",
+        "zyab",
+        "yzab",
+        "abyz"
+      ],
+      "answer": 2,
+      "explanation": "greater<P> נותן min-heap לפי השוואה לקסיקוגרפית של pair: קודם first, ובשוויון second. לכן (1,\"y\"), (1,\"z\"), (2,\"a\"), (2,\"b\"): yzab. heap לא שומר סדר הכנסה בין שווים, ולכן zyab או zyba שגויים. abyz מתעלם מה-first.",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "K closest points to origin עם n נקודות ו-k קטן, ב-stream. מה הבחירה הנכונה?",
+      "choices": [
+        "min-heap בגודל k לפי מרחק, ומוציאים את הקטן כשהגודל עובר k",
+        "max-heap בגודל k לפי x²+y²: כל נקודה נכנסת, וכשהגודל עובר k מוציאים את הרחוקה ביותר; O(n log k)",
+        "max-heap בגודל k לפי sqrt(x²+y²), כי בלי sqrt ההשוואה לא נכונה",
+        "heapify על כל הנקודות ואחריו k פעולות pop, כי זה O(n) זיכרון בלבד ומתאים ל-stream"
+      ],
+      "answer": 1,
+      "explanation": "כדי לשמור את k הקרובות, ה-top צריך להיות הרחוקה מביניהן, כדי שנדע את מי לזרוק: max-heap. min-heap בגודל k זורק את הקרובות ושומר את k הרחוקות. sqrt מונוטוני, ולכן השוואת ריבועי מרחק נותנת אותו סדר, מהר יותר ובלי שגיאות floating point. heapify דורש להחזיק את כל n הנקודות, וזה לא מתאים ל-stream.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q28",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "IPO: יש לך הון התחלתי w ואפשר לבצע עד k פרויקטים. פרויקט i דורש הון מינימלי capital[i] (לא נצרך) ומוסיף רווח profits[i]. החזר את ההון המקסימלי בסוף.",
+      "starter": "int findMaximizedCapital(int k, int w, vector<int>& profits, vector<int>& capital);",
+      "modelAnswer": "int findMaximizedCapital(int k, int w, vector<int>& profits, vector<int>& capital) {\n    int n = profits.size();\n    vector<pair<int, int>> pr(n);  // (capital, profit)\n    for (int i = 0; i < n; ++i) pr[i] = {capital[i], profits[i]};\n    sort(pr.begin(), pr.end());\n    priority_queue<int> avail;  // max-heap of profits we can afford\n    int i = 0;\n    while (k-- > 0) {\n        while (i < n && pr[i].first <= w) avail.push(pr[i++].second);\n        if (avail.empty()) break;  // nothing affordable\n        w += avail.top();\n        avail.pop();\n    }\n    return w;\n}",
+      "rubric": [
+        "ממיין פרויקטים לפי הון נדרש ומכניס ל-max-heap את כל מה שהפך זמין",
+        "בכל שלב לוקח את הרווח הגדול ביותר מבין הזמינים (נימוק חמדני: הון רק גדל, ולכן פרויקט זמין נשאר זמין)",
+        "עוצר כשאין פרויקט זמין, גם אם k לא נגמר",
+        "סיבוכיות O(n log n + k log n), זיכרון O(n)",
+        "שם לב ל-overflow אם הסכומים גדולים (int מול long long לפי האילוצים)"
+      ],
+      "explanation": "הדפוס: מצביע על רשימה ממוינת לפי תנאי זמינות, ו-heap של הזמינים לפי ערך. בדוגמה k=2, w=0, profits=[1,2,3], capital=[0,1,1] מקבלים 0+1+3 = 4.",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q29",
+      "level": 4,
+      "type": "multi",
+      "prompt": "מחליפים heap בינארי ב-d-ary heap (לכל צומת d ילדים) עם d=4 או 8. אילו טענות נכונות?",
+      "choices": [
+        "הגובה קטן ל-log_d n, ולכן push (sift-up) מבצע פחות רמות",
+        "pop נעשה זול יותר באותה מידה, כי גם sift-down עובר פחות רמות",
+        "בכל רמה של sift-down צריך d-1 השוואות כדי למצוא את הילד הקטן",
+        "הילדים של צומת יושבים רצוף בזיכרון, וזה משפר locality של cache",
+        "הוא מתאים במיוחד לאלגוריתמים עם הרבה decrease-key ומעט pop, כמו Dijkstra על גרף צפוף"
+      ],
+      "answer": [
+        0,
+        2,
+        3,
+        4
+      ],
+      "explanation": "sift-up משווה רק להורה, ולכן גובה נמוך הוא רווח נקי. sift-down צריך למצוא את המינימום מבין d ילדים בכל רמה, כך שהעלות היא כ-d·log_d n, ועבור d גדול זה יותר מ-2·log2 n. לכן pop לא משתפר באותה מידה. ילדים רציפים ב-cache line אחד מקטינים cache misses. decrease-key הוא sift-up, ולכן גרפים עם הרבה relaxations מרוויחים.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q30",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מראיין שואל: למה אין priority queue מבוסס השוואות עם push וגם pop-min שניהם O(1) (אפילו amortized)?",
+      "choices": [
+        "כי זה היה מאפשר למיין n איברים ב-O(n) השוואות (n דחיפות ואחריהן n שליפות), בסתירה לחסם Ω(n log n) של מיון מבוסס השוואות",
+        "כי מערך לא תומך בהכנסה ב-O(1)",
+        "יש כזה: Fibonacci heap נותן את שתיהן ב-O(1) amortized",
+        "כי גובה עץ שלם הוא log n, וכל מבנה חייב להיות עץ שלם"
+      ],
+      "answer": 0,
+      "explanation": "זה טיעון reduction: priority queue כזה הוא אלגוריתם מיון ליניארי, וזה בלתי אפשרי במודל ההשוואות. לכן לפחות אחת הפעולות חייבת להיות Ω(log n) amortized. Fibonacci heap נותן insert ו-decrease-key ב-O(1) amortized, אבל extract-min שלו O(log n). מבנים שלא מבוססים על השוואות (radix heap, bucket queue) יכולים לעקוף זאת כשהמפתחות שלמים וחסומים. הטענה על עץ שלם לא נכונה, יש heaps שאינם עצים שלמים.",
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q31",
+      "level": 5,
+      "type": "multi",
+      "prompt": "Dijkstra עם heap בינארי. אילו טענות נכונות?",
+      "choices": [
+        "עם lazy deletion, אם לא מדלגים על רשומה מיושנת בשליפה, המרחקים עדיין נכונים אבל רשימות שכנים נסרקות שוב ושוב והסיבוכיות נפגעת",
+        "עם Fibonacci heap הסיבוכיות התאורטית היא O(E + V log V)",
+        "עם lazy deletion גודל ה-heap חסום ב-V, כי לכל צומת יש לכל היותר רשומה חיה אחת",
+        "בגרף צפוף (E ≈ V^2) מימוש עם מערך וסריקה ליניארית ב-O(V^2) עדיף על heap בינארי",
+        "heapq.heapreplace מספק decrease-key לכל איבר ב-heap"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "רשומה מיושנת שלא מדלגים עליה מובילה ל-relaxation עם מרחק שכבר לא משפר כלום, כך שהתוצאה נכונה אבל יש עבודה מיותרת. Fibonacci heap: V פעולות extract-min ב-O(log V) ו-E פעולות decrease-key ב-O(1). רשומות מיושנות נשארות פיזית ב-heap, ולכן הגודל הוא עד כ-E, לא V. בגרף צפוף O(V^2) < O(V^2 log V). heapreplace מחליף רק את השורש.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q32",
+      "level": 5,
+      "type": "oral",
+      "prompt": "אתה מתכנן מנגנון טיימרים לשרת רשת עם מיליוני חיבורים פתוחים. לכל חיבור יש timeout שמתעדכן בכל packet, ורוב הטיימרים מבוטלים לפני שהם פוקעים. heap או משהו אחר? הסבר trade-offs.",
+      "modelAnswer": "פרופיל העומס: הרבה הוספות וביטולים, מעט פקיעות. ב-heap בינארי הוספה היא O(log n), וביטול דורש לדעת את מיקום הטיימר (indexed heap עם אינדקס בכל אובייקט ועדכון בכל swap) או lazy deletion, שמנפח את ה-heap ברשומות מתות כי רוב הטיימרים מבוטלים. עם מיליון טיימרים זה כ-20 רמות, swaps על מערך גדול ו-cache misses. חלופה: hashed/hierarchical timing wheel – מערך מעגלי של buckets לפי tick; הוספה וביטול O(1) (רשימה דו-כיוונית בתוך bucket), ובכל tick מעבדים רק bucket אחד. ה-trade-off: רזולוציה מוגבלת ל-tick (בדרך כלל מספיק ל-timeouts), ו-cascading בין רמות ב-hierarchical. אופטימיזציה נוספת: לא לבטל ולהוסיף בכל packet אלא לשמור last-activity ולבדוק אותו כשהטיימר פוקע (re-arm עצל). heap עדיף כשצריך דיוק גבוה ומעט טיימרים. Linux kernel משתמש ב-timer wheel ל-timeouts וב-hrtimers (עץ אדום-שחור) לטיימרים מדויקים.",
+      "rubric": [
+        "מזהה שהעלות העיקרית היא הוספה/ביטול ולא פקיעה",
+        "מסביר ביטול ב-heap: indexed heap מול lazy deletion והמחיר של כל אחד",
+        "מציע timing wheel עם O(1) ומציין trade-off של רזולוציה",
+        "מציע re-arm עצל (בדיקת last-activity בפקיעה) כדי לחסוך עדכונים",
+        "מתייחס ל-cache/זיכרון בקנה מידה של מיליונים"
+      ],
+      "explanation": "שאלת מערכות: ה-heap הוא תשובה סבירה רק אחרי שמבינים את תמהיל הפעולות. מראיין סניור מצפה לחלופה עם O(1) ולהבנה של מחיר הדיוק.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.heaps"
+    },
+    {
+      "id": "alg.heaps.q33",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "רוצים min-heap של int עם comparator מותאם. הקוד מתקמפל ונראה שהוא עובד בבדיקות. מה הבעיה?",
+      "code": "struct Cmp {\n    bool operator()(int a, int b) const {\n        return a >= b;\n    }\n};\npriority_queue<int, vector<int>, Cmp> pq;",
+      "bugLine": 3,
+      "choices": [
+        "הוא יוצר max-heap, כי >= הופך את הכיוון פעמיים",
+        "operator() חייב להיות noexcept, אחרת priority_queue לא יקבל אותו",
+        "הפרמטרים צריכים להיות const int&, אחרת זה undefined behavior",
+        "ה-comparator מפר strict weak ordering (Cmp(a,a) מחזיר true), וזה undefined behavior לפי התקן; צריך a > b"
+      ],
+      "answer": 3,
+      "explanation": "ה-Compare של priority_queue (כמו של sort ו-set) חייב להיות strict weak ordering, ובפרט irreflexive. עם >= כל איבר 'קודם' לעצמו, והאלגוריתמים רשאים להניח שזה לא קורה. ב-priority_queue זה לרוב 'עובד' בשקט, אבל זה UB, ואותו comparator ב-std::sort יכול לגרום לקריאה מחוץ לגבולות. הכיוון עצמו נכון ל-min-heap (a > b). noexcept והעברה by value אינם דרישה.",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.heaps"
     }
   ]
 }

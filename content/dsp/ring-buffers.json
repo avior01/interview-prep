@@ -5,7 +5,7 @@
     {
       "id": "dsp.ring-buffers",
       "title": "Ring buffers",
-      "what": "ring buffer (circular buffer) הוא FIFO בגודל קבוע שהאינדקסים שלו עוטפים לתחילת המערך. זה מבנה הנתונים הבסיסי בין שלבים ב-pipeline של DSP: בין thread ה-RX לעיבוד, בין העיבוד ל-TX, ובתוך delay lines. גרסת SPSC (producer אחד, consumer אחד) אפשר לממש lock-free עם שני atomics בלבד.",
+      "what": "ring buffer (circular buffer) הוא FIFO בגודל קבוע שהאינדקסים שלו עוטפים לתחילת המערך. זה מבנה הנתונים הבסיסי בין שלבים ב-pipeline של DSP: בין thread ה-RX לעיבוד, בין העיבוד ל-TX, ובתוך delay lines של מסננים. אין בו הקצאות בזמן ריצה, push ו-pop הם O(1), וגרסת SPSC (producer אחד, consumer אחד) אפשר לממש lock-free עם שני atomics בלבד ובלי CAS.",
       "when": [
         "העברת stream בין threads בלי הקצאות ובלי locks",
         "ספיגת jitter: ה-producer קצבי וה-consumer עובד ב-bursts",
@@ -23,19 +23,221 @@
       ],
       "complexity": "push ו-pop ב-O(1), בלי הקצאות. זיכרון: N איברים. גודל נדרש: קצב × הזמן הארוך ביותר שה-consumer יכול להיעצר, ועוד גודל batch.",
       "pitfalls": [
-        "N שאינו חזקה של 2 עם מונים רצים: קפיצה באינדקס כשהמונה עוטף (ב-32 ביט וב-100 MS/s זה קורה אחרי 43 שניות)",
+        "N שאינו חזקה של 2 עם מונים רצים של 32 ביט: קפיצה באינדקס כשהמונה עוטף (ב-100 MS/s זה קורה כל 42.9 שניות)",
+        "מונים signed (overflow הוא UB) או uint16_t (integer promotion הופך את `head - tail` ל-int שלילי)",
         "head ו-tail באותה cache line: false sharing",
-        "relaxed במקום release/acquire: הצד השני רואה אינדקס לפני הנתונים",
+        "relaxed במקום release/acquire: הצד השני רואה אינדקס לפני הנתונים, או ה-producer דורס slot שעוד נקרא",
+        "שימוש ב-SPSC עם שני producers: שניהם קוראים אותו head וכותבים לאותו slot",
         "שתי mappings פרטיות (MAP_PRIVATE) במקום אותו קובץ זיכרון פעמיים: אלה שני buffers שונים",
-        "Python: slice assignment לא עוטף"
+        "Python/NumPy: slice לא עוטף, הוא פשוט נחתך בסוף המערך",
+        "באפר ענק 'ליתר ביטחון': כשהוא מתמלא, ה-latency שווה למילוי חלקי קצב הדגימה"
       ],
       "senior": [
-        "לנמק את הגודל במספרים: קצב, stall מקסימלי, batch",
-        "להסביר את ה-memory ordering של SPSC ולמה הוא מספיק בלי CAS",
+        "לנמק את הגודל במספרים: קצב, stall מקסימלי, batch, וה-latency כשהבאפר מלא",
+        "להסביר את ה-memory ordering של SPSC ולמה הוא מספיק בלי CAS, ומה משתנה ב-MPSC/MPMC",
         "לדבר על cache: false sharing, cached indices, batching של עדכונים",
-        "להגדיר מדיניות overflow ותצפית (counters) כחלק מה-API"
+        "להגדיר מדיניות overflow ותצפית (counters, discontinuity) כחלק מה-API",
+        "לדעת מתי צריך mirrored mapping ומתי שתי העתקות מספיקות"
       ],
-      "diagram": "N=8, head=11, tail=6  (free-running)\nsize = 11-6 = 5\nidx:  0 1 2 3 4 5 6 7\n      d d d . . . d d\n            ^head&7=3  ^tail&7=6"
+      "diagram": "N=8, head=11, tail=6  (free-running)\nsize = 11-6 = 5\nidx:  0 1 2 3 4 5 6 7\n      d d d . . . d d\n            ^head&7=3  ^tail&7=6",
+      "details": [
+        {
+          "title": "אינדקסים, mask ומונים רצים",
+          "body": "יש שתי דרכים להחזיק מיקום. הראשונה: אינדקסים בטווח [0, N) שמתאפסים כשהם מגיעים ל-N. השנייה, הנפוצה במימושים מודרניים: **מונים רצים** (free-running counters). head סופר כמה איברים נכתבו מאז ההתחלה ו-tail כמה נקראו, והם אף פעם לא מתאפסים. המיקום הפיזי הוא `head & (N-1)` ומספר האיברים הוא `head - tail`.\n\nלמה זה עובד גם כשהמונה עוטף? חיסור ב-unsigned הוא חשבון מודולו 2^bits, ולכן `head - tail` נותן את ההפרש האמיתי כל עוד ההפרש האמיתי קטן מ-2^bits (והוא תמיד ≤ N). כדי שגם המיקום הפיזי יישאר רציף ברגע ה-wrap, N חייב לחלק את 2^bits, כלומר להיות חזקה של 2. עם N=1000 ומונה של 32 ביט, `head % N` קופץ מ-295 ל-0 ברגע שהמונה עוטף.\n\nשלוש מלכודות של C++: מונה signed הוא UB כשהוא גולש; מונה מסוג uint16_t או uint8_t עובר integer promotion ל-int לפני החיסור, ולכן `head - tail` אחרי wrap יוצא שלילי אלא אם עושים cast חזרה לרוחב המונה; ו-`& N` במקום `& (N-1)` הוא באג הקלדה קלאסי שנותן 0 או N.\n\n32 מול 64 ביט: ב-100 MS/s מונה של 32 ביט עוטף כל 42.9 שניות, ומונה של 64 ביט אחרי כ-5,800 שנים. עם 64 ביט ה-wrap לא קורה בפועל, אבל עדיין משתמשים ב-mask כי הוא זול."
+        },
+        {
+          "title": "full מול empty",
+          "body": "עם אינדקסים בטווח [0, N) יש N+1 מצבים אפשריים (0 עד N איברים) אבל רק N ערכים אפשריים להפרש `(head - tail) mod N`. לכן `head == tail` דו-משמעי: גם ריק וגם מלא. שלושה פתרונות:\n\n- **slot ריק תמיד**: מלא הוא `(head+1) % N == tail`. הקיבולת היא N-1. פשוט, ומתאים ל-SPSC כי כל צד כותב רק את האינדקס שלו. זה המימוש הקלאסי של Lamport.\n- **מונה count**: הקיבולת N, אבל count נכתב על ידי שני הצדדים, ולכן הוא צריך atomic RMW ונהיה נקודת contention.\n- **מונים רצים**: ריק הוא `head == tail`, מלא הוא `head - tail == N`. הקיבולת N, ואין משתנה משותף נוסף. זה הפתרון המועדף."
+        },
+        {
+          "title": "SPSC lock-free ו-memory ordering",
+          "body": "ב-SPSC לכל אינדקס יש **כותב יחיד**: רק ה-producer כותב head ורק ה-consumer כותב tail. לכן אין צורך ב-CAS: כל צד קורא את האינדקס של עצמו ב-relaxed (אף אחד אחר לא משנה אותו), ומפרסם אותו ב-store.\n\nהסדר הוא העיקר. ה-producer כותב נתונים ל-slot ואז עושה `head.store(h+1, release)`. ה-consumer עושה `head.load(acquire)`. אם ה-acquire ראה את הערך שה-release כתב, נוצר synchronizes-with, וכל מה שה-producer כתב לפני ה-release (הנתונים) מובטח להיראות ל-consumer אחרי ה-acquire. באותו אופן בכיוון ההפוך: ה-consumer קורא את ה-slot ואז מפרסם tail ב-release, וה-producer קורא tail ב-acquire לפני שהוא דורס את ה-slot.\n\nעם relaxed בשני המקרים אין happens-before, וזה data race על ה-slot. על x86 (TSO) החומרה לא מבצעת את רוב ה-reorderings האלה, ולכן acquire/release הם `mov` רגילים והבאג כמעט לא מופיע. על ARM ו-POWER החומרה כן מבצעת reordering, והבאג מופיע. seq_cst לא נדרש ורק מוסיף עלות (ב-x86 store של seq_cst הוא `xchg`).\n\nמה קורה עם שני producers? שניהם קוראים אותו head, כותבים לאותו slot, ושניהם מפרסמים h+1: דגימה אחת נדרסת ואחת אובדת. ל-MPSC או MPMC צריך לתפוס slot עם CAS (או fetch_add) על האינדקס, ולסמן לכל slot מתי הוא מוכן, למשל במספר רצף לכל slot כמו בתור של Vyukov."
+        },
+        {
+          "title": "ביצועים: cache lines, cached indices ו-batching",
+          "body": "ליבות מתקשרות דרך פרוטוקול ה-cache coherence (MESI ודומיו). כשליבה כותבת לשורה, השורה נשללת מכל ליבה אחרת, והקריאה הבאה שם עולה עשרות עד מאות ns. **false sharing** הוא מצב שבו head ו-tail, שאין ביניהם קשר לוגי, יושבים באותה שורה של 64 bytes, ולכן כל push וכל pop מעבירים את השורה הלוך וחזור. הפתרון: `alignas(64)` לכל אחד, או `std::hardware_destructive_interference_size`.\n\n**cached indices**: ה-producer שומר עותק מקומי של tail ומרענן אותו רק כשהעותק מראה שהבאפר מלא. העותק תמיד שמרני (tail רק עולה), ולכן אם הוא מראה מקום, המקום באמת קיים. ה-consumer עושה אותו דבר עם head. הרענון חייב להיות acquire, כי הוא מה שיוצר את הסנכרון עם הנתונים.\n\n**batching**: גם עם כל זה, פרסום אינדקס על כל דגימה מגביל ל-30 עד 50 מיליון פעולות בשנייה. העברת בלוקים (push של 1024 דגימות ועדכון אינדקס אחד) מחלקת את עלות ה-coherence על כל הבלוק, וה-memcpy עצמו רציף ו-vectorized. המחיר: latency של בלוק, למשל 1024 דגימות ב-100 MS/s הן 10.24 µs."
+        },
+        {
+          "title": "בלוק רציף: שתי העתקות או mirrored mapping",
+          "body": "FFT או מסנן צריכים בלוק רציף, אבל בלוק שמתחיל ליד הסוף חוצה אותו. הפתרון הפשוט: להעתיק בשני חלקים, `N - i` איברים עד הסוף ואת השאר מההתחלה. זה נייד, במחיר copy.\n\n**mirrored mapping** (magic ring buffer) נותן חלון רציף בלי העתקה: אותם דפים פיזיים ממופים פעמיים ברצף ב-virtual memory, כך ש-`buf[N + k]` הוא אותו זיכרון כמו `buf[k]`. על Linux: יוצרים אובייקט זיכרון משותף עם `memfd_create` (או shm), משריינים 2×size של address space, וממפים את אותו fd פעמיים עם `MAP_SHARED | MAP_FIXED`. הגודל חייב להיות כפולה של גודל הדף (4 KiB, או 2 MiB עם hugepages). שתי mappings של `MAP_PRIVATE | MAP_ANONYMOUS` הן שני זיכרונות נפרדים ולא עובדות.\n\nב-Python ו-NumPy, slice שחורג מהסוף נחתך בשקט, ולכן השמה של בלוק לחלק כזה נכשלת עם 'could not broadcast'. לקריאה עוטפת אפשר להשתמש ב-`np.take(buf, idx, mode='wrap')` או באינדקס `% N`, ולכתיבה מפצלים לשני חלקים."
+        },
+        {
+          "title": "מדיניות overflow, גודל ו-latency",
+          "body": "כשהבאפר מלא יש שלוש אפשרויות: לחסום את ה-producer, לזרוק את החדש, או לדרוס את הישן. ב-RX real-time לא חוסמים, כי זה רק מעביר את ה-overflow למכשיר. זורקים, מעלים overflow counter, ומסמנים **discontinuity** כדי שה-consumer יאפס state (מסננים, detector, phase). `deque(maxlen=n)` של Python ממש 'drop oldest', מתאים ל-history ול-pre-trigger capture.\n\nדריסת הישן ב-SPSC lock-free קשה: ה-producer לא יכול להזיז את tail, כי אז יש לו שני כותבים. הדרך הנכונה היא בסגנון **seqlock**: ה-consumer מעתיק את ה-slot, קורא שוב את head, ואם `head - t >= N` ההעתק אולי נדרס ונזרק, וה-consumer קופץ קדימה. זה דורש fences בשני הצדדים.\n\n**גודל**: קצב × ה-stall הגרוע של ה-consumer, ועוד batch, ומעגלים לחזקה של 2. **latency**: בלוק שממתין בבאפר מתעכב ב-מילוי/קצב. באפר של 2^20 דגימות ב-100 MS/s מחזיק 10.49 ms, ולכן ב-jammer ריאקטיבי עדיף consumer שעובד קרוב לראש ומדלג קדימה כשהוא מפגר. פרטי מערכת: זיכרון שהוקצה מראש, mlock ו-prefault נגד page faults, affinity ועדיפות RT ל-threads."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מעקב אחרי מונים רצים, N=8",
+          "body": "מתחילים ב-head=0, tail=0 (ריק). כותבים 6 איברים, קוראים 4, כותבים עוד 5:\n\n- אחרי 6 כתיבות: head=6, tail=0, size=6, הכתיבה הבאה ל-6&7=6\n- אחרי 4 קריאות: head=6, tail=4, size=2, הקריאה הבאה מ-4\n- אחרי 5 כתיבות: head=11, tail=4, size=7. האיברים האחרונים נכתבו ל-6, 7, 0, 1, 2, כלומר ה-wrap קרה בלי שום קוד מיוחד\n- עוד כתיבה אחת: head=12, size=8=N, מלא. הכתיבה הבאה תידחה כי `head - tail == N`\n\nאותו הדבר אחרי wrap של uint32_t: head=5, tail=4294967294. `head - tail` ב-unsigned = 5 - (2^32 - 2) mod 2^32 = 7. tail נמצא שני איברים לפני ה-wrap, ונכתבו עוד 7 מעבר לו."
+        },
+        {
+          "title": "דוגמה: גודל באפר ל-RX של 100 MS/s",
+          "body": "דגימות complex float (8 bytes). ה-consumer נעצר עד 3 ms ולוקח batches של 4096.\n\n- stall: 3e-3 × 100e6 = 300,000 דגימות\n- ועוד batch שממתין: 304,096\n- 2^18 = 262,144 קטן מדי, ולכן 2^19 = 524,288 דגימות = 4 MiB\n- latency כשהבאפר מלא: 524,288 / 100e6 = 5.24 ms\n\nהמסקנה: הבאפר ספג את ה-stall, אבל אם ה-consumer מפגר באופן קבוע ומילוי הבאפר נשאר גבוה, כל דגימה מתעכבת עד 5 ms. לכן מנטרים מילוי מקסימלי ו-lag ולא רק overflows."
+        },
+        {
+          "title": "דוגמה: למה N=1000 שובר מונה של 32 ביט",
+          "body": "2^32 = 4,294,967,296, ו-2^32 mod 1000 = 296.\n\n- head = 2^32 - 1: האינדקס הוא 295\n- head עוטף ל-0: האינדקס הוא 0, אבל הרצף הנכון היה 296\n- slots 296 עד 999 מדולגים בסיבוב הזה\n\nב-100 MS/s זה קורה כל 2^32/1e8 = 42.95 שניות, ולכן הסימפטום הוא glitch מחזורי. עם N=1024, 2^32 מתחלק ב-1024 והאינדקס ממשיך מ-1023 ל-0 כרגיל."
+        },
+        {
+          "title": "דוגמה: delay line של 2 דגימות ב-ring בגודל 4",
+          "body": "delay line שומרת את הדגימות האחרונות, למשל ה-history של FIR. כותבים כל דגימה ל-`w & 3`, וקוראים את y[n] = x[n-2] מ-`(w - 2) & 3`, ואז מקדמים את w. הקלט 10, 20, 30, 40:\n\n- w=0: כותבים 10 ל-0, קוראים מ-(0-2)&3 = 2 (אתחול 0), y=0\n- w=1: כותבים 20 ל-1, קוראים מ-3, y=0\n- w=2: כותבים 30 ל-2, קוראים מ-0, y=10\n- w=3: כותבים 40 ל-3, קוראים מ-1, y=20\n\nשימו לב ש-`w - 2` כש-w=0 הוא 2^32-2 ב-unsigned, ו-mask מחזיר 2, כלומר החיסור עוטף נכון בזכות החזקה של 2. הבאפר צריך לפחות D+1 מקומות כשכותבים לפני שקוראים."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "ring buffer / circular buffer",
+          "def": "FIFO בגודל קבוע שהאינדקסים שלו עוטפים לתחילת המערך. אין הקצאות בזמן ריצה, ולכן מתאים ל-real-time."
+        },
+        {
+          "term": "FIFO",
+          "def": "First In First Out: הסדר שבו יוצאים האיברים זהה לסדר שבו נכנסו."
+        },
+        {
+          "term": "free-running counter (מונה רץ)",
+          "def": "מונה שסופר כמה נכתב או נקרא מאז ההתחלה ולא מתאפס. המיקום הוא `counter & (N-1)` והגודל `head - tail`."
+        },
+        {
+          "term": "mask עם חזקה של 2",
+          "def": "כש-N חזקה של 2, `i & (N-1)` שווה ל-`i % N` ועולה מחזור אחד במקום חלוקה. בנוסף N מחלק את 2^bits, ולכן האינדקס רציף גם כשהמונה עוטף."
+        },
+        {
+          "term": "unsigned wraparound",
+          "def": "חשבון unsigned ב-C++ מוגדר מודולו 2^bits, ולכן `head - tail` נכון גם אחרי שהמונה עטף. ב-signed, overflow הוא undefined behavior."
+        },
+        {
+          "term": "integer promotion",
+          "def": "טיפוסים צרים מ-int (כמו uint16_t) מומרים ל-int לפני פעולה אריתמטית. לכן `head - tail` של uint16_t אחרי wrap יוצא שלילי, וצריך cast חזרה לרוחב המונה."
+        },
+        {
+          "term": "full/empty ambiguity",
+          "def": "עם אינדקסים ב-[0, N), `head == tail` יכול להיות גם ריק וגם מלא. פותרים עם slot ריק, count, או מונים רצים."
+        },
+        {
+          "term": "SPSC",
+          "def": "Single Producer Single Consumer: thread אחד כותב ו-thread אחד קורא. לכל אינדקס יש כותב יחיד, ולכן אפשר lock-free בלי CAS."
+        },
+        {
+          "term": "MPSC / MPMC",
+          "def": "כמה producers (ו/או כמה consumers). כמה כותבים לאותו אינדקס דורשים CAS או fetch_add כדי לתפוס slot, וסימון per-slot מתי הוא מוכן."
+        },
+        {
+          "term": "CAS (compare-and-swap)",
+          "def": "פעולה אטומית שכותבת ערך רק אם הערך הנוכחי שווה לצפוי. בסיס ל-lock-free עם כמה כותבים, ויקרה יותר מ-load/store."
+        },
+        {
+          "term": "Vyukov bounded MPMC queue",
+          "def": "ring buffer שבו לכל slot יש מספר רצף. producer תופס slot עם CAS על האינדקס, כותב, ומעדכן את מספר הרצף כדי לסמן שהוא מלא; consumer עושה את ההפך."
+        },
+        {
+          "term": "ABA problem",
+          "def": "thread קורא ערך A, ערך אחר נכתב ואז A חוזר, ו-CAS מצליח למרות שהמצב השתנה. בתור של Vyukov אין ABA כי מספר הרצף של slot רק עולה מסיבוב לסיבוב."
+        },
+        {
+          "term": "lock-free",
+          "def": "מבנה שבו thread שנעצר לא יכול לעצור את האחרים, כי אין locks. ב-SPSC זה מושג עם atomics בלבד."
+        },
+        {
+          "term": "std::atomic ו-memory_order_relaxed",
+          "def": "relaxed מבטיח אטומיות בלבד, בלי סדר מול גישות אחרות. מתאים לקריאת אינדקס שרק אתה כותב."
+        },
+        {
+          "term": "release / acquire",
+          "def": "store ב-release מבטיח שכל מה שנכתב לפניו נראה למי שעושה load ב-acquire וקורא את הערך הזה. זה הזוג שמפרסם נתונים ב-SPSC."
+        },
+        {
+          "term": "happens-before / synchronizes-with",
+          "def": "כש-acquire קורא ערך של release נוצר synchronizes-with, ומכאן happens-before: הכתיבות שלפני ה-release מובטחות להיראות אחרי ה-acquire. בלי זה, גישה לא-אטומית משותפת היא data race."
+        },
+        {
+          "term": "seq_cst",
+          "def": "ברירת המחדל של std::atomic: סדר גלובלי אחד לכל הפעולות. לא נדרש ב-SPSC ועולה יותר, למשל `xchg` ב-store על x86."
+        },
+        {
+          "term": "data race",
+          "def": "שתי גישות לאותו זיכרון מ-threads שונים, לפחות אחת כתיבה, בלי happens-before ביניהן. ב-C++ זה undefined behavior."
+        },
+        {
+          "term": "x86 TSO מול ARM",
+          "def": "x86 (Total Store Order) לא מסדר מחדש loads מול loads או load מול store מאוחר, ולכן acquire/release הם `mov` רגילים. ARM ו-POWER כן מסדרים מחדש, ושם באגי ordering מופיעים."
+        },
+        {
+          "term": "cache line ו-cache coherence (MESI)",
+          "def": "יחידת ההעברה בין cache לזיכרון, לרוב 64 bytes. פרוטוקול coherence נותן לשורה כותב יחיד בכל רגע, והעברת שורה בין ליבות עולה עשרות עד מאות ns."
+        },
+        {
+          "term": "false sharing",
+          "def": "שני משתנים לא קשורים שנכתבים מליבות שונות יושבים באותה cache line, והשורה עוברת הלוך וחזור. פותרים עם `alignas(64)` או `std::hardware_destructive_interference_size`."
+        },
+        {
+          "term": "cached index",
+          "def": "עותק מקומי של האינדקס של הצד השני, שמתרענן ב-acquire רק כשנראה שאין מקום או אין נתונים. חוסך תעבורת coherence ברוב הפעולות."
+        },
+        {
+          "term": "batching",
+          "def": "העברת בלוק של איברים עם עדכון אינדקס אחד. מחלק את עלות ה-coherence על הבלוק, במחיר latency של בלוק."
+        },
+        {
+          "term": "mirrored mapping (magic ring buffer)",
+          "def": "אותם דפים פיזיים ממופים פעמיים ברצף ב-virtual memory, כך שקריאה מעבר לסוף ממשיכה בהתחלה בלי העתקה."
+        },
+        {
+          "term": "memfd_create, MAP_SHARED, MAP_FIXED",
+          "def": "memfd_create יוצר אובייקט זיכרון אנונימי עם fd. MAP_SHARED ממפה את אותם דפים (בניגוד ל-MAP_PRIVATE שנותן עותק פרטי), ו-MAP_FIXED ממפה לכתובת מדויקת בתוך האזור שהושרין."
+        },
+        {
+          "term": "page size / hugepages",
+          "def": "יחידת המיפוי של ה-MMU, לרוב 4 KiB, או 2 MiB עם hugepages. גודל של mirrored buffer חייב להיות כפולה שלה."
+        },
+        {
+          "term": "mlock / prefault",
+          "def": "mlock נועל דפים בזיכרון הפיזי, ו-prefault נוגע בכל דף מראש. שניהם מונעים page faults בזמן ריצה ב-thread real-time."
+        },
+        {
+          "term": "overflow / underrun",
+          "def": "overflow: ה-producer מגיע לבאפר מלא ודגימות אובדות או שהוא נחסם. underrun: ה-consumer (למשל TX) מוצא באפר ריק."
+        },
+        {
+          "term": "discontinuity flag",
+          "def": "סימון שמגיע ל-consumer יחד עם הנתונים ואומר שהיה אובדן לפניהם, כדי שיאפס state כמו מסננים ופאזה."
+        },
+        {
+          "term": "overflow counter",
+          "def": "מונה של דגימות או בלוקים שנזרקו. הופך אובדן לגלוי ומאפשר monitoring."
+        },
+        {
+          "term": "drop newest / drop oldest / block",
+          "def": "שלוש מדיניות לבאפר מלא: לזרוק את החדש, לדרוס את הישן, או לחכות. ב-RX real-time לא חוסמים."
+        },
+        {
+          "term": "seqlock",
+          "def": "קורא מעתיק נתונים ואז בודק שמונה הגרסה של הכותב לא השתנה; אם השתנה, ההעתק נזרק. מאפשר לכותב לא לחכות לעולם, ודורש fences בשני הצדדים."
+        },
+        {
+          "term": "deque(maxlen)",
+          "def": "`collections.deque` עם maxlen: append לתור מלא זורק את האיבר מהצד השני, כלומר ring buffer של drop oldest."
+        },
+        {
+          "term": "NumPy slice truncation",
+          "def": "slice שחורג מסוף מערך נחתך בלי שגיאה. השמה של מערך ארוך יותר לחלק כזה נכשלת עם ValueError של broadcast. `np.take(..., mode='wrap')` קורא בעטיפה."
+        },
+        {
+          "term": "delay line",
+          "def": "ring buffer ששומר את D הדגימות האחרונות, כך ש-y[n] = x[n-D]. ה-history של FIR הוא delay line."
+        },
+        {
+          "term": "sc16",
+          "def": "פורמט דגימה של שני int16 (I ו-Q), 4 bytes לדגימה. complex float (fc32) הוא 8 bytes."
+        },
+        {
+          "term": "jitter ו-stall",
+          "def": "jitter: שונות בזמן שבין פעולות. stall: עצירה של ה-consumer (scheduling, page fault, I/O). הבאפר צריך לספוג את ה-stall הגרוע."
+        },
+        {
+          "term": "CPU affinity ו-RT priority",
+          "def": "הצמדת thread לליבה קבועה ומתן עדיפות real-time (SCHED_FIFO), כדי לצמצם stalls ו-cache misses."
+        }
+      ]
     }
   ],
   "questions": [
@@ -98,7 +300,7 @@
         "לאתחל את tail ל-1 במקום 0"
       ],
       "answer": 3,
-      "explanation": "שלושת הראשונים הם הפתרונות הסטנדרטיים: slot ריק (מבזבז איבר אחד), count (משתנה משותף נוסף, לא נוח ל-lock-free), או מונים רצים (הנפוץ ב-SPSC מודרני). הזזת נקודת ההתחלה לא משנה את העובדה שיש N+1 מצבים (0 עד N איברים) ורק N ערכים של הפרש.",
+      "explanation": "slot ריק (מבזבז איבר אחד), count (משתנה משותף נוסף שגם ה-producer וגם ה-consumer כותבים אליו, ולכן לא נוח ל-lock-free) ומונים רצים (הנפוץ ב-SPSC מודרני) הם הפתרונות הסטנדרטיים. אתחול tail ל-1 רק מזיז את נקודת ההתחלה: עדיין יש N+1 מצבים אפשריים (0 עד N איברים) ורק N ערכים אפשריים להפרש בין שני אינדקסים בטווח [0, N), ולכן הדו-משמעות נשארת.",
       "lesson": "dsp.ring-buffers"
     },
     {
@@ -213,7 +415,7 @@
         "head צריך להיות atomic"
       ],
       "answer": 0,
-      "explanation": "2^32 mod 1000 = 296, ולכן לפני ה-wrap האינדקס האחרון הוא (2^32-1) mod 1000 = 295, ואחריו 0. שני slots נכתבים 'מחוץ לסדר' וה-consumer, שמחשב באותה צורה, רואה סדר שגוי. 2^32/100e6 ≈ 42.95 s, וזה הזמן המחזורי. תיקון: N חזקה של 2 (1024), או מונים ב-64 ביט (שעוטפים אחרי כ-5,800 שנים ב-100 MS/s). `%` אכן איטי יחסית אבל זה לא באג נכונות.",
+      "explanation": "2^32 mod 1000 = 296, ולכן לפני ה-wrap האינדקס האחרון הוא (2^32-1) mod 1000 = 295, ואחריו 0 במקום 296. ה-slots 296 עד 999 מדולגים בסיבוב הזה, וה-consumer, שהמונה שלו עוטף ברגע אחר, קורא slots ישנים או בסדר שגוי. 2^32/100e6 ≈ 42.95 s, וזה הזמן המחזורי. תיקון: N חזקה של 2 (1024), או מונים ב-64 ביט (שעוטפים אחרי כ-5,800 שנים ב-100 MS/s). `%` אכן איטי יחסית אבל זה לא באג נכונות, ו-atomic לא רלוונטי כאן כי הבעיה מתרחשת גם ב-thread יחיד.",
       "lesson": "dsp.ring-buffers",
       "tags": [
         "nvidia"
@@ -322,7 +524,7 @@
         "הקריאה של ה-slot יכולה להיראות כאילו קרתה אחרי ה-store של tail. ה-producer רואה את ה-slot כפנוי, כותב אליו, וה-consumer קורא ערך חדש או מעורבב (data race על ה-slot)"
       ],
       "answer": 3,
-      "explanation": "relaxed store לא מונע reordering של loads קודמים אחריו, ו-ARM אכן מבצע reordering כזה. כך ה-producer יכול לדרוס slot שה-consumer עוד לא סיים לקרוא. release על tail (ו-acquire בקריאה של ה-producer) מבטיח שכל הקריאות מה-slot הסתיימו לפני שהוא נראה פנוי. relaxed לא מונע מהעדכון להיראות, רק לא נותן סדר. על x86 (TSO) loads לא עוברים stores מאוחרים, ולכן הבאג נראה רק על ARM.",
+      "explanation": "relaxed store לא מונע מ-loads קודמים להיראות אחריו, ו-ARM אכן מבצע reordering כזה (וגם הקומפיילר רשאי). כך ה-producer יכול לדרוס slot שה-consumer עוד לא סיים לקרוא. release על tail (ו-acquire בקריאה של ה-producer) מבטיח שכל הקריאות מה-slot הסתיימו לפני שהוא נראה פנוי. relaxed לא מונע מהעדכון להיראות, רק לא נותן סדר, ונתונים ישנים הם בעיה של צד ה-acquire על head ולא של ה-store הזה. על x86 (TSO) החומרה לא מעבירה load אחרי store מאוחר ממנו, ולכן הבאג כמעט לא נראה שם, אבל מבחינת התקן זה עדיין data race.",
       "lesson": "dsp.ring-buffers",
       "tags": [
         "nvidia"
@@ -344,6 +546,297 @@
       "lesson": "dsp.ring-buffers",
       "tags": [
         "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-SPSC ring buffer עם head ו-tail, מי כותב לכל אינדקס?",
+      "choices": [
+        "שני ה-threads כותבים לשניהם, עם CAS",
+        "רק ה-producer כותב את head ורק ה-consumer כותב את tail; כל צד רק קורא את האינדקס של השני",
+        "ה-producer כותב את שניהם, וה-consumer רק קורא",
+        "ה-consumer כותב את שניהם, כי הוא זה שמחליט מתי slot פנוי"
+      ],
+      "answer": 1,
+      "explanation": "ב-SPSC לכל אינדקס יש כותב יחיד: ה-producer מקדם את head אחרי שכתב נתונים, וה-consumer מקדם את tail אחרי שקרא. כל צד רק קורא את האינדקס של השני. זו הסיבה שאין צורך ב-CAS. אם שני הצדדים היו כותבים לאותו אינדקס, היה צריך פעולות RMW אטומיות, וזה כבר מבנה אחר.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "ring buffer עם N=8 ומונים רצים. head=13. לאיזה אינדקס פיזי במערך תיכתב הדגימה הבאה?",
+      "accept": [
+        "5"
+      ],
+      "explanation": "האינדקס הפיזי הוא `head & (N-1)` = 13 & 7 = 5 (13 = 8 + 5). המונה עצמו לא מתאפס, רק ה-mask ממפה אותו לטווח [0, 8). 13 הוא לא אינדקס חוקי במערך, ו-6 הוא טעות off-by-one.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של overflow ב-ring buffer שבין thread ה-RX ל-thread העיבוד?",
+      "choices": [
+        "ה-producer מגיע לבאפר מלא ואין לו איפה לכתוב, ולכן דגימות אובדות או שהוא נאלץ לחכות",
+        "ה-consumer מנסה לקרוא מבאפר ריק",
+        "המונה head עוטף מעבר ל-2^32",
+        "ערך של דגימה חורג מהטווח של int16"
+      ],
+      "answer": 0,
+      "explanation": "overflow הוא מצב שבו ה-producer מגיע לבאפר מלא, כי ה-consumer לא עומד בקצב. מצב ההפוך, consumer שמוצא באפר ריק, הוא underrun (ב-TX זה מה שגורם לשקט ב-RF). עטיפה של מונה רץ היא חלק תקין מהמנגנון ולא אובדן, וחריגה מטווח int16 היא saturation של ערכים ולא בעיה של הבאפר.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q22",
+      "level": 1,
+      "type": "multi",
+      "prompt": "באילו מקרים ring buffer הוא המבנה הטבעי?",
+      "choices": [
+        "delay line של FIR: שמירת K הדגימות האחרונות",
+        "העברת stream של דגימות בין thread ה-RX ל-thread העיבוד",
+        "מיון דגימות לפי עוצמה",
+        "pre-trigger capture: שמירת הדגימות שלפני אירוע",
+        "תור שגדל ללא הגבלה כשה-consumer איטי"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "delay line של FIR, העברת stream בין threads ו-pre-trigger capture הם כולם 'החלון האחרון בגודל קבוע' או FIFO בגודל קבוע. מיון דורש גישה אקראית ושינוי סדר, וזה לא FIFO. מבנה שגדל ללא הגבלה הוא unbounded queue: ring buffer הוא בגודל קבוע, ובדיוק זה מה שהופך אותו לבטוח ל-real-time.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q23",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nbuf = np.arange(8) * 10\nprint(buf[6:11], np.take(buf, np.arange(6, 11), mode='wrap'))",
+      "choices": [
+        "[60 70  0 10 20] [60 70  0 10 20]",
+        "IndexError",
+        "[60 70] IndexError",
+        "[60 70] [60 70  0 10 20]"
+      ],
+      "answer": 3,
+      "explanation": "slice שחורג מהסוף נחתך בלי שגיאה, ולכן `buf[6:11]` נותן רק את שני האיברים האחרונים. `np.take` עם `mode='wrap'` מחשב כל אינדקס מודולו האורך, ולכן 8, 9, 10 הופכים ל-0, 1, 2. אין IndexError בשום מקרה: ב-slice כי הוא נחתך, וב-take כי ה-mode עוטף. זו בדיוק המלכודת של ring buffer ב-NumPy.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q24",
+      "level": 2,
+      "type": "short",
+      "prompt": "ring buffer עם אינדקסים בטווח [0, N) ושיטת 'slot ריק תמיד', N=16. כמה איברים לכל היותר אפשר להחזיק בו בבת אחת?",
+      "accept": [
+        "15"
+      ],
+      "explanation": "בשיטה הזו מלא מוגדר כ-`(head+1) % N == tail`, כלומר תמיד נשאר slot אחד לא מנוצל, והקיבולת היא N-1 = 15. זה המחיר של הפתרון לדו-משמעות של full מול empty. עם מונים רצים הקיבולת היא N מלא (16).",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q25",
+      "level": 2,
+      "type": "short",
+      "prompt": "ring buffer עם מונים רצים, N=1024, head=5000, tail=4000. כמה slots פנויים לכתיבה?",
+      "accept": [
+        "24"
+      ],
+      "explanation": "מספר האיברים הוא head - tail = 1000, ולכן הפנויים הם N - 1000 = 24. `5000 & 1023 = 904` הוא רק המיקום הפיזי של הכתיבה הבאה, לא כמות. אם היה יוצא head - tail > N, זה סימן לבאג (ה-producer דרס נתונים).",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q26",
+      "level": 2,
+      "type": "bug",
+      "prompt": "ring buffer עם slot ריק תמיד, N=8. אחרי כמה pops התוכנית קוראת מחוץ למערך. מה הבאג?",
+      "lang": "cpp",
+      "code": "constexpr size_t N = 8;\nint buf[N];\nsize_t head = 0, tail = 0;   // indices in [0, N)\n\nbool push(int v) {\n    size_t next = (head + 1) % N;\n    if (next == tail) return false;   // full\n    buf[head] = v;\n    head = next;\n    return true;\n}\nbool pop(int& out) {\n    if (head == tail) return false;   // empty\n    out = buf[tail];\n    tail = (tail + 1) & N;\n    return true;\n}",
+      "bugLine": 15,
+      "choices": [
+        "ה-mask צריך להיות `N - 1`: `(tail + 1) & 8` נותן 0 או 8, ולכן tail קופץ ל-0 או יוצא מהמערך",
+        "בדיקת full צריכה להיות `head == tail`",
+        "pop צריך לבדוק `(tail + 1) % N == head`",
+        "push צריך לכתוב ל-`buf[next]` ולא ל-`buf[head]`"
+      ],
+      "answer": 0,
+      "explanation": "`(tail + 1) & N` עם N=8 נותן 0 לכל tail בין 0 ל-6, ו-8 כש-tail=7, כלומר tail קופץ ל-0 או ל-8 ו-`buf[8]` הוא גישה מחוץ למערך. ה-mask הנכון הוא `N - 1` (או `% N`). בדיקת full ב-push נכונה לשיטת slot ריק, ו-`head == tail` הוא בדיוק התנאי לריק בשיטה הזו.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q27",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "משתמשים ב-SPSC ring buffer (head נקרא relaxed, נכתב ב-release) משני producer threads במקביל. מה יקרה?",
+      "choices": [
+        "יעבוד נכון, כי head הוא std::atomic",
+        "שני producers עלולים לקרוא אותו head, לכתוב לאותו slot ולפרסם אותו ערך, ולכן דגימות אובדות או נדרסות בשקט",
+        "deadlock כשהבאפר מתמלא",
+        "יעבוד נכון אם מחליפים את ה-release ב-seq_cst"
+      ],
+      "answer": 1,
+      "explanation": "שני ה-producers יכולים לקרוא את אותו head, לכתוב לאותו slot ולפרסם את אותו h+1. כך דגימה אחת נדרסת והשנייה 'נעלמת', ואין שום שגיאה. atomic מבטיח שכל load ו-store בודדים שלמים, אבל read-modify-write שמורכב משתי פעולות נפרדות אינו אטומי. אין deadlock כי אין locks. ל-MPSC צריך לתפוס slot עם CAS או fetch_add, ולסמן per-slot מתי הוא מוכן לקריאה.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q28",
+      "level": 3,
+      "type": "output",
+      "prompt": "delay line ב-ring בגודל 4. מה מודפס?",
+      "lang": "cpp",
+      "code": "#include <cstdio>\nint main() {\n    float d[4] = {0};\n    unsigned w = 0;\n    for (int n = 1; n <= 6; ++n) {\n        d[w & 3] = n;\n        float y = d[(w - 3) & 3];\n        ++w;\n        printf(\"%g \", y);\n    }\n}",
+      "choices": [
+        "0 0 1 2 3 4",
+        "1 2 3 4 5 6",
+        "0 1 2 3 4 5",
+        "0 0 0 1 2 3"
+      ],
+      "answer": 3,
+      "explanation": "בכל איטרציה כותבים ל-`w & 3` ואז קוראים מ-`(w - 3) & 3`, כלומר את הדגימה שנכתבה שלוש איטרציות קודם: y[n] = x[n-3]. בשלוש האיטרציות הראשונות קוראים slots שעוד לא נכתבו (אפסים), למשל w=0 נותן (2^32-3) & 3 = 1. אחר כך יוצאים 1, 2, 3. 'השהיה של 2' היא טעות off-by-one, וההדפסה של הקלט עצמו תתקבל רק עם השהיה 0.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q29",
+      "level": 3,
+      "type": "multi",
+      "prompt": "SPSC עם מונים רצים של uint32_t ב-stream ארוך (המונים עוטפים). `head - tail` משמש לגודל ו-`counter & (N-1)` למיקום. אילו תנאים נדרשים כדי שזה יהיה נכון לאורך כל הריצה?",
+      "choices": [
+        "המונים מטיפוס unsigned",
+        "N חזקה של 2",
+        "המונים מתאפסים ל-0 כשהם מגיעים ל-N",
+        "ההפרש האמיתי בין head ל-tail לא עולה לעולם על N",
+        "head ו-tail באותה cache line, כדי שייקראו יחד"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "unsigned נותן חיסור מודולו 2^32 (ב-signed הגלישה היא UB). N חזקה של 2 מחלק את 2^32, ולכן המיקום רציף ברגע ה-wrap. וההפרש האמיתי חייב להישאר ≤ N, אחרת כבר נדרסו נתונים והחיסור לא יכול להבחין. איפוס המונים ב-N הופך אותם בחזרה לאינדקסים רגילים ומחזיר את הדו-משמעות של full מול empty. head ו-tail באותה cache line רק פוגעים בביצועים (false sharing), ואין צורך לקרוא אותם יחד.",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "id": "dsp.ring-buffers.q30",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "RX של 100 MS/s, ring buffer של 2^20 דגימות. ה-consumer עומד בקצב הממוצע אבל מפגר באופן קבוע, והבאפר נשאר מלא בכ-75%. כמה latency מוסיף הבאפר לכל דגימה?",
+      "choices": [
+        "10.49 ms",
+        "7.86 ms",
+        "2.62 ms",
+        "786 µs"
+      ],
+      "answer": 1,
+      "explanation": "דגימה שנכתבת עכשיו תיקרא רק אחרי שכל מה שלפניה בבאפר ייקרא: 0.75 × 2^20 = 786,432 דגימות, חלקי 100e6 = 7.86 ms. 10.49 ms הוא ה-latency בבאפר מלא לגמרי, 2.62 ms מתאים לחלק הריק, ו-786 µs הוא טעות של סדר גודל. זו הסיבה שב-jammer ריאקטיבי לא מגדילים באפר 'ליתר ביטחון' אלא מנטרים lag ומדלגים קדימה.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q31",
+      "level": 4,
+      "type": "bug",
+      "prompt": "pop של SPSC עם cached head. ה-producer מפרסם head ב-release. על ARM ה-consumer מקבל מדי פעם ערכים ישנים או זבל. מה הבאג?",
+      "lang": "cpp",
+      "code": "bool try_pop(T& out) {\n    size_t t = tail_.load(std::memory_order_relaxed);\n    if (t == cachedHead_) {\n        cachedHead_ = head_.load(std::memory_order_relaxed);\n        if (t == cachedHead_) return false;\n    }\n    out = buf_[t & (N - 1)];\n    tail_.store(t + 1, std::memory_order_release);\n    return true;\n}",
+      "bugLine": 4,
+      "choices": [
+        "cachedHead_ חייב להיות std::atomic, כי הוא עותק של משתנה משותף",
+        "הקריאה של tail_ צריכה להיות acquire",
+        "הרענון של head_ צריך להיות acquire: relaxed לא מסתנכרן עם ה-release של ה-producer, ולכן הנתונים ב-slot לא מובטחים להיראות",
+        "cachedHead_ ישן יכול לגרום לקריאה מעבר ל-head האמיתי"
+      ],
+      "answer": 2,
+      "explanation": "הרענון של cachedHead_ הוא הנקודה היחידה שבה ה-consumer מסתנכרן עם ה-producer. relaxed לא יוצר synchronizes-with עם ה-release, ולכן הקריאה מה-slot יכולה לראות את התוכן שלפני שה-producer כתב אליו. צריך acquire בשורה הזו, וה-acquire הזה מכסה גם את כל ה-pops הבאים עד cachedHead_. cachedHead_ נגיש רק ל-consumer ולכן לא צריך להיות atomic, tail נכתב רק על ידי ה-consumer ולכן relaxed בקריאה שלו תקין, ו-cachedHead_ ישן הוא שמרני: הוא רק מראה פחות נתונים ממה שיש.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q32",
+      "level": 5,
+      "type": "output",
+      "prompt": "מונים רצים מסוג uint16_t, אחרי ש-head עטף. מה מודפס?",
+      "lang": "cpp",
+      "code": "uint16_t head = 3, tail = 65533;   // free-running, wrapped\nstd::cout << (head - tail) << ' ' << uint16_t(head - tail);",
+      "choices": [
+        "6 6",
+        "-65530 6",
+        "4294901766 6",
+        "6 -65530"
+      ],
+      "answer": 1,
+      "explanation": "uint16_t עובר integer promotion ל-int לפני החיסור, ולכן `head - tail` הוא 3 - 65533 = -65530 ב-int, ולא מודולו 2^16. רק cast חזרה ל-uint16_t מחזיר את 6 הנכון. בדיקה כמו `head - tail == N` תיכשל בשקט אחרי ה-wrap, וה-producer ידרוס נתונים. 4294901766 הוא מה שהיה יוצא אילו החיסור היה ב-unsigned int של 32 ביט, ואילו 6 6 מניח שהחיסור נעשה ברוחב של המונה.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q33",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "רוצים SPSC lock-free עם מדיניות overwrite oldest: ה-producer לעולם לא נחסם ולא זורק, ודורס את הישן. מה המימוש הנכון?",
+      "choices": [
+        "כשהבאפר מלא, ה-producer מקדם את tail בעצמו עם `tail.store(tail + 1)` ואז כותב",
+        "להשתמש ב-seq_cst בכל הפעולות, וכך ה-consumer לא יקרא slot שנמצא בכתיבה",
+        "ה-producer לוקח mutex רק כשהבאפר מלא, ושאר הזמן עובד lock-free",
+        "ה-producer לא נוגע ב-tail. ה-consumer מעתיק את ה-slot, ואחרי acquire fence קורא שוב את head; אם `head - t >= N` ההעתק אולי נדרס, ולכן הוא נזרק וה-consumer קופץ קדימה"
+      ],
+      "answer": 3,
+      "explanation": "ה-producer לא יכול לגעת ב-tail, כי אז יש לו שני כותבים וה-store של ה-consumer יכול לבטל את ההתקדמות. ordering, גם seq_cst, לא מונע מה-producer לכתוב ל-slot בזמן שה-consumer מעתיק אותו. mutex רק בצד ה-producer לא מגן על כלום כי ה-consumer לא לוקח אותו. הפתרון הוא אימות בסגנון seqlock: לקרוא, לבדוק שוב את head אחרי ה-fence, ולזרוק העתק שאולי נדרס. בשביל זה ה-producer צריך release fence בין פרסום head לכתיבה הבאה, וגישה ל-slot כ-atomic relaxed כדי שזה לא יהיה UB.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q34",
+      "level": 5,
+      "type": "code",
+      "prompt": "הוסף ל-SPSC ring buffer (מונים רצים, N חזקה של 2) את `push_bulk` ו-`pop_bulk`: כל אחת מעבירה עד n איברים (כמה שיש מקום או נתונים), עם memcpy בשני חלקים כשהבלוק חוצה את הסוף, ומחזירה כמה הועברו. עדכון אינדקס אחד לבלוק.",
+      "lang": "cpp",
+      "starter": "template <typename T, size_t N>\nclass Spsc {\n    alignas(64) std::atomic<size_t> head_{0};\n    alignas(64) std::atomic<size_t> tail_{0};\n    alignas(64) T buf_[N];\npublic:\n    size_t push_bulk(const T* src, size_t n);  // producer only\n    size_t pop_bulk(T* dst, size_t n);         // consumer only\n};",
+      "modelAnswer": "template <typename T, size_t N>\nclass Spsc {\n    static_assert(N > 0 && (N & (N - 1)) == 0, \"N must be a power of two\");\n    static_assert(std::is_trivially_copyable_v<T>, \"memcpy needs trivially copyable T\");\n    alignas(64) std::atomic<size_t> head_{0};\n    alignas(64) std::atomic<size_t> tail_{0};\n    alignas(64) T buf_[N];\npublic:\n    size_t push_bulk(const T* src, size_t n) {\n        size_t h = head_.load(std::memory_order_relaxed);\n        size_t t = tail_.load(std::memory_order_acquire);\n        n = std::min(n, N - (h - t));                 // free slots\n        if (n == 0) return 0;\n        size_t i = h & (N - 1);\n        size_t first = std::min(n, N - i);            // up to the end\n        std::memcpy(buf_ + i, src, first * sizeof(T));\n        std::memcpy(buf_, src + first, (n - first) * sizeof(T));\n        head_.store(h + n, std::memory_order_release); // publish once\n        return n;\n    }\n    size_t pop_bulk(T* dst, size_t n) {\n        size_t t = tail_.load(std::memory_order_relaxed);\n        size_t h = head_.load(std::memory_order_acquire);\n        n = std::min(n, h - t);                       // available\n        if (n == 0) return 0;\n        size_t i = t & (N - 1);\n        size_t first = std::min(n, N - i);\n        std::memcpy(dst, buf_ + i, first * sizeof(T));\n        std::memcpy(dst + first, buf_, (n - first) * sizeof(T));\n        tail_.store(t + n, std::memory_order_release);  // free slots once\n        return n;\n    }\n};",
+      "rubric": [
+        "חישוב נכון של מקום פנוי (`N - (h - t)`) ושל זמינים (`h - t`) עם מונים רצים",
+        "פיצול לשני memcpy כשהבלוק חוצה את הסוף, כולל המקרה שהחלק השני ריק",
+        "acquire על האינדקס של הצד השני ו-release אחד בסוף, אחרי ההעתקות",
+        "static_assert על חזקה של 2 ועל trivially copyable",
+        "O(n) להעתקה ו-O(1) סנכרון לבלוק; מזכיר את ה-trade-off של latency מול גודל בלוק"
+      ],
+      "explanation": "עדכון אחד של האינדקס לבלוק מחלק את עלות ה-coherence על כל הבלוק. ה-release אחרי שתי ההעתקות מבטיח שה-consumer רואה את כל הבלוק, וה-acquire על האינדקס של הצד השני מבטיח שה-producer לא דורס slots שעוד נקראים. ה-memcpy השני עם אורך 0 תקין, ו-`N - (h - t)` נכון גם אחרי wrap כי החשבון ב-unsigned.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.ring-buffers.q35",
+      "level": 5,
+      "type": "oral",
+      "prompt": "ה-SPSC שלך צריך להפוך ל-MPMC (כמה RX threads וכמה workers). הסבר למה הפתרון של SPSC לא מספיק, ואיך עובד bounded MPMC queue בסגנון Vyukov.",
+      "modelAnswer": "ב-SPSC לכל אינדקס כותב יחיד, ולכן מספיקים load/store עם acquire/release. עם כמה producers, שני threads קוראים אותו head וכותבים לאותו slot, ולכן צריך לתפוס slot אטומית. אבל גם תפיסה עם fetch_add על head לא מספיקה לבד: consumer שרואה head מתקדם לא יודע אם ה-producer שתפס את ה-slot כבר סיים לכתוב, כי producers מסיימים בסדר שונה. הפתרון של Vyukov: לכל slot יש sequence atomic, מאותחל לאינדקס שלו. producer קורא pos = enqueue_pos, ובודק את seq של slot[pos & mask]: אם seq == pos, ה-slot פנוי לסיבוב הזה, והוא מנסה CAS של enqueue_pos מ-pos ל-pos+1. אם הצליח, כותב את הנתונים ומפרסם seq = pos+1 ב-release. אם seq < pos, התור מלא; אם seq > pos, מישהו אחר הקדים אותו, והוא קורא pos מחדש. consumer עושה את ההפך: מחכה ל-seq == pos+1 (acquire), תופס עם CAS על dequeue_pos, קורא, ומפרסם seq = pos + N, כלומר ה-slot פנוי לסיבוב הבא. כך מספר הרצף משמש גם כדגל full/empty per-slot וגם כפרסום הנתונים, ואין ABA כי הוא עולה בכל סיבוב. המחיר: CAS על מונה משותף בכל פעולה, כלומר cache line אחת שכל ה-producers נלחמים עליה, וזה לא lock-free במובן החזק (producer שנעצר באמצע הכתיבה עוצר את ה-consumer של ה-slot הזה). חלופות: SPSC נפרד לכל זוג (N×M תורים, הכי מהיר והכי פשוט, ובדרך כלל מה שהייתי בוחר ל-RX threads), או sharding לפי producer. ב-pipeline של DSP המבנה הטבעי הוא בדרך כלל שרשרת של SPSC עם batching ולא תור MPMC אחד.",
+      "rubric": [
+        "מסביר שהכותב היחיד הוא מה שמאפשר SPSC בלי CAS, ומה נשבר עם שני producers",
+        "מבין שתפיסת slot לבדה לא מספיקה כי producers מסיימים בסדר שונה",
+        "מתאר sequence per-slot: בדיקת seq מול pos, CAS על האינדקס, ופרסום seq ב-release (pos+1 ו-pos+N)",
+        "מציין את המחיר: contention על ה-cache line של המונה, ולא wait-free",
+        "מציע חלופה: SPSC לכל זוג או sharding, ומנמק מתי"
+      ],
+      "explanation": "המראיין רוצה לשמוע למה הכותב היחיד הוא מה שמאפשר את SPSC, איך מספר רצף per-slot פותר גם את תפיסת ה-slot וגם את פרסום הנתונים, ומה המחיר ב-contention לעומת חלופות.",
+      "lesson": "dsp.ring-buffers",
+      "tags": [
+        "nvidia",
+        "microsoft"
       ]
     }
   ]

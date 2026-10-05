@@ -35,7 +35,177 @@
         "member מסוג reference מבטל את ה-copy assignment שנוצר אוטומטית; std::reference_wrapper פותר את זה",
         "lifetime extension: מתי היא חלה (קשירה ישירה, כולל לתת-אובייקט של temporary) ומתי לא (דרך פונקציה, ב-member initializer list של constructor)"
       ],
-      "diagram": "int x = 5;   int* p = &x;   int& r = x;\n\n  p [0x1000] ---> x [5]  <--- r (alias)\n  ^ own storage       ^ same object"
+      "diagram": "int x = 5;   int* p = &x;   int& r = x;\n\n  p [0x1000] ---> x [5]  <--- r (alias)\n  ^ own storage       ^ same object",
+      "details": [
+        {
+          "title": "המודל: pointer הוא אובייקט, reference הוא שם",
+          "body": "pointer הוא משתנה רגיל שהערך שלו הוא כתובת. יש לו storage משלו (8 בתים ב-64 ביט), אפשר לקחת את הכתובת שלו (וכך מקבלים pointer ל-pointer, `int**`), אפשר לשנות אותו כך שיצביע על אובייקט אחר (reseat), ומותר לו להחזיק nullptr. כדי להגיע לאובייקט עושים dereference עם `*p` או `p->member`.\n\nreference הוא שם נוסף (alias) לאובייקט שכבר קיים. הוא חייב להיקשר באתחול, ואחרי זה כל שימוש בשם הוא שימוש באובייקט עצמו. לכן `r = b` לא קושר את r מחדש אלא מבצע השמה של הערך של b לתוך האובייקש ש-r מייצג. `sizeof(r)` ו-`&r` נותנים את הגודל והכתובת של האובייקט המקורי. התקן לא קובע אם ל-reference יש storage בכלל; בפועל, reference שעובר כפרמטר או נשמר כ-member ממומש כ-pointer.\n\nלסימנים `&` ו-`*` יש שתי משמעויות לפי ההקשר:\n\n- בהצהרה הם חלק מהטיפוס: `int* p` מצהיר על pointer, `int& r` מצהיר על reference.\n- בביטוי, `&x` הוא address-of (מחזיר את הכתובת של x), ו-`*p` הוא dereference (מחזיר את האובייקט שהכתובת מצביעה עליו).\n\nnullptr (מ-C++11) הוא literal מטיפוס `std::nullptr_t`. הוא מומר לכל טיפוס pointer אבל לא ל-int. NULL לעומתו הוא מאקרו לקבוע שלם (implementation-defined: `0`, `0L` או `__null` של GCC), ולכן בקריאה `f(NULL)` כשיש overloads `f(int)` ו-`f(char*)` נבחרת לרוב דווקא גרסת ה-int. עם nullptr נבחרת גרסת ה-pointer.\n\nקריאת הצהרות: מתחילים מהשם וקוראים החוצה, ימינה ואז שמאלה. `const int* p` הוא \"p is a pointer to const int\". `int* const p` הוא \"p is a const pointer to int\". `int (*fp)(double)` הוא \"fp is a pointer to function taking double returning int\": הסוגריים הכרחיים, כי בלעדיהם `int* fp(double)` מצהיר על פונקציה שמחזירה int*. ההסקה של `auto` מורידה reference ו-const עליון: אם r הוא `int&` אז `auto a = r` יוצר עותק מסוג int, ורק `auto& b = r` יוצר alias."
+        },
+        {
+          "title": "Value categories וחוקי הקשירה",
+          "body": "לכל ביטוי ב-C++ יש טיפוס וגם value category:\n\n- lvalue: יש לו זהות (שם או כתובת), למשל משתנה, `*p`, `v[i]`. גם משתנה עם שם שהטיפוס שלו `int&&` הוא lvalue כשמשתמשים בו.\n- prvalue (pure rvalue): ערך בלי זהות, למשל `5`, `a + b`, קריאה לפונקציה שמחזירה by value.\n- xvalue (eXpiring): יש לו זהות אבל מסומן כ\"מותר לגנוב ממנו\", למשל `std::move(x)`, `static_cast<T&&>(x)`, או member של rvalue. lvalue ו-xvalue ביחד נקראים glvalue; prvalue ו-xvalue ביחד נקראים rvalue.\n\nחוקי קשירה של references:\n\n- `T&` נקשר רק ל-lvalue שאינו const.\n- `const T&` נקשר לכל דבר: lvalue, const lvalue ו-rvalue.\n- `T&&` נקשר רק ל-rvalue שאינו const. כדי לקשור אותו ל-lvalue צריך std::move.\n- `const T&&` נקשר ל-rvalue, כולל const rvalue. נדיר בפועל.\n\nב-overload resolution, כשכמה overloads מתאימים, rvalue מעדיף `T&&` על פני `const T&`, ו-lvalue שאינו const מעדיף `T&` על פני `const T&` (פחות הוספת const עדיפה). קשירה שמורידה const אסורה תמיד, ולכן const rvalue (למשל `static_cast<const int&&>(x)`) לא יכול להגיע ל-`int&&` ונופל ל-`const int&` אם אין `const int&&`.\n\nב-C++17 prvalue הוא \"מתכון לאתחול\" ולא אובייקט. temporary נוצר רק כשצריך אותו, למשל כשקושרים אליו reference; זה נקרא temporary materialization. זה גם הבסיס ל-guaranteed copy elision: `T x = T();` לא יוצר temporary בכלל. `decltype` על ביטוי בסוגריים חושף את הקטגוריה: `T&` ל-lvalue, `T&&` ל-xvalue, ו-`T` ל-prvalue."
+        },
+        {
+          "title": "Lifetime: dangling ו-lifetime extension",
+          "body": "reference או pointer שמצביעים לאובייקט שכבר נהרס נקראים dangling. השימוש בהם הוא undefined behavior (UB): התוכנית עשויה \"לעבוד\", להדפיס זבל, או להיכשל רק ב-O2. המקורות הנפוצים: החזרת reference/pointer ל-local, שמירת view (`std::string_view`, `std::span`) על temporary, ו-reallocation של מכולה.\n\ntemporary נהרס בסוף ה-full-expression שבו נוצר, כלומר בסוף הביטוי השלם (בדרך כלל עד ה-`;`). יש חריג אחד: lifetime extension. כש-`const T&` או `T&&` נקשר ישירות ל-temporary (prvalue), חיי ה-temporary מוארכים עד סוף חיי ה-reference. הכלל חל גם כשקושרים לתת-אובייקט של temporary, למשל `const int& r = make().v;`: אז האובייקט השלם חי.\n\nאיפה ההארכה לא חלה:\n\n- דרך פונקציה: `const S& r = g(make());` כש-g מקבלת ומחזירה reference. ה-temporary נקשר לפרמטר של g, ונהרס בסוף הביטוי. הקומפיילר לא יודע שה-reference שמוחזר מצביע עליו.\n- ב-member initializer list של constructor (member מסוג reference שנקשר ל-temporary): ה-temporary מת בסוף ה-constructor.\n- לא על xvalue: `const T& r = std::move(T());` לא מאריך, כי std::move הוא קריאה לפונקציה שמחזירה reference.\n- ב-`std::string_view sv = s1 + s2;`: string_view הוא אובייקט ולא reference, ולכן ה-std::string הזמני מת מיד ו-sv dangling.\n\nrange-based for מתורגם ל-`auto&& __range = <expr>;` ואחריו לולאה על begin/end. אם הביטוי הוא prvalue (`for (x : make())`), ההארכה עובדת. אם הביטוי הוא קריאה ל-member function על temporary שמחזירה reference (`for (x : make().items())`), ה-temporary מת לפני שהלולאה מתחילה: UB עד C++20 כולל. C++23 (P2718) תיקן את זה והאריך את כל ה-temporaries בביטוי ה-range.\n\nהחזרת local by value היא הדרך הנכונה: NRVO (named return value optimization) בונה את המשתנה ישירות במקום של ערך ההחזרה, ואם הוא לא מתבצע, נעשה move אוטומטי."
+        },
+        {
+          "title": "Pointer arithmetic, מערכים ו-decay",
+          "body": "pointer arithmetic נמדד ביחידות של איברים ולא בבתים: `p + 1` מתקדם ב-`sizeof(T)` בתים. `p[i]` מוגדר כ-`*(p + i)`. ההפרש `p - q` בין שני pointers לאותו מערך הוא מספר האיברים ביניהם, מטיפוס `std::ptrdiff_t`.\n\nהתחום החוקי: מ-`a` עד `a + N` כולל, כש-`a + N` היא הכתובת one-past-the-end. מותר ליצור אותה ולהשוות אליה (כך עובדים begin/end), אבל אסור לבצע עליה dereference. כבר יצירה של pointer מחוץ לתחום, כמו `a + N + 1` או `a - 1`, היא UB לפי [expr.add], גם אם אף פעם לא קוראים דרכו.\n\nהשוואות:\n\n- `==` ו-`!=` בין כל שני pointers מוגדרים. השוואה בין one-past-the-end של מערך לכתובת של אובייקט אחר שבמקרה צמוד אליו נותנת תוצאה unspecified.\n- `<`, `>` בין pointers לאובייקטים שאינם קשורים (לא אותו מערך, לא אותו אובייקט) נותנים תוצאה unspecified. זה לא UB, אבל אין הבטחה לסדר עקבי.\n- `std::less<T*>` (וגם greater, less_equal, greater_equal) מחויב לתת strict total order על כל ה-pointers, ולכן std::map<T*, X> ו-std::sort על pointers משתמשים בו.\n\narray decay: ביטוי מסוג מערך הופך כמעט בכל הקשר ל-pointer לאיבר הראשון. פרמטר שנכתב `int a[10]` הוא בעצם `int* a`, ולכן `sizeof(a)` בתוך הפונקציה הוא 8 ולא 40. כדי לשמור את הגודל מעבירים `int (&a)[N]` עם template על N, או std::span.\n\nסדר פעולות ו-sequencing: `*p++` מתפרש כ-`*(p++)`: post-increment מחזיר את הערך הישן של p ומקדם אותו, וה-dereference חל על הערך הישן. ב-C++17 האופרנדים של `<<` מוערכים משמאל לימין, ולכן שרשרת `cout << *p++ << *p` מוגדרת היטב. לפני C++17 היא הייתה unsequenced, כלומר UB."
+        },
+        {
+          "title": "Invalidation של references למכולות",
+          "body": "reference, pointer או iterator לאיבר של מכולה נשארים תקינים רק כל עוד האיבר לא זז בזיכרון. הכללים שכדאי לזכור:\n\n- std::vector: כש-`size() == capacity()` ומוסיפים איבר, נוצר buffer חדש (בדרך כלל פי 2 ב-libstdc++/libc++ ופי 1.5 ב-MSVC; זה לא נקבע בתקן), האיברים מועברים, והישן משוחרר. כל ה-references נפסלים. גם `reserve(n)` עם n גדול מה-capacity מבצע reallocation. insert או erase באמצע פוסלים את כל ה-references מנקודת השינוי ואילך, גם בלי reallocation, כי האיברים זזו.\n- std::deque: push_back ו-push_front פוסלים את כל ה-iterators, אבל references ו-pointers לאיברים קיימים נשארים תקינים, כי ה-deque מקצה בלוקים חדשים ולא מזיז איברים.\n- std::list ו-std::map/set: מבוססי nodes. הוספה לא פוסלת כלום, ומחיקה פוסלת רק את האיבר שנמחק.\n- std::unordered_map: rehash פוסל iterators, אבל references ו-pointers לאיברים נשארים תקינים, כי כל איבר יושב ב-node משלו.\n\nפתרונות: לקרוא ל-`reserve` מראש כשהגודל ידוע, להחזיק אינדקס במקום reference, או לקחת את ה-reference רק אחרי שכל ההוספות הסתיימו."
+        },
+        {
+          "title": "Aliasing ו-strict aliasing",
+          "body": "aliasing הוא מצב שבו שני שמות ניגשים לאותו זיכרון. בפונקציה שמקבלת `float* out, const float* a`, הקומפיילר חייב להניח ש-out ו-a עשויים לחפוף: כתיבה ל-`out[i]` עשויה לשנות את `a[i+1]`. לכן הוא לא יכול לטעון כמה איברים של a לרגיסטר וקטורי מראש. התוצאה: או שהוא מוותר על vectorization, או שהוא מייצר loop versioning: בדיקת חפיפה בזמן ריצה, וגרסה מוקטרת שרצה רק אם אין חפיפה.\n\nconst על pointer לא עוזר כאן: `const float* a` רק אוסר לכתוב דרך a, ולא מבטיח שאף pointer אחר לא כותב לאותו זיכרון. גם החלפה ל-`std::vector<float>&` לא עוזרת, כי שני references יכולים להיות לאותו vector. `__restrict` (הרחבה של GCC, Clang ו-MSVC; לא חלק מתקן C++) הוא הבטחה של המתכנת שאין חפיפה. אם ההבטחה שקרית, התוצאה UB.\n\nstrict aliasing הוא הכלל ההפוך ([basic.lval]): מותר לגשת לאובייקט רק דרך glvalue מהטיפוס שלו (או גרסה signed/unsigned/const שלו), או דרך `char`, `unsigned char` או `std::byte`. לכן הקומפיילר מניח ש-`float*` ו-`uint32_t*` לעולם לא מצביעים לאותו מקום. קריאה של float דרך `*reinterpret_cast<uint32_t*>(&f)` היא UB ועלולה להישבר באופטימיזציה.\n\ntype punning חוקי (לקרוא את הביטים של אובייקט כטיפוס אחר): `std::memcpy` לתוך משתנה מהטיפוס החדש, או `std::bit_cast` מ-C++20 (שמחייב גדלים שווים וטיפוסים trivially copyable, ועובד גם ב-constexpr). הקומפיילר הופך את שניהם להוראת mov אחת, כך שאין עלות."
+        },
+        {
+          "title": "בחירת סוג פרמטר, ו-reference כ-member",
+          "body": "סוג הפרמטר הוא חוזה:\n\n- `const T&`: קלט חובה, קריאה בלבד, בלי העתקה.\n- `T&`: in-out חובה; הפונקציה משנה את האובייקט של הקורא.\n- `T*` או `const T*`: אופציונלי (nullptr הוא ערך משמעותי), בלי בעלות.\n- `std::span<const T>` (C++20): תצוגה (view) על רצף רציף, מחליפה זוג pointer+size ועובדת עם vector, std::array ומערך C. const של ה-span עצמו לא הופך את האיברים ל-const; לשם כך כותבים `span<const T>`.\n- `std::unique_ptr<T>` by value: הפונקציה לוקחת בעלות (sink). הקורא חייב לכתוב std::move, וזה גלוי בקוד.\n- `std::shared_ptr<T>` by value: רק אם הפונקציה באמת שומרת עותק. כל עותק עושה atomic increment ו-decrement ל-refcount, וזה יקר ב-hot path.\n- טיפוס קטן ו-trivially copyable (int, double, std::complex<float>) עדיף by value: אין indirection ואין aliasing. כמה \"קטן\" תלוי ב-ABI: ב-System V x86-64 (Linux) struct עד 16 בתים עובר ברגיסטרים; ב-Windows x64 רק עד 8 בתים.\n- `std::optional<T>` by value מעתיק את T, ולכן הוא לא תחליף ל-`const T*` כשמדובר באובייקט גדול.\n\nreference כ-member: ה-copy assignment וה-move assignment שהקומפיילר יוצר מוגדרים כ-deleted, כי אי אפשר לקשור reference מחדש (אותו דבר עם member מסוג const). ה-copy constructor כן קיים, כי הוא מאתחל reference חדש. לכן אפשר לבצע push_back של אובייקט כזה ל-vector, אבל std::sort, שדורש move assignment, לא יתקמפל. גם `mutable` לא עוזר: הוא אסור על member מסוג reference. הפתרון הוא `std::reference_wrapper<T>`, שמחזיק pointer בפנים, הוא assignable, ומתנהג כמו reference (`.get()` או המרה ל-`T&`). חלופה: `T*`."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מעקב אחרי pointer arithmetic",
+          "body": "נתון מערך של 4 int (כל אחד 4 בתים) בכתובת 0x100: `a = {3, 6, 9, 12}`, ו-`p = a`.\n\n- `*p`: p מצביע על a[0] בכתובת 0x100, הערך 3.\n- `*p++`: מחזיר 3 (הערך הישן), ואחר כך p עובר ל-a[1] בכתובת 0x104.\n- `*p`: עכשיו 6.\n- `p[2]`: זה `*(p + 2)`, כלומר a[3], הערך 12. p לא זז.\n- `p - a`: 1 (מספר איברים, לא 4 בתים).\n- `p + 3`: הכתובת 0x110, כלומר a+4: one-past-the-end. מותר ליצור, אסור לקרוא.\n\nמה לומדים: `p++` הוסיף 4 לכתובת אבל 1 לאינדקס. `p + 4` (כלומר a+5) כבר היה UB, גם בלי לקרוא דרכו."
+        },
+        {
+          "title": "דוגמה: השמה ל-reference לעומת השמה ל-pointer",
+          "body": "`int a = 10, b = 20; int& r = a; int* p = &a;`\n\n1. `r = b;` מעתיק 20 לתוך a. עכשיו a=20, b=20, ו-r עדיין שם של a.\n2. `b = 30;` משנה רק את b. a ו-r נשארים 20.\n3. `p = &b;` משנה את ה-pointer עצמו: עכשיו p מצביע על b. a לא השתנה.\n4. `*p = 40;` כותב דרך p ל-b. עכשיו a=20, b=40, r=20, *p=40.\n\nמה לומדים: ל-reference אין פעולת \"הצבע למקום אחר\". כל פעולה עליו היא פעולה על האובייקט. ל-pointer יש שתי רמות: לשנות את p (reseat) או לשנות את *p."
+        },
+        {
+          "title": "דוגמה: reallocation של vector",
+          "body": "נניח `std::vector<int> v = {1, 2, 3};` עם capacity 3, וה-buffer בכתובת 0x500. לוקחים `int& first = v[0];`, כלומר first הוא alias לכתובת 0x500.\n\n1. `v.push_back(4)`: size (3) שווה ל-capacity (3), ולכן ה-vector מקצה buffer חדש, למשל בכתובת 0x800 עם capacity 6 ב-libstdc++.\n2. האיברים 1, 2, 3 מועברים ל-0x800, ה-4 נבנה אחריהם, וה-buffer ב-0x500 משוחרר.\n3. first עדיין מצביע על 0x500, זיכרון ששוחרר. קריאה דרכו היא UB.\n\nאם היינו קוראים קודם ל-`v.reserve(4)`, ה-push_back לא היה מבצע reallocation ו-first היה נשאר תקין. עם std::deque במקום vector, ה-reference היה נשאר תקין גם בלי reserve."
+        },
+        {
+          "title": "דוגמה: מתי ה-temporary חי",
+          "body": "נתון `struct S { int v; }; S make();` ו-`const S& id(const S& s) { return s; }`.\n\n- `const S& r1 = make();` ה-prvalue עובר materialization ל-temporary, r1 נקשר אליו ישירות, ה-temporary חי עד סוף ה-scope של r1. תקין.\n- `const int& r2 = make().v;` קשירה ישירה לתת-אובייקט של temporary: כל ה-S חי כל עוד r2 חי. תקין.\n- `const S& r3 = id(make());` ה-temporary נקשר לפרמטר s ומת ב-`;`. r3 dangling.\n- `std::string_view sv = std::string(\"ab\") + \"c\";` ה-string הזמני מת ב-`;`. sv dangling.\n\nכלל אצבע: הארכה קורית רק כשה-reference שאתה מצהיר עליו נקשר בעצמו ל-temporary, לא דרך שום פונקציה באמצע."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "pointer",
+          "def": "אובייקט שמחזיק כתובת. יש לו storage משלו, אפשר לשנות אותו (reseat), והוא יכול להיות nullptr. ניגשים לאובייקט דרכו עם * או ->."
+        },
+        {
+          "term": "reference",
+          "def": "שם נוסף (alias) לאובייקט קיים. חייב אתחול, אי אפשר לקשור אותו מחדש, ואין reference תקין ל-null. השמה אליו משנה את האובייקט."
+        },
+        {
+          "term": "nullptr / std::nullptr_t",
+          "def": "literal של null pointer מ-C++11, מטיפוס std::nullptr_t. מומר לכל טיפוס pointer אבל לא ל-int, ולכן לא נופל ל-overload של int כמו NULL."
+        },
+        {
+          "term": "dereference",
+          "def": "גישה לאובייקט שה-pointer מצביע עליו, עם *p או p->m. על nullptr, על pointer תלוי או על one-past-the-end זה UB."
+        },
+        {
+          "term": "const int* מול int* const",
+          "def": "const משמאל ל-* חל על האובייקט (אסור לכתוב דרך p); const מימין ל-* חל על ה-pointer עצמו (אסור לשנות את p). קוראים מימין לשמאל."
+        },
+        {
+          "term": "function pointer",
+          "def": "pointer לפונקציה, למשל int (*fp)(double). הסוגריים סביב *fp הכרחיים; בלעדיהם זו הצהרה על פונקציה שמחזירה pointer."
+        },
+        {
+          "term": "lvalue / prvalue / xvalue",
+          "def": "value categories. lvalue: יש זהות (משתנה, *p). prvalue: ערך בלי זהות (5, f() by value). xvalue: יש זהות ומותר לגנוב ממנו (std::move(x)). משתנה עם שם מטיפוס T&& הוא lvalue."
+        },
+        {
+          "term": "rvalue reference (T&&)",
+          "def": "reference שנקשר רק ל-rvalue. משמש ל-move semantics ול-overload שמבדיל בין אובייקט זמני לקבוע. כדי לקשור אותו ל-lvalue צריך std::move."
+        },
+        {
+          "term": "dangling reference/pointer",
+          "def": "reference או pointer לאובייקט שכבר נהרס (local שיצא מ-scope, temporary, buffer ששוחרר). כל שימוש בו הוא UB."
+        },
+        {
+          "term": "full-expression",
+          "def": "הביטוי השלם שאינו חלק מביטוי גדול יותר, בדרך כלל עד ה-;. temporaries נהרסים בסופו, אלא אם חלה lifetime extension."
+        },
+        {
+          "term": "lifetime extension",
+          "def": "כש-const T& או T&& נקשר ישירות ל-temporary (או לתת-אובייקט שלו), ה-temporary חי כמו ה-reference. לא חל דרך ערך החזרה של פונקציה, דרך std::move, או ב-member initializer list."
+        },
+        {
+          "term": "temporary materialization",
+          "def": "ב-C++17 prvalue אינו אובייקט; temporary נוצר ממנו רק כשצריך, למשל בקשירת reference. זה הבסיס ל-guaranteed copy elision."
+        },
+        {
+          "term": "NRVO",
+          "def": "Named Return Value Optimization: הקומפיילר בונה את ה-local המוחזר ישירות במקום ערך ההחזרה. לא מובטח; אם לא קורה, מתבצע move אוטומטי. לכן מחזירים local by value ולא by reference."
+        },
+        {
+          "term": "array decay",
+          "def": "ביטוי מסוג מערך הופך ל-pointer לאיבר הראשון (כמעט בכל הקשר, כולל העברה לפונקציה). הגודל הולך לאיבוד, ולכן sizeof בתוך הפונקציה נותן את גודל ה-pointer."
+        },
+        {
+          "term": "one-past-the-end",
+          "def": "הכתובת a+N במערך של N איברים. מותר ליצור אותה ולהשוות אליה (end()), אסור לבצע עליה dereference. כל pointer מחוץ ל-[a, a+N] הוא UB כבר ביצירה."
+        },
+        {
+          "term": "std::ptrdiff_t",
+          "def": "טיפוס signed שמחזיק הפרש בין שני pointers לאותו מערך, נמדד במספר איברים."
+        },
+        {
+          "term": "UB / unspecified / implementation-defined",
+          "def": "UB: אין שום דרישה על התוכנית, והקומפיילר רשאי להניח שזה לא קורה. unspecified: אחת מכמה תוצאות חוקיות, בלי חובת תיעוד. implementation-defined: כמו unspecified אבל המימוש חייב לתעד (למשל sizeof(long))."
+        },
+        {
+          "term": "std::less<T*>",
+          "def": "function object שמבטיח strict total order על כל ה-pointers, גם כש-< על pointers לא קשורים נותן תוצאה unspecified. משמש ב-std::map ו-std::sort."
+        },
+        {
+          "term": "iterator/reference invalidation",
+          "def": "פעולה על מכולה שגורמת ל-iterators או references לאיברים להפסיק להיות תקינים. vector: reallocation או insert/erase באמצע. deque: push בקצוות פוסל iterators בלבד. list/map: רק האיבר שנמחק."
+        },
+        {
+          "term": "capacity / reserve",
+          "def": "capacity הוא מספר האיברים שה-buffer של vector יכול להכיל בלי הקצאה. reserve(n) מקצה מראש, ולכן הוספות עד n לא יגרמו ל-reallocation."
+        },
+        {
+          "term": "aliasing",
+          "def": "שני שמות או pointers שניגשים לאותו זיכרון. כשהקומפיילר לא יכול לשלול aliasing הוא מוותר על vectorization או מוסיף בדיקת חפיפה (loop versioning)."
+        },
+        {
+          "term": "loop versioning",
+          "def": "אופטימיזציה שבה הקומפיילר מייצר שתי גרסאות של לולאה ובדיקה בזמן ריצה: גרסה מוקטרת כשאין חפיפה בין ה-buffers, וגרסה סקלרית אחרת."
+        },
+        {
+          "term": "__restrict",
+          "def": "הרחבה של GCC, Clang ו-MSVC (לא תקן C++) שבה המתכנת מבטיח שה-pointer הוא הדרך היחידה לגשת לזיכרון שלו. מאפשר vectorization; הפרה של ההבטחה היא UB."
+        },
+        {
+          "term": "strict aliasing",
+          "def": "כלל [basic.lval]: מותר לגשת לאובייקט רק דרך הטיפוס שלו (או גרסת signed/unsigned/const), או דרך char, unsigned char ו-std::byte. גישה דרך טיפוס אחר היא UB."
+        },
+        {
+          "term": "type punning: memcpy / std::bit_cast",
+          "def": "הדרכים החוקיות לפרש את הביטים של אובייקט כטיפוס אחר. bit_cast (C++20) דורש גדלים שווים וטיפוסים trivially copyable ועובד ב-constexpr. שניהם מתקמפלים להוראת mov."
+        },
+        {
+          "term": "std::span",
+          "def": "view שאינו בעלים על רצף רציף: pointer ו-size. מ-C++20. const של ה-span לא הופך את האיברים ל-const; לשם כך span<const T>."
+        },
+        {
+          "term": "std::string_view",
+          "def": "view לקריאה בלבד על תווים (pointer ו-size), לא בעלים. אינו reference, ולכן לא מאריך חיים של std::string זמני."
+        },
+        {
+          "term": "std::reference_wrapper",
+          "def": "עטיפה שמחזיקה pointer ומתנהגת כמו reference, אבל ניתנת להשמה ולהעתקה. מאפשרת לשים 'references' במכולות ולבצע עליהן sort."
+        },
+        {
+          "term": "range-based for",
+          "def": "מתורגם ל-auto&& __range = expr ואחריו לולאה על begin/end. temporary שנוצר בתוך expr ולא נקשר ישירות ל-__range מת לפני הלולאה (עד C++20); C++23 מאריך את כולם."
+        },
+        {
+          "term": "std::enable_if / is_convertible",
+          "def": "כלים של templates להגבלת constructor: enable_if_t<cond> קיים רק כש-cond true (SFINAE), ו-is_convertible_v<U(*)[], T(*)[]> בודק שהמרה מ-U ל-T היא רק הוספת const. כך std::span מאפשר span<const int> מ-vector<int> אבל לא span<long>."
+        }
+      ]
     }
   ],
   "questions": [
@@ -385,6 +555,181 @@
       ],
       "answer": 0,
       "explanation": "ה-copy assignment שנוצר אוטומטית מוגדר כ-deleted כשיש member מסוג reference (וכך גם עם member const), כי אי אפשר לקשור reference מחדש. ה-copy constructor כן קיים, כי הוא מאתחל reference חדש, ולכן push_back עובד. sort לעומת זאת דורש move assignment. std::reference_wrapper מחזיק pointer בפנים, ולכן הוא assignable ומתנהג כמו reference.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד של `&` ושל `*` בשתי השורות `int* p = &x;` ו-`*p = 4;`?",
+      "choices": [
+        "`&` מצהיר ש-p הוא reference ל-x; `*` בשורה השנייה משנה את הכתובת ש-p מחזיק ל-4",
+        "`&` לוקח את הכתובת של x; `*` בשורה השנייה משנה את p כך שיצביע לכתובת 4",
+        "`&` לוקח את הכתובת של x; `*` בשורה השנייה ניגש לאובייקט ש-p מצביע עליו, ולכן x הופך ל-4",
+        "בשתי השורות `&` ו-`*` הם חלק מהטיפוס, ולכן השורה השנייה היא הצהרה חדשה"
+      ],
+      "answer": 2,
+      "explanation": "בביטוי, `&x` הוא address-of ומחזיר את הכתובת של x, ו-`*p` הוא dereference ומחזיר את האובייקט עצמו, ולכן ההשמה כותבת ל-x. בהצהרה `int* p` הסימן `*` הוא חלק מהטיפוס. כדי לשנות את הכתובת עצמה כותבים `p = ...` בלי `*`.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q22",
+      "level": 1,
+      "type": "short",
+      "prompt": "אחרי `int x = 3; int* p = &x; *p = 8;` מה הערך של x?",
+      "accept": [
+        "8"
+      ],
+      "explanation": "p מחזיק את הכתובת של x, ו-`*p = 8` כותב לאובייקט שבכתובת הזו, כלומר ל-x. x הוא 8. p עצמו לא השתנה.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q23",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה ב-C++11 ומעלה עדיף לכתוב `nullptr` ולא `NULL` או `0`?",
+      "choices": [
+        "nullptr מצביע לכתובת 0 שמערכת ההפעלה מגינה עליה, ו-NULL לא מבטיח זאת",
+        "NULL הוצא מהתקן ב-C++11 ולא מתקמפל יותר",
+        "dereference של nullptr מוגדר וזורק exception, בניגוד ל-NULL",
+        "nullptr הוא מטיפוס std::nullptr_t שמומר לכל pointer אבל לא ל-int, ולכן ב-overloads של f(int) ו-f(char*) הוא בוחר את גרסת ה-pointer"
+      ],
+      "answer": 3,
+      "explanation": "NULL הוא מאקרו לקבוע שלם (implementation-defined: 0, 0L או __null), ולכן f(NULL) נוטה לבחור f(int). nullptr הוא literal עם טיפוס משלו שמומר רק ל-pointers. NULL עדיין קיים בתקן. dereference של nullptr הוא UB ולא exception.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q24",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int x = 1, y = 2;\nint* p = &x;\nint** pp = &p;\n*pp = &y;\n**pp = 5;\nstd::cout << x << y << *p;",
+      "choices": [
+        "525",
+        "125",
+        "155",
+        "552"
+      ],
+      "answer": 2,
+      "explanation": "pp מצביע על p. `*pp = &y` כותב ל-p עצמו, ועכשיו p מצביע על y. `**pp` הוא האובייקט ש-p מצביע עליו, כלומר y, ולכן y הופך ל-5. x לא נגע ונשאר 1, ו-*p הוא y, כלומר 5. הפלט: 155.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q25",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד אמור להכפיל כל איבר ב-2 ולהדפיס 246, אבל מדפיס 123. מה הבאג?",
+      "code": "std::vector<int> v = {1, 2, 3};\nfor (auto x : v)\n  x *= 2;\nfor (int x : v) std::cout << x;",
+      "bugLine": 2,
+      "choices": [
+        "`auto x` יוצר עותק של כל איבר, וההכפלה חלה על העותק; צריך `auto& x`",
+        "range-for על vector מחזיר תמיד const references, ולכן ההכפלה נזרקת בשקט",
+        "שינוי איברים בתוך range-for פוסל את ה-iterators, והקומפיילר מבטל את השינוי",
+        "`auto` מסיק `int&&`, ולכן x הוא temporary שנהרס לפני ההכפלה"
+      ],
+      "answer": 0,
+      "explanation": "ההסקה של auto מורידה reference: x הוא int חדש שמאותחל מכל איבר, והשינוי שלו לא נוגע ב-vector. `auto& x` נקשר לאיבר עצמו. על vector שאינו const, range-for נותן references שאפשר לכתוב דרכם, ושינוי ערך של איבר לא פוסל iterators.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q26",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int x = 1;\nint& r = x;\nauto a = r;\nauto& b = r;\na = 5;\nb = 7;\nstd::cout << x << a;",
+      "choices": [
+        "57",
+        "75",
+        "77",
+        "55"
+      ],
+      "answer": 1,
+      "explanation": "`auto a = r` מסיק int (ה-reference יורד) ויוצר עותק בערך 1. `auto& b = r` מסיק int&, ו-b הוא alias של x. `a = 5` משנה רק את העותק, ו-`b = 7` משנה את x. הפלט: x=7, a=5.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q27",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג?",
+      "code": "std::string make_name();\n\nint main() {\n  std::string_view sv = make_name() + \"-v2\";\n  std::cout << sv << '\\n';\n}",
+      "bugLine": 4,
+      "choices": [
+        "string_view מאריך את חיי ה-temporary כמו const std::string&, ולכן אין בעיה מלבד העתקה מיותרת",
+        "operator+ של std::string עם const char* מחזיר const char*, ולכן sv מצביע לליטרל ולא לתוצאה",
+        "string_view לא null-terminated, ולכן ההדפסה תמשיך לקרוא אחרי סוף המחרוזת",
+        "ה-std::string הזמני נהרס בסוף ה-full-expression; sv מצביע לזיכרון ששוחרר, וההדפסה היא UB"
+      ],
+      "answer": 3,
+      "explanation": "התוצאה של operator+ היא std::string זמני. string_view הוא אובייקט שמחזיק pointer ו-size, ולא reference, ולכן lifetime extension לא חלה. ה-string נהרס ב-; ו-sv dangling. ה-<< של string_view משתמש ב-size ולא מחפש '\\0'. התיקון: `std::string name = make_name() + \"-v2\";`.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q28",
+      "level": 4,
+      "type": "multi",
+      "prompt": "מחזיקים reference לאיבר קיים במכולה (האיבר עצמו לא נמחק). אחרי אילו פעולות ה-reference נפסל (invalidated) לפי התקן? (כל פעולה בנפרד)",
+      "choices": [
+        "`std::vector::push_back` כש-`size() == capacity()`",
+        "`std::vector::insert` בתחילת ה-vector, כשיש capacity פנוי",
+        "`std::deque::push_back`",
+        "`std::unordered_map::insert` שגורם ל-rehash",
+        "`std::list::push_front`",
+        "`std::vector::reserve(n)` עם n גדול מה-capacity הנוכחי"
+      ],
+      "answer": [
+        0,
+        1,
+        5
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "ב-vector, reallocation (גם ב-push_back מלא וגם ב-reserve שמגדיל) פוסל הכול, ו-insert פוסל את כל ה-references מנקודת ההכנסה ואילך כי האיברים זזו. deque::push_back פוסל iterators אבל לא references, כי איברים קיימים לא זזים. rehash ב-unordered_map פוסל iterators בלבד, כי כל איבר נמצא ב-node משלו. ב-list הוספה לא פוסלת כלום.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q29",
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מה הבאג ב-C++20?",
+      "code": "struct Batch {\n  std::vector<int> v;\n  const std::vector<int>& items() const { return v; }\n};\nBatch load();\n\nint main() {\n  for (int x : load().items())\n    std::cout << x;\n}",
+      "bugLine": 8,
+      "choices": [
+        "range-for מאריך את חיי כל ה-temporaries בביטוי ה-range כבר מ-C++11, ולכן הבעיה היחידה היא העתקה של ה-vector",
+        "הלולאה מתורגמת ל-`auto&& __range = load().items();`. ה-Batch הזמני נקשר רק ל-this של items() ומת בסוף האתחול, ו-__range dangling. UB עד C++20; C++23 מאריך את ה-temporaries בביטוי ה-range",
+        "items() מחזיר const&, ולכן x חייב להיות `const int` אחרת הקוד לא מתקמפל",
+        "load() מחזיר prvalue, ו-guaranteed copy elision של C++17 משאיר את ה-Batch חי עד סוף main"
+      ],
+      "answer": 1,
+      "tags": [
+        "nvidia"
+      ],
+      "explanation": "lifetime extension חלה רק על temporary שנקשר ישירות ל-reference. כאן __range נקשר ל-reference שמוחזר מ-items(), והקומפיילר לא מאריך את ה-Batch. GCC מזהיר על כך (-Wdangling-reference), ובהרצה זה עלול לקרוס. C++23 (P2718) שינה את הכלל. העתקת int מ-const int& תקינה. copy elision לא משנה את חיי ה-temporary. תיקון ב-C++20: `auto b = load(); for (int x : b.items())`.",
+      "lesson": "cpp.pointers-refs"
+    },
+    {
+      "id": "cpp.pointers-refs.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "הסבר את ה-value categories ב-C++17 (lvalue, xvalue, prvalue), ואיך הן קשורות לחוקי הקשירה של references, ל-lifetime extension ול-guaranteed copy elision.",
+      "modelAnswer": "לכל ביטוי יש טיפוס ו-value category. glvalue הוא ביטוי עם זהות; rvalue הוא ביטוי שמותר להעביר ממנו משאבים. lvalue הוא glvalue שאינו rvalue: משתנה, *p, v[i], וגם משתנה עם שם מטיפוס T&&. xvalue הוא גם glvalue וגם rvalue: std::move(x), static_cast<T&&>(x), קריאה לפונקציה שמחזירה T&&, member של rvalue. prvalue הוא rvalue בלי זהות: literal, a+b, f() שמחזירה by value. decltype((e)) נותן T&, T&& ו-T בהתאמה. חוקי קשירה: T& רק ל-lvalue לא-const; const T& לכל דבר; T&& רק ל-rvalue לא-const. ב-overload resolution, rvalue מעדיף T&& על const T&, ו-lvalue לא-const מעדיף T&. ב-C++17 prvalue אינו אובייקט אלא מתכון לאתחול: אם הוא מאתחל אובייקט מאותו טיפוס, האובייקט נבנה ישירות במקום (guaranteed copy elision, גם בלי copy/move constructor). temporary נוצר רק ב-temporary materialization, למשל כשקושרים אליו reference או ניגשים ל-member שלו, ואז הוא xvalue. lifetime extension חלה כשה-reference נקשר ישירות ל-temporary שנוצר מ-prvalue (או לתת-אובייקט שלו). היא לא חלה על xvalue שמגיע מפונקציה: const T& r = std::move(T()) הוא dangling, וכך גם reference שמוחזר מ-getter על temporary. דוגמה מעשית: for (x : make().items()) תלוי עד C++20.",
+      "rubric": [
+        "מגדיר נכון lvalue, xvalue ו-prvalue עם דוגמה לכל אחד, כולל 'משתנה T&& עם שם הוא lvalue'",
+        "חוקי קשירה ל-T&, const T&, T&& וההעדפה ב-overload resolution",
+        "C++17: prvalue כמתכון, temporary materialization ו-guaranteed copy elision",
+        "lifetime extension חלה רק בקשירה ישירה ל-temporary, לא דרך std::move או ערך החזרה של פונקציה",
+        "דוגמה מעשית ל-dangling (getter על temporary, range-for, string_view)"
+      ],
+      "explanation": "מראיין סניור בודק אם אתה מבין את המנגנון שמאחורי move, copy elision ו-dangling, ולא רק זוכר דוגמאות. הנקודה העדינה היא ש-xvalue מפונקציה לא מאריך חיים.",
+      "tags": [
+        "nvidia"
+      ],
       "lesson": "cpp.pointers-refs"
     }
   ]

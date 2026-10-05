@@ -34,7 +34,193 @@
         "חלופות: CRTP (static), std::variant עם std::visit (קבוצה סגורה), type erasure",
         "ב-CUDA, virtual functions על device נתמכות רק כשהאובייקט נוצר על ה-device. ב-kernels חמים נמנעים מהן ומשתמשים ב-templates"
       ],
-      "diagram": "obj D:  [vptr]---> vtable D: [~D][f=D::f][g=B::g]\n        [B members]\n        [D members]\nb->f(): load vptr, load slot, call"
+      "diagram": "obj D:  [vptr]---> vtable D: [~D][f=D::f][g=B::g]\n        [B members]\n        [D members]\nb->f(): load vptr, load slot, call",
+      "details": [
+        {
+          "title": "טיפוס סטטי, טיפוס דינמי ומתי יש dispatch",
+          "body": "לכל ביטוי יש טיפוס סטטי, מה שהקומפיילר רואה בקוד, וטיפוס דינמי, הטיפוס של האובייקט האמיתי בזמן ריצה. ב-`B* p = new D;` הטיפוס הסטטי של `*p` הוא B והדינמי הוא D. הם יכולים להיות שונים רק דרך pointer או reference. אובייקט by value תמיד מהטיפוס שהוצהר.\n\ndynamic dispatch קורה רק כששני תנאים מתקיימים: המתודה `virtual`, והקריאה נעשית דרך pointer או reference. אחרת הקריאה נפתרת סטטית לפי הטיפוס הסטטי. גם קריאה מפורשת עם שם מחלקה, כמו `B::f()` מתוך `D::f`, מבטלת את ה-dispatch וקוראת בדיוק למימוש של B. זו הדרך הרגילה 'להרחיב' את המימוש של ה-base.\n\nפונקציה שמוצהרת virtual ב-base נשארת virtual בכל derived, גם בלי המילה virtual. מה שלא יכול להיות virtual: constructors (עוד אין אובייקט שיש לו טיפוס דינמי), static member functions (אין this), ו-member function templates (אי אפשר לבנות vtable עם מספר לא ידוע של instantiations). destructors, operators ו-const member functions יכולים להיות virtual.\n\nהרשאות גישה (public/private) נבדקות סטטית, לפי הטיפוס שדרכו קוראים. אם D דורס את f כ-private, קריאה דרך `B&` שבה f היא public עוברת קומפילציה ומגיעה ל-D::f. קריאה ישירה `d.f()` לא תתקמפל."
+        },
+        {
+          "title": "vptr ו-vtable: מה יש בזיכרון",
+          "body": "התקן לא מגדיר איך מממשים virtual, אבל Itanium ABI (Linux, macOS) ו-MSVC ABI עושים את אותו הדבר בעיקרון:\n\n- לכל class פולימורפי יש vtable אחת, סטטית, ב-read-only data: מערך של pointers לפונקציות, slot לכל virtual function, ובנוסף (ב-Itanium) offset-to-top ו-pointer ל-type_info לטובת RTTI.\n- בכל אובייקט יש vptr נסתר, בדרך כלל בתחילת האובייקט, שמצביע ל-vtable של הטיפוס הדינמי. ב-64 ביט הוא 8 בתים ומעלה את ה-alignment של המחלקה ל-8.\n- קריאה `p->f()`: טוענים את ה-vptr מ-`*p`, טוענים את ה-slot של f (offset קבוע שנקבע בקומפילציה), וקוראים בעקיפין. אין חיפוש לפי שם.\n\nה-constructor הוא שכותב את ה-vptr. בזמן הבנייה הוא מעודכן שלב אחר שלב: קודם ל-vtable של ה-base, ואחרי שה-base סיים, ל-vtable של ה-derived. ה-destructor עושה את ההפך.\n\nkey function: כדי לא לייצר את ה-vtable בכל translation unit, Itanium ABI בוחר את ה-virtual function הראשונה שאינה inline ואינה pure, ומייצר את ה-vtable רק ב-TU שמגדיר אותה. אם היא מוצהרת ולא מוגדרת, מקבלים undefined reference to vtable. אם אין key function (הכל inline), ה-vtable נוצר בכל TU כ-COMDAT וה-linker משאיר עותק אחד."
+        },
+        {
+          "title": "override, final, הסתרת שמות ו-default arguments",
+          "body": "כדי לדרוס, החתימה חייבת להתאים בדיוק: שם, טיפוסי פרמטרים, cv-qualifiers של הפונקציה (`const`) ו-ref-qualifiers. הבדל קטן יוצר פונקציה חדשה. גרוע מזה: פונקציה בשם f ב-derived מסתירה (name hiding) את כל ה-overloads בשם f של ה-base. קריאה `d.f(1)` מוצאת קודם את השם ב-D, ושם נעצר החיפוש, גם אם ב-B יש f(int) שמתאימה יותר. `using B::f;` מחזיר את ה-overloads של ה-base.\n\n`override` אומר לקומפיילר 'זו חייבת לדרוס virtual', ושגיאה אחרת. `final` על מתודה אוסר דריסה נוספת, ועל class אוסר לרשת ממנו. בונוס: כשהטיפוס הסטטי הוא מחלקה final, הקומפיילר יודע את הטיפוס הדינמי ויכול לבצע devirtualization.\n\nטיפוס החזרה חייב להיות זהה, עם חריג אחד: covariant return types. אם ה-base מחזיר `B*` או `B&`, ה-derived רשאי להחזיר `D*` או `D&`, כש-B הוא base חד-משמעי ונגיש של D, ו-D לא יותר cv-qualified. זה עובד רק ל-raw pointers ו-references, לא ל-`unique_ptr<D>`.\n\ndefault arguments הם חלק מהקריאה, לא מהפונקציה: הקומפיילר מכניס אותם לפי הטיפוס הסטטי של הביטוי. לכן `b.f()` דרך `B&` מקבל את ה-default של B, גם כשהגוף שרץ הוא של D. ההמלצה: לא לשים default arguments שונים בפונקציות שדורסות."
+        },
+        {
+          "title": "virtual destructor, abstract classes ו-slicing",
+          "body": "pure virtual function מסומנת `= 0`. מחלקה עם לפחות אחת כזו היא abstract: אי אפשר ליצור ממנה אובייקט, רק לרשת. pure virtual יכולה בכל זאת לקבל גוף, ואז אפשר לקרוא לו במפורש `I::run()`. pure virtual destructor חייב גוף, כי ה-destructor של כל derived קורא ל-destructor של ה-base באופן לא-וירטואלי.\n\n`delete p` דרך `Base*` כשהטיפוס הדינמי הוא Derived ול-Base אין virtual destructor הוא UB. בפועל ~Derived לא רץ (members דולפים) ולפעמים משוחרר גודל שגוי. הכלל המקובל: destructor של base פולימורפי הוא public virtual, או protected non-virtual אם לא מוחקים דרך ה-base. קומפיילרים מזהירים עם `-Wdelete-non-virtual-dtor`.\n\nslicing: העתקה by value של Derived לתוך Base מעתיקה רק את חלק ה-Base, וה-copy constructor של Base כותב vptr של Base. זה קורה ב-`B v = d;`, בפרמטר by value וב-`std::vector<Base>`. אוסף פולימורפי דורש indirection, בדרך כלל `std::vector<std::unique_ptr<Base>>`. מונעים slicing מקרי עם copy constructor ו-copy assignment של ה-base כ-protected או deleted.\n\nכש-unique_ptr לא copyable, deep copy של אוסף פולימורפי נעשה עם virtual constructor idiom: `virtual std::unique_ptr<Base> clone() const`. CRTP (מחלקת ביניים template שמקבלת את ה-derived כפרמטר) מאפשר לכתוב את clone פעם אחת."
+        },
+        {
+          "title": "virtual בזמן בנייה והריסה",
+          "body": "סדר הבנייה: virtual bases, אחר כך bases רגילים לפי סדר ההצהרה, אחר כך members, ורק אז גוף ה-constructor. ההריסה הפוכה. בזמן ש-B() רץ, חלק ה-D עוד לא קיים, ולכן הטיפוס הדינמי הוא B וה-vptr מצביע ל-vtable של B. קריאה ל-virtual מתוך B() או ~B() מגיעה למימוש של B. זה מוגדר היטב, רק מפתיע.\n\nאם הפונקציה pure virtual ב-B, הקריאה היא UB. קריאה ישירה הקומפיילר לפעמים מזהה. דרך פונקציה עקיפה, כמו init() שקוראת ל-run(), הוא לא. ב-GCC ו-Clang ה-slot של pure virtual ב-vtable מצביע ל-`__cxa_pure_virtual`, שמדפיס pure virtual method called ומבצע abort.\n\nהפתרון כשצריך לוגיקה וירטואלית באתחול: two-phase init (constructor ואז `init()` אחרי שהאובייקט שלם) או factory function שבונה ומאתחלת."
+        },
+        {
+          "title": "RTTI, dynamic_cast ו-typeid",
+          "body": "RTTI (Run-Time Type Information) קיים רק למחלקות פולימורפיות, דרך ה-vtable. `dynamic_cast<D*>(p)` בודק בזמן ריצה אם האובייקט באמת D (או נגזר ממנו) ומחזיר nullptr אם לא. על reference אין null, ולכן כישלון זורק `std::bad_cast`. `dynamic_cast<void*>(p)` מחזיר את הכתובת של האובייקט השלם (most derived).\n\n`static_cast<D*>(p)` לא בודק כלום. אם הטיפוס הדינמי לא D, שימוש בתוצאה הוא UB. `reinterpret_cast` בין pointers במחלקות עם multiple inheritance שגוי, כי הוא לא מתקן את ה-offset.\n\n`typeid(*p)` על מחלקה פולימורפית מחזיר את הטיפוס הדינמי. על מחלקה לא פולימורפית הוא מחזיר את הטיפוס הסטטי, בלי לגשת לאובייקט. הערך של `name()` הוא implementation-defined, ולכן משווים `type_info` ולא שמות.\n\nמחיר: dynamic_cast עשוי לעבור על היררכיה ולהשוות type_info, ולכן הוא יקר יחסית. שימוש רב בו הוא לעתים קרובות סימן לתכנון שחסרה בו virtual function."
+        },
+        {
+          "title": "multiple inheritance, diamond וחלופות ל-virtual",
+          "body": "multiple inheritance: למחלקה `C : A, B` יש שני base subobjects בכתובות שונות (שני subobjects לא ריקים לא יכולים לחלוק כתובת). המרה `C*` ל-`B*` מוסיפה offset בזמן קומפילציה, וגם ההשוואה `pb == &c` ממירה קודם ולכן נותנת true. ל-B-in-C יש vtable משלו, ובו thunk: קטע קוד קטן שמתקן את this לפני קפיצה ל-`C::fb`.\n\ndiamond: אם A ו-B שניהם יורשים מ-V, ל-D : A, B יהיו שני עותקים של V. virtual inheritance (`: virtual V`) משאיר עותק יחיד. מי שבונה את ה-virtual base הוא ה-class הכי נגזר (most derived), לפני כל השאר. ה-initializers של V ב-A וב-B מתעלמים כשהם לא ה-most derived, ואם D לא מציין את V, נקרא ה-default constructor.\n\nעלות virtual: שתי טעינות ו-indirect branch, בערך 1-3 ns כשהכל ב-cache וה-predictor צודק. call site מונומורפי (תמיד אותו טיפוס) מנובא טוב. megamorphic (טיפוסים רבים לסירוגין) גורם ל-mispredictions. המחיר הגדול הוא אובדן inlining, ואיתו constant propagation ו-vectorization. devirtualization אפשרי עם final, LTO (Link Time Optimization, שרואה את כל התוכנית), או PGO (Profile Guided Optimization, שמנחש את הטיפוס הנפוץ ומוסיף בדיקה ו-fast path).\n\nחלופות:\n- CRTP: פולימורפיזם סטטי בזמן קומפילציה, בלי vptr, עם inlining מלא. אין אוסף הטרוגני.\n- `std::variant` עם `std::visit`: קבוצה סגורה של טיפוסים, נשמרים by value בלי הקצאה. הוספת פעולה קלה (visitor חדש), הוספת טיפוס מחייבת לעדכן ולקמפל מחדש את כל ה-visitors.\n- type erasure (כמו `std::function`): interface אחיד בלי ירושה מצד המשתמש.\n- היררכיה וירטואלית: קבוצה פתוחה, הוספת טיפוס קלה, הוספת פעולה מחייבת לגעת בכל המחלקות.\n\nABI: לקוח שקומפל מול הספרייה מקודד offsets של slots ואת sizeof. הוספת virtual function או data member למחלקה שכבר שוחררה שוברת אותו. ב-CUDA, אובייקט עם virtual functions תקין על ה-device רק אם נוצר על ה-device, כי ה-vptr מצביע ל-vtable במרחב הכתובות שבו נבנה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מעקב אחרי vptr בזמן `D d;` ו-delete",
+          "body": "B עם `virtual void hello()` ו-D שדורס אותה, ושניהם קוראים ל-hello ב-constructor וב-destructor.\n\n- מוקצה זיכרון ל-d. ה-constructor של D מתחיל ומיד קורא ל-B().\n- B() כותב vptr = vtable של B. hello() מגיעה ל-B::hello ומדפיסה B.\n- B() מסתיים. D() כותב vptr = vtable של D. hello() מדפיסה D.\n- ביציאה מה-scope: ~D רץ קודם, vptr עדיין D. בסופו ~B מתחיל ומחזיר את ה-vptr ל-B. hello() מתוך ~B מדפיסה B.\n\nהפלט BD בבנייה ו-DB בהריסה. אם hello הייתה pure ב-B, השלב השני היה UB."
+        },
+        {
+          "title": "דוגמה: sizeof ופריסה ב-Itanium x86-64",
+          "body": "`struct A { int x; virtual void f(); };`\n\n- offset 0: vptr, 8 בתים.\n- offset 8: x, 4 בתים.\n- offset 12: padding של 4, כי alignment של A הוא 8 ו-sizeof חייב להיות כפולה שלו.\n\nsizeof(A) = 16, לעומת 4 בלי virtual. מערך של מיליון A עולה 16MB במקום 4MB, ובכל cache line של 64 בתים נכנסים 4 אובייקטים במקום 16. זו עלות אמיתית בלולאות חמות, בנוסף לעלות הקריאה."
+        },
+        {
+          "title": "דוגמה: name hiding ו-override שלא קרה",
+          "body": "ב-B יש `virtual void f(int)`. ב-D כתבו `void f(double)` בלי override.\n\n- `d.f(1)`: החיפוש מוצא את השם f ב-D ועוצר. יש רק f(double), ו-1 מומר ל-double. רץ D::f.\n- `B& b = d; b.f(1)`: החיפוש מתחיל ב-B ומוצא את f(int) הוירטואלית. ב-vtable של D ה-slot שלה עדיין מצביע ל-B::f, כי f(double) לא דורסת אותה. רץ B::f.\n\nאותו אובייקט, אותו ארגומנט, שני מימושים שונים. `override` על f(double) היה הופך את זה לשגיאת קומפילציה."
+        },
+        {
+          "title": "דוגמה: multiple inheritance ותיקון this",
+          "body": "`struct A { virtual void fa(); int a; }; struct B { virtual void fb(); int b; }; struct C : A, B { void fb() override; };`\n\nפריסה ב-Itanium x86-64: offset 0 vptr של A, offset 8 a, offset 16 vptr של B-in-C, offset 24 b. sizeof(C) = 32.\n\n- `B* pb = &c;` נותן כתובת c+16.\n- `pb->fb()`: טוען vptr מ-c+16, מוצא slot שמצביע ל-thunk. ה-thunk מחסיר 16 מ-this וקופץ ל-C::fb, שמצפה ל-this = c.\n- `reinterpret_cast<B*>(&c)` היה נותן c+0, ו-fb הייתה רצה על ה-vptr של A. באג."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "טיפוס סטטי וטיפוס דינמי",
+          "def": "סטטי: הטיפוס שהקומפיילר רואה בביטוי. דינמי: הטיפוס של האובייקט האמיתי בזמן ריצה. נבדלים רק דרך pointer או reference."
+        },
+        {
+          "term": "dynamic dispatch",
+          "def": "בחירת המימוש לפי הטיפוס הדינמי בזמן ריצה. קורה רק ל-virtual function שנקראת דרך pointer או reference, ולא בקריאה מוסמכת כמו `B::f()`."
+        },
+        {
+          "term": "vtable",
+          "def": "טבלה סטטית אחת לכל class פולימורפי, עם pointer לכל virtual function (ובנוסף type_info ו-offset-to-top ב-Itanium). פרט מימוש, לא חלק מהתקן."
+        },
+        {
+          "term": "vptr",
+          "def": "pointer נסתר בכל אובייקט פולימורפי שמצביע ל-vtable של הטיפוס הדינמי. מוסיף 8 בתים ב-64 ביט, ומתעדכן בכל שלב של בנייה והריסה."
+        },
+        {
+          "term": "override",
+          "def": "specifier מ-C++11 שמחייב שהפונקציה תדרוס virtual function של base. אחרת שגיאת קומפילציה. תופס הבדלי חתימה כמו const חסר."
+        },
+        {
+          "term": "final",
+          "def": "על מתודה: אסור לדרוס אותה שוב. על class: אסור לרשת ממנו. מאפשר לקומפיילר devirtualization."
+        },
+        {
+          "term": "name hiding",
+          "def": "שם שמוגדר ב-derived מסתיר את כל ה-overloads באותו שם ב-base. החיפוש נעצר ב-scope הראשון שבו נמצא השם. `using Base::f;` מחזיר אותם."
+        },
+        {
+          "term": "pure virtual ו-abstract class",
+          "def": "`virtual void f() = 0;` היא pure virtual. מחלקה עם לפחות אחת כזו היא abstract ואי אפשר ליצור ממנה אובייקט. pure virtual יכולה לקבל גוף, ו-pure virtual destructor חייב גוף."
+        },
+        {
+          "term": "virtual destructor",
+          "def": "destructor וירטואלי ב-base מבטיח ש-`delete` דרך pointer ל-base יריץ את ה-destructor של ה-derived. בלעדיו זה UB."
+        },
+        {
+          "term": "slicing",
+          "def": "העתקת אובייקט derived לתוך משתנה מטיפוס base by value. נשאר רק חלק ה-base עם vptr של base. נמנע עם pointers או protected copy."
+        },
+        {
+          "term": "covariant return type",
+          "def": "חריג לכלל של טיפוס החזרה זהה: override יכול להחזיר `D*` או `D&` במקום `B*` או `B&`. לא חל על smart pointers."
+        },
+        {
+          "term": "default arguments בפונקציה וירטואלית",
+          "def": "נקבעים בזמן קומפילציה לפי הטיפוס הסטטי של הביטוי, גם כשהגוף נבחר דינמית."
+        },
+        {
+          "term": "virtual constructor idiom (clone)",
+          "def": "`virtual std::unique_ptr<Base> clone() const` שכל derived ממש, כדי להעתיק אובייקט בלי לדעת את טיפוסו. משמש ל-deep copy של אוסף פולימורפי."
+        },
+        {
+          "term": "CRTP",
+          "def": "Curiously Recurring Template Pattern: `struct D : Base<D>`. ה-base יודע את טיפוס ה-derived בזמן קומפילציה. מאפשר פולימורפיזם סטטי בלי vptr, או מימוש משותף כמו clone."
+        },
+        {
+          "term": "copy-and-swap",
+          "def": "copy assignment שבונה עותק זמני ומחליף איתו את התוכן. אם ההעתקה זורקת, האובייקט המקורי לא נפגע (strong guarantee)."
+        },
+        {
+          "term": "RTTI",
+          "def": "Run-Time Type Information: type_info לכל class פולימורפי, דרך ה-vtable. משמש את dynamic_cast ו-typeid. אפשר לכבות עם `-fno-rtti`."
+        },
+        {
+          "term": "dynamic_cast",
+          "def": "המרה שנבדקת בזמן ריצה. ל-pointer מחזירה nullptr בכישלון, ל-reference זורקת `std::bad_cast`. דורשת מחלקה פולימורפית."
+        },
+        {
+          "term": "typeid",
+          "def": "מחזיר `const std::type_info&`. על glvalue של מחלקה פולימורפית מחזיר את הטיפוס הדינמי, אחרת את הסטטי. `name()` הוא implementation-defined."
+        },
+        {
+          "term": "static_cast מול reinterpret_cast בהיררכיה",
+          "def": "static_cast מ-base ל-derived לא בודק בזמן ריצה, אבל מתקן offsets. reinterpret_cast לא מתקן כלום ושגוי עם multiple inheritance."
+        },
+        {
+          "term": "thunk",
+          "def": "קטע קוד קטן ב-vtable שמתקן את this (מוסיף או מחסיר offset) וקופץ למימוש. נדרש כשקוראים דרך base שאינו בכתובת 0 של האובייקט."
+        },
+        {
+          "term": "virtual inheritance ו-diamond",
+          "def": "`: virtual V` משאיר עותק יחיד של V גם כשהוא מגיע מכמה מסלולים. ה-class הכי נגזר בונה אותו, ו-initializers של V במחלקות הביניים מתעלמים."
+        },
+        {
+          "term": "devirtualization",
+          "def": "אופטימיזציה שהופכת קריאה וירטואלית לישירה (ואז אפשר inlining) כשהקומפיילר יודע את הטיפוס הדינמי: final, LTO, או ניחוש מבוסס profile (PGO) עם בדיקה."
+        },
+        {
+          "term": "monomorphic ו-megamorphic call site",
+          "def": "monomorphic: באותה נקודת קריאה תמיד אותו טיפוס, וה-indirect branch predictor מנבא מצוין. megamorphic: הרבה טיפוסים לסירוגין, mispredictions."
+        },
+        {
+          "term": "key function",
+          "def": "ב-Itanium ABI: ה-virtual function הראשונה שאינה inline ואינה pure. ה-vtable נוצר רק ב-TU שמגדיר אותה. אם לא הוגדרה, undefined reference to vtable."
+        },
+        {
+          "term": "COMDAT",
+          "def": "סקשן שה-linker רשאי לאחד: אם כמה TUs מייצרים אותו, נשאר עותק אחד. משמש ל-inline functions, templates ו-vtables בלי key function."
+        },
+        {
+          "term": "__cxa_pure_virtual",
+          "def": "ה-handler ש-GCC ו-Clang שמים ב-slot של pure virtual. אם נקרא (למשל מתוך constructor של ה-base), מדפיס pure virtual method called ומבצע abort."
+        },
+        {
+          "term": "two-phase init",
+          "def": "בנייה ואז `init()` נפרד אחרי שהאובייקט שלם, או factory function. מאפשר לוגיקה וירטואלית שאסור להריץ מתוך constructor."
+        },
+        {
+          "term": "std::variant ו-std::visit",
+          "def": "חלופה לירושה כשקבוצת הטיפוסים סגורה: האובייקט נשמר by value בלי heap, ו-visit מריץ את ה-overload המתאים. הוספת טיפוס מחייבת לעדכן את כל ה-visitors."
+        },
+        {
+          "term": "type erasure",
+          "def": "עטיפה שמסתירה טיפוס קונקרטי מאחורי interface אחיד, כמו `std::function` או `std::any`. בפנים יש בדרך כלל virtual או טבלת function pointers."
+        },
+        {
+          "term": "ABI break",
+          "def": "שינוי שמחייב לקמפל מחדש קוד לקוח, למשל הוספת virtual function (משנה slots) או data member (משנה sizeof ו-offsets). מתגוננים עם pimpl, interfaces עם versioning או C ABI."
+        },
+        {
+          "term": "pimpl",
+          "def": "pointer to implementation: ה-class הציבורי מחזיק רק pointer למבנה פנימי. אפשר לשנות את המבנה הפנימי בלי לשנות את sizeof ואת ה-ABI."
+        },
+        {
+          "term": "access control ב-virtual",
+          "def": "public/private נבדקים בזמן קומפילציה לפי הטיפוס הסטטי שדרכו קוראים. override פרטי עדיין נקרא דרך base שבו הפונקציה public."
+        },
+        {
+          "term": "NVI (Non-Virtual Interface)",
+          "def": "דפוס שבו ה-base חושף מתודה ציבורית לא-וירטואלית שקוראת ל-virtual פרטית. ה-base שולט ב-pre/post conditions, וה-derived רק דורס את הפרטית."
+        },
+        {
+          "term": "LTO ו-PGO",
+          "def": "LTO: אופטימיזציה בזמן link שרואה את כל התוכנית ולכן יודעת למשל שלמחלקה אין derived. PGO: קומפילציה לפי profile ריצה, כולל ניחוש הטיפוס הנפוץ ב-call site."
+        }
+      ]
     }
   ],
   "questions": [
@@ -349,6 +535,192 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "cpp.polymorphism.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מהי abstract class ב-C++?",
+      "choices": [
+        "מחלקה שכל המתודות שלה virtual",
+        "מחלקה בלי data members",
+        "מחלקה עם לפחות pure virtual function אחת (`= 0`). אי אפשר ליצור ממנה אובייקט, רק לרשת ממנה ולהשתמש בה דרך pointer או reference",
+        "מחלקה שמסומנת final"
+      ],
+      "answer": 2,
+      "explanation": "מה שהופך מחלקה ל-abstract הוא pure virtual function, שלה או שירשה ולא דרסה. מחלקה יכולה להיות abstract ועדיין להחזיק data ומתודות רגילות. derived שלא דורס את כל ה-pure virtuals נשאר abstract בעצמו. final אוסר ירושה, כמעט ההפך.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה עושה `final` על class, למשל `struct Fir final : Stage { ... };`?",
+      "choices": [
+        "אוסר לרשת מ-Fir. בנוסף, קריאה וירטואלית דרך `Fir*` או `Fir&` יכולה לעבור devirtualization, כי אין טיפוס נגזר יותר",
+        "הופך את כל המתודות של Fir ל-const",
+        "אוסר ליצור יותר מאובייקט אחד מ-Fir",
+        "מבטל את ה-vtable של Fir"
+      ],
+      "answer": 0,
+      "explanation": "final על class מונע ירושה, ועל מתודה מונע דריסה נוספת. האובייקט עדיין פולימורפי ויש לו vptr, כי הוא יורש מ-Stage. כשהטיפוס הסטטי הוא Fir, הקומפיילר יודע שהטיפוס הדינמי הוא בדיוק Fir, ויכול לקרוא ישירות ול-inline.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "במימושים הנפוצים, כמה vtables וכמה vptrs יש כשיוצרים 1000 אובייקטים מ-class פולימורפי אחד (בלי multiple inheritance)?",
+      "choices": [
+        "1000 vtables ו-1000 vptrs",
+        "vtable אחת לכל המחלקה ו-vptr אחד בכל אובייקט, כלומר 1000 vptrs",
+        "vtable אחת ו-vptr אחד, משותפים לכל האובייקטים",
+        "אין vtable, רק vptr בכל אובייקט שמצביע ישר לפונקציה"
+      ],
+      "answer": 1,
+      "explanation": "ה-vtable תלויה רק בטיפוס, ולכן יש אחת לכל class, ב-read-only data. כל אובייקט צריך לדעת מה הטיפוס הדינמי שלו, ולכן מחזיק vptr משלו (8 בתים ב-64 ביט). עם multiple inheritance יש vptr לכל base פולימורפי בתוך האובייקט.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q23",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual void f(int) { std::cout << 'B'; }\n};\nstruct D : B {\n  void f(double) { std::cout << 'D'; }\n};\n\nint main() {\n  D d;\n  d.f(1);\n  B& b = d;\n  b.f(1);\n}",
+      "choices": [
+        "BB",
+        "DD",
+        "BD",
+        "DB"
+      ],
+      "answer": 3,
+      "explanation": "D::f(double) לא דורסת את f(int), כי סוג הפרמטר שונה. ב-d.f(1) החיפוש מוצא את השם f ב-D ונעצר שם (name hiding), ולכן 1 מומר ל-double ורץ D::f. ב-b.f(1) החיפוש מתחיל ב-B ומוצא את f(int) הוירטואלית, וב-vtable של D ה-slot שלה עדיין B::f. `override` היה תופס את זה בקומפילציה.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q24",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual ~B() = default;\n  virtual void f() { std::cout << 'B'; }\n};\nstruct D : B {\n  void f() override { B::f(); std::cout << 'D'; }\n};\n\nint main() {\n  B* p = new D;\n  p->f();\n  delete p;\n}",
+      "choices": [
+        "BD",
+        "D",
+        "רקורסיה אינסופית, כי B::f() עובר שוב dispatch ל-D::f",
+        "DB"
+      ],
+      "answer": 0,
+      "explanation": "p->f() מגיע ל-D::f. בתוכו `B::f()` היא קריאה מוסמכת (qualified), שמבטלת את ה-dispatch וקוראת בדיוק למימוש של B, ולכן אין רקורסיה. מודפס B ואחריו D. זו הדרך הרגילה להרחיב את ההתנהגות של ה-base.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q25",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual ~B() { name(); }\n  virtual void name() { std::cout << 'B'; }\n};\nstruct D : B {\n  ~D() { std::cout << \"~D\"; }\n  void name() override { std::cout << 'D'; }\n};\n\nint main() {\n  { D d; }\n}",
+      "choices": [
+        "~DD",
+        "~DB",
+        "D~D",
+        "UB, כי קוראים ל-virtual מתוך destructor"
+      ],
+      "answer": 1,
+      "explanation": "ההריסה מתחילה ב-~D ומדפיסה ~D. אחר כך ~B רץ, ובזמן הזה חלק ה-D כבר נהרס והטיפוס הדינמי הוא B: ה-vptr הוחזר ל-vtable של B. לכן name() מגיעה ל-B::name. זה מוגדר היטב. רק קריאה ל-pure virtual במצב כזה היא UB.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q26",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מאלה יכולים להיות מוצהרים virtual?",
+      "choices": [
+        "constructor",
+        "destructor",
+        "static member function",
+        "member function template, כמו `template<class T> virtual void f(T);`",
+        "`bool operator==(const Shape&) const`",
+        "const member function"
+      ],
+      "answer": [
+        1,
+        4,
+        5
+      ],
+      "explanation": "constructor לא יכול להיות virtual, כי לפני הבנייה אין אובייקט עם טיפוס דינמי (לכן יש clone ו-factories). static function לא קשורה לאובייקט ואין לה this. member function template לא יכולה להיות virtual, כי ה-vtable צריכה מספר slots ידוע, ומספר ה-instantiations לא ידוע. operators ו-const functions הם פונקציות רגילות לעניין זה, וה-const הוא חלק מהחתימה שצריך להתאים בדריסה.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "pipeline עיבוד מחזיק אוסף של צעדים מכמה סוגים ידועים מראש (Fir, Mixer, Decimator). שוקלים `std::vector<std::variant<Fir, Mixer, Decimator>>` עם `std::visit` במקום `std::vector<std::unique_ptr<Stage>>` עם virtual. מה ה-trade-off הנכון?",
+      "choices": [
+        "אין הבדל, std::visit ממומש עם virtual functions",
+        "variant תמיד איטי יותר, כי visit בודק את הטיפוס בכל קריאה",
+        "variant מתאים לקבוצה פתוחה של טיפוסים ש-plugins מוסיפים בזמן ריצה, ו-virtual לקבוצה סגורה",
+        "variant: האובייקטים נשמרים by value ברצף בלי הקצאה לכל צעד, והקומפיילר רואה את כל הטיפוסים (אפשר inlining). המחיר: קבוצה סגורה, גודל כל איבר הוא של הטיפוס הגדול ביותר, והוספת טיפוס מחייבת לקמפל מחדש את כל ה-visitors. virtual מתאים לקבוצה פתוחה"
+      ],
+      "answer": 3,
+      "explanation": "variant מחזיק את האובייקט בתוכו, ולכן הוקטור רציף ואין pointer chasing. visit מתורגם בדרך כלל ל-jump table או ל-switch על ה-index, בלי vptr. החיסרון הוא הגודל (המקסימום ועוד index) והקבוצה הסגורה. היררכיה וירטואלית מאפשרת להוסיף טיפוסים בלי לגעת בקוד הקיים, ומחייבת indirection והקצאות.",
+      "lesson": "cpp.polymorphism",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "cpp.polymorphism.q28",
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct P { virtual ~P() = default; };\nstruct Q : P {};\nstruct N {};\nstruct M : N {};\n\nint main() {\n  P* p = new Q;\n  N* n = new M;\n  std::cout << (typeid(*p) == typeid(Q))\n            << (typeid(*n) == typeid(M));\n}",
+      "choices": [
+        "11",
+        "00",
+        "10",
+        "01"
+      ],
+      "answer": 2,
+      "explanation": "typeid על glvalue של מחלקה פולימורפית מחזיר את הטיפוס הדינמי, דרך ה-type_info שב-vtable, ולכן Q. ל-N אין virtual functions ואין RTTI, ולכן typeid(*n) נקבע סטטית ל-N. משווים type_info ולא את name(), כי name() הוא implementation-defined.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה קורה בקוד?\n\n```cpp\nstruct B { virtual void f() { std::cout << 'B'; } };\nstruct D : B {\nprivate:\n  void f() override { std::cout << 'D'; }\n};\nint main() {\n  D d;\n  B& b = d;\n  b.f();\n}\n```",
+      "choices": [
+        "שגיאת קומפילציה: אסור לדרוס public virtual כ-private",
+        "מתקמפל ומדפיס D. בדיקת הרשאות נעשית סטטית לפי הטיפוס שדרכו קוראים (B, שבו f היא public), וה-dispatch בוחר את D::f. לעומת זאת `d.f()` לא היה מתקמפל",
+        "מתקמפל ומדפיס B, כי D::f פרטית ולכן לא נכנסת ל-vtable",
+        "UB, כי קוראים לפונקציה פרטית מחוץ למחלקה"
+      ],
+      "answer": 1,
+      "explanation": "access control הוא בדיקה בזמן קומפילציה על השם בביטוי, ולא תכונה של המימוש שרץ. הדריסה תקינה, ו-D::f נכנסת ל-slot ב-vtable. זה הבסיס של Non-Virtual Interface (NVI), שבו ה-virtuals פרטיים ומופעלים דרך מתודה ציבורית לא-וירטואלית של ה-base.",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "id": "cpp.polymorphism.q30",
+      "level": 5,
+      "type": "multi",
+      "prompt": "ב-base מוצהרות `virtual B* c1(); virtual std::unique_ptr<B> c2(); virtual B& c3(); virtual B* c4(); virtual int c5();`. ב-`struct D : B` (ירושה public), אילו דריסות מתקמפלות?",
+      "choices": [
+        "`D* c1() override;`",
+        "`std::unique_ptr<D> c2() override;`",
+        "`D& c3() override;`",
+        "`const D* c4() override;`",
+        "`long c5() override;`"
+      ],
+      "answer": [
+        0,
+        2
+      ],
+      "explanation": "covariant return types מותרים רק ל-pointer או reference למחלקה, כש-B הוא base חד-משמעי ונגיש של D. unique_ptr<D> הוא טיפוס אחר לגמרי ולא נגזר מ-unique_ptr<B>, ולכן לא covariant. `const D*` שגוי כי מחלקת ההחזרה ב-derived לא יכולה להיות יותר cv-qualified מזו של ה-base. int ו-long הם טיפוסים שונים, ואין covariance לטיפוסים בסיסיים. בגלל המגבלה על smart pointers, clone מחזיר unique_ptr<Base> או עובר דרך CRTP.",
+      "lesson": "cpp.polymorphism"
     }
   ]
 }

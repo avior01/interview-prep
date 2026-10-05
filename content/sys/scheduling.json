@@ -35,7 +35,177 @@
         "מתי לעבור מ-nice ל-SCHED_FIFO, cpusets או isolcpus",
         "כלים: perf sched, /proc/<pid>/sched, schedstat, runqlat ב-bpftrace"
       ],
-      "diagram": "CPU0 runqueue (by vruntime)\n      [T3:12ms]\n      /        \\\n [T1:10ms]   [T5:15ms]\n pick leftmost -> T1\n T1 runs, vruntime grows,\n re-inserted to the right"
+      "diagram": "CPU0 runqueue (by vruntime)\n      [T3:12ms]\n      /        \\\n [T1:10ms]   [T5:15ms]\n pick leftmost -> T1\n T1 runs, vruntime grows,\n re-inserted to the right",
+      "details": [
+        {
+          "title": "יסודות: preemption, אלגוריתמים קלאסיים ומדדים",
+          "body": "ב-**preemptive scheduling** הקרנל יכול להוציא thread מה-CPU בכל רגע, למשל ב-timer interrupt (ה-**tick**) או כש-thread חשוב יותר מתעורר. ב-**cooperative** thread מוותר רק כשהוא בוחר (coroutines, asyncio). מערכות הפעלה מודרניות הן preemptive.\n\nאלגוריתמים קלאסיים, שעדיין נשאלים בראיונות:\n- **FCFS**: לפי סדר הגעה. פשוט, אבל עבודה ארוכה בראש התור מעכבת את כל הקצרות (convoy effect).\n- **SJF**: הקצרה ביותר קודם. ממזער זמן המתנה ממוצע, אבל דורש לדעת אורכים מראש ועלול להרעיב עבודות ארוכות.\n- **Round Robin**: כל אחד מקבל **quantum** ועובר לסוף התור. quantum קטן נותן response time טוב אבל יותר context switches. quantum גדול מאוד הופך ל-FCFS.\n- **עדיפויות**: תמיד מריצים את הגבוהה. הסכנה: **starvation**, task מוכן שלא מקבל CPU לעולם. **aging** (העלאת עדיפות עם זמן ההמתנה) מונע את זה.\n\nמדדים: **turnaround** (מהגעה עד סיום), **waiting time** (זמן בתור), **response time** (עד הריצה הראשונה). ל-task אינטראקטיבי חשוב response, ל-batch חשוב throughput.\n\n**CPU-bound** משתמש בכל ה-slice שלו. **I/O-bound** רץ קצר ונחסם. scheduler טוב נותן ל-I/O-bound לרוץ מהר כשהוא מתעורר, כי זה זול ומשפר תגובה."
+        },
+        {
+          "title": "המבנה של ה-scheduler ב-Linux",
+          "body": "לכל CPU יש **runqueue** משלו. **load balancing** מעביר tasks בין cores מדי פעם ובזמן התעוררות. ה-scheduler מעדיף להשאיר task על אותו core (cache חם), אבל אין הבטחה. **affinity** (`taskset`, `sched_setaffinity`, `pthread_setaffinity_np`) הוא אילוץ קשיח על ה-cores המותרים, ו-load balancing לא יעבור עליו.\n\n**scheduling classes** נבדקות לפי סדר קבוע, והראשונה שיש לה task מוכן מנצחת: stop, ואחריה **deadline** (SCHED_DEADLINE), **rt** (SCHED_FIFO, SCHED_RR), **fair** (SCHED_OTHER, SCHED_BATCH, SCHED_IDLE), ולבסוף idle. לכן thread RT בעדיפות 1 תמיד קודם ל-thread רגיל עם nice ‎-20.\n\n- **SCHED_FIFO**: עדיפויות 1–99 (גבוה = חשוב). רץ עד שהוא נחסם, מוותר (sched_yield) או נדחק על ידי עדיפות גבוהה יותר. אין חלוקת זמן בין threads באותה עדיפות.\n- **SCHED_RR**: כמו FIFO, אבל threads באותה עדיפות מתחלפים כל quantum (ברירת מחדל 100ms).\n- **SCHED_OTHER**: הוגנות לפי משקל (nice).\n- **SCHED_DEADLINE**: לפי runtime, deadline ו-period (ראו בהמשך).\n\nהפקודה `chrt` מריצה או משנה policy ועדיפות: `chrt -f 80 ./rx` מריץ ב-SCHED_FIFO 80."
+        },
+        {
+          "title": "CFS ו-EEVDF: הוגנות לפי משקל",
+          "body": "**CFS** (Completely Fair Scheduler) שומר לכל task **vruntime**: זמן ריצה אמיתי × 1024 / weight. ה-tasks מסודרים בעץ red-black לפי vruntime, ונבחר תמיד השמאלי ביותר (הקטן ביותר). task עם משקל גבוה צובר vruntime לאט, ולכן מקבל יותר זמן.\n\n**משקלים לפי nice**: nice 0 = 1024, וכל צעד הוא בערך פי 1.25. nice 5 = 335, nice 19 = 15, nice ‎-20 = 88761. בין שני tasks שמתחרים, החלק של כל אחד הוא המשקל שלו חלקי סכום המשקלים. nice לא מונע מאף task לרוץ.\n\n**min_vruntime**: task חדש או מתעורר לא מתחיל מ-0, אלא קרוב ל-vruntime המינימלי ב-runqueue. אחרת task שישן שעה היה צובר זכות לרוץ שעה ברצף. I/O-bound עדיין נהנה: ה-vruntime שלו נמוך יחסית, והוא רץ כמעט מיד כשהוא מתעורר.\n\n**EEVDF** (ברירת המחדל מקרנל 6.6) מפריד הוגנות מ-latency. לכל task יש **lag**: כמה שירות מגיע לו ביחס להוגן. task הוא **eligible** כש-lag ≥ 0 (קיבל פחות או בדיוק את חלקו). לכל task יש **virtual deadline** = זמן הזכאות + slice / weight. מבין ה-eligible נבחר בעל ה-deadline המוקדם ביותר. task שמבקש slice קצר (sched_setattr) מקבל deadline מוקדם, ולכן latency נמוך, אבל בפרוסות קטנות יותר. זה מחליף את ההיוריסטיקות של CFS ל-wakeup preemption.\n\n**sched_yield** ב-SCHED_OTHER: לא מוגדר היטב. אם אין task אחר ראוי, הוא חוזר מיד. לכן `while (!flag) sched_yield();` שורף CPU ואינו מנגנון המתנה.\n\n**autogroup** (CONFIG_SCHED_AUTOGROUP, מופעל בהרבה הפצות desktop): כל session (למשל טרמינל) הוא קבוצה עם משקל שווה, וההוגנות היא קודם בין קבוצות ורק אז בתוך קבוצה. לכן nice משפיע רק ביחס ל-tasks באותה קבוצה, ו-`nice -n 19 make` בטרמינל אחר כמעט לא משנה את החלוקה מול טרמינל שני."
+        },
+        {
+          "title": "Real-time: throttling, priority inversion ו-SCHED_DEADLINE",
+          "body": "**RT throttling**: כדי ש-thread RT תקוע לא יקפיא את המכונה, ברירת המחדל הקלאסית היא sched_rt_runtime_us = 950000 מתוך sched_rt_period_us = 1000000: tasks RT מקבלים לכל היותר 950ms בכל שנייה, ו-50ms נשמרים ל-tasks רגילים. thread RT שעושה busy-poll של 100% יראה הפסקות של כ-50ms. בקרנלים חדשים המנגנון ממומש כ-deadline server של ה-fair class, שמופעל רק כשיש tasks רגילים שמחכים. הודעת dmesg טיפוסית: \"sched: RT throttling activated\".\n\n**spin ב-SCHED_FIFO**: שני threads FIFO באותה עדיפות על אותו core. אם אחד מסתובב בלולאה ומחכה לדגל שהשני אמור להדליק, השני לא ירוץ לעולם, כי FIFO לא מחלק זמן בין שווים. busy-wait ב-RT מסוכן אלא אם כל צד על core משלו.\n\n**priority inversion**: thread בעדיפות נמוכה (L) מחזיק mutex, thread בעדיפות גבוהה (H) מחכה לו, ו-thread בעדיפות בינונית (M) רץ ולא נותן ל-L להשתחרר. H מחכה ל-M, בלי חסם. המקרה המפורסם: Mars Pathfinder (1997). הפתרון: **priority inheritance** (`PTHREAD_PRIO_INHERIT`): בזמן ש-H מחכה, L רץ בעדיפות של H. ב-PREEMPT_RT ה-spinlocks של הקרנל הם rt_mutex עם PI.\n\n**SCHED_DEADLINE**: task מצהיר runtime, deadline ו-period (למשל 2ms כל 10ms, deadline 10ms). הקרנל מתזמן לפי EDF (earliest deadline first) ומגביל כל task ל-runtime שלו (CBS, constant bandwidth server), כך שחריגה של task אחד לא פוגעת באחרים. יש **admission control**: אם סכום ה-runtime/period עובר את הקיבולת, sched_setattr נכשל. מתאים לעבודה מחזורית עם דרישה ידועה."
+        },
+        {
+          "title": "cgroups: weight, max ו-throttling",
+          "body": "ב-cgroup v2:\n- **cpu.weight** (ברירת מחדל 100): חלוקה יחסית בין groups, רק כשיש תחרות. group יכול להשתמש בכל ה-CPU הפנוי (work-conserving).\n- **cpu.max** (\"quota period\"): תקרה קשיחה. `50000 100000` פירושו 50ms של זמן CPU בכל 100ms, מצטבר על כל ה-threads וכל ה-cores. זה מה ש-CPU limit של Kubernetes מגדיר.\n- **cpuset.cpus**: אילו cores ה-group רשאי להשתמש בהם. בידוד אמיתי, במחיר cores שעומדים פנויים.\n\n**CFS bandwidth throttling**: הקוטה נמדדת בזמן CPU מצטבר, לא בזמן שעון. group עם הרבה threads יכול לשרוף את הקוטה בתחילת ה-period ואז להיות מושהה עד סופו. הממוצע נראה נמוך, אבל p99 של latency קופץ בערך באורך ה-period. רואים את זה ב-cpu.stat: nr_throttled ו-throttled_usec.\n\nהוגנות היא היררכית: אם שני groups עם weight שווה מתחרים על core, כל group מקבל 50%, וכל thread מקבל חלק מה-50% של ה-group שלו, בלי קשר למספר ה-threads בקבוצה האחרת."
+        },
+        {
+          "title": "מדידה ואבחון",
+          "body": "**מצבים**: R (רץ או מוכן), S (שינה שניתנת להפרעה), D (uninterruptible, בדרך כלל I/O; גם SIGKILL מחכה), Z (zombie). **load average** ב-Linux סופר R וגם D, ולכן load גבוה עם CPU פנוי מצביע בדרך כלל על I/O.\n\n**context switches** ב-/proc/<pid>/status: voluntary (נחסם בעצמו: I/O, lock, sleep) ו-nonvoluntary (הוצא בכוח: נגמר ה-slice או task חשוב יותר). nonvoluntary גבוה ב-thread קריטי מעיד על תחרות על ה-core.\n\nכלים:\n- `perf sched record` ו-`perf sched latency`: זמני המתנה ב-runqueue לכל task.\n- `runqlat` (BCC/bpftrace): היסטוגרמה של זמן ההמתנה לריצה.\n- `/proc/<pid>/schedstat`: זמן ריצה, זמן המתנה ב-runqueue ומספר ריצות. `/proc/<pid>/sched`: פרטים של ה-scheduler.\n- `cyclictest`: latency של thread שמתעורר מ-timer, הכלי הסטנדרטי למערכות RT.\n\nגורמים שה-scheduler לא פותר: יציאה מ-C-states עמוקים, interrupts שנוחתים על ה-core, ותחרות על LLC ורוחב פס זיכרון. לבידוד מלא: isolcpus (ה-core לא בשימוש של ה-scheduler הרגיל), nohz_full (בלי tick כשיש task יחיד), והזזת IRQs."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: Round Robin מול FCFS מול SJF",
+          "body": "שלוש עבודות CPU-bound מגיעות ב-t = 0 בסדר A, B, C, עם אורכים 5, 3, 1 ms. מתעלמים מעלות context switch.\n\n**RR עם quantum של 3ms:**\n- 0–3: A (נשארו לו 2)\n- 3–6: B, מסתיים ב-6\n- 6–7: C, מסתיים ב-7\n- 7–9: A, מסתיים ב-9\nturnaround ממוצע: (9 + 6 + 7) / 3 ≈ 7.33. response time של C: 6.\n\n**FCFS:** A 0–5, B 5–8, C 8–9. turnaround ממוצע: (5 + 8 + 9) / 3 ≈ 7.33. response של C: 8.\n\n**SJF:** C 0–1, B 1–4, A 4–9. turnaround ממוצע: (1 + 4 + 9) / 3 ≈ 4.67.\n\nמה לומדים: SJF אופטימלי בממוצע, אבל דורש לדעת אורכים. RR לא שיפר כאן את הממוצע, אבל שיפר את ה-response של העבודה הקצרה, וזה מה שמשתמש מרגיש."
+        },
+        {
+          "title": "דוגמה: משקלים ו-vruntime",
+          "body": "על core אחד: T0 עם nice 0 (weight 1024) ו-T5 עם nice 5 (weight 335), שניהם CPU-bound.\n\n- חלק של T0: 1024 / (1024 + 335) = 1024 / 1359 ≈ 75%. T5 מקבל כ-25%.\n- אם T5 רץ 10ms אמיתיים, ה-vruntime שלו גדל ב-10 × 1024 / 335 ≈ 30.6ms.\n- אם T0 רץ 10ms, ה-vruntime שלו גדל ב-10ms בדיוק.\n- לכן אחרי ש-T5 רץ פעם אחת, T0 צריך לרוץ בערך פי 3 יותר זמן כדי להשתוות, וזה היחס 75:25.\n\nעם nice 19 (weight 15) מול nice 0: 1024 / 1039 ≈ 98.6%. nice 19 עדיין רץ, כ-1.4%."
+        },
+        {
+          "title": "דוגמה: throttling של cpu.max",
+          "body": "קונטיינר עם `cpu.max = 50000 100000` (חצי CPU), 4 threads, במכונה עם הרבה cores פנויים.\n\n1. t = 0: מגיע burst. 4 threads רצים במקביל על 4 cores.\n2. כל ms של זמן שעון שורף 4ms של קוטה. 50ms של קוטה נגמרים ב-t = 12.5ms.\n3. כל ה-group מושהה עד t = 100ms, כלומר 87.5ms.\n4. בקשה שהגיעה ב-t = 13ms מחכה עד t = 100ms, אף על פי שהמכונה כמעט ריקה.\n\nממוצע השימוש לאורך זמן יכול להיות 20%, וה-p99 עדיין כ-90ms. תיקונים: thread אחד בלבד (ייקח 50ms של זמן שעון לשרוף את הקוטה, וירוץ רציף יותר), להגדיל את הקוטה, period קצר יותר, או cpu.weight במקום תקרה."
+        },
+        {
+          "title": "דוגמה: priority inversion",
+          "body": "שלושה threads ב-SCHED_FIFO על core אחד: L (עדיפות 10), M (50), H (90).\n\n- t = 0: L נועל mutex ומתחיל קטע קריטי של 0.2ms.\n- t = 0.1: H מתעורר, מנסה לנעול ונחסם.\n- t = 0.15: M מתעורר עם 50ms של חישוב. M גבוה מ-L, ולכן L לא רץ.\n- H מחכה עד שM מסיים (t ≈ 50ms), ואז L משלים את הקטע ומשחרר. latency של H: כ-50ms, ותלוי ב-M שבכלל לא קשור ל-mutex.\n\n**עם priority inheritance:** ב-t = 0.1, כש-H נחסם, L עולה לעדיפות 90. M לא יכול לדחוק אותו. L מסיים ב-t ≈ 0.2, חוזר ל-10 ומשחרר, ו-H רץ מיד. latency של H: כ-0.1ms."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "preemptive / cooperative",
+          "def": "preemptive: הקרנל יכול להוציא thread בכל רגע. cooperative: thread מוותר רק מרצונו."
+        },
+        {
+          "term": "tick ו-time slice",
+          "def": "tick: interrupt מחזורי של timer שבו ה-scheduler בודק אם להחליף task. slice: כמות הזמן שה-task מקבל לפני שבודקים מחדש."
+        },
+        {
+          "term": "FCFS / SJF / Round Robin",
+          "def": "לפי סדר הגעה, הקצר ביותר קודם, או quantum לכל אחד בסבב. RR מאזן response מול overhead לפי גודל ה-quantum."
+        },
+        {
+          "term": "turnaround / waiting / response time",
+          "def": "מהגעה עד סיום, זמן בתור, ועד הריצה הראשונה."
+        },
+        {
+          "term": "starvation ו-aging",
+          "def": "starvation: task מוכן שלא מקבל CPU לעולם. aging: העלאת עדיפות עם זמן ההמתנה כדי למנוע זאת."
+        },
+        {
+          "term": "CPU-bound / I/O-bound",
+          "def": "CPU-bound מנצל את כל ה-slice. I/O-bound רץ קצר ונחסם, וצריך לרוץ מהר כשמתעורר."
+        },
+        {
+          "term": "runqueue ו-load balancing",
+          "def": "תור ה-tasks המוכנים של כל CPU. load balancing מעביר tasks בין התורים כדי לאזן."
+        },
+        {
+          "term": "affinity",
+          "def": "רשימת ה-cores שבהם task רשאי לרוץ. אילוץ קשיח. taskset, sched_setaffinity, pthread_setaffinity_np."
+        },
+        {
+          "term": "scheduling classes",
+          "def": "stop, deadline, rt, fair, idle, לפי סדר קדימות קשיח. task RT כלשהו קודם לכל task רגיל."
+        },
+        {
+          "term": "SCHED_OTHER / BATCH / IDLE",
+          "def": "policies של ה-fair class. BATCH מוותר על wakeup preemption לעבודות רקע, IDLE מקבל משקל זעיר."
+        },
+        {
+          "term": "SCHED_FIFO / SCHED_RR",
+          "def": "policies של real-time עם עדיפויות 1–99. FIFO רץ עד שנחסם או נדחק, RR מחלק quantum בין threads באותה עדיפות."
+        },
+        {
+          "term": "chrt",
+          "def": "פקודה להרצה או לשינוי של policy ועדיפות, למשל chrt -f 80 להרצה ב-SCHED_FIFO 80."
+        },
+        {
+          "term": "CFS ו-vruntime",
+          "def": "Completely Fair Scheduler: מריץ את ה-task עם ה-vruntime (זמן × 1024 / weight) הקטן ביותר, מעץ red-black."
+        },
+        {
+          "term": "nice ו-weight",
+          "def": "nice בין ‎-20 ל-19. nice 0 = 1024, כל צעד בערך פי 1.25. החלק של task הוא המשקל שלו חלקי סכום המשקלים."
+        },
+        {
+          "term": "min_vruntime",
+          "def": "ה-vruntime המינימלי ב-runqueue. task חדש או מתעורר מוצב לידו, כדי שלא יצבור זכות ריצה אינסופית."
+        },
+        {
+          "term": "EEVDF: lag, eligible, virtual deadline",
+          "def": "ה-scheduler מ-6.6: מבין ה-tasks שקיבלו פחות או בדיוק את חלקם (lag ≥ 0), רץ בעל ה-virtual deadline המוקדם ביותר. slice קצר נותן deadline מוקדם."
+        },
+        {
+          "term": "sched_yield",
+          "def": "ויתור על ה-CPU. ב-SCHED_FIFO מעביר לסוף התור של אותה עדיפות. ב-SCHED_OTHER לא מוגדר היטב ויכול לחזור מיד."
+        },
+        {
+          "term": "autogroup",
+          "def": "קיבוץ אוטומטי של tasks לפי session עם הוגנות בין קבוצות. nice משפיע רק בתוך הקבוצה."
+        },
+        {
+          "term": "RT throttling",
+          "def": "הגבלת tasks RT ל-950ms בכל שנייה (ברירת מחדל קלאסית), כדי שתוכנית RT תקועה לא תקפיא את המערכת."
+        },
+        {
+          "term": "priority inversion",
+          "def": "thread חשוב מחכה ל-lock שמחזיק thread חלש, ו-thread בינוני מונע מהחלש לרוץ. ההמתנה הופכת ללא חסומה."
+        },
+        {
+          "term": "priority inheritance (PI)",
+          "def": "המחזיק ב-lock רץ זמנית בעדיפות של הממתין החשוב ביותר. ב-pthreads: PTHREAD_PRIO_INHERIT."
+        },
+        {
+          "term": "SCHED_DEADLINE, EDF ו-CBS",
+          "def": "policy לפי runtime, deadline ו-period. מתזמן לפי deadline מוקדם ראשון, מגביל כל task ל-runtime שלו, ומסרב לקבל tasks מעבר לקיבולת (admission control)."
+        },
+        {
+          "term": "cpu.weight / cpu.max / cpuset",
+          "def": "ב-cgroup v2: חלוקה יחסית בזמן תחרות, תקרה קשיחה לכל period, ורשימת cores מותרים."
+        },
+        {
+          "term": "CFS bandwidth throttling",
+          "def": "השהיית group שגמר את הקוטה של cpu.max עד סוף ה-period. גורם ל-latency spikes גם כשהממוצע נמוך."
+        },
+        {
+          "term": "cpu.stat",
+          "def": "קובץ סטטיסטיקה של cgroup: usage, nr_throttled ו-throttled_usec."
+        },
+        {
+          "term": "מצבי task ו-load average",
+          "def": "R, S, D, Z. load average ב-Linux סופר R וגם D, ולכן משקף גם המתנה ל-I/O."
+        },
+        {
+          "term": "voluntary / nonvoluntary context switches",
+          "def": "voluntary: ה-thread נחסם בעצמו. nonvoluntary: הוצא בכוח. מונים ב-/proc/<pid>/status."
+        },
+        {
+          "term": "perf sched, runqlat, schedstat",
+          "def": "כלים למדידת זמן המתנה ב-runqueue: perf sched latency, היסטוגרמה של BPF, וקובץ /proc/<pid>/schedstat."
+        },
+        {
+          "term": "cyclictest",
+          "def": "מודד את ההפרש בין זמן ההתעוררות המתוכנן לזמן שבו thread התחיל לרוץ בפועל. כלי בסיס למערכות RT."
+        },
+        {
+          "term": "isolcpus / nohz_full",
+          "def": "isolcpus מוציא cores מה-scheduler הרגיל. nohz_full מבטל את ה-tick על core שרץ עליו task יחיד."
+        },
+        {
+          "term": "TASK_KILLABLE",
+          "def": "מצב שינה בקרנל שבו רק SIGKILL מעיר את ה-task. מחליף בהרבה מקומות את D כדי שאפשר יהיה להרוג תהליכים תקועים."
+        }
+      ]
     }
   ],
   "questions": [
@@ -311,6 +481,216 @@
       "answer": 1,
       "explanation": "SIGKILL לא ניתן לחסימה מ-user space, אבל הקרנל בודק אותו רק בנקודות מסוימות. בשינה uninterruptible הוא לא מעיר את ה-task. קרנלים חדשים משתמשים ב-TASK_KILLABLE בהרבה מקומות כדי לאפשר SIGKILL. zombie מופיע כ-Z, ולא ניתן להרוג אותו כי הוא כבר מת.",
       "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין SCHED_FIFO ל-SCHED_RR ב-Linux?",
+      "choices": [
+        "FIFO מיועד ל-I/O ו-RR ל-CPU",
+        "FIFO הוגן ו-RR לא",
+        "שניהם real-time עם עדיפויות. ב-FIFO thread רץ עד שהוא נחסם, מוותר או נדחק על ידי עדיפות גבוהה יותר. ב-RR threads באותה עדיפות מתחלפים כל quantum",
+        "RR קיים רק ב-PREEMPT_RT"
+      ],
+      "answer": 2,
+      "explanation": "ההבדל הוא רק בין threads באותה עדיפות: FIFO לא מחלק זמן ביניהם, RR כן. מול עדיפויות שונות שניהם מתנהגים זהה: הגבוהה רצה. שניהם תמיד קודמים ל-SCHED_OTHER.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q19",
+      "level": 1,
+      "type": "short",
+      "prompt": "איזו פקודה ב-Linux מריצה תוכנית עם policy של real-time, למשל SCHED_FIFO בעדיפות 80?",
+      "accept": [
+        "chrt"
+      ],
+      "explanation": "`chrt -f 80 ./rx` מריץ ב-SCHED_FIFO 80, ו-`chrt -p <pid>` מציג את ה-policy של process קיים. הרצה בעדיפות RT דורשת הרשאה (CAP_SYS_NICE או RLIMIT_RTPRIO). מתוך קוד משתמשים ב-sched_setscheduler או pthread_setschedparam.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה starvation בהקשר של scheduling?",
+      "choices": [
+        "thread שנגמר לו הזיכרון",
+        "task שמוכן לרוץ אבל לא מקבל CPU לאורך זמן (או לעולם), כי ה-scheduler תמיד מעדיף אחרים",
+        "מצב שבו כל ה-threads מחכים זה לזה",
+        "thread שישן יותר מדי"
+      ],
+      "answer": 1,
+      "explanation": "starvation קורה בעיקר עם עדיפויות קשיחות: אם תמיד יש task בעדיפות גבוהה יותר, הנמוך לא ירוץ. מצב שבו כולם מחכים זה לזה הוא deadlock. aging, או scheduler הוגן כמו CFS ו-EEVDF, מונעים starvation בין tasks רגילים.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q21",
+      "level": 2,
+      "type": "short",
+      "prompt": "Round Robin עם quantum של 4ms. שלוש עבודות CPU-bound מגיעות ב-t = 0 בסדר A, B, C, עם אורכים A = 8ms, B = 4ms, C = 2ms. בלי עלות context switch, באיזה זמן (ב-ms) מסתיימת C?",
+      "accept": [
+        "10",
+        "10ms",
+        "10 ms"
+      ],
+      "explanation": "A רצה 0–4 (נשארו 4), B רצה 4–8 ומסתיימת, C רצה 8–10 ומסתיימת, ו-A רצה 10–14. C מסתיימת ב-10. ב-SJF היא הייתה מסתיימת ב-2, וזה ההבדל בין response טוב לעבודות קצרות לבין הוגנות סבב.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שלוש עבודות מגיעות ב-t = 0 בסדר: 10ms, 1ms, 1ms. מה זמן ההמתנה הממוצע ב-FCFS וב-SJF?",
+      "choices": [
+        "FCFS: 4ms, SJF: 1ms",
+        "FCFS: 11ms, SJF: 2ms",
+        "FCFS: 7ms, SJF: 4ms",
+        "FCFS: 7ms, SJF: 1ms"
+      ],
+      "answer": 3,
+      "explanation": "FCFS: הראשונה מחכה 0, השנייה 10, השלישית 11, ממוצע 21 / 3 = 7. SJF: שתי הקצרות קודם, המתנות 0, 1, 2, ממוצע 1. זה ה-convoy effect: עבודה ארוכה בראש התור מעכבת את כולן.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על core אחד, thread ב-SCHED_FIFO בעדיפות 1 נמצא בלולאה אינסופית, ו-thread ב-SCHED_OTHER עם nice ‎-20 מוכן לרוץ. מה קורה (עם הגדרות ברירת מחדל)?",
+      "choices": [
+        "nice ‎-20 גבוה יותר ולכן הוא רץ",
+        "הם מתחלקים 50:50",
+        "ה-FIFO רץ כמעט כל הזמן. ה-thread הרגיל מקבל רק את מה ש-RT throttling משאיר (ברירת מחדל: כ-50ms בכל שנייה)",
+        "הקרנל הורג את ה-thread FIFO"
+      ],
+      "answer": 2,
+      "explanation": "ה-rt class נבדקת לפני ה-fair class, כך שכל עדיפות RT קודמת לכל nice. nice משפיע רק בתוך ה-fair class. RT throttling (sched_rt_runtime_us = 950000 מתוך 1000000) הוא רשת ביטחון שמשאירה זמן ל-tasks רגילים, כדי שבאג ב-thread RT לא יקפיא את המכונה.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q24",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread בעדיפות גבוהה (90) מחכה ל-mutex שמחזיק thread בעדיפות נמוכה (10), ובינתיים thread בעדיפות 50 רץ 50ms של חישוב על אותו core. כל ה-threads ב-SCHED_FIFO. מה התופעה ומה הפתרון?",
+      "choices": [
+        "deadlock. פותרים בסדר נעילה קבוע",
+        "priority inversion: ה-thread הבינוני מונע מהנמוך לשחרר, ולכן הגבוה מחכה לבינוני. פותרים עם priority inheritance (PTHREAD_PRIO_INHERIT), שמעלה את מחזיק ה-mutex לעדיפות של הממתין",
+        "starvation של ה-thread הבינוני",
+        "RT throttling. פותרים בהגדלת sched_rt_runtime_us"
+      ],
+      "answer": 1,
+      "explanation": "אין כאן מעגל, ולכן זה לא deadlock: ברגע שהבינוני יסיים, הכול ישתחרר. אבל ההמתנה של ה-thread החשוב תלויה ב-thread שלא קשור ל-mutex בכלל. עם PI, ה-thread הנמוך רץ בעדיפות 90 עד שהוא משחרר, וה-50ms נעלמים. זה הבאג של Mars Pathfinder.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q25",
+      "level": 3,
+      "type": "multi",
+      "prompt": "חושדים ש-thread מחכה הרבה זמן ב-runqueue (מוכן לרוץ אבל לא רץ). אילו כלים מודדים את זה ישירות?",
+      "choices": [
+        "`perf sched record` ואחריו `perf sched latency`",
+        "`strace -c`",
+        "`runqlat` (BCC או bpftrace)",
+        "השדה השני ב-`/proc/<pid>/schedstat` (זמן המתנה ב-runqueue)",
+        "`valgrind --tool=cachegrind`"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "perf sched ו-runqlat מודדים את הזמן בין ההתעוררות לריצה. schedstat מכיל שלושה מספרים: זמן ריצה, זמן המתנה ב-runqueue ומספר ריצות. strace -c סופר זמן ב-syscalls, ו-cachegrind מדמה cache, ואף אחד מהם לא רואה המתנה ל-CPU.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "thread צריך 2ms של CPU כל 10ms, ועליו לסיים כל מחזור עד סוף ה-10ms. אתה רוצה שהקרנל יבטיח את זה, ויסרב לקבל tasks נוספים אם אין מספיק קיבולת. איזה policy מבטא את זה ישירות?",
+      "choices": [
+        "SCHED_FIFO בעדיפות 99",
+        "SCHED_RR עם quantum של 2ms",
+        "SCHED_OTHER עם nice ‎-20",
+        "SCHED_DEADLINE עם runtime = 2ms, deadline = 10ms, period = 10ms (דרך sched_setattr)"
+      ],
+      "answer": 3,
+      "explanation": "SCHED_DEADLINE מתזמן לפי EDF, מגביל כל task ל-runtime שהוצהר (כך שחריגה לא פוגעת באחרים), ומבצע admission control: אם סכום runtime/period של כל ה-tasks עובר את הקיבולת, sched_setattr נכשל. FIFO 99 נותן עדיפות, אבל לא חסם על הזמן ולא בדיקת קיבולת, ובאג בו יכול להרעיב את כולם.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "thread ב-SCHED_FIFO עושה busy-poll של 100% על core מבודד. פעם בשנייה הוא נעצר לכ-50ms, ו-dmesg מציג `sched: RT throttling activated`. מה קורה?",
+      "choices": [
+        "RT throttling: tasks RT מוגבלים כברירת מחדל ל-950ms מתוך כל שנייה (sched_rt_runtime_us מול sched_rt_period_us), כדי להשאיר זמן ל-tasks רגילים. אפשר לשנות את המגבלה, אבל אז באג ב-thread RT יכול לתקוע את ה-core",
+        "ה-core נכנס ל-C-state",
+        "ה-watchdog עוצר את ה-thread",
+        "isolcpus מגביל threads ל-95% CPU"
+      ],
+      "answer": 0,
+      "explanation": "בהגדרות ברירת המחדל הקלאסיות, sched_rt_runtime_us = 950000 ו-sched_rt_period_us = 1000000. כשיש tasks רגילים שמחכים לאותו core, ה-RT נעצר ל-50ms. אפשרויות: לוודא שאין tasks רגילים על ה-core המבודד, להגדיר sched_rt_runtime_us = -1 בזהירות, או להשתמש ב-busy-poll ב-SCHED_OTHER על core שלם עם nohz_full. בקרנלים חדשים המנגנון ממומש כ-deadline server, אבל העיקרון זהה.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "desktop עם autogroup מופעל (ברירת מחדל בהרבה הפצות). בטרמינל אחד רץ `nice -n 19 ./burn` ובטרמינל שני `./burn`, שניהם CPU-bound, מוצמדים לאותו core. איזה חלק מה-core מקבל ה-process עם nice 19?",
+      "choices": [
+        "כ-1.4%, לפי היחס בין המשקלים 15 ל-1024",
+        "כ-50%: כל טרמינל הוא autogroup עם משקל שווה, וההוגנות היא קודם בין הקבוצות. nice משפיע רק ביחס ל-tasks באותה קבוצה",
+        "0%, nice 19 רץ רק כשה-core פנוי",
+        "כ-25%"
+      ],
+      "answer": 1,
+      "explanation": "עם autogroup ה-scheduler מחלק קודם בין sessions, ובתוך כל session לפי nice. מול process מ-session אחר, nice לא משנה כמעט כלום (man 7 sched מציין זאת במפורש). אפשר לשנות את המשקל של הקבוצה עצמה דרך /proc/<pid>/autogroup, או להשתמש ב-cgroups. בלי autogroup, או כששניהם באותו session, התשובה הייתה כ-1.4%.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "שני threads ב-SCHED_FIFO באותה עדיפות, מוצמדים לאותו core. Thread A עושה `while (!ready.load(std::memory_order_acquire)) {}`, ו-Thread B אמור לבצע `ready.store(true)`. A התחיל ראשון. מה קורה?",
+      "choices": [
+        "A יקבל את הדגל אחרי quantum אחד",
+        "B ירוץ כש-A ייחסם על cache miss",
+        "load balancing יעביר את B ל-core אחר",
+        "A מסתובב לנצח: FIFO לא מחלק זמן בין threads באותה עדיפות, A אף פעם לא נחסם או מוותר, ולכן B לא ירוץ. במקרה הטוב RT throttling יעצור את A לרגע"
+      ],
+      "answer": 3,
+      "explanation": "ב-SCHED_FIFO thread רץ עד שהוא נחסם, מוותר או נדחק על ידי עדיפות גבוהה יותר. busy-wait לא עושה אף אחד מהם. affinity מונע מ-load balancing להעביר את B. ב-SCHED_RR, A היה מוותר כל quantum (100ms), עדיין בזבוז עצום. busy-wait ב-RT מתאים רק כשהצד השני רץ על core אחר. אחרת צריך futex, atomic::wait או condition variable.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.scheduling.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "thread DSP ב-Linux צריך לעבד בלוק כל 500µs, עם deadline קשיח של 200µs מתחילת הבלוק. בבדיקות יש חריגות של כמה מילי-שניות פעם בכמה דקות. איך תגדיר את המערכת ואיך תאתר את מקור החריגות?",
+      "modelAnswer": "קודם מדידה: cyclictest על ה-core הרלוונטי (latency של התעוררות), timestamps בקוד (זמן מההתעוררות לתחילת העיבוד ומשך העיבוד, לפי max ולא ממוצע), ו-perf sched או ftrace (sched_switch, irq tracepoints) כדי לראות מה רץ בזמן חריגה. הגדרות scheduling: SCHED_FIFO בעדיפות גבוהה (למשל 80) ל-thread, לא 99, כדי לא לעקוף threads של הקרנל שצריכים לרוץ. core מבודד: isolcpus או cpuset, nohz_full ו-rcu_nocbs, כך שאין tick ואין callbacks של RCU. IRQ affinity של כל ההתקנים ל-cores אחרים, irqbalance מוגבל. RT throttling: לוודא שאין tasks רגילים על ה-core, אחרת עצירה של 50ms. priority inversion: כל mutex שה-thread חולק עם thread חלש יותר צריך PTHREAD_PRIO_INHERIT, או עדיף מבנים lock-free. זיכרון: mlockall, prefault של stacks ובאפרים, בלי malloc ובלי syscalls חוסמים בנתיב החם, ולוודא שאין threads אחרים ב-process שמבצעים munmap (TLB shootdown IPIs). חומרה: להגביל C-states (cpuidle, /dev/cpu_dma_latency), לכבות SMT על ה-core או לבודד גם את ה-sibling, לבדוק frequency scaling. אם זה עדיין לא מספיק: קרנל PREEMPT_RT, שמקצר קטעים שבהם preemption ו-interrupts חסומים. חריגות של מילי-שניות פעם בכמה דקות מרמזות על אירוע תקופתי: SMI של BIOS (בודקים עם hwlatdetect), RT throttling, compaction או writeback של הקרנל, או page fault. עוברים מהשערה להשערה עם trace שמכסה את החריגה.",
+      "rubric": [
+        "מדידה לפני תיקון: cyclictest, timestamps, ftrace או perf sched, ומעקב אחרי max",
+        "SCHED_FIFO בעדיפות סבירה ובידוד core (isolcpus, nohz_full, rcu_nocbs, IRQ affinity)",
+        "RT throttling ו-priority inversion (PI או lock-free)",
+        "זיכרון: mlockall, prefault, בלי malloc ו-syscalls, ומניעת TLB shootdowns",
+        "חומרה וקרנל: C-states, SMT, SMI, ושקילת PREEMPT_RT"
+      ],
+      "explanation": "השאלה בודקת שיטה ולא רשימת טריקים: למדוד, לזהות את סוג החריגה (תקופתית, תלוית עומס), ולסגור את מקורות ה-latency אחד אחד.",
+      "lesson": "sys.scheduling",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }

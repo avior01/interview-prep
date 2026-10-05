@@ -33,7 +33,165 @@
         "לדבר על כלים: cyclictest, ftrace, perf, histogram של זמני לולאה",
         "לתכנן שינוי config בזמן ריצה בלי לפגוע ב-deadlines (העברה אטומית של מצביע, polling בגבול בלוק)"
       ],
-      "diagram": "core0: OS, IRQs, logging, config\ncore2: RX thread   (FIFO 80)\ncore3: DSP thread  (FIFO 70)\n        no malloc / no locks / no I/O"
+      "diagram": "core0: OS, IRQs, logging, config\ncore2: RX thread   (FIFO 80)\ncore3: DSP thread  (FIFO 70)\n        no malloc / no locks / no I/O",
+      "details": [
+        {
+          "title": "predictability: deadlines, WCET ו-jitter",
+          "body": "במערכת זמן-אמת תוצאה נכונה שמגיעה מאוחר היא תוצאה שגויה. לכן המדד הוא החסם העליון ולא הממוצע.\n- **deadline:** הזמן שעד אליו התוצאה חייבת להיות מוכנה.\n- **hard RT:** החמצה היא כשל (כרית אוויר, בקר מנוע). **soft RT:** החמצה פוגעת באיכות ומותרת לעיתים (פריים וידאו שנזרק).\n- **WCET (Worst-Case Execution Time):** זמן הריצה הגרוע ביותר של משימה. מודדים אותו תחת עומס, לאורך זמן, ומשאירים margin, כי worst case נדיר לא יופיע ב-10 דקות במעבדה שקטה.\n- **jitter:** השונות בזמן שבו משהו קורה (התעוררות, סיום, שידור) לעומת הזמן המתוכנן. מערכת טובה היא זו שה-jitter שלה חסום.\n\nמשימות מחזוריות מתוארות בזוג (C, T): זמן ריצה C כל period T. ה-utilization של סט משימות הוא Σ C/T. משימה של 2 ms כל 10 ms ומשימה של 3 ms כל 20 ms נותנות 0.2 + 0.15 = 35%.\n\nמה עושים כשמחמיצים: ברוב מערכות האותות והבקרה לא 'משלימים' איטרציות שהוחמצו (catch-up storm שמעבד נתונים ישנים ומאריך את האיחור), אלא מתיישרים לשעון המוחלט, סופרים miss וממשיכים עם הנתונים העדכניים. לולאה מחזורית ישנה עם clock_nanosleep ו-TIMER_ABSTIME עד הזמן המוחלט הבא; sleep יחסי צובר drift, כי זמן העבודה ו-jitter ההתעוררות מתווספים בכל מחזור."
+        },
+        {
+          "title": "scheduling: SCHED_FIFO, RR, RMS ו-EDF",
+          "body": "ב-Linux:\n- **SCHED_OTHER (CFS):** ברירת המחדל, הוגנות, nice משפיע רק כאן.\n- **SCHED_FIFO:** עדיפות קבועה (1-99) בלי time slice. thread רץ עד שהוא נחסם או מוותר, ורק thread RT בעדיפות גבוהה יותר מפקיע אותו. לולאה אינסופית מרעיבה כל מה שמתחתיו על אותו core. RT throttling (ברירת מחדל 950 ms מכל שנייה) משאיר מעט זמן לשאר, אבל במערכות RT לפעמים מבטלים אותו.\n- **SCHED_RR:** כמו FIFO, אבל threads באותה עדיפות מתחלפים לפי time slice.\n\nתיאוריה קלאסית למשימות מחזוריות על מעבד אחד:\n- **RMS (Rate-Monotonic Scheduling):** עדיפות קבועה לפי period: period קצר יותר = עדיפות גבוהה יותר. אופטימלי בין שיטות העדיפות הקבועה. מבחן Liu & Layland: אם U ≤ n(2^(1/n) − 1), הסט בטוח schedulable. ל-n=1 זה 100%, ל-n=2 כ-82.8%, ל-n=3 כ-78%, ובגבול כ-69.3% (ln 2). זה תנאי מספיק ולא הכרחי: סט מעל הגבול יכול עדיין לעמוד בכל ה-deadlines, ובודקים אותו ב-response-time analysis.\n- **EDF (Earliest Deadline First):** עדיפות דינמית, תמיד המשימה עם ה-deadline הקרוב. schedulable עד U ≤ 100% (כש-deadline = period). המחיר: מימוש מורכב יותר, ובעומס יתר ההתנהגות פחות צפויה (domino effect). ב-Linux יש SCHED_DEADLINE.\n- **cyclic executive:** טבלת זמנים קבועה שמחושבת offline. דטרמיניסטית מאוד, קשיחה לשינויים."
+        },
+        {
+          "title": "priority inversion וסנכרון",
+          "body": "**priority inversion:** H ממתין ל-mutex שמחזיק L, ו-M (לא קשור ל-mutex) רץ כל הזמן ומונע מ-L לרוץ ולשחרר. H מחכה בעקיפין ל-M, בלי חסם. זה מה שקרה ב-Mars Pathfinder ב-1997.\n\nפתרונות:\n- **priority inheritance:** L יורש את העדיפות של H כל עוד הוא מחזיק את ה-mutex (PTHREAD_PRIO_INHERIT). M לא יכול להפקיע אותו.\n- **priority ceiling:** ל-mutex יש עדיפות תקרה (העדיפות הגבוהה ביותר של מי שעשוי לנעול אותו), וכל מי שנועל עולה אליה מיד (PTHREAD_PRIO_PROTECT). מונע גם שרשראות וחלק מה-deadlocks.\n- **הכי טוב:** לא לחלוק locks בין thread RT לבין threads בעדיפות נמוכה. מעבירים נתונים בתורים lock-free (SPSC) או במצביע atomic.\n\nהמתנה לנתונים: חסימה על futex או eventfd עולה מיקרו-שניות של wakeup ומוסיפה jitter. busy-polling מגיב תוך עשרות ns, אבל שורף core שלם ב-100%. מתאים רק ל-core מבודד וייעודי (DPDK, SPDK ו-HFT עושים כך). polling ב-SCHED_FIFO על core משותף יכול להרעיב threads של הקרנל (ksoftirqd, kworkers) ולגרום לתקלות רחוקות. פשרה: spin קצר עם הוראת pause (מקטינה לחץ על ה-HT sibling) ואז חסימה."
+        },
+        {
+          "title": "הכנת ה-platform: זיכרון, cores ו-interrupts",
+          "body": "**זיכרון:** major page fault (דף שצריך לקרוא מדיסק או מ-swap) עולה מילישניות; minor page fault (דף שהוקצה אבל עוד לא מופה פיזית, נגיעה ראשונה) עולה מיקרו-שניות. mlockall(MCL_CURRENT | MCL_FUTURE) נועל את כל הדפים ב-RAM, ו-prefault (כתיבה לכל buffer ולמחסנית לפני שמתחילים) מבטל את הנגיעה הראשונה. fork() בתהליך RT מסוכן: הקרנל מסמן את כל הדפים הפרטיים כ-copy-on-write (COW), כל כתיבה אחר כך היא page fault, ושינוי ה-page tables מחייב TLB shootdown, IPI שמפריע לכל ה-cores שמריצים את התהליך.\n\n**בידוד core:**\n- isolcpus=3 או cpusets: ה-scheduler לא שם שם tasks אחרים.\n- nohz_full=3: מבטל את ה-timer tick כשרץ thread יחיד.\n- rcu_nocbs=3: מעביר RCU callbacks ל-cores אחרים.\n- IRQ affinity: מזיזים interrupts של NIC, דיסק וכו' ל-cores אחרים.\n- הצמדת ה-thread ל-core עם SCHED_FIFO.\n- **hyper-threading:** שני logical CPUs על אותו core פיזי חולקים יחידות ביצוע ו-caches (L1, L2). עבודה כבדה על ה-sibling מאטה את ה-thread ה-RT, ולכן מבודדים את שני ה-siblings או מכבים HT.\n\n**מקורות jitter נוספים:** C-states עמוקים (יציאה עולה עשרות עד מאות מיקרו-שניות), שינויי תדר (DVFS), ו-SMI (System Management Interrupts של ה-BIOS, שאפילו הקרנל לא רואה).\n\n**PREEMPT_RT:** patch (בקרנלים חדשים חלק מה-mainline) שהופך את רוב הקרנל ל-preemptible: interrupt handlers רצים כ-threads עם עדיפות שאפשר לקבוע, ו-spinlocks הופכים ל-mutexes עם priority inheritance. משפר את ה-worst case latency, לא את המהירות הממוצעת, ולא פוטר מ-mlock ומבידוד."
+        },
+        {
+          "title": "נתיב חם ונתיב קר, ו-config בזמן ריצה",
+          "body": "בנתיב החם: אין הקצאות, אין I/O, אין syscalls חוסמים, ואין locks משותפים עם threads בעדיפות נמוכה. הקצאות נסתרות ב-C++: std::string שחורג מה-SSO (small string optimization, buffer פנימי קטן), push_back ל-vector מלא, std::function עם lambda גדולה מה-small buffer שלו, ו-throw (אובייקט ה-exception מוקצה). std::sort הוא in-place ולא מקצה; std::stable_sort מנסה להקצות buffer.\n\nהנתיב הקר (config, logging, UI) רץ ב-threads בעדיפות רגילה על cores אחרים.\n\nשינוי config בזמן ריצה: thread רגיל בונה אובייקט config חדש ושלם (immutable), כולל כל מה שנגזר ממנו, ומפרסם אותו דרך מצביע atomic עם release. ה-thread ה-RT טוען אותו עם acquire פעם אחת בתחילת כל בלוק, כך שאין מצב חצי-מעודכן. את הגרסה הישנה ה-RT לא משחרר בעצמו: מחזיר את המצביע בתור SPSC ל-thread רגיל, או משתמש ב-double buffer או ב-RCU (Read-Copy-Update: הקוראים לא נועלים, והשחרור נדחה עד שכל הקוראים עברו quiescent state, נקודה שבה הם בוודאות לא מחזיקים מצביע ישן).\n\nפעולות שמחייבות שינוי בחומרה (retune של תדר) מבצעים כ-timed command, או משנים קודם NCO דיגיטלי אם השינוי קטן."
+        },
+        {
+          "title": "זמן מוחלט ו-timed commands",
+          "body": "ה-host הוא מקור jitter. במקום 'שדר עכשיו' שולחים 'שדר בזמן T' לפי השעון של ה-radio (ב-USRP: time_spec ב-metadata של TX). ה-radio מבצע בדיוק בזמן לפי השעון שלו, וה-host רק צריך להגיע לפני. כך jitter של ±300 מיקרו-שניות הופך מבעיית דיוק לבעיית margin: מספיק שה-worst case של ה-host קטן מהזמן שנותר. אם הפקודה מגיעה מאוחר, ה-radio מדווח late ולא משדר בזמן שגוי.\n\nאותו עיקרון בכל מקום: לחשב לפי timestamp של הקלט (זמן הדגימה) ולא לפי 'מתי ה-host ראה אותו', ולתזמן פלט לזמן מוחלט."
+        },
+        {
+          "title": "safety: fail-safe, watchdog ומכונת מצבים",
+          "body": "**fail-safe:** כל מצב לא מוגדר מוביל למצב בטוח. במשדר: TX כבוי. ברירת מחדל disarmed, ושידור דורש פעולה מפורשת (arm). מכונת מצבים מפורשת: DISARMED, ARMED_IDLE, TRANSMITTING, FAULT, כש-FAULT דורש reset ידני.\n\n**watchdog:** רכיב שמצפה ל-heartbeat תקופתי, ואם הוא לא מגיע, מבצע פעולת בטיחות. הוא חייב להיות בלתי תלוי במה שהוא מנטר: watchdog ב-SCHED_FIFO נמוך על אותו core של thread RT שנתקע בלולאה לעולם לא ירוץ. עדיף watchdog חומרתי או timeout ב-FPGA שמכבה את ה-PA.\n\nסדר הפעולות בתקלה: קודם להגיע למצב בטוח (TX off), ורק אחר כך לתעד, לנקות ולדווח. חזרה לשידור רק ידנית.\n\n**אימות:** cyclictest מודד latency של התעוררות של ה-platform; stress-ng מייצר עומס רקע (CPU, זיכרון, I/O); ftrace ו-perf מראים מה רץ בזמן spike. מודדים max על פני שעות או ימים, ומשאירים ניטור של deadline misses ב-production."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: ניתוח RMS לשלוש משימות",
+          "body": "שלוש משימות מחזוריות (C, T): A = (1 ms, 4 ms), B = (2 ms, 10 ms), C = (4 ms, 20 ms).\n\n- utilization: 0.25 + 0.2 + 0.2 = 0.65.\n- RMS: עדיפות A > B > C (period קצר יותר = עדיפות גבוהה).\n- גבול Liu & Layland ל-n=3: 3 × (2^(1/3) − 1) ≈ 0.78. 0.65 ≤ 0.78, ולכן הסט בטוח schedulable.\n- response-time analysis ל-C: מתחילים מ-R = 4. ב-R = 4 נכנסות ⌈4/4⌉ = 1 הרצה של A ו-⌈4/10⌉ = 1 של B: R = 4 + 1 + 2 = 7. ב-R = 7: ⌈7/4⌉ = 2 של A ו-1 של B: R = 4 + 2 + 2 = 8. ב-R = 8: ⌈8/4⌉ = 2 ו-1: R = 8. התכנס. 8 ms < 20 ms.\n\nאם C היה (8 ms, 20 ms), U = 0.85, מעל הגבול. זה לא אומר שהסט נכשל, רק שצריך לבדוק ב-response-time analysis. ב-EDF הוא schedulable כי U ≤ 1."
+        },
+        {
+          "title": "דוגמה: timed TX עם margin",
+          "body": "דרישה: לשדר burst בדיוק 2 ms אחרי אות שזוהה ב-RX.\n\n- ה-RX מסמן את ה-sample שבו זוהה האות בזמן t0 = 12.000000 s לפי שעון ה-radio.\n- ה-host מעבד ומחליט. במקרה הרע זה לוקח 1.2 ms, עם jitter של ±300 מיקרו-שניות.\n- הפקודה נשלחת עם time_spec = t0 + 2 ms = 12.002000 s.\n- ה-radio משדר ב-12.002000 בדיוק, בלי קשר מתי בדיוק הפקודה הגיעה.\n- margin: 2 − 1.2 − 0.3 = 0.5 ms. אם ה-host מתעכב יותר, ה-radio מחזיר late ולא משדר.\n\nהלקח: jitter של ה-host נבלע לחלוטין כל עוד הוא בתוך ה-margin, ומדד הבריאות הוא מונה ה-late."
+        },
+        {
+          "title": "דוגמה: לולאה מחזורית שמחמיצה",
+          "body": "לולאה כל 1 ms, עם clock_nanosleep לזמן מוחלט. ה-deadlines: 1, 2, 3, 4, 5 ms.\n\n- איטרציה שמתחילה ב-1 ms לוקחת 3.5 ms בגלל תקלה, ומסתיימת ב-4.5 ms.\n- הגישה הנכונה: הזמן הבא שבעתיד הוא 5 ms. סופרים 3 misses (2, 3, 4), ממשיכים ב-5 עם הנתונים העדכניים.\n- הגישה השגויה: להריץ מיד 3 איטרציות ברצף. הן מעבדות נתונים ישנים, וה-5 ms עצמו מוחמץ גם הוא.\n- עם sleep יחסי של 1 ms אחרי כל איטרציה, המחזור היה 1 ms + זמן העבודה, וה-drift מצטבר כל הזמן."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "hard / soft real-time",
+          "def": "החמצת deadline היא כשל של המערכת, מול החמצה שפוגעת באיכות ומותרת לעיתים."
+        },
+        {
+          "term": "deadline",
+          "def": "הזמן שעד אליו התוצאה חייבת להיות מוכנה. במערכת RT תוצאה מאוחרת היא שגויה."
+        },
+        {
+          "term": "WCET",
+          "def": "Worst-Case Execution Time: זמן הריצה הגרוע ביותר של משימה. נמדד תחת עומס ולאורך זמן, ומשאירים margin."
+        },
+        {
+          "term": "jitter",
+          "def": "השונות בתזמון לעומת הזמן המתוכנן. מערכת RT טובה היא זו שה-jitter שלה חסום."
+        },
+        {
+          "term": "utilization של משימות",
+          "def": "Σ C/T: סכום זמני הריצה חלקי ה-periods. מבחנים כמו RMS ו-EDF מבוססים עליו."
+        },
+        {
+          "term": "SCHED_FIFO / SCHED_RR / SCHED_OTHER",
+          "def": "עדיפות קבועה בלי time slice; אותו דבר עם time slice בין threads באותה עדיפות; ומדיניות ההוגנות הרגילה, שבה nice משפיע."
+        },
+        {
+          "term": "RT throttling",
+          "def": "מגבלה של Linux על זמן ה-CPU של threads RT (ברירת מחדל 950 ms מכל שנייה), כדי שלולאה אינסופית לא תתקע את המערכת כולה."
+        },
+        {
+          "term": "RMS ו-Liu & Layland",
+          "def": "עדיפות קבועה לפי period קצר. סט עם U ≤ n(2^(1/n) − 1) בטוח schedulable (כ-78% ל-3 משימות, כ-69% בגבול); זה תנאי מספיק ולא הכרחי."
+        },
+        {
+          "term": "EDF ו-SCHED_DEADLINE",
+          "def": "עדיפות דינמית לפי ה-deadline הקרוב, schedulable עד 100% utilization. ב-Linux ממומש כ-SCHED_DEADLINE."
+        },
+        {
+          "term": "response-time analysis",
+          "def": "חישוב איטרטיבי של זמן התגובה הגרוע של משימה, כולל ההפרעות של משימות בעדיפות גבוהה. בודק schedulability גם מעל גבול RMS."
+        },
+        {
+          "term": "priority inversion",
+          "def": "thread בעדיפות גבוהה מחכה ל-lock שמחזיק thread נמוך, שלא רץ כי thread בינוני תופס את ה-CPU."
+        },
+        {
+          "term": "priority inheritance / ceiling",
+          "def": "מחזיק ה-lock יורש את העדיפות של הממתין הגבוה; או עולה מיד לעדיפות תקרה של ה-lock."
+        },
+        {
+          "term": "busy-polling מול futex/eventfd",
+          "def": "בדיקה רציפה שמגיבה בעשרות ns ושורפת core, מול חסימה בקרנל שעולה מיקרו-שניות של wakeup."
+        },
+        {
+          "term": "mlockall ו-prefault",
+          "def": "נעילת כל דפי התהליך ב-RAM, ונגיעה מראש בכל buffer כדי לבטל page faults ראשונים."
+        },
+        {
+          "term": "major / minor page fault",
+          "def": "גישה לדף שצריך להביא מדיסק (מילישניות), מול דף שקיים אבל עוד לא מופה (מיקרו-שניות)."
+        },
+        {
+          "term": "copy-on-write ו-TLB shootdown",
+          "def": "אחרי fork הדפים מסומנים לקריאה בלבד וכל כתיבה גורמת ל-fault; ושינוי page tables מחייב IPI שמנקה TLBs בכל ה-cores."
+        },
+        {
+          "term": "isolcpus, nohz_full, rcu_nocbs, IRQ affinity",
+          "def": "הוצאת core מה-scheduler הכללי, ביטול timer tick עליו, העברת RCU callbacks ממנו, והזזת interrupts ל-cores אחרים."
+        },
+        {
+          "term": "hyper-threading sibling",
+          "def": "logical CPU שני על אותו core פיזי, שחולק יחידות ביצוע ו-caches. עומס עליו מוסיף jitter ל-thread RT."
+        },
+        {
+          "term": "C-states, DVFS, SMI",
+          "def": "מצבי שינה של ה-CPU, שינוי תדר דינמי, ו-interrupts של ה-BIOS שהקרנל לא רואה. כולם מקורות jitter."
+        },
+        {
+          "term": "PREEMPT_RT",
+          "def": "קרנל שבו רוב הקוד preemptible, IRQs רצים כ-threads, ו-spinlocks הופכים ל-mutexes עם PI. משפר worst case, לא ממוצע."
+        },
+        {
+          "term": "clock_nanosleep עם TIMER_ABSTIME",
+          "def": "שינה עד זמן מוחלט, כך שלולאה מחזורית לא צוברת drift."
+        },
+        {
+          "term": "timed command (time_spec)",
+          "def": "פקודה לחומרה עם זמן ביצוע מוחלט לפי השעון שלה. מנתקת את ה-jitter של ה-host; פקודה מאוחרת מדווחת late."
+        },
+        {
+          "term": "fail-safe ו-arm/disarm",
+          "def": "כל מצב לא מוגדר מוביל למצב בטוח (TX כבוי); שידור דורש פעולה מפורשת."
+        },
+        {
+          "term": "watchdog",
+          "def": "רכיב בלתי תלוי שמצפה ל-heartbeat ומבצע פעולת בטיחות אם הוא לא מגיע. עדיף בחומרה או ב-FPGA."
+        },
+        {
+          "term": "SSO ו-הקצאות נסתרות",
+          "def": "small string optimization: string קצר נשמר בלי הקצאה. מעבר לו, וגם vector מלא, std::function גדול ו-throw, מקצים זיכרון."
+        },
+        {
+          "term": "RCU ו-quiescent state",
+          "def": "קוראים בלי נעילה, וכותב שמחליף מצביע ומשחרר את הישן רק אחרי שכל הקוראים עברו נקודה שבה בוודאות לא מחזיקים אותו."
+        },
+        {
+          "term": "cyclictest, stress-ng, ftrace",
+          "def": "מדידת latency התעוררות של ה-platform, יצירת עומס רקע, ומעקב אחרי מה שרץ בקרנל בזמן spike."
+        },
+        {
+          "term": "jitter buffer ו-PLC",
+          "def": "באודיו בזמן אמת: buffer שסופג שונות בזמני הגעת packets, ו-packet loss concealment שממציא אות סביר ל-packet חסר במקום שקט."
+        }
+      ]
     }
   ],
   "questions": [
@@ -333,6 +491,215 @@
       "lesson": "design.rt-design",
       "tags": [
         "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה WCET?",
+      "choices": [
+        "זמן הריצה הגרוע ביותר של משימה, שעליו מתכננים את ה-deadlines",
+        "זמן הריצה הממוצע של משימה",
+        "הזמן שה-CPU ממתין ל-I/O",
+        "הזמן בין שתי הרצות של משימה מחזורית"
+      ],
+      "answer": 0,
+      "explanation": "Worst-Case Execution Time הוא החסם העליון, וזה מה שקובע אם deadline יעמוד. ממוצע לא מספיק במערכת RT. הזמן בין הרצות הוא ה-period.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה jitter בהקשר של מערכת זמן-אמת?",
+      "choices": [
+        "רעש חשמלי בכבלים",
+        "הזמן הממוצע לתגובה",
+        "מספר ה-deadlines שהוחמצו",
+        "השונות בזמן שבו פעולה קורה לעומת הזמן המתוכנן, למשל התעוררות של לולאה מחזורית"
+      ],
+      "answer": 3,
+      "explanation": "jitter מתאר כמה התזמון 'רוקד' סביב המתוכנן. ממוצע יכול להיות מצוין עם jitter גדול. deadline misses הם תוצאה של jitter גדול מה-margin, לא ה-jitter עצמו.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד של watchdog במערכת שמשדרת?",
+      "choices": [
+        "למדוד את הספק השידור",
+        "לשמור לוגים של כל השידורים",
+        "לאזן עומס בין threads",
+        "לצפות ל-heartbeat תקופתי מהתוכנה, ואם הוא לא מגיע, להעביר את המערכת למצב בטוח (למשל לכבות TX)"
+      ],
+      "answer": 3,
+      "explanation": "watchdog מזהה תוכנה תקועה או קרוסה דרך היעדר heartbeat ומבצע פעולת בטיחות. כדי שיעבוד, הוא חייב להיות בלתי תלוי במה שהוא מנטר, ועדיף בחומרה.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q21",
+      "level": 2,
+      "type": "short",
+      "prompt": "על core אחד רצות שתי משימות מחזוריות: אחת רצה 2 ms כל 10 ms, והשנייה 3 ms כל 20 ms. מה ה-utilization הכולל, באחוזים?",
+      "accept": [
+        "35",
+        "35%",
+        "0.35"
+      ],
+      "explanation": "U = Σ C/T = 2/10 + 3/20 = 0.2 + 0.15 = 0.35. זה נמוך מכל גבול schedulability מקובל, ולכן הסט בטוח גם ב-RMS.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין SCHED_FIFO ל-SCHED_RR ב-Linux?",
+      "choices": [
+        "ב-SCHED_RR threads באותה עדיפות מתחלפים לפי time slice; ב-SCHED_FIFO thread רץ עד שהוא נחסם או מוותר",
+        "SCHED_RR לא real-time",
+        "SCHED_FIFO מתחלף לפי time slice ו-SCHED_RR לא",
+        "SCHED_RR מאפשר עדיפויות דינמיות"
+      ],
+      "answer": 0,
+      "explanation": "שתיהן מדיניות real-time עם עדיפות קבועה, ו-thread בעדיפות גבוהה יותר מפקיע בשתיהן. ההבדל הוא רק בין threads באותה עדיפות: RR מסובב ביניהם, FIFO לא. עדיפות דינמית לפי deadline היא SCHED_DEADLINE.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "לולאה מחזורית של 1 ms עושה עבודה ואז קוראת ל-sleep יחסי של 1 ms. מה הבעיה?",
+      "choices": [
+        "sleep יחסי לא זמין ב-Linux",
+        "sleep יחסי תמיד מתעורר מוקדם",
+        "אין בעיה כל עוד העבודה קצרה",
+        "המחזור בפועל הוא 1 ms ועוד זמן העבודה ועוד jitter ההתעוררות, וה-drift מצטבר; צריך לישון עד זמן מוחלט (clock_nanosleep עם TIMER_ABSTIME)"
+      ],
+      "answer": 3,
+      "explanation": "בשינה יחסית כל עיכוב מתווסף למחזור הבא ולא מתקזז, ולכן הלולאה זוחלת אחורה ביחס לשעון. עם זמן מוחלט, next += period, ועיכוב באיטרציה אחת לא משפיע על הבאות. גם עבודה קצרה מצטברת לאורך אלפי מחזורים.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q24",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שלוש משימות מחזוריות עם periods של 5, 10 ו-50 ms רצות עם עדיפויות קבועות. לפי RMS, איך מחלקים עדיפויות?",
+      "choices": [
+        "ה-period הקצר ביותר (5 ms) מקבל את העדיפות הגבוהה ביותר, אחריו 10 ms, ו-50 ms הכי נמוכה",
+        "המשימה עם זמן הריצה הארוך ביותר מקבלת את העדיפות הגבוהה ביותר",
+        "המשימה עם ה-period הארוך ביותר מקבלת עדיפות גבוהה, כדי שתספיק לסיים",
+        "כולן באותה עדיפות עם SCHED_RR"
+      ],
+      "answer": 0,
+      "explanation": "Rate-Monotonic: קצב גבוה (period קצר) = עדיפות גבוהה. זו ההקצאה האופטימלית בין שיטות עדיפות קבועה כש-deadline = period. עדיפות לפי זמן ריצה או period ארוך גורמת למשימות המהירות להחמיץ.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q25",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות על קרנל PREEMPT_RT נכונות?",
+      "choices": [
+        "רוב הקרנל הופך ל-preemptible, ולכן thread RT ממתין פחות לקוד קרנל שרץ",
+        "interrupt handlers רצים כ-threads, ואפשר לקבוע להם עדיפות",
+        "הוא מעלה את ה-throughput הממוצע של המערכת",
+        "spinlocks רגילים בקרנל הופכים ל-mutexes עם priority inheritance",
+        "הוא פוטר מהצורך ב-mlockall ובבידוד cores"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "PREEMPT_RT מקטין את ה-worst case latency: קוד קרנל ארוך ניתן להפקעה, IRQs הופכים ל-threads עם עדיפות, ו-spinlocks הופכים ל-rt_mutex עם PI. בדרך כלל ה-throughput הממוצע אפילו יורד מעט. page faults, IRQs על ה-core ו-C-states עדיין דורשים mlock, בידוד ו-tuning.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q26",
+      "level": 4,
+      "type": "short",
+      "prompt": "מה גבול Liu & Layland ל-utilization של 3 משימות תחת RMS, באחוזים ומעוגל למספר שלם?",
+      "accept": [
+        "78",
+        "78%",
+        "0.78"
+      ],
+      "explanation": "n(2^(1/n) − 1) = 3 × (1.2599 − 1) ≈ 0.7798, כלומר כ-78%. כל סט של 3 משימות עם U מתחת לזה schedulable ב-RMS. ל-2 משימות זה כ-82.8%, ובגבול של הרבה משימות כ-69.3%.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q27",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "סט של 3 משימות מחזוריות עם U = 0.85 (deadline = period). מה אפשר להסיק?",
+      "choices": [
+        "הסט לא schedulable ב-RMS, כי הוא מעל 78%",
+        "הסט לא schedulable בשום אלגוריתם",
+        "צריך להוריד את U מתחת ל-69%",
+        "הגבול של RMS הוא תנאי מספיק ולא הכרחי, ולכן צריך לבדוק response-time analysis; ב-EDF הסט בוודאות schedulable כי U ≤ 1"
+      ],
+      "answer": 3,
+      "explanation": "Liu & Layland מבטיח schedulability מתחת לגבול, אבל סט מעליו יכול לעבור (למשל כש-periods הם כפולות זה של זה, RMS עובד עד 100%). response-time analysis נותן תשובה מדויקת. EDF אופטימלי על מעבד אחד ועובד עד U = 1, במחיר של עדיפויות דינמיות.",
+      "lesson": "design.rt-design"
+    },
+    {
+      "id": "design.rt-design.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "thread RT מוצמד ל-logical CPU 3, שבודד עם isolcpus, nohz_full ו-IRQ affinity. ה-histogram של זמני הלולאה תקין, חוץ מתקופות שבהן build גדול רץ על המכונה, ואז ה-max קופץ פי 3. ה-build רץ רק על cores לא מבודדים. מה ההסבר הסביר ביותר?",
+      "choices": [
+        "logical CPU 3 ואחד ה-CPUs שה-build רץ עליו הם hyper-threading siblings על אותו core פיזי, וחולקים יחידות ביצוע ו-caches; צריך לבודד גם את ה-sibling או לכבות HT",
+        "ה-build גורם ל-swap, אף שהתהליך עשה mlockall",
+        "isolcpus לא עובד עם nohz_full",
+        "ה-scheduler מתעלם מ-isolcpus בעומס גבוה"
+      ],
+      "answer": 0,
+      "explanation": "בידוד ברמת logical CPU לא מבודד את ה-core הפיזי. כשה-sibling עמוס, שני ה-threads מתחרים על pipelines, L1 ו-L2, וה-thread ה-RT מאט. בנוסף, ה-L3 ורוחב הפס לזיכרון משותפים לכל ה-cores, ולכן גם בלי HT עומס כבד יכול להשפיע (שם עוזרים cache partitioning כמו Intel CAT). mlockall מונע swap של התהליך, ו-isolcpus לא מתבטל בעומס.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "בתהליך RT עם mlockall, thread רגיל (לא RT) מפעיל תוכנית חיצונית בעזרת fork() ואחריו exec(). מיד אחר כך נצפים spikes ב-latency של ה-thread ה-RT. מה הסיבה הסבירה?",
+      "choices": [
+        "exec() מחליף את קוד ה-thread ה-RT",
+        "mlockall מתבטל אחרי fork",
+        "ה-child יורש את SCHED_FIFO ומפקיע את ה-thread ה-RT",
+        "fork מסמן את דפי הזיכרון הפרטיים של התהליך כ-copy-on-write, ולכן כתיבות של ה-thread ה-RT גורמות ל-page faults, ושינוי ה-page tables דורש TLB shootdown שמפריע לכל ה-cores של התהליך"
+      ],
+      "answer": 3,
+      "explanation": "fork משכפל את מרחב הכתובות בשיטת COW: הקרנל מסמן דפים כקריאה בלבד, וכל כתיבה אחר כך היא fault שמעתיק או מחזיר הרשאה, עד שה-child עושה exec. בנוסף, שינוי ה-page tables מחייב IPI לכל ה-cores שמריצים threads של התהליך. mlockall לא מונע את זה. נכון שה-child יורש את מדיניות ה-scheduling של ה-thread שקרא ל-fork, אבל כאן זה thread רגיל. הפתרון: posix_spawn או vfork, או תהליך עזר נפרד שמפעיל תוכניות.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "design.rt-design.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן את מסלול האודיו בזמן אמת של שיחת Teams על מחשב של משתמש: מיקרופון, עיבוד (echo cancellation, noise suppression), קידוד, רשת, ובצד השני jitter buffer, פענוח ורמקול. מה תקציב ה-latency, מה ה-deadlines, ואיך המערכת מתנהגת כשה-CPU עמוס או שהרשת מאבדת packets?",
+      "modelAnswer": "יעד: mouth-to-ear מתחת לכ-150 ms (ההמלצה המקובלת לשיחה טבעית), כשהרשת לוקחת חלק גדול. האודיו נלכד ב-48 kHz במסגרות של 10 ms (480 samples) דרך callback של ה-audio driver; ה-callback הוא ה-deadline הקשיח: אם הוא לא מחזיר בזמן, יש glitch שנשמע. לכן ב-callback רק מעתיקים לתור SPSC lock-free, בלי הקצאות ובלי locks, ו-thread עיבוד בעדיפות גבוהה (MMCSS ב-Windows, או SCHED_FIFO) מריץ AEC, noise suppression ו-AGC. תקציב לדוגמה: capture buffer 10-20 ms, עיבוד 5-10 ms, קידוד במסגרות של 20 ms (Opus או SILK) כלומר 20 ms של צבירה, רשת 30-80 ms, jitter buffer 20-60 ms, פענוח ו-playout buffer 10-20 ms. jitter buffer אדפטיבי: גדל כשה-jitter של הרשת עולה ומתכווץ כשהוא יורד, באמצעות time-stretching של קטעי דיבור או שקט כדי שלא יישמעו קפיצות. אובדן packets: PLC שממציא אות סביר, FEC (מידע עודף ב-packet הבא) כשיש אובדן מתמשך, ואם הרשת גרועה, הורדת bitrate. CPU עמוס: ה-callback מוגן כי הוא עושה מינימום; אם thread העיבוד לא עומד, מורידים מדרגה (noise suppression פשוט יותר, דילוג על AI denoise) לפני שמחמיצים frames. AEC חייב את אות הרמקול כ-reference עם יישור זמן מדויק, ולכן ה-latency של playout צריך להיות יציב ונמדד. מדדים: glitches לדקה, גודל jitter buffer, אחוז PLC, ו-mouth-to-ear משוער; בדיקות עם network emulator (אובדן, jitter, bursts) ועם עומס CPU מלאכותי.",
+      "rubric": [
+        "תקציב mouth-to-ear מפורק לרכיבים עם מספרים ויעד של כ-150 ms",
+        "audio callback כ-deadline קשיח: בלי הקצאות ו-locks, העברה בתור lock-free, thread עדיפות גבוהה לעיבוד",
+        "jitter buffer אדפטיבי ו-PLC/FEC לאובדן packets",
+        "degradation מדורג בעומס CPU במקום glitches",
+        "מדדים ובדיקות עם network emulator ועומס"
+      ],
+      "explanation": "אותם עקרונות של SDR (callback כ-hard deadline, נתיב חם בלי הקצאות, degradation מתוכנן) בהקשר של מוצר צרכני. תשובה חזקה מפרקת את ה-latency ומסבירה מה קורה כשמשהו נכשל.",
+      "lesson": "design.rt-design",
+      "tags": [
+        "microsoft"
       ]
     }
   ]

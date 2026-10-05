@@ -33,7 +33,153 @@
         "לדבר על late data, watermarks ו-allowed lateness",
         "לתכנן replay ו-reprocessing: אותו קוד על היסטוריה, checkpoints, dead letter queue"
       ],
-      "diagram": "src -> [A 2ms] -> q -> [B 5ms]x3 -> q -> [C 1ms] -> sink\n                       bottleneck"
+      "diagram": "src -> [A 2ms] -> q -> [B 5ms]x3 -> q -> [C 1ms] -> sink\n                       bottleneck",
+      "details": [
+        {
+          "title": "throughput, latency ו-bottleneck",
+          "body": "ב-pipeline כל שלב רץ במקביל לאחרים על פריטים שונים. לכן:\n- **throughput** = המינימום על השלבים של (מספר workers / זמן לפריט). השלב שבו המינימום מתקבל הוא ה-bottleneck.\n- **latency** של פריט = סכום זמני השלבים, ועוד ההמתנה בתורים, ועוד עלות ה-handoff בין שלבים.\n- **workers לשלב** = ⌈קצב יעד × זמן לפריט⌉. ב-2,000 פריטים בשנייה ושלב של 4 ms: 2,000 × 0.004 = 8 workers. זה Little's law: מספר הפריטים שבעבודה בכל רגע.\n\nתורים בין שלבים סופגים bursts, אבל לא מעלים את הקצב הממוצע. בתכנון מוסיפים מרווח, כי שלב שרץ ב-utilization גבוה ייצור תור ו-latency.\n\nhandoff הוא לא חינם: כתיבה לתור, wakeup של thread, והעברת cache lines בין cores עולים בסדר גודל של מאות ns עד מיקרו-שניות. אם שני שלבים קלים וצמודים, מאחדים אותם (fusion): מעבר אחד על הנתונים, בלי תור, והנתונים נשארים חמים ב-cache. מפצלים רק כשיש סיבה: שלב שצריך scaling בנפרד, שלב לא יציב (I/O) שצריך בידוד, או שלבים שרצים על חומרה שונה."
+        },
+        {
+          "title": "stateless, stateful ו-partitioning",
+          "body": "שלב **stateless** מחשב כל פריט בנפרד (parsing, המרה, filter לפי סף קבוע). אפשר לשכפל אותו ל-k workers בלי תיאום.\n\nשלב **stateful** תלוי בהיסטוריה: ספירה לפי key, aggregation בחלון, FIR עם delay line, NCO עם phase. אם משכפלים אותו בלי לחשוב, ה-state של key מתפזר בין workers והתוצאה שגויה. הפתרון הוא **partitioning לפי key**: hash(key) mod N קובע לאיזה worker כל פריט הולך, וכל ה-state של key נמצא במקום אחד. בונוס: הסדר נשמר בתוך key.\n\nב-Kafka זה מובנה: topic מחולק ל-partitions, הודעות עם אותו key הולכות לאותו partition, והסדר מובטח רק בתוך partition. **consumer group** הוא קבוצת צרכנים שמתחלקים ב-partitions: כל partition נצרך על ידי צרכן אחד בלבד בקבוצה. לכן מספר הצרכנים הפעילים חסום במספר ה-partitions, וצרכנים עודפים יושבים בטלים. כשצרכן מצטרף או נופל, יש **rebalance** שמחלק מחדש את ה-partitions.\n\n**hot key (skew):** אם key אחד מקבל חלק גדול מהתעבורה, ה-partition שלו הופך ל-bottleneck, ושום הוספת workers לא עוזרת. פתרונות: pre-aggregation מקומי (combiner) לפני ה-shuffle, או salting: מפצלים את ה-key ל-key#0..key#k, מצברים חלקית, ומאחדים בשלב שני. זה עובד לפעולות שניתן לפרק (sum, count, max), ולממוצע רק אם מעבירים (sum, count) ולא ממוצעים חלקיים."
+        },
+        {
+          "title": "delivery semantics: at-most, at-least, effectively-once",
+          "body": "כשצרכן קורס באמצע, השאלה היא מה קורה להודעה שבעבודה:\n- **at-most-once:** commit של ה-offset לפני העיבוד. קריסה אחרי ה-commit מאבדת את ההודעה. גם auto-commit תקופתי בזמן שהעיבוד אסינכרוני יכול להגיע לזה: ה-offset מתקדם לפני שהעבודה הסתיימה.\n- **at-least-once:** commit אחרי העיבוד. קריסה בין העיבוד ל-commit גורמת לעיבוד חוזר. אין אובדן, יש כפילויות.\n- **effectively-once (exactly-once בפועל):** at-least-once ועוד sink אידמפוטנטי (למשל upsert לפי מזהה הודעה או לפי (device, minute)), או שמירת ה-offset באותה טרנזקציה עם התוצאה.\n\n**exactly-once בתוך המערכת:** Flink לוקח snapshot עקבי של ה-state של כל השלבים בעזרת barriers שזורמים עם הנתונים (asynchronous barrier snapshotting, וריאציה של Chandy-Lamport). כל שלב שומר את ה-state שלו כשה-barrier עובר, וה-snapshot כולל את ה-offsets של המקור. אחרי כשל משחזרים הכל מה-snapshot ומנגנים מחדש. **Kafka transactions** מאחדות כתיבה ל-topic פלט ו-commit של offsets לפעולה אטומית; צרכנים עם isolation level של read_committed לא רואים רשומות של טרנזקציה שבוטלה.\n\nהגבול: side effect חיצוני (email, קריאה ל-API של תשלום) לא נכלל בשום טרנזקציה של ה-pipeline, ויכול לקרות פעמיים. פתרונות: idempotency key בצד המקבל, או **outbox pattern**: כותבים את הכוונה לשלוח לטבלה באותה טרנזקציה עם השינוי, ותהליך נפרד שולח מהטבלה ומסמן."
+        },
+        {
+          "title": "זמן ב-streaming: event time, windows ו-watermarks",
+          "body": "**event time** הוא מתי האירוע קרה (timestamp באירוע). **processing time** הוא מתי עיבדנו אותו. קיבוץ לפי processing time פשוט, אבל אירועים מאחרים נופלים בחלון הלא נכון, ו-replay של אותם נתונים נותן תוצאה אחרת.\n\nסוגי חלונות:\n- **tumbling:** חלונות צמודים ולא חופפים (10:00-10:01, 10:01-10:02). כל אירוע בחלון אחד.\n- **sliding / hopping:** חלונות באורך W שמתחילים כל S. כל אירוע שייך ל-W/S חלונות: חלון של 10 דקות שזז כל דקה מכיל כל אירוע ב-10 חלונות.\n- **session:** חלון לכל רצף פעילות, שנסגר אחרי gap של חוסר פעילות.\n- **count window:** N האירועים האחרונים.\n\n**watermark** הוא הצהרה הוריסטית: 'כל האירועים עם timestamp עד T כבר הגיעו'. כשה-watermark עובר את סוף החלון, החלון נסגר ופולט תוצאה. אירוע שמגיע עם timestamp לפני ה-watermark הוא **late data**. **allowed lateness** קובע כמה זמן אחרי הסגירה עוד מעדכנים חלון ופולטים תוצאה מתוקנת; אחרי זה האירוע נזרק או נשלח ל-side output (זרם צדדי לטיפול נפרד).\n\nכשיש כמה partitions, ה-watermark של אופרטור הוא המינימום על הקלטים שלו. partition שלא מקבל אירועים בכלל (idle) עוצר את ה-watermark ואף חלון לא נסגר. הפתרון: idleness timeout שמוציא partition שקט מחישוב המינימום."
+        },
+        {
+          "title": "תוצאות מתעדכנות, panes ו-state גדול",
+          "body": "כש-allowed lateness מאפשר עדכון של חלון, אותו חלון נפלט יותר מפעם אחת: תוצאה ראשונית ואחריה תוצאה מתוקנת. צרכן downstream חייב להתייחס לפלט כ-upsert לפי מפתח החלון (מחליף את הערך הקודם), או לעבד retractions (הודעה שמבטלת את הערך הקודם). צרכן שמוסיף כל פלט לסכום כולל יספור פעמיים.\n\nsliding windows עם הרבה keys: שמירת כל האירועים יקרה. מחלקים את הזמן ל-**panes** (slices) בגודל ההזזה, מחשבים ערך חלקי לכל pane, וחלון הוא צירוף של W/S panes. ב-sum או count אפשר להחסיר את ה-pane היוצא. max ו-min אינם הפיכים, ולכן משתמשים ב-monotonic deque (תור ששומר רק מועמדים יורדים) או ב-two-stacks, שנותנים max ב-O(1) amortized.\n\nstate גדול נשמר ב-state backend מקומי (למשל RocksDB) עם checkpoints תקופתיים לאחסון מרוחק, ו-TTL ל-keys שלא נראו זמן רב."
+        },
+        {
+          "title": "כשלים: poison messages, DLQ, lag ו-replay",
+          "body": "**poison message** הוא הודעה שגורמת ל-exception בכל ניסיון. בלי טיפול, הצרכן קורס, עולה מחדש, ונתקע עליה שוב, וכל ה-partition עומד. הפתרון: מספר ניסיונות מוגבל, ואז העברה ל-**dead letter queue (DLQ)** עם פרטי השגיאה, התראה על קצב ה-DLQ, והמשך. ההודעה נשמרת לחקירה ולעיבוד מחדש אחרי תיקון.\n\n**consumer lag** הוא הפער בין ה-offset האחרון שנכתב ל-partition לבין ה-offset שהצרכן הגיע אליו. מודדים אותו גם בזמן (כמה שניות מאחור), לא רק בהודעות. lag שגדל הוא הסימן הראשון לצרכן שלא עומד בקצב.\n\n**replay ו-reprocessing:** כש-log מבוזר שומר הודעות ימים או שבועות (retention), אפשר להריץ קוד מתוקן על היסטוריה. זה עובד רק אם החישוב תלוי ב-event time ולא ב-processing time, וה-sink אידמפוטנטי.\n\nבמספרים: אם צרכן מעבד 20 MB/s והקצב הנכנס 300 MB/s, צריך לפחות 15 צרכנים, ולכן לפחות 15 partitions. בוחרים יותר מראש, כי הגדלת מספר partitions משנה את המיפוי של keys ושוברת סדר."
+        },
+        {
+          "title": "pipelines של DSP ו-GPU",
+          "body": "ב-pipeline זמן-אמת של SDR הסדר הטבעי הוא: RX streaming, המרה ותיקונים (DC offset, scaling), חלוקה לחלונות והכפלה ב-window (להקטנת leakage), FFT, detection מול סף לכל bin, והחלטה ושליחה ל-TX.\n\nהעברה ל-GPU משתלמת רק עם batching: FFT בודד קטן לא ממלא את ה-GPU, ולכן צוברים הרבה חלונות ומריצים batched FFT (cuFFT). המחיר הוא latency של צבירה: 256 חלונות של 1024 ב-200 Msps הם כ-1.3 ms. כדי שההעתקות לא יחכו לחישוב: pinned memory (זיכרון host נעול, שה-DMA יכול לקרוא ישירות), CUDA streams, ו-double או triple buffering, כך שהעתקת batch אחד, חישוב של הקודם והחזרת תוצאות של זה שלפניו חופפים. מחזירים רק detections ולא את כל הספקטרום.\n\nהשורה התחתונה: GPU הוא מכונת throughput. לולאת תגובה של עשרות מיקרו-שניות נשארת ב-FPGA או ב-CPU על בלוקים קטנים."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: sizing של pipeline ל-2,000 פריטים בשנייה",
+          "body": "שלושה שלבים stateless: A לוקח 1 ms, B לוקח 4 ms, C לוקח 0.5 ms.\n\n- worker אחד לכל שלב: B מוציא 250 פריטים בשנייה. זה ה-throughput.\n- workers נדרשים: A: 2,000 × 0.001 = 2. B: 2,000 × 0.004 = 8. C: 2,000 × 0.0005 = 1. סך הכל 11.\n- ב-11 workers כל שלב ב-100% utilization, ולכן התורים יגדלו בכל burst. מוסיפים מרווח: 3, 10 ו-2.\n- latency של פריט בלי המתנה: 1 + 4 + 0.5 = 5.5 ms, בלי קשר למספר ה-workers.\n\nאם B היה stateful (ספירה לפי device), מחלקים אותו ל-10 partitions לפי hash(device_id), וכל worker מחזיק את ה-state של ה-devices שלו."
+        },
+        {
+          "title": "דוגמה: watermark ו-late data",
+          "body": "tumbling windows של דקה לפי event time, watermark = האירוע המקסימלי שנראה פחות 30 שניות, allowed lateness של 2 דקות.\n\n- הגיע אירוע עם timestamp 10:04:30. ה-watermark עולה ל-10:04:00. החלון 10:03-10:04 נסגר ונפלט: count = 120.\n- מגיע אירוע מאחר עם timestamp 10:03:20. הוא לפני ה-watermark, כלומר late, אבל בתוך ה-allowed lateness. החלון 10:03 מתעדכן ונפלט שוב: count = 121.\n- ה-sink כותב upsert לפי (key, 10:03), ולכן הערך פשוט מוחלף.\n- אחרי שה-watermark עובר את 10:06:00, אירוע של 10:03 כבר נשלח ל-side output.\n\nהלקח: watermark קובע מתי פולטים, allowed lateness קובע עד מתי מתקנים, וה-sink חייב לתמוך בתיקון."
+        },
+        {
+          "title": "דוגמה: hot key ו-salting",
+          "body": "ספירת קליקים לפי מפרסם, 100k אירועים בשנייה, 20 partitions. מפרסם אחד מקבל 30% מהתעבורה.\n\n- ה-partition שלו מקבל לפחות 30k בשנייה, ועוד חלקו בשאר. אם worker מעבד 10k בשנייה, הוא מפגר בלי קשר לשאר 19.\n- salting: מוסיפים ל-key סיומת אקראית 0..7. הקליקים של המפרסם מתפזרים על 8 keys, כל אחד כ-3.75k בשנייה.\n- שלב שני: לכל חלון, מאחדים את 8 הספירות החלקיות לספירה אחת. זה עובד כי count ניתן לפירוק.\n- לממוצע מחיר לקליק: מעבירים (sum, count) מכל salt ומחשבים sum/count בסוף, ולא ממוצע של ממוצעים."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "bottleneck",
+          "def": "השלב עם ה-throughput הנמוך ביותר (workers / זמן לפריט). קובע את קצב ה-pipeline כולו."
+        },
+        {
+          "term": "stateless / stateful",
+          "def": "שלב שתלוי רק בפריט הנוכחי, מול שלב שתלוי בהיסטוריה (ספירה, חלון, delay line). stateful משכפלים רק עם partitioning."
+        },
+        {
+          "term": "partitioning לפי key",
+          "def": "ניתוב כל פריט ל-worker לפי hash(key), כך שה-state והסדר של key נשמרים במקום אחד."
+        },
+        {
+          "term": "fusion",
+          "def": "איחוד שלבים קלים וצמודים לשלב אחד, כדי לחסוך תור, wakeup והעברת cache בין cores."
+        },
+        {
+          "term": "handoff",
+          "def": "העברת פריט בין threads או שירותים דרך תור. עולה מאות ns עד מיקרו-שניות, ולכן לא מפצלים עבודה זעירה."
+        },
+        {
+          "term": "Kafka partition ו-offset",
+          "def": "topic מחולק ל-partitions; סדר מובטח רק בתוך partition. offset הוא המיקום של הודעה, והצרכן מבצע commit ל-offset שעיבד."
+        },
+        {
+          "term": "consumer group ו-rebalance",
+          "def": "קבוצת צרכנים שכל partition נצרך בה על ידי אחד בלבד. צרכנים מעבר למספר ה-partitions בטלים. rebalance מחלק מחדש כשצרכן מצטרף או נופל."
+        },
+        {
+          "term": "consumer lag",
+          "def": "הפער בין סוף ה-partition לבין המיקום של הצרכן, בהודעות או בזמן. סימן ראשון לצרכן שלא עומד בקצב."
+        },
+        {
+          "term": "at-most-once / at-least-once",
+          "def": "commit לפני העיבוד (אובדן אפשרי) מול commit אחרי העיבוד (כפילויות אפשריות)."
+        },
+        {
+          "term": "effectively-once / exactly-once",
+          "def": "כל אירוע משפיע על התוצאה פעם אחת: at-least-once עם sink אידמפוטנטי, או טרנזקציה שמאחדת offset ותוצאה."
+        },
+        {
+          "term": "idempotent sink ו-upsert",
+          "def": "כתיבה שאפשר לחזור עליה בלי שינוי בתוצאה, למשל upsert לפי מזהה הודעה או לפי (key, window)."
+        },
+        {
+          "term": "Kafka transactions ו-read_committed",
+          "def": "כתיבה לפלט ו-commit של offsets כפעולה אטומית; צרכני read_committed לא רואים רשומות מטרנזקציה שבוטלה. לא מכסה side effects חיצוניים."
+        },
+        {
+          "term": "outbox pattern",
+          "def": "כתיבת ההודעה היוצאת לטבלה באותה טרנזקציה עם השינוי, ותהליך נפרד ששולח ממנה. מונע מצב של שינוי בלי הודעה או הודעה בלי שינוי."
+        },
+        {
+          "term": "barrier snapshot (Chandy-Lamport)",
+          "def": "barriers שזורמים עם הנתונים, וכל שלב שומר state כשהם עוברים. יחד עם offsets של המקור נותנים snapshot עקבי לשחזור."
+        },
+        {
+          "term": "event time / processing time",
+          "def": "מתי האירוע קרה מול מתי עובד. event time נותן תוצאות נכונות ו-replay דטרמיניסטי, במחיר טיפול באיחורים."
+        },
+        {
+          "term": "tumbling / sliding / session / count window",
+          "def": "חלונות צמודים לא חופפים; חלונות באורך W כל S (כל אירוע ב-W/S חלונות); חלון לרצף פעילות שנסגר אחרי gap; N האירועים האחרונים."
+        },
+        {
+          "term": "watermark",
+          "def": "הצהרה ש'כל האירועים עד T הגיעו', שמאפשרת לסגור חלונות. באופרטור עם כמה קלטים הוא המינימום שלהם."
+        },
+        {
+          "term": "late data, allowed lateness, side output",
+          "def": "אירוע עם timestamp לפני ה-watermark; חלון זמן שבו עוד מעדכנים חלונות סגורים; זרם צדדי לאירועים שאיחרו מעבר לזה."
+        },
+        {
+          "term": "idle partition",
+          "def": "partition בלי אירועים שמקפיא את ה-watermark (כי הוא המינימום). מטפלים ב-idleness timeout."
+        },
+        {
+          "term": "retraction",
+          "def": "הודעה שמבטלת תוצאה שנפלטה קודם, כדי ש-downstream שמצבר לא יספור פעמיים כשחלון מתעדכן."
+        },
+        {
+          "term": "panes ו-monotonic deque",
+          "def": "חלוקת sliding window לפרוסות בגודל ההזזה עם ערך חלקי לכל אחת; max על הפרוסות מתוחזק ב-deque מונוטוני או two-stacks ב-O(1) amortized."
+        },
+        {
+          "term": "hot key, salting, combiner",
+          "def": "key שמקבל חלק גדול מהתעבורה ותוקע partition; פיצול שלו לכמה keys עם איחוד בשלב שני; ו-pre-aggregation מקומי לפני ה-shuffle."
+        },
+        {
+          "term": "poison message ו-DLQ",
+          "def": "הודעה שנכשלת תמיד; מעבירים אותה אחרי מספר ניסיונות ל-dead letter queue עם פרטי השגיאה וממשיכים."
+        },
+        {
+          "term": "replay / reprocessing",
+          "def": "הרצה מחדש של קוד על היסטוריה שנשמרה ב-log. דורש event time ו-sink אידמפוטנטי."
+        },
+        {
+          "term": "batched FFT, pinned memory, CUDA streams",
+          "def": "הרצת הרבה FFTs בקריאה אחת כדי למלא את ה-GPU; זיכרון host נעול ל-DMA ישיר; ותורי עבודה שמאפשרים חפיפה של העתקה וחישוב."
+        }
+      ]
     }
   ],
   "questions": [
@@ -316,6 +462,204 @@
       "lesson": "design.pipelines",
       "tags": [
         "nvidia"
+      ]
+    },
+    {
+      "id": "design.pipelines.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה watermark ב-stream processing?",
+      "choices": [
+        "סימון של הודעות פגומות",
+        "הערכה שכל האירועים עם timestamp עד זמן T כבר הגיעו, כדי שאפשר יהיה לסגור חלונות",
+        "הגבלה על גודל התור בין שלבים",
+        "חתימה דיגיטלית על כל הודעה"
+      ],
+      "answer": 1,
+      "explanation": "ה-watermark מתקדם עם event time ומאפשר להחליט מתי חלון סגור ולפלוט תוצאה. הוא הוריסטיקה, ולכן יכולים להגיע אחריו אירועים מאחרים (late data). גודל תור הוא עניין של backpressure, והודעות פגומות הולכות ל-DLQ.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של at-least-once delivery?",
+      "choices": [
+        "כל הודעה מעובדת בדיוק פעם אחת",
+        "חלק מההודעות יכולות ללכת לאיבוד, אבל אין כפילויות",
+        "הודעות מעובדות לפי הסדר",
+        "אף הודעה לא הולכת לאיבוד, אבל הודעה יכולה להיות מעובדת יותר מפעם אחת"
+      ],
+      "answer": 3,
+      "explanation": "at-least-once מושג כשמבצעים commit רק אחרי העיבוד: קריסה בין העיבוד ל-commit גורמת לעיבוד חוזר. אובדן בלי כפילויות הוא at-most-once. סדר הוא תכונה נפרדת.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד של dead letter queue (DLQ)?",
+      "choices": [
+        "תור לגיבוי של כל ההודעות",
+        "תור שאליו מעבירים הודעות שנכשלו שוב ושוב, כדי שלא יתקעו את הזרם ויישמרו לחקירה",
+        "תור של הודעות שה-TTL שלהן עבר ונמחקו",
+        "תור בעדיפות גבוהה להודעות דחופות"
+      ],
+      "answer": 1,
+      "explanation": "DLQ מוציא poison messages מהנתיב הראשי בלי לאבד אותן: אחרי מספר ניסיונות ההודעה עוברת לשם עם פרטי השגיאה, ואפשר לחקור ולעבד מחדש אחרי תיקון. הוא לא גיבוי של כל התעבורה ולא תור עדיפות.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q21",
+      "level": 2,
+      "type": "short",
+      "prompt": "sliding window באורך 10 דקות שמתקדם כל דקה. לכמה חלונות שייך כל אירוע?",
+      "accept": [
+        "10"
+      ],
+      "explanation": "כל אירוע שייך לכל חלון שמתחיל ב-10 הדקות שלפניו, כלומר W/S = 10/1 = 10 חלונות. זו גם הסיבה ששמירה נאיבית של state לכל חלון יקרה, ומשתמשים ב-panes של דקה.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "topic ב-Kafka עם 8 partitions. מפעילים consumer group עם 12 צרכנים. מה קורה?",
+      "choices": [
+        "כל partition מתחלק בין כמה צרכנים, וה-throughput עולה פי 1.5",
+        "Kafka מוסיף אוטומטית 4 partitions",
+        "הצרכנים מתחלקים בהודעות בסבב (round robin) בלי קשר ל-partitions",
+        "8 צרכנים מקבלים partition כל אחד, ו-4 יושבים בטלים"
+      ],
+      "answer": 3,
+      "explanation": "בתוך consumer group כל partition נצרך על ידי צרכן אחד בלבד, כדי לשמור סדר. לכן המקביליות חסומה במספר ה-partitions. צרכנים עודפים שימושיים רק כ-standby שמחליף צרכן שנפל. Kafka לא מוסיף partitions לבד.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q23",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "אירועים של מכשירים נכתבים ל-topic עם כמה partitions. השלב הבא צריך לעבד את האירועים של כל מכשיר לפי הסדר. איך כותבים אותם?",
+      "choices": [
+        "בלי key, כדי שהעומס יתפזר שווה",
+        "עם device_id כ-key, כך שכל האירועים של מכשיר הולכים לאותו partition",
+        "עם timestamp כ-key",
+        "עם key אקראי לכל הודעה"
+      ],
+      "answer": 1,
+      "explanation": "Kafka מבטיח סדר רק בתוך partition, וה-partition נקבע לפי hash של ה-key. device_id כ-key שומר סדר לכל מכשיר וגם מאפשר state לפי מכשיר ב-worker אחד. בלי key או עם key אקראי, אירועים של אותו מכשיר מתפזרים ואין סדר ביניהם. timestamp כ-key מפזר אירועים של מכשיר על partitions שונים.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q24",
+      "level": 3,
+      "type": "short",
+      "prompt": "pipeline stateless של שלושה שלבים: A לוקח 1 ms לפריט, B לוקח 4 ms ו-C לוקח 0.5 ms. רוצים 2,000 פריטים בשנייה. מה מספר ה-workers המינימלי בסך הכל (בלי מרווח)?",
+      "accept": [
+        "11"
+      ],
+      "explanation": "לכל שלב: קצב × זמן. A: 2,000 × 0.001 = 2. B: 2,000 × 0.004 = 8. C: 2,000 × 0.0005 = 1. סך הכל 11. בפועל מוסיפים מרווח, כי ב-100% utilization כל burst יוצר תור.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צרכן Kafka עם enable.auto.commit (commit אוטומטי כל 5 שניות של ה-offsets שנקראו). הוא קורא הודעות ומעביר אותן ל-thread pool שמעבד אותן אסינכרונית. מה הסיכון?",
+      "choices": [
+        "כפילויות בלבד, כי auto-commit תמיד אחרי העיבוד",
+        "אין סיכון, auto-commit מבטיח exactly-once",
+        "ה-thread pool יעבד הודעות בסדר הפוך",
+        "אובדן הודעות: ה-commit יכול לכסות הודעות שנקראו אבל עוד לא עובדו, וקריסה באותו רגע מאבדת אותן"
+      ],
+      "answer": 3,
+      "explanation": "auto-commit מבצע commit לפי מה שנקרא, לא לפי מה שעובד. כשהעיבוד אסינכרוני, ה-offset יכול להתקדם לפני שהעבודה הסתיימה, וזה at-most-once בפועל. הפתרון: commit ידני רק עד ה-offset שכל ההודעות לפניו הושלמו. גם כפילויות אפשריות (קריסה לפני commit), כך שבמצב הזה מקבלים את שתי הבעיות.",
+      "lesson": "design.pipelines",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.pipelines.q26",
+      "level": 4,
+      "type": "multi",
+      "prompt": "ספירת קליקים לפי מפרסם, עם partitioning לפי advertiser_id. מפרסם אחד מייצר 30% מהתעבורה, וה-worker שלו מפגר. אילו פתרונות נכונים?",
+      "choices": [
+        "להוסיף עוד workers לאותו consumer group",
+        "salting: לפצל את ה-key של המפרסם ל-key#0..key#7, לספור חלקית, ולאחד את 8 הספירות בשלב שני",
+        "pre-aggregation מקומי (combiner) לפני ה-shuffle, כך שכל upstream worker שולח ספירה חלקית במקום כל קליק",
+        "לחשב ממוצע מחיר לקליק לכל salt, ובשלב השני למצע את הממוצעים",
+        "להעביר את (sum, count) מכל salt ולחשב את הממוצע רק בשלב האיחוד"
+      ],
+      "answer": [
+        1,
+        2,
+        4
+      ],
+      "explanation": "workers נוספים לא עוזרים: כל הקליקים של key אחד הולכים לאותו partition ולאותו worker. salting ו-combiner מפזרים או מקטינים את העבודה על ה-key החם, וזה עובד לפעולות שניתנות לפירוק. ממוצע של ממוצעים שגוי כשלכל salt מספר קליקים שונה; צריך להעביר (sum, count).",
+      "lesson": "design.pipelines",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.pipelines.q27",
+      "level": 4,
+      "type": "short",
+      "prompt": "הקצב הנכנס ל-topic הוא 300 MB/s, וצרכן בודד מסוגל לעבד 20 MB/s. מה מספר ה-partitions המינימלי כדי שה-consumer group יעמוד בקצב?",
+      "accept": [
+        "15"
+      ],
+      "explanation": "צריך 300 / 20 = 15 צרכנים במקביל, וכל partition נצרך על ידי צרכן אחד בלבד, ולכן לפחות 15 partitions. בוחרים יותר מראש (למשל 32), כי הגדלת partitions אחר כך משנה את מיפוי ה-keys ושוברת סדר לכל key בזמן המעבר.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "stream processor קורא מ-16 partitions עם event-time windows. אחרי שינוי בניתוב, partition אחד הפסיק לקבל אירועים לגמרי, והשאר ממשיכים כרגיל. מה הסימפטום הצפוי, ולמה?",
+      "choices": [
+        "החלונות ייסגרו מוקדם מדי ואירועים ייזרקו כ-late",
+        "אין השפעה, כי ה-partition הריק לא מוסיף אירועים",
+        "ה-throughput יירד ב-1/16",
+        "אף חלון לא ייסגר וה-state יגדל, כי ה-watermark של האופרטור הוא המינימום על הקלטים, וה-partition השקט תקוע; פותרים ב-idleness timeout"
+      ],
+      "answer": 3,
+      "explanation": "watermark של אופרטור עם כמה קלטים הוא המינימום שלהם, כדי לא לסגור חלון לפני שכל הקלטים התקדמו. partition שלא שולח כלום לא מקדם את ה-watermark שלו, ולכן הכולל קפוא: אין פלט, וה-state של חלונות פתוחים גדל. idleness timeout מסמן אותו כ-idle ומוציא אותו מהמינימום עד שיחזור.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "שלב aggregation פולט ספירה לכל דקה עם allowed lateness של 5 דקות, ולכן חלק מהדקות נפלטות פעמיים (ראשונית ומתוקנת). צרכן downstream מוסיף כל ספירה שמגיעה לסכום יומי מצטבר. מה התיקון?",
+      "choices": [
+        "לבטל את ה-allowed lateness ולזרוק כל אירוע מאחר",
+        "ה-downstream צריך להתייחס לכל פלט כ-upsert לפי (key, דקה) ולחשב את הסכום היומי מהערכים העדכניים, או לעבד retractions שמבטלים את הערך הקודם",
+        "להפעיל Kafka transactions בין השלבים",
+        "להחליף ל-processing time"
+      ],
+      "answer": 1,
+      "explanation": "הבעיה סמנטית: הפלט הוא ערך מתעדכן, וה-downstream מתייחס אליו כאירוע חדש וסופר את הדקה פעמיים. upsert לפי מפתח החלון, או זוג retract/insert, שומרים על נכונות. transactions מונעים כפילויות של אותה רשומה, לא עדכונים לגיטימיים. ביטול lateness או מעבר ל-processing time פוגעים בנכונות במקום אחר.",
+      "lesson": "design.pipelines"
+    },
+    {
+      "id": "design.pipelines.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן pipeline לחיוב פרסום בסגנון Bing Ads: מיליון אירועי קליק בשנייה בשיא, כל קליק צריך להיספר לחיוב בדיוק פעם אחת, clients שולחים לפעמים את אותו קליק פעמיים, ומפרסמים רואים dashboard של הוצאה עם עיכוב של עד דקה. חיוב סופי נעשה יומי.",
+      "modelAnswer": "מספרים: 1M קליקים בשנייה, נניח 500 bytes לקליק, הם 500 MB/s, כ-43 TB ליום. ingestion: gateway שמאמת חתימה ומוסיף click_id ייחודי (נוצר בזמן הצגת המודעה, ולכן retry של client נושא את אותו id), וכותב ל-log מבוזר עם partitioning לפי click_id לצורך dedup, או לפי advertiser עם salting למפרסמים גדולים. dedup: stateful לפי click_id עם TTL של כמה שעות (אחרי זה קליק חוזר נחשב חשוד ונבדק ב-batch); ה-state גדול (מיליארדי ids ביום) ולכן RocksDB עם checkpoints, או bloom filter כשכבה ראשונה עם בדיקה מדויקת רק כשיש התאמה. אחרי dedup, סינון הונאה (בוטים, קליקים מהירים מאותו מקור) בשלב נפרד. שני נתיבים: (1) near-real-time ל-dashboard: tumbling windows של דקה לפי event time, watermark עם allowed lateness של כמה דקות, פלט upsert לפי (advertiser, minute) ל-store מהיר; מותר שיהיה מקורב ויתוקן. (2) חיוב: מקור האמת הוא ה-log המלא שנשמר בארכיון; job יומי לפי event time מריץ dedup וסינון מלאים על כל היום, כולל קליקים מאחרים, וכותב ל-ledger עם מפתח (advertiser, day) באופן אידמפוטנטי, כך ש-rerun נותן אותה תוצאה. exactly-once בתוך ה-streaming עם snapshots (barriers) ו-sink טרנזקציוני או upsert; side effects כמו עצירת קמפיין כשנגמר התקציב נעשים דרך outbox עם idempotency key. מדדים: consumer lag, אחוז כפילויות שנזרקו, late events, הפרש בין סכום ה-streaming לסכום היומי (reconciliation) עם התראה על פער מעל סף. replay מה-log מאפשר לתקן באג ולהריץ מחדש.",
+      "rubric": [
+        "מספרים ונפח, ובחירת log מבוזר כמקור אמת עם retention וארכיון",
+        "dedup לפי click_id יציב מה-client, עם state מנוהל (TTL, RocksDB או bloom filter)",
+        "הפרדה בין נתיב near-real-time מקורב לבין חיוב batch מדויק עם reconciliation",
+        "event time, watermarks, allowed lateness ו-sinks אידמפוטנטיים (upsert לפי מפתח חלון)",
+        "טיפול ב-hot advertisers, side effects דרך outbox, ומדדים"
+      ],
+      "explanation": "תשובה חזקה מבינה ש-exactly-once לחיוב לא מגיע ממנוע ה-streaming לבד: צריך מזהה יציב מהמקור, dedup, sink אידמפוטנטי, ו-reconciliation מול מקור אמת.",
+      "lesson": "design.pipelines",
+      "tags": [
+        "microsoft"
       ]
     }
   ]

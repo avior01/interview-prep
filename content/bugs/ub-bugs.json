@@ -36,7 +36,78 @@
         "לדעת להבחין בין UB, implementation-defined ו-unspecified",
         "לבנות תהליך: warnings כ-errors, sanitizers ב-CI, fuzzing לקוד שמפרסר קלט"
       ],
-      "diagram": "source:  if (!p) return; (after p->x)\noptimizer: p was dereferenced\n           => p != null\n           => delete the check"
+      "diagram": "source:  if (!p) return; (after p->x)\noptimizer: p was dereferenced\n           => p != null\n           => delete the check",
+      "details": [
+        {
+          "title": "שלוש רמות של 'לא מוגדר': UB, unspecified, implementation-defined",
+          "body": "התקן של C++ מבחין בין שלוש קטגוריות, ומראיין סניור מצפה שתדע להבדיל ביניהן:\n- **implementation-defined**: התוצאה תלויה בקומפיילר ובפלטפורמה, אבל המימוש **חייב לתעד** אותה ולהתנהג עקבית. דוגמאות: `sizeof(long)`, ולפני C++20 גם shift ימינה של מספר שלילי.\n- **unspecified**: יש כמה תוצאות חוקיות, המימוש בוחר אחת ולא חייב לתעד או להיות עקבי. הדוגמה הקלאסית: הסדר שבו מוערכים הארגומנטים ב-`f(a(), b())`. התוכנית עדיין תקינה, רק לא דטרמיניסטית.\n- **undefined behavior (UB)**: התקן לא מטיל **שום** דרישה. לא 'תוצאה כלשהי', אלא שהתוכנית כולה מאבדת משמעות, כולל קוד שרץ לפני נקודת ה-UB.\n\nב-C++26 נוספה קטגוריה רביעית, **erroneous behavior**: קריאה של משתנה מקומי לא מאותחל מפסיקה להיות UB והופכת ל'שגיאה מוגדרת' (ערך כלשהו, והמימוש רשאי לאבחן). זה עדיין באג, אבל הקומפיילר כבר לא רשאי 'לנצל' אותו.\n\nחשוב גם מה **לא** UB: unsigned שעובר את 0 עוטף מודולו 2^n באופן מוגדר; `delete nullptr` הוא no-op; `free(NULL)` מוגדר; המרה צרה ל-signed (למשל `int8_t c = 300`) מוגדרת מ-C++20 כמודולו. ב-Python אין UB במובן של C++: ההפתעות שם הן התנהגות **מוגדרת** של השפה שמפתיעה, או פרטי מימוש של CPython."
+        },
+        {
+          "title": "למה הקומפיילר 'מנצל' UB: הנחות, מחיקת בדיקות ו-time travel",
+          "body": "האופטימייזר מניח שהתוכנית חוקית, וגוזר מזה מסקנות:\n- **signed overflow**: מאחר שגלישה של `int` היא UB, הקומפיילר רשאי להניח ש-`x + 1 > x` תמיד נכון ולקפל אותו ל-`true`, כך שבדיקת overflow שנכתבה אחרי החיבור נעלמת (ב-`-O0` היא עוד 'עובדת'). בדיקה חוקית נעשית לפני הפעולה: `x < INT_MAX`, או `__builtin_add_overflow`. אותה הנחה מאפשרת להוכיח שלולאה `for (int i = 0; i <= n; ++i)` מסתיימת ולבצע vectorization. גם `-INT_MIN` הוא גלישה ולכן UB.\n- **null dereference**: אם `p->x` כבר בוצע, אז `p` לא null (אחרת היה UB), ולכן `if (!p)` שאחריו הוא קוד מת ונמחק. זה קרה בקרנל של Linux, ומאז הוא מקומפל עם `-fno-delete-null-pointer-checks`.\n- **time travel**: אם כל מסלול שמגיע לנקודה מסוימת עובר בהכרח דרך UB (למשל קריאת `table[4]` במערך בגודל 4), הקומפיילר רשאי להניח שהמסלול הזה לא קורה, ולשנות גם קוד שלפניו.\n\nדגלים כמו `-fwrapv` (גלישת signed עוטפת), `-fno-strict-aliasing` ו-`-fno-delete-null-pointer-checks` הופכים התנהגות מסוימת למוגדרת בקומפיילר אחד. הם שימושיים לאבחון ('הבאג נעלם עם -fwrapv' מצביע על overflow), אבל הקוד נשאר לא פורטבילי. לכן הכלל: UB מתקנים בקוד, לא בדגלים.\n\nלא כל באג שתלוי ב-`-O2` הוא UB: גם data race (שהוא UB בפני עצמו, ונתפס ב-TSan) והבדלי floating-point יכולים להיראות כך. `-O2` לבדו שומר על סמנטיקת IEEE, אבל `-ffast-math`, או חישוב ברגיסטרי x87 של 80 ביט, משנים תוצאות."
+        },
+        {
+          "title": "Strict aliasing, type punning, alignment ו-std::launder",
+          "body": "**strict aliasing** הוא הכלל שלפיו אסור לגשת לאובייקט דרך lvalue מטיפוס שונה מהטיפוס שלו (חוץ מגרסאות signed/unsigned ו-cv). החריגים: `char`, `unsigned char` ו-`std::byte` רשאים לקרוא כל אובייקט. בזכות הכלל הקומפיילר יודע שכתיבה דרך `float*` לא משנה `int`, ויכול להשאיר ערכים ברגיסטרים. GCC ו-Clang מפעילים `-fstrict-aliasing` כברירת מחדל מ-`-O2`. החריגה של char עובדת בכיוון אחד בלבד: מותר לקרוא אובייקט דרך char, אבל לא לקרוא buffer של char כאילו היה `uint32_t`.\n\n**type punning** הוא קריאת הביטים של אובייקט כטיפוס אחר. הדרכים הנפוצות והסטטוס שלהן:\n- cast של מצביע (`*(int32_t*)&f`) או `reinterpret_cast`: UB.\n- union, כתיבה לשדה אחד וקריאה מאחר: חוקי ב-C, UB ב-C++ (GCC מתיר כ-extension).\n- `memcpy` לתוך משתנה מהטיפוס הרצוי: חוקי תמיד, והקומפיילר מתרגם אותו לפקודה בודדת.\n- `std::bit_cast` (C++20): חוקי, constexpr, ודורש טיפוסים trivially copyable באותו גודל.\n\n**alignment**: לכל טיפוס יש דרישת יישור (`alignof(uint32_t)` הוא 4). גישה דרך מצביע לא מיושר היא UB גם על x86, כי אחרי vectorization הקומפיילר רשאי להשתמש בפקודות כמו `movaps` שדורשות יישור. `memcpy` פותר גם את זה.\n\n**reinterpret_cast** לא יוצר אובייקט; הוא רק משנה את טיפוס המצביע. אם בנית אובייקט עם placement new בתוך מערך bytes, הדרך החוקית לגשת אליו היא המצביע ש-`new` החזיר, או `std::launder(reinterpret_cast<T*>(buf))`. `std::launder` אומר לקומפיילר: 'בכתובת הזו יש עכשיו אובייקט חדש מטיפוס T, אל תסיק מסקנות מהמצביע הישן'. הסיבה: מצביע לאיבר במערך bytes ומצביע לאובייקט שנבנה בו אינם pointer-interconvertible, גם אם הכתובת זהה."
+        },
+        {
+          "title": "סדר הערכה: sequenced-before, unsequenced ו-C++17",
+          "body": "ב-C++03 דיברו על **sequence points**; מ-C++11 המונח הוא **sequenced-before**: יחס שקובע איזה חישוב או side effect מסתיים לפני אחר. שני חישובים יכולים להיות:\n- **sequenced**: אחד בהכרח לפני השני.\n- **indeterminately sequenced**: אחד לפני השני, אבל לא ידוע איזה (unspecified, לא UB). מ-C++17 זה המצב של ארגומנטים של פונקציה: `f(i++, i++)` נותן תוצאה unspecified אבל חוקית.\n- **unsequenced**: אין שום סדר, והחישובים עלולים להשתלב. אם שני side effects על אותו משתנה, או side effect וקריאה של אותו משתנה, הם unsequenced, זה **UB**.\n\nדוגמאות UB גם ב-C++17: `i++ + i++` ו-`i + i++`, כי שני האופרנדים של `+` עדיין unsequenced.\n\nמה ש-C++17 תיקן (P0145): באופרטור השמה, האופרנד הימני sequenced לפני השמאלי. לכן `i = i++ + 1` ו-`a[i] = i++` מוגדרים מ-C++17 (ב-C++11 הם היו UB). כך גם `<<` של streams: `cout << i++ << i++` מוערך משמאל לימין. GCC עדיין מזהיר `-Wsequence-point` על חלק מהמקרים האלה; האזהרה שמרנית, אבל קוד כזה לא קריא ממילא."
+        },
+        {
+          "title": "Shift, המרות ואריתמטיקה",
+          "body": "- **shift בכמות לא חוקית**: `x << n` או `x >> n` כש-n שלילי או n >= רוחב הטיפוס (אחרי promotion) הוא UB. ב-x86 פקודת shl ממסכת את ה-count ל-5 ביטים (ב-32 ביט), ולכן `1u << 32` נותן בפועל 1, לא 0.\n- **shift שמאלה של שלילי**: `-1 << 1` הוא UB עד C++17 כולל. מ-C++20 מספרים signed מוגדרים כ-two's complement, ו-shift שמאלה מוגדר כמודולו.\n- **shift ימינה של שלילי**: implementation-defined עד C++20 (בפועל arithmetic shift), ומ-C++20 מוגדר כ-arithmetic.\n- **signed overflow**: חיבור, חיסור, כפל, `-INT_MIN`, `INT_MIN / -1` הם UB. ב-DSP זה קלאסי: צבירת אנרגיה של דגימות int16 ב-`int` גולשת אחרי שתי דגימות בעוצמה מלאה. הפתרון הוא accumulator רחב (`int64_t`) או saturation מפורש.\n- **המרות**: float ל-int מחוץ לטווח היא UB (`(int)1e10`). המרת int ל-signed צר יותר הייתה implementation-defined לפני C++20 ומודולו מ-C++20."
+        },
+        {
+          "title": "חיים של אובייקטים ושאר המקורות הנפוצים",
+          "body": "- **קריאה לא מאותחלת**: משתנה מקומי בלי אתחול מכיל זבל מה-stack או מרגיסטר. `-Wmaybe-uninitialized`, MemorySanitizer ו-Valgrind תופסים.\n- **out-of-bounds**: קריאה או כתיבה מחוץ למערך, כולל `v[i]` מעבר ל-`size()` אחרי `reserve`. ASan תופס על heap ו-stack.\n- **dangling**: החזרת reference או מצביע למשתנה מקומי, או שימוש ב-reference לאיבר של vector אחרי שגדל. `-Wreturn-local-addr` תופס את המקרה הפשוט.\n- **moved-from**: אחרי `std::move`, אובייקט סטנדרטי נמצא במצב 'valid but unspecified'. מותר לקרוא לפונקציות בלי תנאים מוקדמים (`size()`, `clear()`, השמה), אבל `v[0]` מניח שהוא לא ריק, ובפועל הוא כמעט תמיד ריק, ולכן UB. clang-tidy (`bugprone-use-after-move`) מזהה את זה סטטית.\n- **missing return**: יציאה מסוף פונקציה שמחזירה ערך (חוץ מ-`main`) היא UB ב-C++; `-Wreturn-type` מזהיר. מנגד, `return g();` בפונקציה void כש-g מחזירה void הוא חוקי לגמרי.\n- **virtual בזמן ctor/dtor**: בזמן הבנאי של Base, הטיפוס הדינמי הוא Base, ולכן קריאה וירטואלית מגיעה לגרסה של Base (מוגדר, אבל מפתיע). אם הפונקציה pure virtual, הקריאה היא UB; בפועל abort עם 'pure virtual method called' או crash.\n- **noexcept**: חריגה שיוצאת מפונקציה `noexcept` לא מגיעה לקורא, אלא קוראת ל-`std::terminate`. זה **מוגדר**, לא UB; רק השאלה אם ה-stack נפרש לפני כן היא implementation-defined, ולכן destructors מקומיים עלולים לא לרוץ. `-Wterminate` של GCC מזהיר על `throw` ישיר בתוך פונקציה כזו.\n- עוד: `delete` על מה שהוקצה ב-`new[]`, `memcpy` עם טווחים חופפים (צריך `memmove`), שינוי אובייקט שהוגדר const דרך `const_cast`, data race, ו-comparator שאינו strict weak ordering ב-`std::sort` (`>=`, או NaN)."
+        },
+        {
+          "title": "Python: לא UB, אבל gotchas שנראות כמוהו",
+          "body": "ב-Python אלה התנהגויות מוגדרות (או פרטי מימוש), לא UB:\n- **mutable default argument**: ערך ברירת המחדל מחושב פעם אחת, בהגדרת הפונקציה. `def f(x, acc=[])` משתף את אותה רשימה בין כל הקריאות. התיקון: `acc=None` ובתוך הפונקציה `if acc is None: acc = []`.\n- **שינוי list תוך איטרציה**: ה-iterator מתקדם לפי אינדקס, ולכן `remove` מזיז איברים ואחד מהם מדולג. אין exception. ב-dict שמשנה גודל נזרק RuntimeError.\n- **`is` מול `==`**: `is` בודק זהות אובייקט, `==` בודק ערך. CPython שומר cache של int מ-5- עד 256 ועושה interning למחרוזות מסוימות, ולכן `is` 'עובד' לערכים קטנים. זה פרט מימוש, לא הבטחה של השפה. ההשוואה הנכונה ל-None היא `is None`, כי None הוא singleton ו-`__eq__` יכול להיות מוגדר מחדש.\n- **late binding של closures**: lambda שנוצר בלולאה קורא את המשתנה בזמן הקריאה, לא בזמן היצירה.\n- **NaN והכלה**: `x in lst` בודק קודם `is` ורק אחר כך `==`, ולכן NaN נמצא ברשימה אם זה אותו אובייקט, למרות ש-`x == x` הוא False.\n- **`id()`**: ייחודי רק בין אובייקטים שחיים באותו זמן. ב-CPython ה-id הוא כתובת, ואובייקט שמשתחרר מפנה כתובת לאובייקט הבא; מימושים אחרים כמו PyPy מתנהגים אחרת.\n- **`np.empty`**: מקצה מערך בלי לאתחל, כמו `malloc`. לפעמים התוכן נראה כמו אפסים, ולכן הבאג חמקמק; לערך התחלתי: `np.zeros`."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: צבירת אנרגיה של int16 ב-int",
+          "body": "בלוק של דגימות int16 בעוצמה מלאה, כל אחת 32767. כל ריבוע הוא 32767 בריבוע = 1,073,676,289 (המכפלה מחושבת ב-int אחרי promotion, ונכנסת בו).\n\nafter  | exact sum      | fits int?\n1      | 1,073,676,289  | yes\n2      | 2,147,352,578  | yes (INT_MAX = 2,147,483,647)\n3      | 3,221,028,867  | no: signed overflow, UB\n\nכלומר טסט עם 1-2 דגימות עובר, ובלוק אמיתי של 1024 דגימות נותן ערך שלילי או זבל, וב-`-O2` הקומפיילר רשאי אפילו לבנות את הלולאה בהנחה שהגלישה לא קורית. התיקון: `int64_t` כ-accumulator; 1024 ריבועים מקסימליים הם בערך 1.1e12, רחוק מ-9.2e18. UBSan עם `-fsanitize=signed-integer-overflow` עוצר בדיוק בדגימה השלישית."
+        },
+        {
+          "title": "דוגמה: סדר הערכה, צעד אחר צעד",
+          "body": "נתחיל מ-`i = 1` ונבחן `x = i++ + i++`. אינטואיטיבית: 1 + 2 = 3. אבל שני ה-`i++` הם אופרנדים של `+`, ולכן unsequenced: שני side effects על `i` בלי סדר ביניהם. זה UB, והקומפיילר רשאי, למשל, לקרוא את `i` פעמיים לפני שהוא כותב, ולקבל 1 + 1 = 2 ו-`i == 2`.\n\nעכשיו `i = 0` ו-`i = i++ + 1` ב-C++17:\n1. האופרנד הימני מוערך במלואו קודם: `i++` מחזיר 0 ומעלה את i ל-1; הביטוי שווה 1.\n2. אחר כך ההשמה כותבת 1 ל-i.\nהתוצאה מוגדרת: 1. ב-C++11 אותו קוד היה UB, כי ה-side effect של `i++` וההשמה היו unsequenced."
+        },
+        {
+          "title": "דוגמה: הביטים של 1.0f",
+          "body": "המספר 1.0f ב-IEEE-754: סימן 0, exponent מוטה 127 (בינארי 01111111), mantissa 0. ביחד: `0x3F800000`.\n- `std::bit_cast<uint32_t>(1.0f)` או `memcpy` לתוך `uint32_t` נותנים `0x3F800000`, באופן מוגדר.\n- `static_cast<uint32_t>(1.0f)` ממיר **ערך**, ונותן 1.\n- `*(uint32_t*)&f` 'עובד' בדרך כלל ונותן `0x3F800000`, אבל זו הפרת strict aliasing: בפונקציה גדולה יותר הקומפיילר רשאי לסדר מחדש את הכתיבה ל-f והקריאה דרך המצביע, ולקרוא ערך ישן.\n\nולגבי shift: מסכה של 32 ביטים בעזרת `(1u << 32) - 1` נראית כאילו תיתן `0xFFFFFFFF`, אבל ה-shift הוא UB, ו-x86 ממסך את 32 ל-0: `1u << 0` הוא 1, ו-1-1 = 0."
+        }
+      ],
+      "glossary": [
+        { "term": "Undefined behavior (UB)", "def": "קוד שהתקן לא מטיל עליו שום דרישה. הקומפיילר רשאי להניח שהוא לא קורה ולבנות אופטימיזציות על ההנחה, ולכן הוא 'עובד' ב-O0 ונשבר ב-O2." },
+        { "term": "Unspecified behavior", "def": "יש כמה תוצאות חוקיות, והמימוש בוחר בלי חובת תיעוד או עקביות. דוגמה: סדר ההערכה של ארגומנטים ב-`f(a(), b())`. התוכנית תקינה, רק לא דטרמיניסטית." },
+        { "term": "Implementation-defined behavior", "def": "התוצאה תלויה במימוש, אבל המימוש חייב לתעד אותה. דוגמאות: `sizeof(long)`, ולפני C++20 shift ימינה של שלילי." },
+        { "term": "Uninitialized read / erroneous behavior", "def": "קריאה של משתנה מקומי שלא אותחל: UB עד C++23, ומ-C++26 'erroneous behavior' (ערך כלשהו, עדיין באג). נתפס ב-`-Wmaybe-uninitialized`, MSan ו-Valgrind." },
+        { "term": "Strict aliasing / -fstrict-aliasing", "def": "הכלל שאסור לגשת לאובייקט דרך lvalue מטיפוס אחר, חוץ מ-char, unsigned char ו-std::byte. GCC/Clang מניחים אותו מ-O2; `-fno-strict-aliasing` מבטל את ההנחה (כמו בקרנל של Linux)." },
+        { "term": "Type punning", "def": "קריאת הייצוג הבינארי של אובייקט כטיפוס אחר. ב-C++ חוקי רק דרך memcpy או std::bit_cast; cast של מצביע ו-union punning הם UB." },
+        { "term": "std::bit_cast", "def": "פונקציה מ-C++20 שמעתיקה את הביטים בין שני טיפוסים trivially copyable באותו גודל. constexpr, מוגדרת, ועולה אפס אחרי אופטימיזציה." },
+        { "term": "memcpy / memmove", "def": "העתקת bytes. memcpy היא הדרך החוקית לעשות type punning ולקרוא מכתובת לא מיושרת; עם טווחים חופפים היא UB, ושם צריך memmove." },
+        { "term": "Alignment / misaligned access", "def": "דרישה שכתובת אובייקט תהיה כפולה של `alignof(T)`. גישה דרך מצביע לא מיושר היא UB, ועלולה לקרוס גם על x86 אחרי vectorization. `-fsanitize=alignment` תופס." },
+        { "term": "reinterpret_cast", "def": "משנה את הטיפוס של מצביע בלי ליצור אובייקט ובלי לבדוק כלום. שימוש בתוצאה לגישה לאובייקט מטיפוס אחר מפר strict aliasing." },
+        { "term": "std::launder / placement new", "def": "placement new בונה אובייקט בזיכרון קיים. כדי לגשת אליו דרך מצביע שלא הוחזר מ-new (למשל cast של buffer), צריך `std::launder`, שמודיע לקומפיילר שיש שם אובייקט חדש." },
+        { "term": "Sequenced-before / unsequenced", "def": "היחס שקובע סדר בין חישובים ו-side effects (החליף את sequence points). שני side effects, או side effect וקריאה, על אותו משתנה שהם unsequenced הם UB, למשל `i++ + i++`." },
+        { "term": "C++17 evaluation order (P0145)", "def": "מ-C++17 האופרנד הימני של השמה sequenced לפני השמאלי, ו-`<<`/`>>` משמאל לימין. לכן `i = i++ + 1` ו-`a[i] = i++` מוגדרים מ-C++17." },
+        { "term": "Signed overflow / -fwrapv", "def": "גלישה של int (כולל `-INT_MIN`) היא UB, ומאפשרת לקומפיילר להניח `x+1 > x`. unsigned עוטף באופן מוגדר. `-fwrapv` הופך גלישת signed לעטיפה ב-GCC/Clang בלבד." },
+        { "term": "Invalid shift", "def": "shift בכמות שלילית או >= רוחב הטיפוס הוא UB. shift שמאלה של שלילי הוא UB עד C++17 ומוגדר מ-C++20. ב-x86 החומרה ממסכת את ה-count." },
+        { "term": "Null pointer dereference", "def": "גישה דרך nullptr היא UB. אחרי dereference הקומפיילר מסיק שהמצביע לא null ומוחק בדיקות מאוחרות; `-fno-delete-null-pointer-checks` מבטל את זה." },
+        { "term": "Dangling reference", "def": "reference או מצביע לאובייקט שזמן חייו הסתיים, למשל החזרת reference למשתנה מקומי. כל שימוש הוא UB. ASan (use-after-return/scope) ו-`-Wreturn-local-addr` עוזרים." },
+        { "term": "Moved-from state", "def": "אחרי move, אובייקט סטנדרטי הוא 'valid but unspecified': מותר להשמיד, להשים או לקרוא לפונקציות בלי תנאים מוקדמים, אבל לא להניח תוכן (למשל `v[0]`)." },
+        { "term": "Missing return / -Wreturn-type", "def": "הגעה לסוף פונקציה לא-void בלי return היא UB ב-C++ (חוץ מ-main). Clang לעיתים פולט `ud2` או ממשיך לפונקציה הבאה. `-Wreturn-type` מזהיר." },
+        { "term": "noexcept violation", "def": "חריגה שיוצאת מפונקציה noexcept גורמת ל-`std::terminate`. זה מוגדר ולא UB; רק אם ה-stack נפרש לפני כן הוא implementation-defined." },
+        { "term": "Virtual call in ctor/dtor", "def": "בזמן בנייה או הריסה של Base, קריאה וירטואלית מגיעה לגרסה של Base ולא של Derived. אם היא pure virtual, זה UB, ובפועל abort או crash." },
+        { "term": "Strict weak ordering", "def": "הדרישה מ-comparator של std::sort: irreflexive, טרנזיטיבי, ושקילות טרנזיטיבית. `>=` או NaN שוברים אותה, וזה UB שיכול לגרום לקריאה מחוץ לטווח. `_GLIBCXX_DEBUG` מאבחן comparator שבור, ו-`std::strong_order` (C++20) נותן סדר מלא גם ל-float עם NaN." },
+        { "term": "UBSan", "def": "`-fsanitize=undefined`: מכשיר את הקוד לבדוק בזמן ריצה signed overflow, shift לא חוקי, null, alignment ועוד. עלות 20%-50%, מתאים ל-CI." },
+        { "term": "ASan / MSan / TSan", "def": "AddressSanitizer תופס out-of-bounds, use-after-free ו-dangling. MemorySanitizer (Clang) תופס קריאה לא מאותחלת. ThreadSanitizer תופס data races. אי אפשר לשלב ASan עם MSan או TSan באותו build." },
+        { "term": "-Wall / -Wextra / Valgrind", "def": "אזהרות הקומפיילר תופסות return-type, uninitialized, sequence-point ו-shift קבוע; `-Werror` הופך אותן לשגיאות. Valgrind memcheck מריץ בינארי רגיל ותופס גישות heap לא חוקיות וקריאות לא מאותחלות, פי 10-50 איטי." }
+      ]
     }
   ],
   "questions": [
@@ -331,7 +402,7 @@
       "id": "bugs.ub-bugs.q18",
       "level": 5,
       "type": "mcq",
-      "prompt": "המיון מהשאלה על peaks תוקן ל-`a.mag > b.mag` (float). בייצור עדיין יש לפעמים crash בתוך std::sort, רק כשה-FFT מקבל קלט שגוי. מה הסיבה הסבירה?",
+      "prompt": "מיון peaks מהגדול לקטן עם comparator `a.mag > b.mag` (שדה float) ב-std::sort. בייצור יש לפעמים crash בתוך std::sort, רק כשה-FFT מקבל קלט שגוי. מה הסיבה הסבירה?",
       "choices": [
         "ערכי `-0.0` ו-`+0.0` שווים בהשוואה, וזה שובר את ה-sort",
         "ערכי NaN: NaN לא גדול ולא קטן מכלום, ולכן 'לא-בר-השוואה' לכל ערך. היחס הזה לא טרנזיטיבי (1~NaN, NaN~2, אבל 1<2), כך ש-`>` אינו strict weak ordering על הקלט, וזה UB",
@@ -340,6 +411,359 @@
       ],
       "answer": 1,
       "explanation": "strict weak ordering דורש ש'שקילות' (אף אחד לא קטן מהשני) תהיה טרנזיטיבית. -0.0 ו-+0.0 שקולים זה לזה באופן עקבי, וזה חוקי. Inf משתווה כרגיל. NaN שובר את הטרנזיטיביות, וזה UB ב-std::sort. תיקון: לסנן NaN לפני המיון (ולהבין למה ה-FFT מייצר NaN), או להשתמש בסדר מלא כמו `std::strong_order` (C++20), שממיין floats לפי IEEE totalOrder. השוואות denormal עקביות.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה מהבאים הוא דוגמה ל-unspecified behavior (ולא ל-UB) ב-C++17?",
+      "choices": [
+        "גלישה של `int` בחיבור",
+        "הסדר שבו מוערכים הארגומנטים בקריאה `f(a(), b())`",
+        "הערך של `sizeof(long)`",
+        "קריאה של משתנה מקומי שלא אותחל"
+      ],
+      "answer": 1,
+      "explanation": "סדר הערכת ארגומנטים הוא unspecified: המימוש בוחר סדר, לא חייב לתעד אותו, והתוכנית עדיין חוקית. `sizeof(long)` הוא implementation-defined, כי המימוש חייב לתעד אותו (4 ב-Windows, 8 ב-Linux 64 ביט). גלישת signed וקריאה לא מאותחלת הן UB, שבו אין שום דרישה על התוכנית.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזה כלי מיועד לתפוס בזמן ריצה signed integer overflow ו-shift בכמות לא חוקית?",
+      "choices": [
+        "AddressSanitizer (`-fsanitize=address`)",
+        "ThreadSanitizer (`-fsanitize=thread`)",
+        "Valgrind memcheck",
+        "UndefinedBehaviorSanitizer (`-fsanitize=undefined`)"
+      ],
+      "answer": 3,
+      "explanation": "UBSan מוסיף בדיקות סביב פעולות אריתמטיות, shifts, המרות, null ו-alignment. ASan מתמקד בזיכרון: out-of-bounds, use-after-free. TSan מחפש data races. Valgrind מריץ את הבינארי במכונה וירטואלית ובודק גישות זיכרון וקריאות לא מאותחלות, אבל לא רואה גלישת int, כי ברמת המכונה היא פשוט עוטפת.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "לפי כלל ה-strict aliasing, דרך אילו טיפוסים מותר לקרוא את הבתים של אובייקט מכל טיפוס?",
+      "choices": [
+        "`char`, `unsigned char` ו-`std::byte`",
+        "`void*` בלבד",
+        "כל טיפוס שלם באותו גודל, למשל `int32_t` עבור `float`",
+        "`uint8_t`, `uint16_t` ו-`uint32_t`"
+      ],
+      "answer": 0,
+      "explanation": "התקן מחריג במפורש את char, unsigned char ו-std::byte, כדי שאפשר יהיה לממש memcpy ו-serialization. `int32_t` באותו גודל כמו float עדיין מפר את הכלל: הגודל לא רלוונטי, הטיפוס כן. `void*` אי אפשר לקרוא בלי cast. uint8_t הוא בפועל unsigned char ברוב הפלטפורמות, אבל uint16_t ו-uint32_t לא מוחרגים.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q22",
+      "level": 1,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "def add(x, acc=[]):\n    acc.append(x)\n    return acc\n\nadd(1)\nprint(add(2))",
+      "choices": ["[2]", "[1]", "[1, 2]", "TypeError"],
+      "answer": 2,
+      "explanation": "זה לא UB אלא התנהגות מוגדרת של Python שמפתיעה: ערך ברירת המחדל מחושב פעם אחת, כשה-`def` מתבצע, וכל הקריאות משתפות את אותה רשימה. הקריאה הראשונה הוסיפה 1, השנייה הוסיפה 2. התיקון: `acc=None` ובתוך הפונקציה `if acc is None: acc = []`.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q23",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-Python, מהי הדרך המומלצת לבדוק אם משתנה הוא None, ולמה?",
+      "choices": [
+        "`x == None`, כי `==` משווה ערכים ו-`is` הוא פרט מימוש",
+        "`x is None`, כי None הוא singleton, ו-`==` קורא ל-`__eq__` שאובייקט יכול להגדיר מחדש",
+        "`not x`, כי None הוא falsy",
+        "`type(x) == None`"
+      ],
+      "answer": 1,
+      "explanation": "השפה מבטיחה ש-None הוא אובייקט יחיד, ולכן `is` הוא בדיקה נכונה ומהירה. `x == None` נשבר על אובייקטים שמגדירים `__eq__`, למשל מערך NumPy מחזיר מערך של bool. `not x` נכון גם עבור 0, '' ו-[] ולכן מבלבל ביניהם. `type(x)` אף פעם לא None. מנגד, `is` להשוואת מספרים או מחרוזות הוא באג, כי שם הזהות היא פרט מימוש של CPython.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q24",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "חישוב אנרגיה של בלוק דגימות int16. בטסט עם 2 דגימות התוצאה נכונה; בבלוק של 1024 דגימות של אות חזק מתקבל ערך שלילי. מה הבאג?",
+      "code": "int energy(const int16_t* x, int n) {\n    int e = 0;\n    for (int i = 0; i < n; ++i)\n        e += x[i] * x[i];\n    return e;\n}",
+      "bugLine": 2,
+      "choices": [
+        "`x[i] * x[i]` מחושב ב-int16 וגולש כבר בדגימה אחת",
+        "הלולאה צריכה לרוץ עד `i <= n`",
+        "צריך `std::pow(x[i], 2)` במקום כפל",
+        "ה-accumulator הוא `int`: ריבוע של 32767 הוא כמעט 2^30, כך שכבר בדגימה השלישית הסכום עובר את INT_MAX. גלישת signed היא UB"
+      ],
+      "answer": 3,
+      "explanation": "לפני הכפל int16 עובר promotion ל-int, ולכן ריבוע בודד (1,073,676,289) נכנס. הבעיה היא הצבירה: שתי דגימות מקסימליות הן 2,147,352,578, והשלישית עוברת את INT_MAX. זה UB, ולא רק 'עטיפה'. התיקון: `int64_t e = 0;`. `std::pow` מחזיר double ורק מסתיר את הבעיה בעלות גבוהה. UBSan עוצר בשורת הצבירה.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q25",
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מתקמפל, ו-`std::cout << name()` מדפיס לפעמים זבל או קורס. מה הבאג?",
+      "code": "const std::string& name() {\n    std::string s = \"rx0\";\n    return s;\n}",
+      "bugLine": 3,
+      "choices": [
+        "מחזירים reference למשתנה מקומי, שמושמד ביציאה מהפונקציה. כל שימוש ב-reference הוא UB (dangling)",
+        "חסר `std::move(s)` ב-return",
+        "`const` ב-return type מונע את ה-RVO",
+        "string literal צריך להיות `std::string_view`"
+      ],
+      "answer": 0,
+      "explanation": "s מושמד בסוף הפונקציה, וה-reference מצביע על זיכרון stack שכבר שוחרר. `-Wreturn-local-addr` (מופעל כברירת מחדל ב-GCC) מזהיר בדיוק על זה, ו-ASan תופס בזמן ריצה. התיקון: להחזיר `std::string` by value; RVO הופך את זה לזול. `std::move` ב-return לא עוזר כאן, כי הבעיה היא סוג ההחזרה.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q26",
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה התוצאה של הקוד ב-C++17?",
+      "code": "int i = 1;\nint x = i++ + i++;\nstd::cout << x;",
+      "choices": [
+        "3, כי מחברים 1 ו-2",
+        "2, כי שני ה-`i++` קוראים את 1",
+        "UB: שני side effects על `i` שהם unsequenced זה ביחס לזה",
+        "unspecified: 2 או 3, תלוי בסדר ההערכה, אבל התוכנית חוקית"
+      ],
+      "answer": 2,
+      "explanation": "האופרנדים של `+` הם unsequenced גם ב-C++17, ושני side effects על אותו משתנה בלי סדר הם UB, לא רק תוצאה לא ידועה. GCC מזהיר `-Wsequence-point`. 3 הוא מה שרוב האנשים מצפים, ו-2 הוא מה שקומפיילר יכול באמת להפיק, אבל אף אחד מהם לא מובטח. ההבחנה בין unspecified ל-UB קריטית: אילו זו הייתה קריאת פונקציה `f(i++, i++)`, ב-C++17 התוצאה הייתה unspecified בלבד.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q27",
+      "level": 2,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "הפונקציה אמורה להסיר את כל המספרים הזוגיים. `drop_even([1, 2, 4, 5])` מחזיר `[1, 4, 5]`. מה הבאג?",
+      "code": "def drop_even(xs):\n    for x in xs:\n        if x % 2 == 0:\n            xs.remove(x)\n    return xs",
+      "bugLine": 4,
+      "choices": [
+        "`remove` מסיר את כל המופעים ולא רק אחד",
+        "הסרה מהרשימה תוך כדי איטרציה עליה: ה-iterator מתקדם לפי אינדקס, וכשאיבר מוסר, האיבר הבא זז אחורה ומדולג",
+        "`x % 2` לא עובד עם מספרים שליליים",
+        "צריך `del xs[x]` במקום `remove`"
+      ],
+      "answer": 1,
+      "explanation": "זו התנהגות מוגדרת של Python, לא UB, ולכן אין exception (בניגוד ל-dict). אחרי הסרת 2 באינדקס 1, ה-4 עובר לאינדקס 1, וה-iterator ממשיך לאינדקס 2, כלומר ל-5. התיקון: `return [x for x in xs if x % 2 != 0]`, או לעבור על עותק `xs[:]`. `remove` מסיר רק את המופע הראשון, ו-`del xs[x]` מוחק לפי אינדקס ולא לפי ערך.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q28",
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד רץ 'תקין' ב-debug, ובבדיקות עם ASan קורס. מה הבאג?",
+      "code": "void send(std::vector<float> v);\n\nfloat process(std::vector<float> buf) {\n    send(std::move(buf));\n    return buf[0];\n}",
+      "bugLine": 5,
+      "choices": [
+        "`send` צריכה לקבל `std::vector<float>&&`",
+        "`std::move` לא מזיז כלום, ולכן buf מועתק פעמיים",
+        "`process` צריכה לקבל `const std::vector<float>&`",
+        "שימוש ב-moved-from: אחרי ה-move ל-`send`, buf במצב 'valid but unspecified', ובפועל ריק. `buf[0]` על וקטור ריק הוא UB"
+      ],
+      "answer": 3,
+      "explanation": "move constructor של vector לוקח את ה-buffer ומשאיר את המקור ריק בכל המימושים הנפוצים. מותר לקרוא `buf.size()` או `buf.clear()`, אבל `operator[]` מניח שהאינדקס תקין. התיקון: לשמור את `buf[0]` לפני ה-move. clang-tidy (`bugprone-use-after-move`) מזהה את זה סטטית. קבלה ב-`&&` לא משנה את הבעיה, ו-`std::move` כן גורם להעברה כאן, כי `send` מקבלת by value.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q29",
+      "level": 3,
+      "type": "oral",
+      "prompt": "הסבר למראיין את ההבדל בין undefined behavior, unspecified behavior ו-implementation-defined behavior, עם דוגמה לכל אחד, ולמה ההבחנה חשובה בקוד production.",
+      "modelAnswer": "implementation-defined: המימוש בוחר ומתעד, ומתנהג עקבית. דוגמאות: sizeof(long), חתימת char, ולפני C++20 shift ימינה של שלילי. אפשר לכתוב קוד שמסתמך עליו עם static_assert. unspecified: יש כמה תוצאות חוקיות, בלי חובת תיעוד או עקביות. דוגמה: סדר הערכת ארגומנטים ב-f(a(), b()); התוכנית תקינה אבל לא דטרמיניסטית, ולכן אסור לתלות לוגיקה בסדר. UB: אין שום דרישה, כולל על קוד שלפני ה-UB. דוגמאות: signed overflow, null deref, out-of-bounds, strict aliasing, i++ + i++. החשיבות: UB הוא לא 'תוצאה לא ידועה' אלא רישיון לאופטימייזר להניח שהמסלול לא קורה, ולכן בדיקות נמחקות והבאג משתנה בין -O0 ל-O2 ובין גרסאות קומפיילר. שווה להזכיר ש-C++26 מוסיף erroneous behavior לקריאה לא מאותחלת, ושב-production מטפלים ב-UB עם warnings כ-errors ו-UBSan/ASan ב-CI.",
+      "rubric": [
+        "הגדרה נכונה לכל אחת משלוש הקטגוריות, כולל חובת התיעוד ב-implementation-defined",
+        "דוגמה נכונה לכל קטגוריה",
+        "מסביר שב-UB האופטימייזר מניח שהמסלול לא קורה, כולל השפעה על קוד שלפניו",
+        "מקשר לתהליך: warnings, sanitizers ב-CI, static_assert להנחות implementation-defined"
+      ],
+      "explanation": "תשובה חזקה מבחינה בין 'תוצאה לא ידועה' (unspecified) לבין 'אין תוכנית' (UB), ומראה למה זה משנה בפועל.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["microsoft"]
+    },
+    {
+      "id": "bugs.ub-bugs.q30",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "פונקציה לבדיקת overflow. מה נכון לגבי `f(INT_MAX)`?",
+      "code": "bool f(int x) {\n    return x + 1 > x;\n}",
+      "choices": [
+        "UB: `INT_MAX + 1` הוא signed overflow. הקומפיילר רשאי לקפל את הביטוי ל-`true`, ובפועל GCC ו-Clang ב-`-O2` מחזירים true",
+        "false באופן מובטח, כי `INT_MAX + 1` עוטף ל-INT_MIN",
+        "true באופן מובטח, כי התקן מגדיר `x + 1 > x` כזהות",
+        "נזרק `std::overflow_error`"
+      ],
+      "answer": 0,
+      "explanation": "גלישת signed היא UB, ולכן אין תוצאה מובטחת. האופטימייזר מנצל זאת: עבור כל x חוקי הביטוי נכון, ולכן `return true`. ב-`-O0` אפשר לקבל false, כי החומרה עוטפת. C++ לא זורק חריגה על overflow. בדיקה נכונה: `x < INT_MAX` לפני החיבור, או `__builtin_add_overflow`.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q31",
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "fs = [lambda: i for i in range(3)]\nprint([f() for f in fs])",
+      "choices": ["[0, 1, 2]", "[0, 0, 0]", "[2, 2, 2]", "NameError: i is not defined"],
+      "answer": 2,
+      "explanation": "late binding: ה-lambda לא שומר את הערך של `i` בזמן היצירה, אלא קורא את `i` מה-scope של ה-comprehension בזמן הקריאה, ואז i כבר 2. ה-closure מחזיק את ה-scope הזה חי, ולכן אין NameError. זו התנהגות מוגדרת של Python, לא UB. תיקון: `lambda i=i: i`, שמקבע את הערך כברירת מחדל.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q32",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "פרוטוקול שולח float בפורמט IEEE-754, little-endian, במיקום שרירותי (לא בהכרח מיושר) בתוך buffer. כתוב `readF32` שמחזירה את הערך בלי UB, ב-C++17 (בלי `std::bit_cast`), על host שהוא little-endian. הסבר את העלות.",
+      "starter": "float readF32(const uint8_t* p);",
+      "modelAnswer": "#include <cstring>\n#include <cstdint>\n\nfloat readF32(const uint8_t* p) {\n    static_assert(sizeof(float) == 4, \"need 32-bit float\");\n    float v;\n    std::memcpy(&v, p, sizeof v);  // no aliasing, no alignment UB\n    return v;\n}\n// bytes 00 00 80 3F -> 1.0f\n// GCC/Clang -O2: a single movss from memory, no call.\n// Wrong: *reinterpret_cast<const float*>(p)\n//   -> strict aliasing + misaligned access",
+      "rubric": [
+        "משתמש ב-memcpy לתוך משתנה float, ולא ב-reinterpret_cast או union",
+        "מסביר ששני ה-UB נמנעים: strict aliasing ו-alignment",
+        "static_assert על sizeof(float), ומזכיר endianness (big-endian דורש היפוך bytes על uint32_t לפני ההעתקה)",
+        "עלות: memcpy בגודל קבוע מתקמפל לפקודה אחת, O(1), בלי קריאה לפונקציה"
+      ],
+      "explanation": "memcpy היא הדרך החוקית ב-C++17 לקרוא ייצוג בינארי מטיפוס אחר ומכתובת לא מיושרת. הקומפיילר מזהה memcpy בגודל קבוע ומחליף אותה ב-load בודד, כך שאין מחיר ביצועים. ב-C++20 אפשר להעתיק ל-`std::array<uint8_t, 4>` ואז `std::bit_cast`.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q33",
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "יצירת `Mixer m;` קורסת מיד (ב-Linux מודפס 'pure virtual method called'). מה הבאג?",
+      "code": "struct Stage {\n    Stage() { setup(); }\n    void setup() { configure(); }\n    virtual void configure() = 0;\n    virtual ~Stage() = default;\n};\nstruct Mixer : Stage {\n    void configure() override { /* set NCO */ }\n};",
+      "bugLine": 2,
+      "choices": [
+        "ה-destructor של Stage צריך להיות pure virtual",
+        "בזמן הבנאי של Stage הטיפוס הדינמי הוא עדיין Stage, ולכן הקריאה הווירטואלית (דרך setup) הולכת ל-`Stage::configure`, שהיא pure virtual. זה UB",
+        "Mixer חייב לקרוא ל-`Stage()` במפורש ב-initializer list",
+        "`setup` צריכה להיות virtual כדי שהקריאה תגיע ל-Mixer"
+      ],
+      "answer": 1,
+      "explanation": "החלק של Mixer עוד לא נבנה כשהבנאי של Stage רץ, ולכן ה-vptr מצביע על ה-vtable של Stage. קריאה לפונקציה pure virtual במצב הזה היא UB; libstdc++ שם בכניסה הזו פונקציה שמדפיסה הודעה וקוראת ל-abort. אם `configure` לא הייתה pure, הקריאה הייתה מוגדרת אבל מגיעה לגרסה של Stage, וזה באג לוגי שקט. קריאה ישירה מהבנאי גוררת לרוב אזהרה או שגיאת link; העקיפה דרך setup מסתירה את זה. תיקון: שלב init נפרד אחרי הבנייה, או factory.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q34",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "פונקציה מוצהרת `noexcept`, ובתוכה נזרקת חריגה שלא נתפסת. מה קורה לפי התקן?",
+      "choices": [
+        "UB: הקומפיילר הניח שאין חריגות ולא יצר טבלאות unwind",
+        "החריגה ממשיכה לקורא כרגיל; noexcept הוא רק רמז לאופטימיזציה",
+        "נקרא `std::terminate`. זה מוגדר, ורק השאלה אם ה-stack נפרש לפני כן היא implementation-defined",
+        "שגיאת קומפילציה"
+      ],
+      "answer": 2,
+      "explanation": "התקן מגדיר שחריגה שמגיעה לגבול של פונקציה noexcept קוראת ל-std::terminate. זה לא UB; זו בדיוק ההבטחה שמאפשרת ל-`std::vector` להשתמש ב-move constructor שהוא noexcept בזמן realloc. הקומפיילר לא חוסם בזמן קומפילציה (מותר לקרוא לפונקציות שזורקות), אבל GCC מזהיר (`-Wterminate`) כש-throw ישיר מופיע בגוף. מכיוון שאין חובה לפרוש את ה-stack, destructors של אובייקטים מקומיים עלולים לא לרוץ.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q35",
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "x = float('nan')\nprint(x == x, x in [x], x in [float('nan')])",
+      "choices": ["False False False", "True True True", "False True True", "False True False"],
+      "answer": 3,
+      "explanation": "לפי IEEE-754, NaN לא שווה לשום דבר, כולל לעצמו, ולכן `x == x` הוא False. אבל אופרטור `in` של list מוגדר בשפה כבודק קודם זהות (`is`) ורק אחר כך `==`, ולכן אותו אובייקט נמצא. NaN חדש הוא אובייקט אחר, ו-`==` נכשל. זה מוגדר בשפה, לא UB, אבל זו מלכודת אמיתית בסינון NaN מתוצאות FFT: יש להשתמש ב-`math.isnan` או `np.isnan`.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q36",
+      "level": 5,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הסטטוס של הקוד, מקומפל עם `-std=c++17`?",
+      "code": "int i = 0;\ni = i++ + 1;\nstd::cout << i;",
+      "choices": [
+        "מוגדר, ומדפיס 1: מ-C++17 האופרנד הימני של השמה (כולל ה-side effect של `i++`) sequenced לפני ההשמה",
+        "UB, כי יש שני side effects על `i` באותו ביטוי",
+        "מוגדר, ומדפיס 2",
+        "unspecified: 1 או 2, תלוי מה קורה קודם, ה-increment או ההשמה"
+      ],
+      "answer": 0,
+      "explanation": "P0145 (C++17) קבע שבהשמה `E1 = E2`, כל החישובים וה-side effects של E2 sequenced לפני E1, וההשמה אחרי שניהם. לכן: `i++` מחזיר 0 ומעלה את i ל-1, הביטוי שווה 1, ואז i מקבל 1. ב-C++11/14 אותו קוד היה UB, כי ה-side effect של `i++` וההשמה היו unsequenced. GCC עדיין מזהיר `-Wsequence-point` גם ב-C++17; האזהרה שמרנית. לעומת זאת `i++ + i++` נשאר UB גם ב-C++17.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q37",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אילו מהבאים הם undefined behavior ב-C++17 (לא ב-C++20)? `i` הוא int מאותחל ל-0, `a` הוא מערך int בגודל 4. (בחר את כל הנכונים)",
+      "choices": [
+        "`a[i] = i++;`",
+        "`int x = i + i++;`",
+        "`int m = INT_MIN; m = -m;`",
+        "`int y = -8 >> 1;`",
+        "`int z = -1 << 1;`"
+      ],
+      "answer": [1, 2, 4],
+      "explanation": "`i + i++`: קריאה של i ו-side effect על i באופרנדים של `+`, unsequenced, ולכן UB. `-INT_MIN` הוא signed overflow. `-1 << 1`: עד C++17 shift שמאלה של ערך שלילי הוא UB (מ-C++20 מוגדר ונותן -2). `a[i] = i++` מוגדר מ-C++17, כי הצד הימני של השמה מוערך קודם, ולכן נכתב 0 ל-`a[1]`. `-8 >> 1` הוא implementation-defined עד C++20 (בפועל -4), ולא UB.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q38",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מה הסטטוס לפי התקן (C++17) של הגישה בשורה האחרונה?\n\n```cpp\nstruct Hdr { int len; };\nalignas(Hdr) unsigned char buf[sizeof(Hdr)];\nnew (buf) Hdr{42};\nint n = reinterpret_cast<Hdr*>(buf)->len;\n```",
+      "choices": [
+        "UB בגלל strict aliasing: ניגשים לזיכרון של מערך unsigned char דרך lvalue מסוג Hdr",
+        "מוגדר: reinterpret_cast מ-`unsigned char*` ל-`T*` תמיד חוקי, כי char רשאי לעשות alias לכל טיפוס",
+        "UB טכנית: המצביע שמתקבל מה-cast עדיין מצביע על איבר במערך ה-bytes ולא על אובייקט ה-Hdr. צריך להשתמש במצביע ש-placement new החזיר, או ב-`std::launder`",
+        "UB כי buf לא מיושר"
+      ],
+      "answer": 2,
+      "explanation": "placement new יצר אובייקט Hdr בזיכרון הזה, ולכן הגישה עצמה היא לאובייקט מהטיפוס הנכון, וזו לא בעיית aliasing. הבעיה היא המצביע: reinterpret_cast לא הופך מצביע ל-byte למצביע לאובייקט החדש, כי הם לא pointer-interconvertible. `std::launder(reinterpret_cast<Hdr*>(buf))` נותן מצביע חוקי. בפועל כל הקומפיילרים מייצרים כאן קוד תקין, אבל זה בדיוק המקרה ש-launder נוסף בשבילו. החריגה של char מתירה לקרוא אובייקט דרך char, לא להפך. `alignas(Hdr)` מבטיח יישור.",
+      "lesson": "bugs.ub-bugs"
+    },
+    {
+      "id": "bugs.ub-bugs.q39",
+      "level": 5,
+      "type": "oral",
+      "prompt": "למה התקן הגדיר signed overflow כ-UB ולא כ-wraparound? אילו אופטימיזציות זה מאפשר, מה המחיר, ומה היית קובע כמדיניות בקוד DSP של real-time (accumulators, אינדקסים, fixed-point)?",
+      "modelAnswer": "היסטורית: C תמכה בייצוגים שונים (one's complement, sign-magnitude) ובמכונות שזורקות trap על overflow, ולכן לא היה אפשר להגדיר תוצאה אחידה. מ-C++20 הייצוג הוא two's complement, אבל overflow נשאר UB בכוונה, כי הוא מאפשר אופטימיזציות: הנחה ש-x+1>x, קיפול ביטויים כמו (x*2)/2 ל-x, ובעיקר ניתוח לולאות: עם `for (int i = 0; i <= n; ++i)` הקומפיילר יכול להניח שהלולאה סופית, לחשב trip count, להרחיב את i ל-64 ביט לחישוב כתובות בלי sign-extend בכל איטרציה, ולבצע vectorization. עם unsigned (שעוטף) חלק מההוכחות האלה נכשלות, וזה אחד המקרים שבהם אינדקס int מהיר יותר מ-unsigned. המחיר: באגים שקטים, ובדיקות overflow שנכתבות אחרי הפעולה נמחקות. -fwrapv מבטל את ה-UB אבל מאבד את האופטימיזציות ואינו פורטבילי. מדיניות ל-DSP: accumulators ברוחב מספיק (int64_t לסכום ריבועים של int16, או 40 ביט כמו ב-DSP), חשבון fixed-point עם saturation מפורש (בדיקה לפני הפעולה, __builtin_add_overflow או intrinsics של saturating add), אינדקסים כ-signed או size_t באופן עקבי עם הוכחת גבולות, UBSan ב-CI על וקטורי בדיקה עם ערכי קצה (full-scale, INT16_MIN), ו-`-Werror`. ריבוע של INT16_MIN ו-`-INT_MIN` הם מקרי קצה שחייבים טסט.",
+      "rubric": [
+        "סיבה היסטורית (ייצוגים שונים, traps) והסיבה העכשווית (אופטימיזציה)",
+        "דוגמה קונקרטית לאופטימיזציה: x+1>x, trip count ו-widening של אינדקס, vectorization",
+        "מחיר: בדיקות שנמחקות, באגים תלויי -O; -fwrapv כ-trade-off",
+        "מדיניות מעשית ל-DSP: accumulator רחב, saturation מפורש, בדיקה לפני הפעולה, UBSan עם ערכי קצה"
+      ],
+      "explanation": "שאלת עומק: מראיין סניור רוצה לשמוע שאתה מבין את ה-trade-off ולא רק ש'overflow זה רע', ושאתה מתרגם אותו למדיניות קוד.",
+      "lesson": "bugs.ub-bugs",
+      "tags": ["nvidia"]
+    },
+    {
+      "id": "bugs.ub-bugs.q40",
+      "level": 5,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה נכון לגבי הפלט של השורה הבאה?",
+      "code": "print(id([]) == id([]), [] is [])",
+      "choices": [
+        "`False False` מובטח, כי כל `[]` יוצר אובייקט חדש",
+        "החלק הראשון תלוי מימוש: ב-CPython בפועל True, כי הרשימה הראשונה משתחררת לפני יצירת השנייה והכתובת ממוחזרת. החלק השני הוא False מובטח",
+        "`True True`, כי CPython עושה cache לרשימות ריקות כמו למספרים קטנים",
+        "`False True`, כי `is` משווה תוכן של רשימות ריקות"
+      ],
+      "answer": 1,
+      "explanation": "Python מבטיחה ש-id ייחודי רק בין אובייקטים שחיים באותו זמן. ב-`id([]) == id([])` הרשימה הראשונה משתחררת מיד אחרי ש-id שלה חושב, ו-CPython (שבו id הוא כתובת) נותן לשנייה את אותה כתובת. מימוש אחר, כמו PyPy, יכול לתת False. ב-`[] is []` שתי הרשימות חיות בו-זמנית, ולכן הן בהכרח אובייקטים שונים. אין cache לרשימות, כי הן mutable. הלקח: לא לשמור id של אובייקט זמני כמפתח.",
       "lesson": "bugs.ub-bugs"
     }
   ]

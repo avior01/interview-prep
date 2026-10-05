@@ -33,7 +33,161 @@
         "לזהות hot spots ולהציע פתרונות (salting, caching, request coalescing)",
         "לתכנן גם resharding, failover ו-multi-region, לא רק את מצב ההתחלה"
       ],
-      "diagram": "clients -> LB -> [app][app][app]  (stateless)\n                    |   cache\n           shard0 shard1 shard2  (+replicas)"
+      "diagram": "clients -> LB -> [app][app][app]  (stateless)\n                    |   cache\n           shard0 shard1 shard2  (+replicas)",
+      "details": [
+        {
+          "title": "back-of-the-envelope: מספרים לפני ארכיטקטורה",
+          "body": "כל שאלת scaling מתחילה בחשבון. 86,400 שניות ביום, בערך 10^5. לכן:\n- מיליון בקשות ביום ≈ 12 לשנייה. 8.64 מיליון ביום = 100 לשנייה בדיוק.\n- QPS ממוצע = משתמשים פעילים × פעולות למשתמש ליום / 86,400.\n- peak: בדרך כלל פי 2 עד 10 מהממוצע, תלוי במוצר (שעות עבודה, אירועים).\n- אחסון: פריטים ליום × גודל × ימי שמירה × מקדם replication. 10 מיליון משתמשים × 2 תמונות ביום × 500 KB = 10 TB ליום, לפני replicas.\n- שרתים: peak / (קיבולת לשרת × utilization יעד), ועוד N+1 או אובדן של availability zone שלם (מתקן נפרד באותו אזור, עם חשמל ורשת עצמאיים).\n\nמרחב מפתחות: base62 (a-z, A-Z, 0-9) עם k תווים נותן 62^k קודים. 62^5 ≈ 916 מיליון, 62^6 ≈ 57 מיליארד, 62^7 ≈ 3.5 טריליון.\n\nהעיקרון: מגדילים רק את מה שהחשבון מראה שצריך. sharding מוקדם מדי מוסיף סיבוכיות קבועה (שאילתות בין shards, טרנזקציות מבוזרות, resharding) כשמכונה אחת עם replicas הייתה מספיקה."
+        },
+        {
+          "title": "stateless compute ו-load balancing",
+          "body": "שכבת האפליקציה צריכה להיות stateless: כל instance יכול לטפל בכל בקשה, ולכן מוסיפים ומורידים instances בחופשיות, ו-failover טריוויאלי. ה-state עובר למקום ייעודי: sessions ל-Redis או לטוקן חתום (JWT) שה-client מחזיק, קבצים ל-object storage (Blob, S3), ונתונים ל-DB.\n\nload balancer:\n- **round robin:** סבב פשוט. טוב לבקשות דומות ושרתים זהים.\n- **least connections:** לשרת עם הכי מעט חיבורים פתוחים. טוב כשהבקשות שונות באורכן.\n- **L4 מול L7:** L4 רואה רק IP ו-port (מהיר, לא מבין HTTP). L7 מבין HTTP ויכול לנתב לפי path, header או cookie, ולסיים TLS.\n- **health checks:** ה-LB בודק כל instance ומוציא חולים מהסבב.\n- **sticky sessions:** כל משתמש תמיד לאותו שרת. פלסטר ל-state מקומי, שפוגע בפיזור ובהתאוששות כששרת נופל.\n\n**CDN** (Content Delivery Network): רשת שרתי cache קרובים למשתמשים, שמגישה תוכן סטטי או תשובות שניתן לשמור (תמונות, וידאו, redirects פופולריים) בלי להגיע ל-origin."
+        },
+        {
+          "title": "caching: דפוסים, invalidation ו-stampede",
+          "body": "דפוסים:\n- **cache-aside:** האפליקציה קוראת מה-cache; ב-miss קוראת מה-DB, ממלאת עם TTL ומחזירה. בכתיבה: מעדכנים DB ומוחקים את ה-key.\n- **read-through:** ה-cache עצמו פונה ל-DB ב-miss.\n- **write-through:** כל כתיבה הולכת ל-cache ול-DB יחד, באופן סינכרוני. עקבי, אבל כל כתיבה משלמת את שני ה-latencies.\n- **write-back (write-behind):** כותבים ל-cache, וה-cache כותב ל-DB מאוחר יותר ב-batch. כתיבות מהירות, אבל קריסה לפני ה-flush מאבדת נתונים.\n\nhit ratio קובע את העומס על ה-DB: עם 20,000 קריאות לשנייה ו-DB שעומד ב-2,000, צריך hit ratio של לפחות 90%. ירידה ל-80% מכפילה את העומס על ה-DB.\n\n**cache stampede:** key חם פג, ואלפי בקשות פונות ל-DB יחד. פתרונות: request coalescing (single-flight, רק בקשה אחת ממלאת והשאר מחכות לה), רענון מוקדם הסתברותי לפני הפקיעה, ו-jitter על TTLs.\n\n**race של cache-aside:** קורא A מקבל miss וקורא את הערך הישן מה-DB. בינתיים כותב B מעדכן את ה-DB ומוחק מה-cache. עכשיו A כותב ל-cache את הערך הישן, והוא יישאר עד ה-TTL. פתרונות: leases (ה-cache נותן ל-A אסימון ב-miss, ומחיקה של B מבטלת אותו, כך שה-set של A נדחה), ערכים עם version, ו-TTL קצר כחסם."
+        },
+        {
+          "title": "replication וקונסיסטנטיות",
+          "body": "**replication** שומר עותקים של אותם נתונים בכמה שרתים: מגדיל קיבולת קריאה וזמינות, לא קיבולת כתיבה.\n- **leader-follower:** כל הכתיבות ל-leader, שמעביר את ה-log ל-replicas. replication אסינכרוני מהיר, אבל יוצר lag: replica יכולה להיות שניות מאחור, ו-failover יכול לאבד כתיבות אחרונות.\n- **read-your-writes:** משתמש תמיד רואה את מה שהוא עצמו כתב. מנתבים את הקריאות שלו ל-leader לזמן קצר אחרי כתיבה, או לקרוא מ-replica רק אם הגיעה ל-LSN (Log Sequence Number, המיקום ב-log) של הכתיבה.\n- **quorums (leaderless):** N עותקים, כתיבה מצליחה עם W אישורים, קריאה מ-R. אם R + W > N, כל קבוצת קריאה חופפת לקבוצת הכתיבה האחרונה, והקורא בוחר את הגרסה החדשה לפי version. sloppy quorum (כתיבה לשרתים זמניים כשהעיקריים לא זמינים) שובר את ההבטחה. read repair מעדכן replica ישנה שנמצאה בקריאה.\n- **linearizability:** המערכת מתנהגת כאילו יש עותק אחד, וכל פעולה נראית מיידית לכולם. החזקה ביותר והיקרה ביותר. **eventual consistency:** אם אין כתיבות חדשות, כל העותקים יתכנסו בסוף.\n\n**CAP:** בזמן network partition, מערכת מבוזרת חייבת לבחור בין consistency (לסרב לחלק מהבקשות) לבין availability (לענות עם נתון שאולי ישן). 'CA' אינה בחירה אמיתית ברשת שבה partitions קורים. **PACELC:** Else, כשאין partition, עדיין יש trade-off בין latency ל-consistency, כי consistency חזק דורש סבבי תיאום.\n\n**multi-region active-active:** כל אזור מקבל כתיבות ומשכפל אסינכרונית. כתיבות מקבילות לאותו key באזורים שונים מתנגשות. last-writer-wins (לפי timestamp) פשוט אבל מאבד עדכונים בשקט. חלופות: לשייך כל key לאזור בית אחד (single-homing), או CRDTs, מבני נתונים שהמיזוג שלהם מוגדר ומתכנס תמיד (למשל counter שכל אזור מחזיק רכיב משלו)."
+        },
+        {
+          "title": "sharding ו-consistent hashing",
+          "body": "**sharding** מחלק את הנתונים לפי key, כך שכל שרת מחזיק חלק. זה מה שמגדיל קיבולת כתיבה ואחסון. בפועל כל shard גם משוכפל.\n- **hash sharding:** פיזור אחיד, אבל שאילתות טווח פוגעות בכל ה-shards.\n- **range sharding:** טווחים רציפים, טוב לשאילתות טווח. מסוכן כשה-key מונוטוני (timestamp, מזהה עולה): כל הכתיבות החדשות הולכות ל-shard האחרון, hot shard.\n- **בחירת shard key:** כך שרוב השאילתות פוגעות ב-shard אחד (tenant_id, user_id), והעומס מתפזר.\n\n**hash mod N** מזיז כמעט את כל ה-keys כש-N משתנה: key נשאר רק אם hash % N == hash % (N+1), בערך 1/(N+1) מהמקרים.\n\n**consistent hashing:** השרתים וה-keys ממופים לטבעת; key שייך לשרת הראשון אחריו בכיוון השעון. הוספת שרת מזיזה רק את הטווח שהוא לוקח, כ-1/N מה-keys. **virtual nodes:** כל שרת פיזי מקבל מאות נקודות על הטבעת. זה מאזן את גודל הטווחים, מפזר את העומס של שרת שנפל בין הרבה שרתים, ומאפשר לתת לשרת חזק יותר vnodes.\n\n**hot keys:** hash מפזר keys, לא עומס של key אחד. מטפלים בהם במיוחד: שכפול ב-cache (key#1..key#N), sharded counters (K תתי-מונים שהקריאה סוכמת, ועוד צבירה מקומית), ובפידים מודל היברידי: fan-out on write (דחיפה לפיד של כל עוקב בזמן הפרסום) למשתמשים רגילים, ו-pull בזמן קריאה לחשבונות ענק."
+        },
+        {
+          "title": "idempotency, יצירת מזהים והגירה",
+          "body": "**idempotency:** פעולה שביצוע כפול שלה נותן אותה תוצאה. ב-HTTP, GET, PUT ו-DELETE מוגדרים idempotent, ו-POST לא. retries ברשת הם בלתי נמנעים (timeout לא אומר שהפעולה לא קרתה), ולכן פעולות כמו תשלום מקבלות idempotency key: ה-client מייצר מזהה ייחודי לפעולה ושולח אותו בכל ניסיון; השרת שומר את התוצאה לפי המפתח, ובניסיון חוזר מחזיר את התוצאה השמורה במקום לבצע שוב.\n\n**מזהים ייחודיים:** מונה מבוזר עם ranges (ticket server: כל שרת מקבל טווח של אלף מזהים מראש), מזהים מבוססי זמן (Snowflake: timestamp, מזהה מכונה ומונה), או UUID אקראי. hash של התוכן נותן dedup אבל דורש טיפול בהתנגשויות.\n\n**301 מול 302:** redirect קבוע נשמר בדפדפן ולא חוזר לשרת; זמני חוזר כל פעם, ולכן מאפשר analytics.\n\n**הגירה בלי downtime:** dual writes או CDC (Change Data Capture: הזרמת שינויים מה-log של ה-DB הישן), backfill של נתונים היסטוריים, shadow reads (קריאה משני המקורות והשוואה), מעבר הדרגתי עם rollback. connection pooling (PgBouncer) ותיקון שאילתות קודמים לכל זה."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: sizing לשירות שיתוף תמונות",
+          "body": "10 מיליון משתמשים פעילים ביום, כל אחד מעלה 2 תמונות (500 KB) וצופה ב-50.\n\n- העלאות: 20 מיליון ביום / 86,400 ≈ 230 לשנייה. peak פי 5: כ-1,150.\n- צפיות: 500 מיליון ביום ≈ 5,800 לשנייה. peak: כ-29,000.\n- אחסון: 20 מיליון × 500 KB = 10 TB ביום, 3.65 PB בשנה, ופי 3 עם replication.\n- רוחב פס יוצא ב-peak: 29,000 × 500 KB ≈ 14.5 GB/s. זה תפקיד של CDN, לא של ה-origin.\n- metadata: 20 מיליון רשומות ביום × 1 KB = 20 GB ביום, sharding לפי user_id.\n\nהלקח: החשבון מראה שהבעיה הגדולה היא אחסון ורוחב פס, לא QPS של metadata."
+        },
+        {
+          "title": "דוגמה: hash mod N מול consistent hashing",
+          "body": "1,000,000 keys על 10 שרתים, ומוסיפים שרת אחד.\n\n- hash mod: key נשאר רק אם hash % 10 == hash % 11, בערך 1/11. כ-909,000 keys זזים. כל ה-caches מתרוקנים בבת אחת.\n- consistent hashing עם vnodes: השרת החדש לוקח כ-1/11 מהטבעת, מכל השרתים הקיימים בערך שווה. כ-91,000 keys זזים, ושאר ה-cache נשאר חם.\n- בלי vnodes: השרת החדש לוקח טווח מאחד השכנים בלבד, והעומס לא מתאזן.\n\nהלקח: consistent hashing עם vnodes הופך שינוי בגודל הצביר לפעולה שגרתית."
+        },
+        {
+          "title": "דוגמה: quorum במספרים",
+          "body": "N = 3 עותקים: A, B, C. W = 2, R = 2.\n\n- כתיבה של v2 מגיעה ל-A ו-B (2 אישורים, הצליחה). C עדיין עם v1.\n- קריאה פונה ל-B ו-C. מקבלת v2 מ-B ו-v1 מ-C, ובוחרת v2 לפי version. read repair מעדכן את C.\n- כל קבוצה של 2 מתוך 3 חופפת לכל קבוצה אחרת של 2, ולכן אין קריאה שמפספסת את v2.\n- עם R = 1 ו-W = 1 (R + W = 2 ≤ 3), קריאה מ-C לבד תחזיר v1.\n- אם A ו-B נפלו, אין quorum לכתיבה או לקריאה: המערכת בוחרת C ומסרבת."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "vertical / horizontal scaling",
+          "def": "מכונה חזקה יותר (פשוט, מוגבל, single point of failure) מול יותר מכונות (כמעט בלי גבול, דורש חלוקת עבודה ונתונים)."
+        },
+        {
+          "term": "QPS ו-peak factor",
+          "def": "בקשות לשנייה, ממוצע כ-(פעולות ביום / 86,400), כפול מקדם peak של 2 עד 10."
+        },
+        {
+          "term": "stateless service",
+          "def": "שירות שלא שומר state בין בקשות, ולכן כל instance מטפל בכל בקשה. ה-state ב-DB, cache או טוקן."
+        },
+        {
+          "term": "load balancer (L4 / L7)",
+          "def": "מפזר בקשות בין instances. L4 לפי IP ו-port; L7 מבין HTTP ומנתב לפי path או header. כולל health checks."
+        },
+        {
+          "term": "round robin / least connections",
+          "def": "סבב פשוט לבקשות אחידות, מול ניתוב לשרת עם הכי מעט חיבורים פתוחים לבקשות שונות באורכן."
+        },
+        {
+          "term": "sticky sessions",
+          "def": "ניתוב כל משתמש לאותו שרת. מאפשר state מקומי אבל פוגע בפיזור ובהתאוששות."
+        },
+        {
+          "term": "CDN",
+          "def": "רשת שרתי cache קרובים למשתמש שמגישה תוכן שניתן לשמור בלי להגיע ל-origin."
+        },
+        {
+          "term": "cache-aside / read-through",
+          "def": "האפליקציה ממלאת את ה-cache ב-miss, מול cache שפונה ל-DB בעצמו."
+        },
+        {
+          "term": "write-through / write-back",
+          "def": "כתיבה סינכרונית ל-cache ול-DB (עקבי, איטי יותר), מול כתיבה ל-cache ו-flush מאוחר ל-DB (מהיר, סיכון לאובדן)."
+        },
+        {
+          "term": "TTL ו-invalidation",
+          "def": "זמן חיים של ערך ב-cache, ומחיקה יזומה של key כשהנתון משתנה."
+        },
+        {
+          "term": "cache stampede ו-single-flight",
+          "def": "הרבה misses בו-זמנית על key חם שמציפים את ה-DB; ופתרון שבו רק בקשה אחת ממלאת והשאר מחכות."
+        },
+        {
+          "term": "lease (ב-cache)",
+          "def": "אסימון שה-cache נותן ב-miss; set עם אסימון שבוטל על ידי מחיקה נדחה. מונע כתיבה של ערך ישן אחרי עדכון."
+        },
+        {
+          "term": "hit ratio",
+          "def": "אחוז הקריאות שנענות מה-cache. עומס ה-DB הוא (1 − hit ratio) × הקריאות."
+        },
+        {
+          "term": "replication ו-replication lag",
+          "def": "עותקים של אותם נתונים בכמה שרתים; ובאסינכרוני, הפיגור של replica אחרי ה-leader."
+        },
+        {
+          "term": "read-your-writes ו-LSN",
+          "def": "הבטחה שמשתמש רואה את הכתיבות שלו; ממומש בניתוב ל-leader או בבדיקה שה-replica הגיעה למיקום ב-log של הכתיבה."
+        },
+        {
+          "term": "quorum (N, W, R)",
+          "def": "N עותקים, W אישורים לכתיבה, R לקריאה. R + W > N מבטיח חפיפה עם הכתיבה האחרונה. sloppy quorum שובר זאת."
+        },
+        {
+          "term": "read repair",
+          "def": "עדכון של replica ישנה שהתגלתה בזמן קריאה, לפי הגרסה החדשה ביותר שנמצאה."
+        },
+        {
+          "term": "linearizability / eventual consistency",
+          "def": "התנהגות כאילו יש עותק יחיד שכל פעולה בו מיידית, מול הבטחה שהעותקים יתכנסו בסוף אם הכתיבות ייפסקו."
+        },
+        {
+          "term": "CAP ו-PACELC",
+          "def": "בזמן partition בוחרים consistency או availability; וגם בלי partition יש trade-off בין latency ל-consistency."
+        },
+        {
+          "term": "last-writer-wins ו-CRDT",
+          "def": "פתרון התנגשויות לפי timestamp שמאבד עדכונים בשקט, מול מבני נתונים שהמיזוג שלהם מוגדר ומתכנס תמיד."
+        },
+        {
+          "term": "sharding: hash / range",
+          "def": "חלוקה לפי hash (פיזור אחיד, טווחים יקרים) או לפי טווח (שאילתות טווח זולות, hot shard ב-key מונוטוני)."
+        },
+        {
+          "term": "consistent hashing ו-vnodes",
+          "def": "מיפוי שרתים ו-keys לטבעת כך ששינוי בשרתים מזיז כ-1/N מה-keys; ומאות נקודות לכל שרת לאיזון."
+        },
+        {
+          "term": "hot key, salting, sharded counter",
+          "def": "key שמקבל עומס חריג; פיצולו לכמה keys; ומונה שמפוצל ל-K תתי-מונים שהקריאה סוכמת."
+        },
+        {
+          "term": "fan-out on write / on read",
+          "def": "דחיפת פוסט לפיד של כל עוקב בזמן הפרסום, מול הרכבת הפיד בזמן הקריאה. משלבים לפי מספר העוקבים."
+        },
+        {
+          "term": "idempotency key",
+          "def": "מזהה ייחודי שה-client שולח עם פעולה; השרת שומר את התוצאה לפיו ומחזיר אותה בניסיון חוזר במקום לבצע שוב."
+        },
+        {
+          "term": "ticket server / Snowflake",
+          "def": "יצירת מזהים ייחודיים מבוזרת: טווחים שמוקצים מראש לכל שרת, או timestamp + מזהה מכונה + מונה."
+        },
+        {
+          "term": "CDC, dual writes, shadow reads",
+          "def": "כלי הגירה: הזרמת שינויים מה-log, כתיבה לשני המקורות, והשוואת קריאות לפני מעבר."
+        },
+        {
+          "term": "availability zone",
+          "def": "מתקן נפרד באותו אזור ענן עם חשמל ורשת עצמאיים. מתכננים קיבולת שתשרוד אובדן של אחד."
+        }
+      ]
     }
   ],
   "questions": [
@@ -309,6 +463,216 @@
         "הוצאת עבודה לתורים ו-SLOs"
       ],
       "explanation": "מראיין סניור מחפש הדרגתיות ושיקול דעת: מה הצעד הזול הבא, ואיך עוברים בלי downtime. קפיצה ישירה ל-'נעשה microservices ו-sharding' היא דגל אדום.",
+      "lesson": "design.scaling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.scaling.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה replication משפר, ומה הוא לא משפר?",
+      "choices": [
+        "משפר קיבולת כתיבה, לא משפר זמינות",
+        "משפר רק את גודל האחסון",
+        "משפר קיבולת קריאה וזמינות, אבל לא קיבולת כתיבה, כי כל עותק צריך לקבל כל כתיבה",
+        "משפר את כל המדדים באופן לינארי"
+      ],
+      "answer": 2,
+      "explanation": "כל replica מחזיקה את כל הנתונים ומקבלת את כל הכתיבות, ולכן היא מוסיפה קיבולת קריאה ושרידות, לא קיבולת כתיבה או אחסון. כדי להגדיל כתיבות ואחסון מחלקים את הנתונים (sharding).",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד של CDN?",
+      "choices": [
+        "לאזן עומס בין שרתי בסיס הנתונים",
+        "לשכפל את בסיס הנתונים לכל אזור",
+        "להגיש תוכן שניתן לשמור (תמונות, וידאו, קבצים סטטיים) משרתי cache קרובים למשתמשים, בלי לפנות ל-origin",
+        "להצפין את התעבורה בין שירותים"
+      ],
+      "answer": 2,
+      "explanation": "CDN מקצר latency (השרת קרוב למשתמש) ומוריד את העומס ורוחב הפס מה-origin. הוא לא מחליף replication של DB, ולא מיועד לתוכן שמשתנה לכל בקשה ולא ניתן לשמירה.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה המשמעות של פעולה idempotent?",
+      "choices": [
+        "פעולה שתמיד מצליחה",
+        "פעולה שביצוע שלה פעמיים או יותר נותן אותה תוצאה כמו ביצוע אחד",
+        "פעולה שרצה בזמן קבוע",
+        "פעולה שלא משנה שום נתון"
+      ],
+      "answer": 1,
+      "explanation": "idempotency הופכת retry לבטוח. PUT שקובע ערך הוא idempotent; POST שיוצר רשומה חדשה בכל קריאה אינו. פעולה יכולה לשנות נתונים ועדיין להיות idempotent.",
+      "lesson": "design.scaling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.scaling.q21",
+      "level": 2,
+      "type": "short",
+      "prompt": "10 מיליון משתמשים מעלים כל אחד 2 תמונות ביום, בגודל ממוצע של 500 KB. כמה TB של אחסון חדש נדרש ביום, לפני replication? (השתמשו ב-1 TB = 10^9 KB)",
+      "accept": [
+        "10",
+        "10TB",
+        "10 TB"
+      ],
+      "explanation": "10^7 × 2 × 500 KB = 10^10 KB = 10 TB ביום. בשנה זה 3.65 PB, ופי 3 עם replication. חשבון כזה מראה מהר שהאחסון ורוחב הפס הם האתגר, ושהתמונות שייכות ל-object storage ול-CDN ולא ל-DB.",
+      "lesson": "design.scaling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.scaling.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין write-through cache ל-write-back cache?",
+      "choices": [
+        "write-through כותב רק ל-DB; write-back רק ל-cache",
+        "אין הבדל ב-durability, רק בביצועים",
+        "ב-write-through כל כתיבה הולכת סינכרונית ל-cache ול-DB; ב-write-back כותבים ל-cache, וה-DB מתעדכן מאוחר יותר, ולכן קריסה לפני ה-flush מאבדת נתונים",
+        "write-back מתאים לנתונים פיננסיים כי הוא מהיר יותר"
+      ],
+      "answer": 2,
+      "explanation": "write-through עקבי ובטוח, אבל כל כתיבה משלמת את ה-latency של שני היעדים. write-back מהיר ומאחד כתיבות, במחיר סיכון לאובדן נתונים שעוד לא נכתבו. לנתונים פיננסיים זה בדרך כלל לא מקובל.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q23",
+      "level": 2,
+      "type": "short",
+      "prompt": "קוד קצר מורכב מתווי base62 (a-z, A-Z, 0-9). מה האורך המינימלי שמספיק למיליארד קודים שונים?",
+      "accept": [
+        "6"
+      ],
+      "explanation": "62^5 ≈ 916 מיליון, פחות ממיליארד. 62^6 ≈ 56.8 מיליארד, מספיק עם מרווח גדול. בפועל לוקחים מרווח נוסף כדי שהקודים יהיו קשים לניחוש ולא ייגמרו.",
+      "lesson": "design.scaling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.scaling.q24",
+      "level": 3,
+      "type": "multi",
+      "prompt": "שירות web שומר sessions בזיכרון, וקבצים שמשתמשים מעלים נשמרים בדיסק המקומי של השרת. אילו שינויים הופכים אותו ל-stateless?",
+      "choices": [
+        "להעביר sessions ל-store משותף כמו Redis, או לטוקן חתום שה-client מחזיק",
+        "להפעיל sticky sessions ב-load balancer",
+        "לשמור את הקבצים ב-object storage משותף",
+        "להגדיל את הזיכרון של כל שרת",
+        "לשכפל את תיקיית הקבצים בין השרתים בעזרת rsync כל שעה"
+      ],
+      "answer": [
+        0,
+        2
+      ],
+      "explanation": "stateless פירושו שאין state שמחייב שבקשה תגיע לשרת מסוים. Redis או טוקן חתום, ו-object storage משותף, מוציאים את ה-state מהשרת. sticky sessions רק עוקפות את הבעיה ונכשלות כששרת נופל. rsync שעתי משאיר חלון של שעה שבו הקובץ קיים רק בשרת אחד. זיכרון גדול יותר לא משנה כלום.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "טבלת אירועים עם עשרות אלפי כתיבות בשנייה מחולקת ל-shards לפי טווחי timestamp (range sharding). מה הבעיה הצפויה?",
+      "choices": [
+        "שאילתות על טווח זמן יהיו איטיות",
+        "אי אפשר להוסיף shards",
+        "כל הכתיבות החדשות הולכות ל-shard של הטווח הנוכחי, ולכן shard אחד חם ושאר ה-shards כמעט לא מקבלים כתיבות",
+        "הנתונים יתפזרו אקראית"
+      ],
+      "answer": 2,
+      "explanation": "key מונוטוני ב-range sharding יוצר hot shard: הזמן תמיד מתקדם, וכל הכתיבות נוחתות בקצה. שאילתות טווח דווקא זולות כאן. פתרונות: hash של מזהה ה-device כחלק מה-key (עם timestamp משני), או bucketing של כמה shards לכל טווח.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "API של תשלומים: ה-client שולח POST /payments, מקבל timeout, ושולח שוב. לפעמים הלקוח מחויב פעמיים. מה הפתרון הסטנדרטי?",
+      "choices": [
+        "להאריך את ה-timeout של ה-client",
+        "לבטל retries ב-client",
+        "ה-client מייצר idempotency key ייחודי לכל תשלום ושולח אותו בכל ניסיון; השרת שומר את התוצאה לפי המפתח (באותה טרנזקציה עם החיוב) ומחזיר אותה בניסיון חוזר",
+        "לבדוק אם קיים תשלום באותו סכום מאותו לקוח בדקה האחרונה"
+      ],
+      "answer": 2,
+      "explanation": "timeout לא אומר שהפעולה לא קרתה, ולכן retries חייבים להיות בטוחים. idempotency key מזהה את הפעולה ולא את התוכן, ושמירת התוצאה באותה טרנזקציה עם החיוב מונעת חלון שבו החיוב קרה והמפתח לא נשמר. זיהוי לפי סכום יחסום תשלומים לגיטימיים זהים. ביטול retries פוגע בזמינות, ו-timeout ארוך רק מקטין את התדירות.",
+      "lesson": "design.scaling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.scaling.q27",
+      "level": 4,
+      "type": "short",
+      "prompt": "שירות מקבל 20,000 קריאות בשנייה, ו-DB עומד לכל היותר ב-2,000 קריאות בשנייה. מה ה-hit ratio המינימלי של ה-cache, באחוזים?",
+      "accept": [
+        "90",
+        "90%",
+        "0.9"
+      ],
+      "explanation": "ה-DB מקבל (1 − h) × 20,000 ≤ 2,000, ולכן h ≥ 0.9. המשמעות המעשית: ירידה ל-80% hit ratio (למשל אחרי restart של ה-cache) מכפילה את העומס על ה-DB ל-4,000, ולכן צריך warm-up או הגנה על ה-DB.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q28",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-cache-aside עם invalidation בכתיבה: קורא A מקבל miss וקורא את הערך מה-DB. לפני ש-A כותב ל-cache, כותב B מעדכן את ה-DB ומוחק את ה-key מה-cache. אז A כותב ל-cache את מה שקרא. מה המצב, ומה פותר אותו?",
+      "choices": [
+        "אין בעיה, כי B מחק את ה-key",
+        "ה-cache יכיל ערך ישן עד ה-TTL; פותרים בהחלפת המחיקה בעדכון ה-cache על ידי B",
+        "ה-cache יכיל ערך ישן עד ה-TTL; פותרים ב-leases: ה-cache נותן ל-A אסימון ב-miss, המחיקה של B מבטלת אותו, וה-set של A נדחה",
+        "ה-DB יכיל ערך ישן; פותרים בטרנזקציה"
+      ],
+      "answer": 2,
+      "explanation": "ה-set של A מגיע אחרי המחיקה, ולכן הערך הישן נשאר ב-cache עד ה-TTL. leases (כמו ב-memcache של Facebook) מזהים שהערך שהקורא מביא ישן יותר מהמחיקה. עדכון ה-cache על ידי B במקום מחיקה יוצר race אחר: שני כותבים מקבילים יכולים להשאיר ב-cache את הערך הלא אחרון. ה-DB עצמו תקין.",
+      "lesson": "design.scaling"
+    },
+    {
+      "id": "design.scaling.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מערכת multi-region active-active עם replication אסינכרוני ופתרון התנגשויות last-writer-wins לפי timestamp. משתמש מוסיף פריט לעגלה באירופה, ובאותה שנייה מכשיר אחר שלו מוסיף פריט אחר בארה״ב. מה יקרה, ומה עדיף?",
+      "choices": [
+        "שני הפריטים יישמרו, כי LWW ממזג רשימות",
+        "המערכת תזהה את ההתנגשות ותחזיר שגיאה לשני הצדדים",
+        "שני הפריטים יישמרו רק אם השעונים מסונכרנים ב-NTP",
+        "אחת התוספות תיעלם בשקט, כי LWW שומר רק את הכתיבה עם ה-timestamp הגבוה; עדיף לייצג את העגלה כ-CRDT (למשל set שממזג תוספות), או לשייך כל עגלה לאזור בית אחד"
+      ],
+      "answer": 3,
+      "explanation": "LWW בוחר ערך שלם אחד ומשליך את השני, בלי שגיאה ובלי עקבות. clock skew רק מחמיר: כתיבה מאוחרת בפועל יכולה להפסיד. CRDT מגדיר מיזוג שמתכנס (איחוד תוספות, עם טיפול נפרד במחיקות), ו-single-homing מונע כתיבות מקבילות באזורים שונים במחיר latency לכתיבה מאזור רחוק.",
+      "lesson": "design.scaling",
+      "tags": [
+        "microsoft"
+      ]
+    },
+    {
+      "id": "design.scaling.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן שירות presence בסגנון Teams (סטטוס זמין, עסוק, לא מחובר) ל-300 מיליון משתמשים, מתוכם עד 100 מיליון מחוברים בו-זמנית. כל משתמש רואה בזמן אמת את הסטטוס של אנשי הקשר שלו (בממוצע 200). איך תתמודד עם קצב העדכונים וה-fan-out?",
+      "modelAnswer": "מספרים: אם כל client שולח heartbeat כל 30 שניות, 100M / 30 ≈ 3.3 מיליון heartbeats בשנייה. שינויי סטטוס אמיתיים נדירים בהרבה, נניח פעם ב-10 דקות למשתמש: כ-170k בשנייה, וכל אחד מגיע ל-200 אנשי קשר: עד 33 מיליון הודעות fan-out בשנייה, אבל רק לאלה שמחוברים כרגע. מבנה: חיבורים ארוכים (WebSocket) ל-gateways stateful מבחינת חיבור; ה-presence עצמו ב-store בזיכרון מחולק לפי user_id עם consistent hashing (Redis cluster או שירות ייעודי), עם TTL: heartbeat מאריך, והיעדר heartbeat הופך את המשתמש ל-offline אחרי 2-3 מחזורים. heartbeat לא נכתב ל-DB עמיד: presence הוא state זמני, ואם shard נופל, ה-clients פשוט ידווחו מחדש תוך 30 שניות. רק שינוי סטטוס (לא heartbeat) מייצר fan-out. מנויים: כל gateway רושם מנוי עבור אנשי הקשר של המשתמשים המחוברים אליו, ב-pub/sub לפי user_id; עדכון נשלח פעם אחת לכל gateway מנוי ולא לכל צופה, וה-gateway מפיץ מקומית. אופטימיזציות: לשלוח סטטוס רק לאנשי קשר שמוצגים כרגע (רשימה פתוחה או שיחה), batching ו-coalescing של שינויים מהירים (debounce של כמה שניות), ו-snapshot בעת התחברות במקום היסטוריה. hot users (מנכ״ל עם 50k צופים): ה-fan-out שלו מפוצל בין כמה publishers. consistency: eventual, ומקובל שסטטוס מפגר בכמה שניות. multi-region: כל משתמש מחובר לאזור הקרוב, וה-presence שלו משוכפל לאזורים שבהם יש לו צופים. מדדים: heartbeats לשנייה לכל shard, fan-out לשנייה, latency מקצה לקצה של שינוי סטטוס, ושיעור false-offline.",
+      "rubric": [
+        "חשבון heartbeats, שינויי סטטוס ו-fan-out, והפרדה בין heartbeat לשינוי",
+        "presence כ-state זמני בזיכרון עם TTL ו-sharding, בלי כתיבה עמידה לכל heartbeat",
+        "pub/sub ברמת gateway ולא ברמת צופה, וצמצום fan-out לאנשי קשר מוצגים",
+        "debounce ו-batching, וטיפול ב-hot users",
+        "consistency מוגדרת (eventual), multi-region ומדדים"
+      ],
+      "explanation": "תשובה חזקה מזהה שה-fan-out ולא ה-QPS הוא האתגר, ושמה שאינו חייב להיות עמיד לא צריך לשלם את המחיר של durability.",
       "lesson": "design.scaling",
       "tags": [
         "microsoft"

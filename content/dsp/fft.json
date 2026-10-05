@@ -14,7 +14,7 @@
       ],
       "how": [
         "רזולוציית bin: fs/N. bin k מייצג k·fs/N עבור k < N/2, ו-(k-N)·fs/N עבור החצי העליון (תדרים שליליים)",
-        "הערכת עבודה: כ-5·N·log2(N) FLOPs ל-FFT מרוכב, כלומר 5·log2(N) FLOPs לכל דגימה. ב-N=4096 זה 60 FLOPs לדגימה",
+        "הערכת עבודה: כ-5·N·log2(N) FLOPs ל-FFT מרוכב (radix-2: בכל אחד מ-log2(N) השלבים יש N/2 butterflies של 10 FLOPs), כלומר 5·log2(N) FLOPs לכל דגימה. ב-N=4096 זה 60 FLOPs לדגימה",
         "קצב frames: fs/hop, כש-hop = N עבור frames לא חופפים ו-N/2 עבור 50% overlap",
         "FFT על קלט ממשי (rfft, r2c) מחזיר N/2+1 bins ועולה בערך חצי",
         "ספריות: יוצרים plan פעם אחת מחוץ ללולאה החמה, עם buffers מיושרים, ומבצעים אותו שוב ושוב. מאגדים (batch) הרבה FFTs קטנים לקריאה אחת",
@@ -35,7 +35,205 @@
         "להכיר את ה-API ואת מגבלות ה-threading של FFTW (execute thread-safe, planner לא)",
         "לתכנן batching ו-pipelining עם GPU (streams, pinned memory)"
       ],
-      "diagram": "bins (N=8, after fft):\nk:  0  1  2  3  4  5  6  7\nf:  0  1  2  3 -4 -3 -2 -1  (x fs/N)\nfftshift -> -4 -3 -2 -1 0 1 2 3"
+      "diagram": "bins (N=8, after fft):\nk:  0  1  2  3  4  5  6  7\nf:  0  1  2  3 -4 -3 -2 -1  (x fs/N)\nfftshift -> -4 -3 -2 -1 0 1 2 3",
+      "details": [
+        {
+          "title": "מ-DFT ל-FFT: Cooley-Tukey, butterflies ו-twiddles",
+          "body": "ה-DFT מוגדר כ-X[k] = Σ x[n]·W^(nk), עם W = exp(-j2π/N) ו-n,k = 0..N-1. חישוב ישיר הוא N כפלים מרוכבים לכל אחד מ-N ה-bins, כלומר O(N^2). ב-N=4096 זה כ-16.7 מיליון כפלים, לעומת כ-25 אלף butterflies ב-FFT.\n\nהרעיון של Cooley-Tukey (radix-2, decimation in time, DIT): מפצלים את x לדגימות זוגיות ואי-זוגיות, מחשבים שני DFTs באורך N/2 (נקרא להם E ו-O), ומרכיבים: X[k] = E[k] + W^k·O[k] ו-X[k+N/2] = E[k] - W^k·O[k]. הזוג הזה הוא **butterfly**, והמקדם W^k הוא ה-**twiddle factor**. חוזרים רקורסיבית: log2(N) שלבים, בכל שלב N/2 butterflies. butterfly הוא כפל מרוכב אחד (6 FLOPs) ושני חיבורים מרוכבים (4 FLOPs), כלומר 10 FLOPs, ומכאן ההערכה המקובלת 5·N·log2(N).\n\nבמימוש in-place הקלט של DIT צריך להיות בסדר **bit-reversed** (אינדקס 1=001 עובר ל-4=100 ב-N=8), והפלט יוצא בסדר טבעי. ב-**DIF** (decimation in frequency) זה הפוך: קלט טבעי, פלט bit-reversed. בשרשרת FFT → כפל איבר-איבר → IFFT אפשר לוותר לגמרי על ה-permutation: forward ב-DIF ו-inverse ב-DIT, כי כפל pointwise לא תלוי בסדר.\n\nוריאציות: radix-4 ו-split-radix חוסכים כפלים; mixed-radix מטפל ב-N עם גורמים 3, 5, 7 (למשל 1000 או 1536); Bluestein מחשב N ראשוני דרך קונבולוציה. FFTW ו-cuFFT בוחרים את הפירוק בעצמם. כשצריך רק מעט bins, **Goertzel** מחשב bin אחד ב-O(N) עם כפל ממשי אחד לדגימה, וזול יותר מ-FFT שלם כשמספר ה-bins קטן ביחס ל-log2(N)."
+        },
+        {
+          "title": "bins, תדרים שליליים, סימטריה ו-zero padding",
+          "body": "המרווח בין bins הוא fs/N. bin k מייצג k·fs/N עבור k < N/2 ו-(k-N)·fs/N עבור החצי העליון, שהוא התדרים השליליים. bin N/2 (רק ב-N זוגי) הוא Nyquist, fs/2, ו-NumPy מציג אותו כשלילי. `np.fft.fftfreq` מחזיר את התדרים בסדר הזה, ו-`fftshift` מסובב כך ש-DC באמצע. ב-N אי-זוגי אין Nyquist, יש (N-1)/2 תדרים חיוביים ואותו מספר שליליים, ולכן fftshift מסובב ב-ceil(N/2) ו-ifftshift ב-floor(N/2): הן לא אותה פונקציה.\n\nאות ממשי מקיים **סימטריה הרמיטית**: X[N-k] = conj(X[k]). לכן `rfft` (או r2c ב-FFTW) מחזיר רק N/2+1 bins, DC ו-Nyquist ממשיים, והעבודה בערך חצי. טריקים קשורים: rfft באורך N מחושב פנימית כ-FFT מרוכב באורך N/2 ועוד post-processing של O(N), ושני אותות ממשיים x ו-y אפשר לארוז ל-z = x + jy, להריץ FFT אחד ולהפריד: X[k] = (Z[k] + conj(Z[N-k]))/2 ו-Y[k] = (Z[k] - conj(Z[N-k]))/(2j).\n\n**רזולוציה** (היכולת להפריד שני טונים) נקבעת לפי משך הנתונים האמיתי והחלון, לא לפי מספר ה-bins. zero padding רק דוגם בצפיפות את אותו DTFT. כדי לשפר הערכת תדר של peak יחיד יש דרך זולה יותר: **אינטרפולציה פרבולית** על log של שלושת ה-bins סביב המקסימום, עם תיקון p = 0.5·(a-c)/(a-2b+c) בין 0.5- ל-0.5+ bin. לחלון גאוסי היא כמעט מדויקת, ל-Hann היא הערכה טובה מאוד."
+        },
+        {
+          "title": "נרמול, Parseval, dB ו-processing gain",
+          "body": "FFTW ו-NumPy לא מנרמלים את ה-forward, וה-inverse של NumPy מחלק ב-N (ברירת המחדל `norm='backward'`). ב-FFTW גם ה-backward לא מנרמל, ולכן forward ואחריו backward מחזירים N·x. האפשרויות ב-NumPy: `'backward'`, `'ortho'` (1/sqrt(N) בשני הכיוונים) ו-`'forward'` (1/N ב-forward).\n\n**Parseval** בגרסה הלא-מנורמלת: Σ|x[n]|^2 = (1/N)·Σ|X[k]|^2. קוסינוס ממשי באמפליטודה A נותן peak של A·N/2 בכל אחד משני ה-bins (חיובי ושלילי); אקספוננט מרוכב נותן A·N ב-bin אחד. חלון מקטין את ה-peak פי ה-**coherent gain** Σw/N (ב-Hann 0.5), ולכן כדי לשחזר A מחלקים ב-Σw/2 ולא ב-N/2.\n\nל-dB: 10·log10 של הספק שווה ל-20·log10 של amplitude. בקוד C++ משתמשים ב-`std::norm` (re^2+im^2, בלי sqrt) ובונים 10·log10, עם epsilon קטן נגד log(0). שימו לב ש-`std::norm` יכול לעשות overflow ב-float כשהערכים מעל כ-1.8e19, בעוד `std::abs` מחושב בזהירות (כמו hypot). ממוצע של כמה frames עושים תמיד על |X|^2 בסקאלה לינארית ורק אחר כך ממירים ל-dB; ממוצע ב-dB מוטה כלפי מטה (כ-2.5 dB לרעש).\n\n**processing gain**: טון יציב מצטבר קוהרנטית (הספק ה-peak גדל כמו N^2) בעוד שהספק הרעש לכל bin גדל כמו N, כך שהיחס טון-לרעש ל-bin משתפר ב-10·log10(N). הכפלת N פי 4 נותנת כ-6 dB. לעומת זאת ממוצע של K periodograms (Welch) לא משנה את היחס הממוצע; הוא רק מקטין את התנודות של רצפת הרעש פי sqrt(K) בסטיית התקן."
+        },
+        {
+          "title": "STFT, overlap, latency ו-fast convolution",
+          "body": "בעיבוד רציף חותכים את ה-stream ל-frames באורך N שמתקדמים ב-**hop**. קצב ה-frames הוא fs/hop: hop = N בלי overlap, hop = N/2 ב-50% overlap, וזה מכפיל את העבודה. overlap קיים כי החלון מנחית את הקצוות; ב-Hann עם 50% overlap כל דגימה מקבלת משקל כולל קבוע.\n\n**latency** של frame הוא לפחות N/fs: חייבים לאסוף את כל N הדגימות לפני שה-FFT אפשרי. overlap משפר את קצב העדכון אבל לא את ה-latency הזה. רוצים latency נמוך עם רזולוציה טובה? משתמשים ב-filter bank או ב-**channelizer** (polyphase FFT) במקום FFT ענק.\n\n**overlap-save** הוא קונבולוציה מהירה עם FIR באורך L: לוקחים בלוק של N דגימות שחופף לקודם ב-L-1, FFT, כפל בספקטרום של המסנן (מחושב פעם אחת), IFFT, וזורקים את L-1 הדגימות הראשונות שנפגעו מ-circular wrap-around. כל בלוק מייצר N-L+1 דגימות תקינות. overlap-add הוא הגרסה הדואלית: בלוקים לא חופפים עם zero padding, והזנבות מחוברים. כש-L גדול (מאות taps ומעלה) זה זול פי עשרות מקונבולוציה ישירה."
+        },
+        {
+          "title": "ביצועים: compute-bound, memory-bound ו-cache",
+          "body": "FFT עושה 5·log2(N) FLOPs לדגימה, אבל קורא וכותב 16 bytes לדגימה (complex<float>) בכל מעבר על הזיכרון. ה-**arithmetic intensity** (FLOPs לכל byte) נמוכה: ב-N=1024 במעבר יחיד זה 50/16, כ-3 FLOP/byte. לפי מודל **roofline**, אם היחס נמוך מ-peak FLOPs חלקי bandwidth (ה-ridge point, ב-GPU מודרני עשרות FLOP/byte) הקוד memory-bound, והתקרה היא bandwidth/16 דגימות בשנייה.\n\nכל עוד ה-working set (N×8 bytes ועוד twiddles) נכנס ב-L1/L2, כל log2(N) השלבים רצים מתוך ה-cache. כשהוא יוצא (N=2^16 הם 512 KB) כל שלב עובר שוב על L3 או DRAM, והזמן לדגימה קופץ. הפתרון הוא **four-step/six-step** (Bailey): רואים את N כמטריצה N1×N2, מבצעים FFTs באורך N1, כפל ב-twiddles, ו-FFTs באורך N2, עם טרנספוזיציות; כך יש רק כמה מעברים על DRAM במקום log2(N).\n\n**strides של חזקת 2**: cache הוא set-associative, וה-set נקבע לפי ביטים באמצע הכתובת. ב-L1 של 32 KiB ו-8-way, כתובות שההפרש ביניהן כפולה של 4 KiB נופלות לאותו set, ורק 8 מהן נכנסות יחד: **conflict misses**. גישה לעמודה של מטריצה 4096×4096 גם מחליפה דף בכל איבר ומתרסקת ב-TLB. פותרים בטרנספוזיציה ב-blocks או ב-padding של כל שורה בכמה איברים.\n\nדיוק: unit roundoff של float הוא 2^-24, כ-6e-8. ב-FFT מסודר השגיאה היחסית גדלה רק כמו O(ε·log N) (ו-RMS כמו sqrt(log N)), כך ש-float32 מספיק ל-ADC של 16 ביט (SNR קוונטיזציה 6.02·16+1.76 ≈ 98 dB). הסכנה היא twiddles שמחושבים בכפל חוזר w *= w1, שבהם השגיאה מצטברת עם מספר הכפלים. denormals (מספרים קטנים מאוד) יכולים להאט פעולות float פי עשרות; flush-to-zero (FTZ/DAZ) מבטל אותם, אבל זו בעיה של זנבות דועכים ולא של גודל N."
+        },
+        {
+          "title": "ספריות בפועל: FFTW ו-cuFFT",
+          "body": "**FFTW** בנוי על plan ו-execute. ה-planner בוחר אלגוריתם לפי flag: `FFTW_ESTIMATE` (היוריסטיקה מהירה), `FFTW_MEASURE` (מודד כמה אפשרויות, יכול לקחת שניות, ו**דורס את מערכי הקלט והפלט** בזמן ה-planning) ו-`FFTW_PATIENT`. את התוצאה אפשר לשמור כ-**wisdom** ולטעון באתחול הבא. buffers מקצים עם `fftw_malloc` כדי לקבל alignment ל-SIMD (AVX). הרבה FFTs קטנים מבצעים בקריאה אחת עם `fftw_plan_many_dft` (batch).\n\nthread safety: רק ה-execute thread-safe. אפשר להריץ את אותו plan מכמה threads עם מערכים שונים דרך new-array execute (`fftw_execute_dft`), כל עוד יש להם אותו alignment כמו במערכים שעליהם תוכנן ה-plan. קריאות ל-planner צריך לסנכרן (או `fftw_make_planner_thread_safe`). ב-r2c in-place המערך הממשי צריך padding ל-2·(N/2+1) floats, ו-c2r out-of-place הורס את הקלט כברירת מחדל.\n\n**cuFFT**: כל launch וכל העתקה עולים מיקרו-שניות של overhead קבוע, ולכן FFT בודד לכל frame הוא אסון. עושים batch גדול (`cufftPlanMany` עם אלפי frames), מקצים **pinned memory** (page-locked) כדי שה-DMA יהיה אסינכרוני, ומשתמשים ב-**CUDA streams** כדי לחפוף העתקה מעל PCIe עם חישוב. Gen3 x16 נותן בפועל כ-12 GB/s, הרבה מעל 800 MB/s של 100 MS/s ב-fc32. FFT קטן (למשל 1024) נכנס כולו ב-shared memory ומחושב בקרנל יחיד עם מעבר אחד על ה-global memory. המחיר של batch גדול הוא latency: 4096 frames של 1024 ב-100 MS/s הם כ-42 ms."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: מיפוי bins ב-N=8 וב-N=5",
+          "body": "fs = 8 Hz, N = 8, ולכן מרווח של 1 Hz:\n\n- k:  0  1  2  3  4  5  6  7\n- f:  0  1  2  3 -4 -3 -2 -1\n\nbin 4 הוא Nyquist (4 Hz), ו-fftfreq מציג אותו כ-4-. אחרי fftshift הסדר הוא 4-..3, ו-DC עובר לאינדקס 4. טון של 1.25 MHz עם fs = 10 MHz ו-N = 2048 נופל ב-bin 1.25e6 / (10e6/2048) = 256.\n\nN = 5: התדרים בסדר הטבעי הם 0, 1, 2, -2, -1. fftshift מסובב שמאלה ב-ceil(5/2) = 3 ומקבל -2, -1, 0, 1, 2. ifftshift מסובב ב-floor(5/2) = 2 ומחזיר את הסדר המקורי. אם משתמשים באותה פונקציה לשני הכיוונים, ב-N=5 התוצאה מוזזת ב-bin אחד."
+        },
+        {
+          "title": "דוגמה: תקציב חישוב של spectrum monitor",
+          "body": "100 MS/s מרוכב, N = 4096, Hann, 50% overlap.\n\n- hop = 2048, ולכן 100e6 / 2048 ≈ 48,828 FFTs בשנייה\n- FLOPs ל-FFT: 5 · 4096 · 12 = 245,760\n- סך הכל: 48,828 · 245,760 ≈ 12.0 GFLOP/s (בלי overlap: 6 GFLOP/s)\n- latency של frame: 4096 / 100e6 ≈ 41 µs, ועדכון כל 20.5 µs\n- ב-30 fps כל תמונה היא ממוצע של כ-1,628 frames\n\nהמסקנה: 12 GFLOP/s על CPU דורש FFTW עם SIMD וכמה ליבות, או GPU עם batch. ה-bandwidth (800 MB/s של fc32) לא הבעיה כאן; ה-overhead לכל קריאה כן, ולכן batching."
+        },
+        {
+          "title": "דוגמה: נרמול amplitude עם Hann",
+          "body": "קוסינוס ממשי באמפליטודה 1, N = 1024, בדיוק על bin 100.\n\n- בלי חלון: |X[100]| = N/2 = 512, כלומר 54.2 dB (20·log10)\n- עם Hann periodic: Σw = 512 (coherent gain 0.5), ולכן |X[100]| = 256, כלומר 48.2 dB\n- שחזור האמפליטודה: 2·256 / Σw = 1\n\nמי ששוכח את הנרמול מקבל 54.2 dB במקום 0 dB, הטעות של 20·log10(N/2). מי שמנרמל ב-N/2 גם עם חלון מקבל 6 dB פחות מהאמת. ל-Hann יש גם Σw^2 = 384 ו-ENBW של 1.5 bins, וזה התיקון הנכון למדידת רעש (לא coherent gain)."
+        },
+        {
+          "title": "דוגמה: overlap-save מול קונבולוציה ישירה",
+          "body": "FIR עם L = 1025 taps מרוכבים, FFT באורך N = 4096.\n\n- דגימות תקינות לבלוק: N - L + 1 = 3072; זורקים את 1024 הראשונות, ו-hop הקלט הוא 3072\n- FFT + IFFT: 2 · 245,760 = 491,520 FLOPs, ועוד כפל pointwise של 4096 · 6 = 24,576; סך הכל 516,096\n- לכל דגימת פלט: 516,096 / 3072 = 168 FLOPs\n- ישירות: 1025 MACs מרוכבים · 8 FLOPs = 8,200 FLOPs לדגימה\n\nהיחס הוא כ-49. המחיר: latency של בלוק (3072 דגימות) ו-buffers גדולים יותר. ב-L קטן (עשרות taps) קונבולוציה ישירה עם SIMD עדיפה."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "DFT",
+          "def": "Discrete Fourier Transform: X[k] = Σ x[n]·exp(-j2πnk/N). חישוב ישיר הוא O(N^2)."
+        },
+        {
+          "term": "FFT / Cooley-Tukey",
+          "def": "משפחת אלגוריתמים שמחשבת DFT ב-O(N log N) בפירוק רקורסיבי ל-DFTs קטנים. Cooley-Tukey radix-2 מפצל לזוגיים ואי-זוגיים."
+        },
+        {
+          "term": "radix / mixed-radix / Bluestein",
+          "def": "radix הוא הגורם שבו מפצלים בכל שלב (2, 4, split-radix). mixed-radix מטפל ב-N עם גורמים כמו 3 ו-5, ו-Bluestein מחשב N ראשוני דרך קונבולוציה."
+        },
+        {
+          "term": "butterfly",
+          "def": "פעולת הבסיס: a + W·b ו-a - W·b. כפל מרוכב אחד ושני חיבורים, 10 FLOPs, ומכאן 5·N·log2(N)."
+        },
+        {
+          "term": "twiddle factor",
+          "def": "המקדם W^k = exp(-j2πk/N) שמכפיל את אחת הכניסות ב-butterfly. מחשבים אותו מדויק או מטבלה, לא בכפל חוזר."
+        },
+        {
+          "term": "bit-reversal, DIT ו-DIF",
+          "def": "סידור האינדקסים לפי היפוך הביטים. ב-DIT in-place הקלט bit-reversed והפלט טבעי; ב-DIF להפך."
+        },
+        {
+          "term": "Goertzel",
+          "def": "חישוב bin בודד במסנן IIR מסדר 2: כפל ממשי אחד לדגימה, O(N) ל-bin, streaming ובכל תדר. עדיף כשצריך מעט bins."
+        },
+        {
+          "term": "bin spacing ורזולוציה",
+          "def": "המרווח בין bins הוא fs/N. היכולת להפריד טונים תלויה גם בחלון (רוחב ה-mainlobe), בערך פי 1.5-2 מ-fs/N ב-Hann."
+        },
+        {
+          "term": "Nyquist bin",
+          "def": "bin N/2 ב-N זוגי, בתדר fs/2. באות ממשי הוא ממשי, ו-NumPy מציג אותו כתדר שלילי."
+        },
+        {
+          "term": "fftfreq / fftshift / ifftshift",
+          "def": "fftfreq מחזיר את תדר כל bin בסדר הטבעי (חיוביים ואז שליליים). fftshift מזיז את DC למרכז ב-ceil(N/2), ו-ifftshift הופך אותו ב-floor(N/2)."
+        },
+        {
+          "term": "סימטריה הרמיטית",
+          "def": "באות ממשי X[N-k] = conj(X[k]): חצי ספקטרום מספיק, ו-DC ו-Nyquist ממשיים."
+        },
+        {
+          "term": "rfft / r2c / c2r",
+          "def": "FFT לקלט ממשי שמחזיר N/2+1 bins ועולה כחצי. c2r הוא הכיוון ההפוך; ב-FFTW הוא הורס את הקלט כברירת מחדל."
+        },
+        {
+          "term": "zero padding ו-DTFT",
+          "def": "DTFT הוא הספקטרום הרציף של אות סופי. zero padding דוגם אותו בצפיפות (אינטרפולציה) בלי להוסיף רזולוציה."
+        },
+        {
+          "term": "אינטרפולציה פרבולית",
+          "def": "פרבולה דרך log magnitude של שלושה bins סביב ה-peak נותנת תיקון p = 0.5(a-c)/(a-2b+c). כמעט מדויקת לחלון גאוסי, טובה מאוד ל-Hann."
+        },
+        {
+          "term": "נרמול (norm)",
+          "def": "ב-NumPy ו-FFTW ה-forward לא מנורמל. NumPy: `backward` (ברירת מחדל, 1/N ב-ifft), `ortho`, `forward`. ב-FFTW forward+backward נותן N·x."
+        },
+        {
+          "term": "Parseval",
+          "def": "שימור אנרגיה: Σ|x|^2 = (1/N)·Σ|X|^2 ב-FFT לא מנורמל. משמש לבדיקת נרמול ולחישוב הספק."
+        },
+        {
+          "term": "coherent gain ו-ENBW",
+          "def": "coherent gain = Σw/N, הנחתת ה-peak של טון (Hann: 0.5). ENBW = N·Σw^2/(Σw)^2 ב-bins, התיקון למדידת רעש (Hann: 1.5)."
+        },
+        {
+          "term": "חלון Hann וחלון גאוסי",
+          "def": "Hann הוא 0.5-0.5cos, מנחית את הקצוות ומקטין leakage. לחלון גאוסי ה-log של ה-mainlobe קרוב מאוד לפרבולה."
+        },
+        {
+          "term": "dB של הספק מול amplitude",
+          "def": "10·log10(|X|^2) = 20·log10(|X|). `std::norm` נותן |X|^2 בלי sqrt אבל יכול לעשות overflow ב-float; `std::abs` מחושב כמו hypot."
+        },
+        {
+          "term": "processing gain",
+          "def": "בטון יציב היחס טון-לרעש ל-bin משתפר ב-10·log10(N), כי הטון מצטבר קוהרנטית והרעש לא. N פי 4 נותן כ-6 dB."
+        },
+        {
+          "term": "periodogram averaging (Welch)",
+          "def": "ממוצע |X|^2 של K frames בסקאלה לינארית. לא משנה את היחס הממוצע אלא מקטין את סטיית התקן של הרצפה פי sqrt(K)."
+        },
+        {
+          "term": "STFT, hop ו-overlap",
+          "def": "FFT על frames עוקבים. hop הוא ההתקדמות בין frames, וקצב ה-frames הוא fs/hop; 50% overlap מכפיל את העבודה."
+        },
+        {
+          "term": "frame latency",
+          "def": "זמן איסוף frame, N/fs, לפני שאפשר לחשב אותו. overlap לא מקטין אותו."
+        },
+        {
+          "term": "overlap-save / overlap-add",
+          "def": "קונבולוציה מהירה עם FFT. overlap-save: בלוקים חופפים ב-L-1, זורקים L-1 דגימות, N-L+1 תקינות. overlap-add: בלוקים זרים וחיבור זנבות."
+        },
+        {
+          "term": "channelizer",
+          "def": "בנק מסננים (polyphase + FFT) שמפרק פס רחב לערוצים צרים עם latency נמוך יחסית ובידוד טוב בין ערוצים."
+        },
+        {
+          "term": "compute-bound, memory-bound ו-roofline",
+          "def": "roofline: הקצב חסום ב-min(peak FLOPs, bandwidth × arithmetic intensity). FFT עם כ-3 FLOP/byte הוא memory-bound ברוב החומרה."
+        },
+        {
+          "term": "cache associativity ו-conflict misses",
+          "def": "cache מחולק ל-sets; כתובת יכולה לשבת רק ב-set אחד. stride של חזקת 2 גדולה ממפה הכל לאותו set, ורק כמספר ה-ways נכנסים."
+        },
+        {
+          "term": "TLB",
+          "def": "cache של תרגומי כתובות וירטואליות לפיזיות. גישה שמחליפה דף (4 KiB) בכל איבר יוצרת TLB misses יקרים."
+        },
+        {
+          "term": "four-step / six-step",
+          "def": "FFT גדול כמטריצה N1×N2: FFTs באורך N1, twiddles, FFTs באורך N2, וטרנספוזיציות (six-step מוסיף טרנספוזיציות כדי שכל ה-FFTs יהיו רציפים). כמה מעברים על DRAM במקום log2(N)."
+        },
+        {
+          "term": "denormals ו-FTZ",
+          "def": "מספרי float קטנים מ-1.2e-38 שמטופלים לאט מאוד בחומרה. flush-to-zero/DAZ מאפסים אותם."
+        },
+        {
+          "term": "float32 round-off",
+          "def": "unit roundoff 2^-24 ≈ 6e-8 (כ-144 dB-). ב-FFT מסודר השגיאה גדלה כמו O(log N), ולכן float32 מספיק ל-ADC של 16 ביט (כ-98 dB)."
+        },
+        {
+          "term": "FFTW plan, flags ו-wisdom",
+          "def": "ה-plan נבנה פעם אחת: ESTIMATE מהיר, MEASURE מודד (שניות, דורס את המערכים), PATIENT יסודי יותר. wisdom שומר את התוצאה לאתחול הבא."
+        },
+        {
+          "term": "fftw_malloc ו-alignment",
+          "def": "הקצאה מיושרת שמאפשרת ל-FFTW להשתמש ב-SIMD (SSE/AVX). new-array execute דורש אותו alignment כמו ב-planning."
+        },
+        {
+          "term": "batch (plan_many)",
+          "def": "ביצוע הרבה FFTs באותו אורך בקריאה אחת (`fftw_plan_many_dft`, `cufftPlanMany`), כדי לחלק overhead קבוע ולנצל חומרה."
+        },
+        {
+          "term": "FFTW thread safety",
+          "def": "רק execute thread-safe (על מערכים שונים לכל thread). ה-planner לא, וצריך לסנכרן קריאות אליו."
+        },
+        {
+          "term": "cuFFT, pinned memory ו-CUDA streams",
+          "def": "cuFFT היא ספריית ה-FFT של NVIDIA. pinned memory מאפשר DMA אסינכרוני מעל PCIe, ו-streams מאפשרים חפיפה בין העתקה לחישוב."
+        },
+        {
+          "term": "ring buffer",
+          "def": "buffer מעגלי בין thread הקליטה ל-workers. גודלו נקבע לפי עשרות ms של stream כדי לספוג jitter, ו-overflow counter מראה אם לא עומדים בקצב."
+        },
+        {
+          "term": "SNR קוונטיזציה",
+          "def": "ל-ADC של b ביט: 6.02·b + 1.76 dB לסינוס מלא. 16 ביט נותן כ-98 dB."
+        }
+      ]
     }
   ],
   "questions": [
@@ -342,6 +540,294 @@
       ],
       "answer": 0,
       "explanation": "100e6/1024 ≈ 97,656 FFTs בשנייה; עם 10 µs של latency קבוע לכל אחד, ה-overhead לבד ממלא את כל הזמן, בזמן שהחישוב עצמו זעיר. batch של 4096 frames הופך את זה לפחות מ-30 קריאות בשנייה. 800 MB/s (fc32) רחוק מגבול PCIe Gen3 x16 (כ-12 GB/s בפועל). pinned memory מאפשר DMA אסינכרוני, ו-streams מאפשרים חפיפה בין העברה לחישוב. ה-trade-off: batch גדול מוסיף latency (4096 frames הם כ-42 ms).",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q19",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה twiddle factor ב-FFT?",
+      "choices": [
+        "מקדם החלון שמוכפל בכל דגימה לפני ה-FFT",
+        "המקדם המרוכב exp(-j2πk/N) שמכפיל את אחת הכניסות של butterfly",
+        "מקדם הנרמול 1/N שמוכפל בכל שלב",
+        "השגיאה הנומרית שנוספת בכל שלב של butterflies"
+      ],
+      "answer": 1,
+      "explanation": "ה-twiddle הוא W^k = exp(-j2πk/N), שמסובב את הכניסה השנייה של כל butterfly לפני החיבור והחיסור, והוא מה שהופך את שני ה-DFTs הקטנים ל-DFT הגדול. חלון מוכפל בדגימות לפני ה-FFT ולא בתוכו. נרמול 1/N הוא אופציונלי וקורה פעם אחת בסוף, אם בכלל. שגיאה נומרית מצטברת קשורה ל-twiddles רק אם מחשבים אותם לא נכון.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q20",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה שלבים של butterflies יש ב-FFT radix-2 באורך N = 4096?",
+      "accept": [
+        "12",
+        "log2(4096)",
+        "12 stages"
+      ],
+      "explanation": "מספר השלבים הוא log2(N) = log2(4096) = 12, ובכל שלב N/2 = 2048 butterflies. מכאן 12·2048 = 24,576 butterflies של 10 FLOPs, בערך 5·N·log2(N) ≈ 246K FLOPs. 4096 או 2048 הם מספר הדגימות או ה-butterflies לשלב, לא מספר השלבים.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q21",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "בפלט של FFT מרוכב באורך N זוגי (סדר טבעי, בלי fftshift), באיזה אינדקס נמצא תדר Nyquist (fs/2)?",
+      "choices": [
+        "N-1",
+        "N/2",
+        "N/2+1",
+        "N/2-1"
+      ],
+      "answer": 1,
+      "explanation": "bin k מייצג k·fs/N, ולכן fs/2 הוא k = N/2: ה-bin האחרון של התדרים החיוביים והראשון של השליליים (NumPy מציג אותו כ-fs/2-). N-1 הוא התדר השלילי הקטן ביותר, fs/N-. N/2-1 הוא התדר החיובי שלפני Nyquist, ו-N/2+1 כבר שלילי, fs/2 - fs/N-.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q22",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "ב-FFTW מריצים plan של forward (`FFTW_FORWARD`) על x ואחריו plan של backward (`FFTW_BACKWARD`) על התוצאה. מה מתקבל?",
+      "choices": [
+        "x בדיוק, כמו ב-NumPy",
+        "x/N",
+        "x הפוך בזמן, x[-n]",
+        "N·x"
+      ],
+      "answer": 3,
+      "explanation": "FFTW לא מנרמל באף כיוון, ולכן ה-round-trip מחזיר N·x, ואת החלוקה ב-N עושים בעצמך (או מקפלים אותה לתוך מקדם אחר). ב-NumPy ifft כן מחלק ב-N כברירת מחדל, ולכן שם מקבלים x; זו בדיוק הסיבה לבלבול. x/N היה מתקבל רק עם נרמול כפול. היפוך בזמן (N·x[-n]) מתקבל מ-forward פעמיים, לא מ-forward ואז backward.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q23",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nx = np.array([1, 2, 3, 4])\nX = np.fft.fft(x)\nprint(np.sum(np.abs(X)**2) / len(x), np.sum(x**2))",
+      "choices": [
+        "30.0 30",
+        "120.0 30",
+        "7.5 30",
+        "30.0 120"
+      ],
+      "answer": 0,
+      "explanation": "זה Parseval בגרסה הלא-מנורמלת: Σ|X|^2 = N·Σ|x|^2, ולכן אחרי חלוקה ב-N מקבלים 1+4+9+16 = 30. השמאלי float (תוצאה של FFT), הימני int64 כי x מערך שלמים, ולכן `30` בלי נקודה. 120 היה יוצא בלי החלוקה ב-N, ו-7.5 מחלוקה כפולה.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q24",
+      "level": 2,
+      "type": "short",
+      "prompt": "fs = 10 MS/s, FFT באורך N = 2048. באיזה bin (אינדקס k) ייפול טון של 1.25 MHz?",
+      "accept": [
+        "256",
+        "k=256",
+        "bin 256"
+      ],
+      "explanation": "מרווח ה-bins הוא fs/N = 10e6/2048 ≈ 4882.8 Hz, ולכן k = 1.25e6 / 4882.8 = 256 בדיוק (1.25 MHz הוא fs/8, ו-2048/8 = 256). טון שלילי של 1.25- MHz היה נופל ב-N-256 = 1792.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q25",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "python",
+      "code": "import numpy as np\nn = np.arange(8)\nx = np.cos(2 * np.pi * 2 * n / 8)\nX = np.fft.fft(x)\nprint(np.round(np.abs(X)).astype(int))",
+      "choices": [
+        "[0 0 8 0 0 0 0 0]",
+        "[0 0 4 0 0 0 0 0]",
+        "[0 0 4 0 0 0 4 0]",
+        "[0 0 2 0 0 0 2 0]"
+      ],
+      "answer": 2,
+      "explanation": "קוסינוס ממשי הוא סכום של שני אקספוננטים, ב-+2 ו-2- bins, כל אחד באמפליטודה 1/2. ה-forward לא מנורמל, ולכן כל אחד נותן N·1/2 = 4. התדר השלילי 2- נמצא ב-bin N-2 = 6. 8 ב-bin אחד מתאים לאקספוננט מרוכב, ו-4 רק ב-bin 2 שוכח את התדר השלילי.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q26",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את שלבי חישוב power spectrum ממוצע ב-dB מ-stream של דגימות:",
+      "items": [
+        "איסוף frame של N דגימות (עם hop)",
+        "כפל בחלון Hann",
+        "FFT",
+        "חישוב |X|^2 עם std::norm",
+        "ממוצע לינארי על frames ונרמול לפי N והחלון",
+        "המרה ל-dB עם 10·log10"
+      ],
+      "explanation": "החלון מוכפל בזמן לפני ה-FFT. ממירים ל-|X|^2 וממצעים בסקאלה לינארית; ממוצע אחרי dB מוטה כלפי מטה (כ-2.5 dB לרעש). הנרמול לפי N והחלון הוא קבוע, ולכן אפשר לעשות אותו פעם אחת על הממוצע. dB תמיד אחרון.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q27",
+      "level": 3,
+      "type": "bug",
+      "prompt": "הפונקציה ממירה אינדקס bin של FFT מרוכב לתדר ב-Hz. ל-k=2, N=8, fs=8 היא מחזירה 2 כצפוי, אבל ל-k=6 היא מחזירה בערך 1.8e19 במקום 2-. מה הבאג?",
+      "lang": "cpp",
+      "code": "double binToHz(size_t k, size_t N, double fs) {\n    size_t kk = (k < N / 2) ? k : k - N;\n    return kk * fs / N;\n}",
+      "bugLine": 2,
+      "choices": [
+        "התנאי צריך להיות `k <= N / 2`, אחרת Nyquist יוצא שלילי",
+        "`k - N` מחושב ב-size_t ועוטף למספר חיובי ענק במקום להיות שלילי",
+        "`fs / N` מבצע חילוק שלמים",
+        "צריך להפעיל fftshift על k לפני ההמרה"
+      ],
+      "answer": 1,
+      "explanation": "k - N מחושב ב-size_t, ולכן 6-8 לא נותן 2- אלא 2^64-2. ההמרה ל-double נותנת כ-1.8e19. התיקון: `long long kk = (k < N/2) ? (long long)k : (long long)k - (long long)N;`. התנאי `k < N/2` נכון לפי ה-convention של NumPy, שבו Nyquist שלילי; `<=` הוא convention אחר ולא הבאג. `fs` הוא double, ולכן אין integer division. fftshift משנה את סדר המערך, לא את המיפוי של אינדקס בודד.",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q28",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך רק 3 bins (לגלאי DTMF-like) מתוך frame ממשי באורך N = 4096. מה ההשוואה הנכונה בין Goertzel ל-rfft?",
+      "choices": [
+        "FFT תמיד עדיף, כי O(N log N) קטן מ-O(N·M)",
+        "Goertzel עדיף רק כש-N חזקה של 2",
+        "אין הבדל: שניהם O(N log N) כשמחשבים 3 bins",
+        "Goertzel: כ-37K FLOPs מול כ-123K ל-rfft. עדיף כש-M קטן ביחס ל-log2(N), והוא streaming ולא מוגבל לתדרי bin"
+      ],
+      "answer": 3,
+      "explanation": "Goertzel עולה כ-3 FLOPs לדגימה לכל bin (כפל ממשי ושני חיבורים), כלומר 3·4096·3 ≈ 37K, מול כ-2.5·N·log2(N) ≈ 123K ל-rfft. הוא עדיף כל עוד מספר ה-bins קטן ביחס ל-log2(N), והוא גם streaming ועובד בכל תדר ובכל N. ההשוואה של O(N log N) מול O(N·M) לא אומרת כלום בלי הקבועים ובלי M. Goertzel לא דורש חזקת 2, ולא מגיע ל-O(N log N).",
+      "lesson": "dsp.fft"
+    },
+    {
+      "id": "dsp.fft.q29",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "overlap-save עם FIR באורך L = 1025 taps ו-FFT באורך N = 4096. כמה דגימות פלט תקינות מייצר כל בלוק?",
+      "choices": [
+        "4096",
+        "3072",
+        "3071",
+        "2048"
+      ],
+      "answer": 1,
+      "explanation": "הקונבולוציה המעגלית פוגעת ב-L-1 = 1024 הדגימות הראשונות של כל בלוק (wrap-around), ולכן נשארות N-L+1 = 3072, וזה גם ה-hop של הקלט. 4096 מתעלם מה-wrap-around. 3071 הוא off-by-one שנובע מזריקה של L דגימות. 2048 הוא hop של 50% overlap, שלא קשור לאורך המסנן.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q30",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי FFT על אותות ממשיים? (בחר את כל הנכונים)",
+      "choices": [
+        "rfft מהיר בדיוק פי 4 מ-FFT מרוכב באותו N, כי חצי מהקלט וחצי מהפלט",
+        "rfft באורך N אפשר לחשב בעזרת FFT מרוכב אחד באורך N/2 ועוד שלב post-processing של O(N)",
+        "שני אותות ממשיים x ו-y: FFT אחד של x + jy, ואז X[k] = (Z[k] + conj(Z[N-k]))/2",
+        "c2r ב-FFTW משאיר את מערך הקלט המרוכב ללא שינוי כברירת מחדל",
+        "r2c in-place ב-FFTW דורש מערך ממשי עם padding ל-2·(N/2+1) floats"
+      ],
+      "answer": [
+        1,
+        2,
+        4
+      ],
+      "explanation": "rfft באורך N מחושב כ-FFT מרוכב באורך N/2 על זוגות (x[2n] + j·x[2n+1]) ועוד post-processing של O(N). אריזה של שני אותות ממשיים ל-z = x + jy והפרדה דרך הסימטריה ההרמיטית היא טריק סטנדרטי. ב-r2c in-place המערך הממשי צריך padding ל-2·(N/2+1) floats כי הפלט גדול מהקלט. rfft חוסך בערך חצי, לא פי 4. c2r ב-FFTW הורס את הקלט כברירת מחדל (FFTW_DESTROY_INPUT), ומי שמניח אחרת מקבל ספקטרום משובש בשימוש חוזר.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q31",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "רוצים לגלות טון חלש ויציב ברעש לבן, ויש 4096 דגימות. אפשרות A: FFT אחד באורך 4096. אפשרות B: ממוצע |X|^2 של ארבעה FFTs באורך 1024. מה נכון?",
+      "choices": [
+        "שתי האפשרויות שוות: בשתיהן 4096 דגימות, ולכן שיפור של 6 dB",
+        "B עדיפה: הממוצע מוריד את רצפת הרעש ב-6 dB",
+        "A משפרת את היחס טון-לרעש ל-bin בכ-6 dB; B לא משנה את היחס הממוצע אלא מקטינה את התנודות של הרצפה (סטיית תקן פי 2)",
+        "A משפרת בכ-12 dB, כי ההספק גדל כמו N^2"
+      ],
+      "answer": 2,
+      "explanation": "ב-FFT קוהרנטי הספק הטון ב-bin גדל כמו N^2 והרעש ל-bin כמו N, ולכן N פי 4 נותן 10·log10(4) ≈ 6 dB. ממוצע של periodograms לא משנה את היחס הממוצע; הוא מקטין את התנודות של רצפת הרעש (סטיית תקן פי sqrt(4) = 2), וזה עוזר לגילוי פחות מ-6 dB, ונותן רזולוציה גסה פי 4. ממוצע לא מוריד את רמת הרצפה הממוצעת, ו-12 dB שוכח שגם הרעש מצטבר. A דורש שהטון יהיה יציב בפאזה ובתדר לאורך כל 4096 הדגימות.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q32",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "GPU עם 900 GB/s ו-30 TFLOP/s ב-FP32 מריץ cuFFT באורך 1024 על batch ענק של complex<float>, out-of-place, כשהנתונים כבר ב-device memory. מה התקרה הריאלית לקצב, בדגימות לשנייה?",
+      "choices": [
+        "כ-600 GS/s: 30 TFLOP/s חלקי 50 FLOPs לדגימה",
+        "כ-56 GS/s: 16 bytes לדגימה חלקי 900 GB/s; ב-3 FLOP/byte זה memory-bound",
+        "כ-112 GS/s: רק הקריאה נספרת, הכתיבה נשארת ב-L2",
+        "כ-5.6 GS/s: כל אחד מ-10 שלבי radix-2 קורא וכותב את המערך מ-DRAM"
+      ],
+      "answer": 1,
+      "explanation": "FFT של 1024 נכנס ב-shared memory ומחושב בקרנל יחיד: קריאה של 8 bytes וכתיבה של 8 לכל דגימה, 16 bytes, ולכן 900e9/16 ≈ 56 GS/s. ה-intensity היא 50 FLOPs ל-16 bytes, כ-3 FLOP/byte, הרבה מתחת ל-ridge point של 30e12/900e9 ≈ 33, כלומר memory-bound, ו-600 GS/s (חסם ה-FLOPs) לא בר-השגה. הכתיבה עוברת ל-DRAM ונספרת, ולכן לא 112. 5.6 GS/s מניח מעבר על DRAM בכל אחד מ-10 השלבים, וזה נכון רק למימוש נאיבי או ל-N גדול שלא נכנס ב-shared memory.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q33",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מימוש ביתי של fast convolution על FPGA או GPU: FFT in-place radix-2 → כפל איבר-איבר בספקטרום מסנן שחושב מראש → IFFT. ה-bit-reversal permutation לוקח חלק ניכר מהזמן. מה הדרך הנכונה לחסוך אותו?",
+      "choices": [
+        "אי אפשר: כל טרנספורם חייב bit-reversal משלו",
+        "לעבור ל-radix-4, שלא דורש סידור מחדש",
+        "להחליף את ה-bit-reversal ב-fftshift, שזול יותר",
+        "forward ב-DIF (פלט bit-reversed), כפל בספקטרום מסנן ששמור גם הוא bit-reversed, ו-inverse ב-DIT שמחזיר סדר טבעי"
+      ],
+      "answer": 3,
+      "explanation": "DIF מקבל קלט בסדר טבעי ומוציא פלט bit-reversed, ו-DIT in-place מקבל קלט bit-reversed ומוציא סדר טבעי. כפל pointwise לא תלוי בסדר, כל עוד ספקטרום המסנן שמור באותו סדר bit-reversed, ולכן אפשר לוותר על שתי ה-permutations. radix-4 דורש digit-reversal בבסיס 4, אז הבעיה נשארת. fftshift הוא סיבוב, לא היפוך ביטים. שתי permutations הן מה שקורה בלי הטריק, לא חובה.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q34",
+      "level": 5,
+      "type": "output",
+      "prompt": "מה מודפס (g++, libstdc++, בלי -ffast-math)?",
+      "lang": "cpp",
+      "code": "#include <complex>\n#include <cmath>\n#include <cstdio>\nint main() {\n    std::complex<float> z(3e19f, 4e19f);\n    float p = std::norm(z);\n    float a = std::abs(z);\n    std::printf(\"%d %g\\n\", (int)std::isinf(p), a);\n}",
+      "choices": [
+        "1 5e+19",
+        "0 5e+19",
+        "1 inf",
+        "0 inf"
+      ],
+      "answer": 0,
+      "explanation": "`std::norm` מחושב כ-re^2 + im^2 ב-float: 9e38 + 1.6e39 גדול מ-FLT_MAX (כ-3.4e38), ולכן inf. `std::abs` ל-complex<float> מחושב כמו hypot, עם scaling שמונע overflow, ונותן 5e19 תקין. המשמעות בפועל: `10*log10(std::norm(X))` חוסך sqrt אבל נשבר כשהערכים גדולים מכ-1.8e19 (למשל צבירה לא מנורמלת של FFTs גדולים), בעוד `20*log10(std::abs(X))` שורד. מי שחושב ששתיהן בטוחות, או ששתיהן עושות overflow, טועה בכיוון אחד.",
+      "lesson": "dsp.fft",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.fft.q35",
+      "level": 5,
+      "type": "oral",
+      "prompt": "הסבר את אלגוריתם four-step (Bailey) ל-FFT באורך N = N1·N2: המתמטיקה, למה הוא מהיר יותר ל-N גדול, ומה ההבדל ל-six-step. איך בוחרים N1 ו-N2 ל-N = 2^24?",
+      "modelAnswer": "כותבים n = N2·n1 + n2 ו-k = k1 + N1·k2. אז W_N^(nk) = W_N1^(n1·k1) · W_N^(n2·k1) · W_N2^(n2·k2), כי W_N^(N1·N2·n1·k2) = 1. לכן: (1) מבצעים N2 FFTs באורך N1 על n1 (עמודות של מטריצה N1×N2, ב-stride N2); (2) מכפילים כל איבר ב-twiddle W_N^(n2·k1); (3) מבצעים N1 FFTs באורך N2 על n2; (4) הפלט יוצא באינדקס k1 + N1·k2, כלומר מטריצה בסידור מוחלף, וצריך טרנספוזיציה כדי לקבל סדר טבעי. למה מהיר: FFT רגיל ב-N שלא נכנס ב-cache עושה log2(N) מעברים על DRAM (24 ב-2^24), כי כל שלב radix נוגע בכל המערך. ב-four-step כל FFT קטן (4096 איברים, 32 KB) נכנס ב-L1/L2 ומבצע את כל השלבים שלו בתוך ה-cache, כך שסך הכל יש כ-3 עד 4 מעברים על DRAM: FFTs ראשונים, twiddle (שאפשר למזג לתוכם), FFTs שניים וטרנספוזיציה. שלב (1) ניגש ב-stride של חזקת 2, וזה conflict misses; six-step פותר זאת בטרנספוזיציה לפני כל סבב FFTs, כך שכל ה-FFTs רצים על שורות רציפות (transpose, FFT, twiddle, transpose, FFT, transpose), ואת הטרנספוזיציות עושים ב-blocks שנכנסים ב-cache. בחירת N1 ו-N2: בערך sqrt(N), כלומר 4096×4096, כדי ששני הסבבים יהיו מאוזנים וכל FFT ייכנס ב-cache; אם cache קטן, מפרקים רקורסיבית. אותו עיקרון משמש ב-GPU (FFT גדול מ-shared memory מפורק לכמה קרנלים) ובמערכות מבוזרות (cuFFTXt או MPI, שם הטרנספוזיציה היא all-to-all ברשת והיא צוואר הבקבוק). twiddles של שלב (2) מחשבים מדויק או מטבלה, לא בכפל חוזר.",
+      "rubric": [
+        "פירוק אינדקסים נכון ו-twiddle W_N^(n2·k1) בין הסבבים",
+        "מסביר את הירידה מ-log2(N) מעברים על DRAM לכמה בודדים",
+        "מבין למה צריך טרנספוזיציה ומה six-step מוסיף (רציפות, conflict misses)",
+        "בוחר N1 ≈ N2 ≈ sqrt(N) ומנמק לפי גודל cache",
+        "מזכיר הכללה ל-GPU או למערכת מבוזרת (all-to-all)"
+      ],
+      "explanation": "המראיין בודק שאתה מבין את הפירוק עד רמת האינדקסים, את הקשר בין מספר המעברים על DRAM לביצועים, ואת התפקיד של הטרנספוזיציה.",
       "lesson": "dsp.fft",
       "tags": [
         "nvidia"
