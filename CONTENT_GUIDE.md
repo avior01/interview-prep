@@ -55,9 +55,40 @@ one-line formula is fine.
   "complexity": "זמן O(n), זיכרון O(k) ...",
   "pitfalls": ["מלכודת נפוצה", "..."],
   "senior": ["מה מראיין סניור מצפה לשמוע: trade-offs, follow-ups, וריאציות"],
-  "diagram": "optional ASCII diagram, monospace, max ~40 chars wide"
+  "diagram": "optional ASCII diagram, monospace, max ~40 chars wide",
+  "details": [                            // 3–7 in-depth sections, the core of the lesson
+    { "title": "כותרת", "body": "2–5 פסקאות קצרות (מותר bullets). הסבר מעמיק: למה זה עובד, וריאציות, מקרי קצה, השוואה לחלופות." }
+  ],
+  "examples": [                           // 2–4 worked examples
+    { "title": "דוגמה: ...", "body": "מקרה קונקרטי עם מספרים, מעקב שלב אחר שלב במילים (מה המצב אחרי כל צעד), ומה לומדים ממנו." }
+  ],
+  "glossary": [                           // every term/concept used in this subtopic's questions
+    { "term": "ABA problem", "def": "1–3 משפטים: מה זה, למה זה חשוב, ואיך מתמודדים." }
+  ]
 }
 ```
+
+### Depth requirements (v2)
+
+The learner reported that lessons were too thin: short, simple explanations, few
+examples, and questions about concepts the lesson never mentions (e.g. a question
+about the ABA problem when the lesson never explains ABA). Therefore:
+
+- A lesson must let someone who never met the topic answer **every** question in
+  the file at levels 1–4 and understand the explanations at level 5.
+- **Coverage rule:** before finishing a file, list every concept, term, algorithm,
+  API, hardware mechanism, and pattern that appears in any question, choice or
+  explanation in the file. Each one must be explained somewhere in the lesson
+  (`details`, `examples` or `glossary`). The glossary typically has 10–25 entries.
+- `details` is a real explanation, the way a good textbook chapter or a senior
+  colleague would teach it: mechanism, intuition, why, variants, edge cases,
+  trade-offs, common interview variants. Typically 800–1,800 Hebrew words per
+  lesson in total across all fields.
+- `examples` walk through concrete cases with real numbers or real inputs, step by
+  step in words (e.g. trace a sliding window over `[2,1,5,1,3,2]` with k=3, showing
+  the window and the sum after each step). Words and small ASCII tables only.
+- Still no code blocks and no pseudocode in lessons (inline `identifiers` are fine).
+  Lessons teach concepts; questions test code.
 
 ## Question
 
@@ -90,8 +121,14 @@ Types and their extra fields:
 
 Rules:
 
-- Per subtopic: **at least 3 questions at each level 1–5** (≥15 total). 18–20 is better
-  for big subtopics.
+- Per subtopic: **at least 6 questions at each level 1–5** (≥30 total). More variety
+  is the goal: new questions must test different angles, not reword existing ones.
+- **Never change or remove an existing question's `id`** (the learner's progress is
+  keyed by id). New questions continue the numbering (q21, q22, ...). Fixing an
+  existing question's text or answer is fine.
+- Every question must stand alone: never refer to "the previous question", and
+  never refer to a choice by its position ("the first three", "option B"), because
+  the app shuffles choices and question order.
 - Mix types. Mostly `mcq`/`multi`/`output`/`bug`/`order`/`short` (they work on a
   phone). Add 1–3 `oral` per subtopic at levels 3–5, and 1–2 `code` questions per
   subtopic at levels 3–5 where coding makes sense (algorithms, C++, concurrency,

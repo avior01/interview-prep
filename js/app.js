@@ -1,7 +1,7 @@
 import { loadContent, content, subKey, hasContent } from './content.js';
 import * as store from './store.js';
 import { esc } from './md.js';
-import { lessonHtml } from './lesson.js';
+import { lessonHtml, lessonText } from './lesson.js';
 import { buildSession, counts, currentWeek, levelOf, PLAN, isDesktop } from './engine.js';
 import { startSession, renderSession, renderSummary, stopSessionTimer } from './session.js';
 import * as ai from './ai.js';
@@ -127,15 +127,15 @@ function practice(params) {
       ${ai.hasKey() ? '' : '<p class="feedback bad small">לא הוגדר מפתח API בהגדרות, אז הבדיקה תהיה עצמית.</p>'}
       ${levelSelect(false)}<label class="field"><span>מספר שאלות</span><select id="len"><option>3</option><option selected>5</option><option>7</option></select></label>`;
     opts.innerHTML = h;
-    opts.dataset.mode = m;
+    opts.dataset.sel = m;
   };
   draw(mode);
-  app.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => {
-    app.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  app.querySelectorAll('button[data-mode]').forEach((b) => b.onclick = () => {
+    app.querySelectorAll('button[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     draw(b.dataset.mode);
   });
   document.getElementById('start').onclick = () => {
-    const m = opts.dataset.mode;
+    const m = opts.dataset.sel;
     const val = (id) => document.getElementById(id)?.value;
     begin({ mode: m, scope: val('scope') || '', level: +(val('lv') || 0), length: +(val('len') || st().settings.sessionLen), companyOnly: document.getElementById('co')?.checked });
   };
@@ -146,7 +146,7 @@ function library(params) {
   const read = st().lessonsRead;
   let body;
   if (qtext) {
-    const hits = Object.values(content.lessons).filter((l) => (l.title + ' ' + content.subById[l.sub]?.name + ' ' + l.what).toLowerCase().includes(qtext));
+    const hits = Object.values(content.lessons).filter((l) => (content.subById[l.sub]?.name.toLowerCase() + ' ' + lessonText(l)).includes(qtext));
     body = `<div class="card"><ul class="list">${hits.map((l) => `<li><a class="list-btn" href="#/lesson/${encodeURIComponent(l.id)}"><span>${esc(l.title)}</span><span class="small muted">${esc(content.domainById[content.subById[l.sub].domain].name)}</span></a></li>`).join('') || '<li class="muted">לא נמצא.</li>'}</ul></div>`;
   } else {
     body = content.domains.map((d) => {

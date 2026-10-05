@@ -8,7 +8,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'content');
 const taxonomy = JSON.parse(readFileSync(join(root, 'taxonomy.json'), 'utf8'));
 const only = process.argv[2];
 
-const TYPES = ['mcq', 'multi', 'output', 'bug', 'order', 'short', 'oral', 'code'];
+const MIN_PER_LEVEL = 6;
+const TYPES =['mcq', 'multi', 'output', 'bug', 'order', 'short', 'oral', 'code'];
 const errors = [];
 const warnings = [];
 const seenIds = new Set();
@@ -43,6 +44,10 @@ for (const domain of taxonomy.domains) {
       for (const f of ['title', 'what', 'complexity']) if (!isStr(l[f])) err(`${lw}: missing ${f}`);
       for (const f of ['when', 'how', 'pitfalls', 'senior']) if (!isStrArr(l[f])) err(`${lw}: ${f} must be a non-empty string array`);
       if (l.diagram !== undefined && typeof l.diagram !== 'string') err(`${lw}: diagram must be a string`);
+      const titled = (arr, min, a, b) => Array.isArray(arr) && arr.length >= min && arr.every((x) => x && isStr(x[a]) && isStr(x[b]));
+      if (!titled(l.details, 3, 'title', 'body')) err(`${lw}: details needs ≥3 {title, body}`);
+      if (!titled(l.examples, 2, 'title', 'body')) err(`${lw}: examples needs ≥2 {title, body}`);
+      if (!titled(l.glossary, 5, 'term', 'def')) err(`${lw}: glossary needs ≥5 {term, def}`);
       const blob = JSON.stringify(l);
       if (blob.includes('```')) err(`${lw}: lessons must not contain code blocks`);
     }
@@ -61,6 +66,9 @@ for (const domain of taxonomy.domains) {
       if (!isStr(q.prompt)) qerr('missing prompt');
       if (!isStr(q.explanation)) qerr('missing explanation');
       if (!lessonIds.has(q.lesson)) qerr(`lesson "${q.lesson}" not in this file`);
+      const text = `${q.prompt} ${q.explanation}`;
+      if (/(השאלה הקודמת|בשאלה הקודמת|מהשאלה הקודמת|השאלה הבאה)/.test(text)) qerr('refers to another question; questions must stand alone');
+      if (/(שתי|שלוש|ארבע) (הראשונות|האחרונות)|(האפשרות|התשובה|המסיח) (הראשונה|השנייה|השלישית|הרביעית|האחרונה)|תשובה [אבגד]'/.test(q.explanation)) qerr('explanation refers to a choice by position; choices are shuffled');
       if (q.tags !== undefined && !(Array.isArray(q.tags) && q.tags.every((t) => ['nvidia', 'microsoft'].includes(t)))) qerr('tags must be nvidia/microsoft');
       const needLang = () => { if (!['cpp', 'python'].includes(q.lang)) qerr('lang must be cpp or python'); };
       const choiceAnswer = (n) => {
@@ -96,7 +104,16 @@ for (const domain of taxonomy.domains) {
           break;
       }
     }
-    for (let lv = 1; lv <= 5; lv++) if (perLevel[lv] < 3) err(`only ${perLevel[lv]} questions at level ${lv} (need ≥3)`);
+    for (let lv = 1; lv <= 5; lv++) if (perLevel[lv] < MIN_PER_LEVEL) err(`only ${perLevel[lv]} questions at level ${lv} (need ≥${MIN_PER_LEVEL})`);
+  }
+}
+
+// Progress is keyed by question id: an id that existed before must not disappear.
+const baselineFile = join(root, '..', 'tools', 'ids-baseline.json');
+if (existsSync(baselineFile)) {
+  for (const id of JSON.parse(readFileSync(baselineFile, 'utf8'))) {
+    if (only && !id.startsWith(only + '.')) continue;
+    if (!seenIds.has(id)) errors.push(`question id ${id} was removed or renamed (progress depends on it)`);
   }
 }
 

@@ -147,8 +147,9 @@ const companyBoost = (qs) => {
 function atLevel(key, level) {
   const qs = (content.qBySub[key] || []).filter(usable);
   const exact = qs.filter((q) => q.level === level);
+  const ordered = [...shuffle(exact.filter(isNew)), ...shuffle(exact.filter((q) => !isNew(q)))];
   const below = qs.filter((q) => q.level < level).sort((a, b) => b.level - a.level);
-  return [...shuffle(exact.filter(isNew)), ...shuffle(exact.filter((q) => !isNew(q))), ...below.filter(isNew)];
+  return [...ordered, ...below.filter(isNew)];
 }
 
 function domainKeys(domainId) {
@@ -201,17 +202,24 @@ export function buildSession({ mode, scope, level, length, companyOnly }) {
   if (mode === 'domain' || mode === 'sub') {
     const keys = mode === 'domain' ? domainKeys(scope) : [scope];
     const inScope = all.filter((q) => keys.includes(q.sub));
-    takeUnique(out, shuffle(inScope.filter(isWeak)), Math.ceil(n * 0.3), used);
-    const fresh = [];
-    for (const k of shuffle(keys)) {
-      const lv = level || levelOf(k);
-      fresh.push(...atLevel(k, lv));
+    const lvOf = (q) => level || levelOf(q.sub);
+    // Missed questions come back first (at the chosen level when one was picked).
+    takeUnique(out, shuffle(inScope.filter((q) => isWeak(q) && (!level || q.level === level))), Math.ceil(n * 0.3), used);
+    if (level) {
+      // A level the user picked: that level only, neighbours just to fill.
+      const exact = inScope.filter((q) => q.level === level);
+      takeUnique(out, [...shuffle(exact.filter(isNew)), ...shuffle(exact.filter(isDue)), ...shuffle(exact)], n, used);
+      const near = inScope.filter((q) => Math.abs(q.level - level) === 1);
+      takeUnique(out, [...shuffle(near.filter(isNew)), ...shuffle(near)], n, used);
+      return shuffle(out);
     }
+    const fresh = [];
+    for (const k of shuffle(keys)) fresh.push(...atLevel(k, levelOf(k)));
     takeUnique(out, mode === 'domain' ? shuffle(fresh) : fresh, n, used);
     takeUnique(out, shuffle(inScope.filter(isDue)), n, used);
     // Still short: stretch one level up, then repeat seen questions at the level.
-    takeUnique(out, shuffle(inScope.filter((q) => isNew(q) && q.level === (level || levelOf(q.sub)) + 1)), n, used);
-    takeUnique(out, shuffle(inScope.filter((q) => q.level === (level || levelOf(q.sub)))), n, used);
+    takeUnique(out, shuffle(inScope.filter((q) => isNew(q) && q.level === lvOf(q) + 1)), n, used);
+    takeUnique(out, shuffle(inScope.filter((q) => q.level === lvOf(q))), n, used);
     return shuffle(out);
   }
 

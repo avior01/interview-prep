@@ -308,12 +308,8 @@ function record(ok) {
   const change = recordLevel(q, ok);
   if (change === 'up') setTimeout(() => toast(`עלית לרמה ${get().levels[q.sub].level} ב${content.subById[q.sub].name}`), 300);
   if (change === 'down') setTimeout(() => toast(`ירדת לרמה ${get().levels[q.sub].level} ב${content.subById[q.sub].name}. כדאי לחזור לשיעור.`), 300);
-  if (!ok && !cur.requeued.includes(q.id) && cur.mode !== 'exam' && cur.mode !== 'interview') {
-    // Ask again 3–5 questions later in this session.
-    cur.requeued.push(q.id);
-    const pos = Math.min(cur.ids.length, cur.idx + 4 + Math.floor(Math.random() * 2));
-    cur.ids.splice(pos, 0, q.id);
-  }
+  // A missed question goes to the weak pool (see next()) and comes back in
+  // the following sessions, not later in this one.
   touchStreak();
   save();
 }
@@ -330,16 +326,16 @@ function next() {
 }
 
 function notKnown() {
-  // Not counted as a mistake: open the lesson and ask the question again at the end.
-  const cur = get().current;
+  // Not counted as a mistake for the level, but the question joins the weak
+  // pool so it comes back in the next sessions, after the lesson was read.
   const q = ui.q;
-  if (!cur.requeued.includes(q.id)) { cur.requeued.push(q.id); cur.ids.push(q.id); }
+  schedule(q.id, 'wrong');
   ui.skipSchedule = true;
   ui.showLesson = true;
   ui.done = true;
   ui.answered = true;
   stopTimer();
-  ui.feedback = `<div class="feedback info"><h3>בסדר, קודם לומדים</h3><p>השאלה תחזור בסוף הסשן, ולא תיחשב טעות.</p></div>
+  ui.feedback = `<div class="feedback info"><h3>בסדר, קודם לומדים</h3><p>השאלה תחזור בסשן הבא, ולא תיחשב טעות ברמה שלך.</p></div>
     <div class="actions"><button class="btn" data-act="lesson">פתח את השיעור</button><button class="btn primary" data-act="next">הבא ←</button></div>`;
   save();
   draw();
