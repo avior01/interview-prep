@@ -36,7 +36,189 @@
         "TLB shootdowns, PCID ו-KPTI",
         "VIPT L1 cache ולמה הגודל שלו מוגבל ע״י גודל הדף"
       ],
-      "diagram": "VA (48 bit):\n|PML4 9|PDPT 9|PD 9|PT 9|offset 12|\n   |      |      |    |\n  CR3 -> L4 -> L3 -> L2 -> L1 -> page\n TLB caches VA page -> PA page"
+      "diagram": "VA (48 bit):\n|PML4 9|PDPT 9|PD 9|PT 9|offset 12|\n   |      |      |    |\n  CR3 -> L4 -> L3 -> L2 -> L1 -> page\n TLB caches VA page -> PA page",
+      "details": [
+        {
+          "title": "תרגום כתובות: page tables, PTE ו-TLB",
+          "body": "כל גישה לזיכרון משתמשת בכתובת **וירטואלית**. ה-**MMU** מתרגם אותה לכתובת **פיזית** ברזולוציה של **דף** (4KB ב-x86-64; ב-ARM64 אפשר 4KB, 16KB או 64KB, ו-Apple Silicon משתמש ב-16KB). 12 הביטים הנמוכים (offset בדף) לא מתורגמים בכלל.\n\nב-x86-64 עם 4 רמות, כתובת של 48 ביט מתחלקת ל-4 אינדקסים של 9 ביט ו-offset של 12: PML4, PDPT, PD, PT. כל טבלה היא דף אחד: 512 רשומות של 8 בתים. **CR3** מכיל את הכתובת הפיזית של טבלת ה-PML4 של ה-process הנוכחי. כתובת חייבת להיות **canonical**: ביטים 63 עד 47 כולם זהים לביט 47, אחרת זו שגיאה. עם **5-level paging** (LA57) יש רמה נוספת וכתובות של 57 ביט, ו-Linux נותן כתובות מעל 47 ביט רק ל-process שמבקש זאת במפורש ב-hint של mmap.\n\nכל **PTE** מכיל את מספר הדף הפיזי וביטים: **present** (קיים), **R/W** (מותר לכתוב), **U/S** (נגיש מ-user), **NX** (אסור להריץ), **accessed** (החומרה מדליקה בכל גישה) ו-**dirty** (החומרה מדליקה בכתיבה). הקרנל משתמש ב-accessed כדי להחליט אילו דפים \"קרים\" לפנות, וב-dirty כדי לדעת מה צריך לכתוב לדיסק לפני פינוי.\n\n**TLB** הוא cache של תרגומים. בדרך כלל יש L1 DTLB קטן (עשרות רשומות) ו-**STLB** משותף של כ-1500–2000 רשומות. TLB miss גורם ל-**page walk**: עד 4 גישות לטבלאות, שחלקן ב-cache, ומעבדים מחזיקים גם paging-structure caches לרמות העליונות. **TLB reach** = מספר רשומות × גודל דף: 1536 × 4KB = 6MB, 1536 × 2MB = 3GB. **huge pages** ממומשים בכך שרשומה ברמת PD (2MB) או PDPT (1GB) מצביעה ישירות לדף גדול, כלומר walk קצר יותר ורשומת TLB שמכסה הרבה יותר."
+        },
+        {
+          "title": "demand paging ו-page faults",
+          "body": "`mmap` ו-malloc גדול רק יוצרים **VMA** (vm_area_struct): תיאור של טווח כתובות עם הרשאות ומקור (אנונימי או קובץ). אין עדיין דפים פיזיים ואין PTEs. ב-glibc, בקשה מעל **M_MMAP_THRESHOLD** (128KB כברירת מחדל) מקבלת mmap משלה, וקטנות יותר מגיעות מה-heap (brk) או מ-arenas.\n\nבגישה הראשונה ה-MMU לא מוצא PTE תקף ומעלה **page fault** (#PF), עם הכתובת ב-**CR2**. הקרנל:\n- מחפש VMA שמכסה את הכתובת. אם אין, או שההרשאה לא מתאימה (כתיבה ל-read-only), שולח **SIGSEGV**. הדפים הנמוכים (עד mmap_min_addr) לא ממופים בכוונה, כדי לתפוס null pointers.\n- בקריאה מזיכרון אנונימי שלא נגעו בו, ממפה את **zero page**: דף אפסים יחיד, משותף ו-read-only. RSS כמעט לא עולה.\n- בכתיבה, מקצה דף, מאפס אותו, ומעדכן את ה-PTE.\n- בדף של קובץ, מחפש אותו ב-page cache, ואם הוא לא שם קורא מהדיסק.\nההוראה מורצת שוב והפעם מצליחה.\n\n**minor fault**: הדף בזיכרון (או רק צריך דף אפס חדש), כ-0.5–2µs. **major fault**: צריך I/O מהדיסק (swap או קובץ), מילי-שניות.\n\n**MAP_PRIVATE** על קובץ: קריאות רואות את הקובץ, כתיבה מבצעת **copy-on-write** ויוצרת עותק פרטי שלא נכתב לקובץ. **MAP_SHARED**: הכתיבות הן לדפי ה-page cache של הקובץ עצמו, נראות לכל מי שממפה או קורא אותו, ונכתבות לדיסק ב-writeback. מות ה-process לא מבטל אותן. **msync** ו-fsync דרושים רק לעמידות מול קריסת מערכת.\n\n**ASLR** מגריל את כתובות הבסיס של ה-stack, ה-heap, הספריות וה-mmaps בכל הרצה, כדי להקשות על exploits שצריכים לדעת כתובות."
+        },
+        {
+          "title": "חשבונאות זיכרון, overcommit ו-OOM",
+          "body": "**VSZ (VIRT)**: גודל כל המיפויים, כולל אזורים שלא נגעו בהם, stacks שמורים וספריות. **RSS (RES)**: דפים פיזיים שממופים כרגע, כולל דפים משותפים שנספרים בכל process. **PSS**: כל דף משותף מחולק במספר ה-processes שחולקים אותו. סכום ה-PSS של כל ה-processes הוא הזיכרון האמיתי. נמצא ב-/proc/<pid>/smaps_rollup.\n\n**overcommit**: Linux מאפשר להבטיח יותר זיכרון ממה שיש. מצב 0 (heuristic, ברירת מחדל) מסרב רק לבקשות מופרכות. מצב 1 מאשר הכול. מצב 2 (strict) מגביל את סך ההבטחות ל-CommitLimit. בגלל overcommit, malloc מוצלח לא אומר שיש זיכרון: הכישלון מגיע בזמן ה-fault.\n\nכשאין דף לתת ואי אפשר לפנות, ה-**OOM killer** בוחר process להרוג לפי ניקוד (בעיקר גודל), שאפשר לכוון ב-**oom_score_adj** (‎-1000 עד 1000; ‎-1000 פוטר מהריגה). בקונטיינר, **memory.max** של ה-cgroup מגביל את ה-group, וה-OOM קורה כשה-group מגיע לגבול גם כשבמכונה יש זיכרון פנוי. גם page cache של ה-group נספר, אבל הוא ניתן לפינוי לפני OOM.\n\n**reclaim**: תחת לחץ, **kswapd** מפנה דפים קרים (לפי ה-accessed bit ורשימות LRU). דף נקי של קובץ פשוט נזרק, דף dirty של קובץ נכתב קודם, ודף אנונימי עובר ל-**swap** אם יש.\n\n**madvise**: `MADV_DONTNEED` על זיכרון אנונימי פרטי זורק את התוכן מיד (הגישה הבאה מקבלת דף אפס), והמיפוי נשאר. `MADV_FREE` עצלן: הקרנל רשאי לזרוק רק תחת לחץ. allocators משתמשים בשניהם כדי להחזיר זיכרון."
+        },
+        {
+          "title": "huge pages: THP מול hugetlbfs",
+          "body": "**THP** (Transparent Huge Pages): הקרנל מנסה בעצמו להשתמש בדפים של 2MB לזיכרון אנונימי. המצבים: `always`, `madvise` (רק לאזורים שסומנו MADV_HUGEPAGE) ו-`never`. המחירים: בזמן fault הקרנל עשוי לבצע **compaction** (הזזת דפים כדי ליצור 2MB רציפים) ולאפס 2MB בבת אחת, ו-**khugepaged** מאחד דפים קטנים ל-huge pages ברקע. לכן ב-always נראים spikes נדירים של מאות µs. בנוסף, RSS יכול לגדול: נגיעה בבית אחד מקצה 2MB.\n\n**hugetlbfs**: מאגר huge pages שמוקצה מראש (ב-boot או דרך /proc/sys/vm/nr_hugepages), ונלקח במפורש עם MAP_HUGETLB או קובץ ב-hugetlbfs. אפשר גם דפים של 1GB, בדרך כלל רק ב-boot. הדפים לא עוברים swap ולא מתפצלים. זה מה ש-DPDK ומערכות RT משתמשים בו.\n\n**עלות ה-page tables**: טבלת PT אחת (4KB) מכסה 2MB. זיכרון צפוף צריך בערך 8 בתים של PTE לכל 4KB (0.2%). זיכרון דליל, שבו נוגעים בדף אחד בכל 2MB, צריך PT שלם לכל דף כזה, כך שהטבלאות שוקלות כמו הנתונים. huge pages מבטלות את רמת ה-PT לגמרי."
+        },
+        {
+          "title": "multi-core: TLB shootdowns, NUMA ו-VIPT",
+          "body": "**TLB shootdown**: כל core מחזיק תרגומים משלו ב-TLB. כשמבטלים או מצמצמים מיפוי (munmap, mprotect מ-RW ל-RO, MADV_DONTNEED, migration של דף), צריך לוודא שאף core לא ממשיך להשתמש בתרגום הישן. הקרנל שולח **IPI** לכל core שמריץ את אותו mm וממתין שיבטלו. העלות גדלה עם מספר ה-cores, וכל core שמקבל IPI נקטע, כולל core מבודד של thread RT. allocator שמחזיר זיכרון ל-OS בתדירות גבוהה ב-process עם עשרות threads יכול לבלות זמן רב ב-shootdowns.\n\nמבחינת נכונות, הכיוון קובע: הרחבת הרשאות (RO ל-RW) או הוספת מיפוי לא מחייבת shootdown מיידי, כי core עם תרגום ישן ומצומצם יקבל fault, והקרנל יראה שה-PTE כבר תקין. צמצום או ביטול חייבים shootdown לפני שממשיכים, אחרת core אחר יכול עדיין לכתוב או לגשת לדף שכבר שוחרר.\n\n**PCID** מתייג רשומות TLB לפי מרחב כתובות, כך ש-context switch לא מרוקן את ה-TLB. **KPTI** מחליף CR3 בכל כניסה לקרנל, ו-PCID מקטין את המחיר.\n\n**NUMA first-touch**: דף פיזי מוקצה ב-node של ה-CPU שגרם ל-fault הראשון. באפר שאותחל ב-thread על node 0 ונקרא מ-node 1 עובר דרך ה-interconnect. כלים: `numactl --membind`, `mbind`, או לאתחל מה-threads שישתמשו.\n\n**VIPT L1**: ה-L1 של הנתונים בוחר set לפי ביטים מהכתובת הווירטואלית במקביל לחיפוש ב-TLB, ומשווה tag פיזי. כדי שלא יהיו aliases, ביטי ה-index וה-offset בשורה חייבים להיות בתוך 12 הביטים שלא מתורגמים, ולכן גודל way מוגבל ל-4KB: 32KB × 8 ways או 48KB × 12 ways."
+        },
+        {
+          "title": "זיכרון ל-RT: נעילה ו-prefault",
+          "body": "המטרה: אף page fault ואף שינוי מיפוי בנתיב החם.\n- **mlockall(MCL_CURRENT | MCL_FUTURE)**: נועל את כל הדפים ב-RAM (בלי swap) ומאכלס אותם. עם MCL_FUTURE גם מיפויים עתידיים ננעלים ומאוכלסים בזמן היצירה. מלכודת: stack של כל thread חדש (8MB כברירת מחדל) ננעל ומאוכלס כולו, ולכן מקטינים את גודל ה-stacks.\n- **MAP_POPULATE**: mmap שמאכלס את הדפים מיד.\n- **prefault ידני**: לכתוב לכל דף (בית אחד בכל 4KB). קריאה בלבד לא מספיקה בזיכרון אנונימי: היא ממפה את ה-zero page, והכתיבה הראשונה עדיין תגרום ל-fault.\n- להקצות את כל הבאפרים באתחול, ולא לשחרר ל-OS בזמן ריצה (כדי לא לגרום ל-shootdowns ול-faults חוזרים). לכוון malloc (M_MMAP_THRESHOLD, M_TRIM_THRESHOLD) או להשתמש ב-pools.\n- huge pages מ-hugetlbfs, על ה-NUMA node הנכון, ו-THP במצב madvise או never.\n- oom_score_adj נמוך ל-process הקריטי."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: פירוק כתובת וירטואלית",
+          "body": "VA = 0x7f3a1c2d5e6f (כתובת טיפוסית של mmap ב-user space).\n\n- ביטים 63–47: כולם 0, ולכן הכתובת canonical.\n- PML4 = (VA >> 39) & 511 = 254\n- PDPT = (VA >> 30) & 511 = 232\n- PD = (VA >> 21) & 511 = 225\n- PT = (VA >> 12) & 511 = 213\n- offset = VA & 0xFFF = 0xE6F\n\nה-walk: CR3 נותן את טבלת ה-PML4. רשומה 254 בה מצביעה לטבלת PDPT. רשומה 232 בה לטבלת PD. רשומה 225 לטבלת PT. רשומה 213 נותנת את מספר הדף הפיזי, ומוסיפים 0xE6F. ארבע גישות לזיכרון לפני הגישה עצמה, אם אף אחת לא ב-cache.\n\nעם דף של 2MB, רשומה 225 ב-PD מצביעה ישירות לדף, וה-offset הוא 21 הביטים הנמוכים: שלוש גישות."
+        },
+        {
+          "title": "דוגמה: TLB reach בגישה אקראית",
+          "body": "טבלת lookup של 1GB, גישות אקראיות אחידות. STLB של 1536 רשומות.\n\n- **דפים של 4KB:** 1GB / 4KB = 262,144 דפים. ה-TLB מכסה 1536 מהם, כלומר הסיכוי ל-hit בערך 1536 / 262,144 ≈ 0.6%. כמעט כל גישה מוסיפה page walk.\n- **דפים של 2MB:** 1GB / 2MB = 512 דפים. כולם נכנסים ב-TLB (אם יש מספיק רשומות לגודל הזה), וכמעט כל גישה היא hit.\n\nה-cache misses על הנתונים עצמם לא משתנים, ולכן LLC-load-misses נראה זהה. מה שמשתנה הוא dTLB-load-misses ומשך כל גישה. מה לומדים: לפני שמגדילים cache או משנים אלגוריתם, לבדוק אם הבעיה היא תרגום."
+        },
+        {
+          "title": "דוגמה: עלות page tables בזיכרון דליל",
+          "body": "process ממפה אזור של 64GB ונוגע בבית אחד בכל 2MB.\n\n- מספר הדפים שנגעו בהם: 64GB / 2MB = 32,768.\n- כל אחד באזור של 2MB אחר, ולכן כל אחד צריך טבלת PT משלו: 32,768 × 4KB = 128MB של page tables.\n- הנתונים עצמם: 32,768 × 4KB = 128MB.\n- טבלאות PD: 64 בלבד (כל אחת מכסה 1GB), כלומר 256KB, זניח.\n\nהטבלאות שוקלות כמו הנתונים. בזיכרון צפוף היחס היה 0.2% בלבד. עם huge pages של 2MB אין רמת PT, אבל כל נגיעה מקצה 2MB שלמים, כלומר 64GB של RSS. מה לומדים: מבני נתונים דלילים מאוד ב-mmap עולים בזיכרון שלא רואים ב-RSS של הנתונים."
+        },
+        {
+          "title": "דוגמה: first-touch ב-NUMA",
+          "body": "שרת עם 2 sockets. thread על node 0 מקצה באפר של 8GB ועושה לו memset. אחר כך 8 workers על node 1 קוראים אותו.\n\n1. memset נוגע בכל דף מ-node 0, ולכן כל 2,097,152 הדפים (של 4KB) מוקצים ב-RAM של node 0.\n2. כל קריאה של worker עוברת את ה-interconnect בין ה-sockets: latency גבוה יותר ורוחב פס מוגבל.\n3. רוחב הפס שנמדד: כחצי מהצפוי.\n\nתיקונים: לבצע את ה-memset מתוך ה-workers עצמם (כל אחד את החלק שלו), להריץ את האתחול עם `numactl --cpunodebind=1 --membind=1`, או להשתמש ב-mbind. ב-SDR: לוודא לאיזה socket ה-NIC מחובר, ולהקצות שם את באפרי ה-RX."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "virtual / physical address",
+          "def": "כתובת וירטואלית היא מה שהתוכנית רואה, פרטית לכל process. ה-MMU מתרגם אותה לכתובת פיזית ב-RAM."
+        },
+        {
+          "term": "MMU",
+          "def": "יחידת החומרה שמתרגמת כתובות לפי page tables ובודקת הרשאות בכל גישה."
+        },
+        {
+          "term": "page / huge page",
+          "def": "יחידת התרגום: 4KB ב-x86-64, ובנוסף huge pages של 2MB ו-1GB. ב-ARM64 גם 16KB ו-64KB."
+        },
+        {
+          "term": "page table: PML4, PDPT, PD, PT",
+          "def": "ארבע רמות ב-x86-64, כל אחת טבלה של 512 רשומות של 8 בתים, שנבחרות לפי 9 ביטים מהכתובת."
+        },
+        {
+          "term": "canonical address ו-5-level paging",
+          "def": "ב-48 ביט, ביטים 63–47 חייבים להיות זהים. 5-level paging (LA57) מוסיף רמה ומאפשר כתובות של 57 ביט."
+        },
+        {
+          "term": "CR3 / CR2",
+          "def": "CR3 מצביע לטבלה העליונה של ה-process הנוכחי. CR2 מכיל את הכתובת שגרמה ל-page fault."
+        },
+        {
+          "term": "PTE ו-ביטים: present, R/W, U/S, NX, accessed, dirty",
+          "def": "רשומה עם מספר הדף הפיזי והרשאות. accessed ו-dirty מודלקים בחומרה ומשמשים לפינוי ולכתיבה לדיסק."
+        },
+        {
+          "term": "TLB / STLB",
+          "def": "cache של תרגומים. L1 DTLB קטן ומהיר, ו-STLB גדול יותר ומשותף. miss גורם ל-page walk."
+        },
+        {
+          "term": "page walk",
+          "def": "מעבר על רמות ה-page tables כדי למצוא תרגום: עד 4 גישות ב-4 רמות, פחות עם huge pages ועם paging-structure caches."
+        },
+        {
+          "term": "TLB reach",
+          "def": "כמות הזיכרון שה-TLB מכסה: מספר רשומות × גודל דף."
+        },
+        {
+          "term": "VMA",
+          "def": "תיאור בקרנל של טווח כתובות ממופה: התחלה, סוף, הרשאות ומקור. page fault מחוץ ל-VMA הוא SIGSEGV."
+        },
+        {
+          "term": "demand paging",
+          "def": "דפים פיזיים מוקצים רק בגישה הראשונה, לא בזמן mmap או malloc."
+        },
+        {
+          "term": "page fault: minor / major",
+          "def": "חריגה כשאין תרגום תקף. minor: הדף בזיכרון או צריך דף אפס. major: צריך לקרוא מהדיסק."
+        },
+        {
+          "term": "zero page",
+          "def": "דף אפסים יחיד ומשותף שהקרנל ממפה בקריאה מזיכרון אנונימי שלא נכתב. כתיבה ראשונה עדיין גורמת ל-fault."
+        },
+        {
+          "term": "SIGSEGV ו-mmap_min_addr",
+          "def": "SIGSEGV נשלח בגישה לכתובת בלי VMA או בלי הרשאה. הדפים מתחת ל-mmap_min_addr לא ממופים כדי לתפוס null pointers."
+        },
+        {
+          "term": "MAP_PRIVATE / MAP_SHARED",
+          "def": "PRIVATE: כתיבות יוצרות עותק פרטי (COW) ולא משנות את המקור. SHARED: כתיבות נראות לכולם ונכתבות לקובץ."
+        },
+        {
+          "term": "copy-on-write",
+          "def": "דף משותף כ-read-only עד שמישהו כותב, ואז מועתק. משמש ב-fork וב-MAP_PRIVATE."
+        },
+        {
+          "term": "M_MMAP_THRESHOLD",
+          "def": "הסף ב-glibc (128KB כברירת מחדל) שמעליו malloc משתמש ב-mmap נפרד במקום ב-heap."
+        },
+        {
+          "term": "ASLR",
+          "def": "Address Space Layout Randomization: הגרלת כתובות הבסיס של stack, heap, ספריות ו-mmap כדי להקשות על exploits."
+        },
+        {
+          "term": "VSZ / RSS / PSS",
+          "def": "גודל וירטואלי, דפים פיזיים ממופים, וחלק יחסי של דפים משותפים. PSS הוא המדד הנכון לסכימה."
+        },
+        {
+          "term": "overcommit ו-CommitLimit",
+          "def": "Linux מבטיח יותר זיכרון ממה שיש. במצב strict הסך מוגבל ל-CommitLimit. malloc מוצלח לא מבטיח זיכרון."
+        },
+        {
+          "term": "OOM killer ו-oom_score_adj",
+          "def": "הורג process כשאין זיכרון. oom_score_adj בין ‎-1000 ל-1000 משנה את הסיכוי, ו-‎-1000 פוטר."
+        },
+        {
+          "term": "memory.max (memcg)",
+          "def": "גבול זיכרון של cgroup. כשמגיעים אליו, הקרנל מפנה page cache של ה-group ואז מפעיל OOM בתוכו."
+        },
+        {
+          "term": "reclaim, kswapd ו-swap",
+          "def": "פינוי דפים קרים תחת לחץ: דפי קובץ נקיים נזרקים, dirty נכתבים קודם, ואנונימיים עוברים ל-swap."
+        },
+        {
+          "term": "MADV_DONTNEED / MADV_FREE",
+          "def": "DONTNEED זורק מיד את התוכן של זיכרון אנונימי פרטי. FREE מאפשר לקרנל לזרוק רק תחת לחץ."
+        },
+        {
+          "term": "msync",
+          "def": "כותב לדיסק דפים dirty של מיפוי קובץ. נדרש לעמידות מול קריסת מערכת, לא מול מות ה-process."
+        },
+        {
+          "term": "THP, compaction ו-khugepaged",
+          "def": "huge pages אוטומטיים (always, madvise, never). compaction מזיז דפים כדי ליצור 2MB רציפים, ו-khugepaged מאחד ברקע. מקורות ל-spikes."
+        },
+        {
+          "term": "hugetlbfs / MAP_HUGETLB",
+          "def": "מאגר huge pages שמוקצה מראש ונלקח במפורש. כולל 1GB, בלי swap ובלי compaction בזמן ריצה."
+        },
+        {
+          "term": "TLB shootdown",
+          "def": "ביטול תרגומים ב-TLB של cores אחרים דרך IPI, אחרי munmap או צמצום הרשאות. יקר ומפריע ל-cores מבודדים."
+        },
+        {
+          "term": "PCID ו-KPTI",
+          "def": "PCID מתייג רשומות TLB לפי מרחב כתובות. KPTI מחליף CR3 בכל כניסה לקרנל, ו-PCID מקטין את המחיר."
+        },
+        {
+          "term": "NUMA first-touch, numactl, mbind",
+          "def": "דף מוקצה ב-node של ה-CPU שנגע בו ראשון. numactl ו-mbind קובעים מדיניות מפורשת."
+        },
+        {
+          "term": "VIPT",
+          "def": "Virtually Indexed, Physically Tagged: ה-L1 בוחר set לפי ה-VA ומשווה tag פיזי. מגביל את גודל ה-way לגודל הדף."
+        },
+        {
+          "term": "mlock / mlockall",
+          "def": "נועלים דפים ב-RAM ומאכלסים אותם. MCL_FUTURE חל גם על מיפויים עתידיים, כולל stacks של threads."
+        },
+        {
+          "term": "MAP_POPULATE ו-prefault",
+          "def": "אכלוס הדפים מראש: דגל של mmap, או כתיבה לכל דף באתחול, כדי שלא יהיו faults בזמן ריצה."
+        }
+      ]
     }
   ],
   "questions": [
@@ -322,6 +504,218 @@
       "answer": 2,
       "explanation": "למרות השם, MADV_DONTNEED ב-Linux על מיפוי אנונימי פרטי זורק את התוכן מיד, והמיפוי נשאר. הגישה הבאה היא fault שמחזיר דף אפס. allocators משתמשים בזה כדי להחזיר זיכרון לקרנל. MADV_FREE עצלן יותר: הקרנל רשאי לשחרר רק תחת לחץ זיכרון, ועד אז אפשר לקרוא בחזרה את הערך הישן.",
       "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q18",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה זה page fault?",
+      "choices": [
+        "שגיאת חומרה בזיכרון ה-RAM",
+        "חריגה שהמעבד מעלה כשאין לכתובת תרגום תקף או שהגישה לא מותרת. הקרנל מטפל בה: מקצה או מביא דף, או שולח SIGSEGV",
+        "באג בתוכנית שתמיד גורם לקריסה",
+        "מצב שבו ה-TLB מלא"
+      ],
+      "answer": 1,
+      "explanation": "רוב ה-page faults הם חלק רגיל מהפעולה: demand paging, COW וטעינת קבצים. רק fault על כתובת שאין לה VMA, או גישה בלי הרשאה, נגמר ב-SIGSEGV. TLB miss הוא דבר אחר: החומרה מבצעת page walk, ורק אם ה-PTE לא תקף נוצר fault.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q19",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה רשומות יש בכל טבלה ב-page tables של x86-64 (4 רמות, דפים של 4KB)?",
+      "accept": [
+        "512"
+      ],
+      "explanation": "כל טבלה היא דף של 4096 בתים, וכל רשומה 8 בתים: 4096 / 8 = 512 = 2^9. לכן כל רמה צורכת 9 ביטים מהכתובת, ו-4 רמות ועוד 12 ביטים של offset נותנות 48 ביט.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q20",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה עושה ASLR?",
+      "choices": [
+        "מאיץ את ה-TLB",
+        "מצפין את הזיכרון של ה-process",
+        "מונע page faults",
+        "מגריל בכל הרצה את כתובות הבסיס של ה-stack, ה-heap, הספריות וה-mmaps, כדי שתוקף לא יוכל לדעת מראש איפה נמצא קוד או נתון"
+      ],
+      "answer": 3,
+      "explanation": "exploits כמו return-oriented programming צריכים לדעת כתובות של קוד. ASLR הופך אותן לאקראיות בכל הרצה. לכן גם כתובות שמודפסות ב-debug משתנות בין הרצות. דליפת pointer אחד יכולה לחשוף את הבסיס ולעקוף את ההגנה.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q21",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה עושה `mlockall(MCL_CURRENT | MCL_FUTURE)` ב-process של RT?",
+      "choices": [
+        "נועל ב-RAM את כל הדפים הממופים כעת ואת כל מה שימופה בעתיד, ומאכלס אותם, כך שלא יהיו major faults ו-swap בזמן ריצה",
+        "מונע מ-threads אחרים לגשת לזיכרון",
+        "נועל mutex גלובלי על ה-heap",
+        "מעביר את הזיכרון ל-huge pages"
+      ],
+      "answer": 0,
+      "explanation": "mlock מבטיח שהדפים לא יפונו ל-swap, ומאכלס אותם מיד. MCL_FUTURE מחיל את זה גם על mmap ו-stacks עתידיים, ולכן כל thread חדש מאכלס את כל ה-stack שלו (8MB כברירת מחדל). זה לא קשור לסנכרון בין threads ולא לגודל הדף. דורש הרשאה (CAP_IPC_LOCK) או RLIMIT_MEMLOCK מספיק.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q22",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בשביל מה הקרנל משתמש בביטים accessed ו-dirty שהחומרה מדליקה ב-PTE?",
+      "choices": [
+        "כדי לבדוק הרשאות",
+        "כדי לבחור באיזה NUMA node להקצות",
+        "accessed מראה אילו דפים היו בשימוש לאחרונה, כדי לבחור דפים קרים לפינוי. dirty מראה שהדף שונה, ולכן צריך לכתוב אותו לקובץ או ל-swap לפני שמפנים אותו",
+        "כדי לספור page faults"
+      ],
+      "answer": 2,
+      "explanation": "החומרה מדליקה accessed בכל גישה ו-dirty בכתיבה, והקרנל מנקה אותם מדי פעם ובודק. דף נקי של קובץ אפשר פשוט לזרוק, כי התוכן בדיסק. דף dirty צריך writeback קודם. הרשאות מסומנות בביטים אחרים (R/W, U/S, NX).",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q23",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "process ממפה 1GB של זיכרון אנונימי חדש עם mmap, ואז **קורא** כל בית בו (בלי לכתוב), עם THP כבוי. בסוף, בערך כמה גדל ה-RSS?",
+      "choices": [
+        "1GB, כי כל דף שנגעו בו מוקצה",
+        "512MB, כי חצי מהדפים פונו",
+        "1GB, אבל רק אחרי שהקרנל מסיים writeback",
+        "כמעט לא גדל: קריאה מזיכרון אנונימי שלא נכתב ממפה את ה-zero page המשותף, שלא נספר ב-RSS. רק כתיבה תקצה דפים פרטיים"
+      ],
+      "answer": 3,
+      "explanation": "בכל fault של קריאה הקרנל מצביע את ה-PTE לדף אפסים יחיד, read-only. מוקצות רק טבלאות הדפים (כ-2MB ל-1GB). הכתיבה הראשונה לכל דף תגרום ל-fault נוסף שמקצה דף פרטי. לכן prefault של באפר RT צריך לכתוב, לא רק לקרוא.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q24",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את מה שקורה בכתיבה הראשונה לדף של זיכרון אנונימי שהוקצה עם mmap:",
+      "items": [
+        "חיפוש ב-TLB נכשל",
+        "page walk מגיע ל-PTE שאינו present",
+        "המעבד מעלה #PF ושם את הכתובת ב-CR2",
+        "הקרנל מוצא את ה-VMA ומוודא שמותר לכתוב",
+        "הקרנל מקצה דף פיזי, מאפס אותו ומעדכן את ה-PTE",
+        "ההוראה מורצת מחדש, התרגום נכנס ל-TLB, והכתיבה מתבצעת"
+      ],
+      "explanation": "ה-fault מתחיל רק אחרי שהחומרה ניסתה לתרגם ולא מצאה PTE תקף. הקרנל בודק קודם שהגישה חוקית (אחרת SIGSEGV), ורק אז מקצה. האיפוס הכרחי מטעמי אבטחה, כדי שלא יגיעו נתונים של process אחר. בחזרה, ההוראה שנכשלה מורצת שוב.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q25",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "service עם 64 threads על 64 cores מקצה ומשחרר בלוקים של כמה MB בתדירות גבוהה. perf מראה זמן רב ב-`flush_tlb_mm_range` וב-`smp_call_function_many`, והביצועים לא משתפרים עם עוד cores. מה קורה?",
+      "choices": [
+        "בלוקים מעל סף ה-mmap של malloc משתחררים עם munmap (או MADV_DONTNEED). כל ביטול מיפוי מחייב TLB shootdown: IPI לכל ה-cores שמריצים את ה-process והמתנה להם. העלות גדלה עם מספר ה-cores. פתרון: לשמור ולהשתמש מחדש בבלוקים (pool, או להעלות את M_MMAP_THRESHOLD ו-M_TRIM_THRESHOLD)",
+        "ה-TLB קטן מדי ל-64 threads",
+        "malloc משתמש ב-lock גלובלי",
+        "הקרנל מעביר דפים בין NUMA nodes"
+      ],
+      "answer": 0,
+      "explanation": "smp_call_function_many שולח IPIs, ו-flush_tlb_mm_range הוא ביטול התרגומים. allocator שמחזיר זיכרון ל-OS בכל free של בלוק גדול גורם לזה בכל פעם. allocators כמו jemalloc ו-tcmalloc מחזיקים זיכרון ומשחררים אותו באיחור ובאצוות. lock של malloc היה נראה כ-contention ב-user space, לא כ-IPIs.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q26",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "process בקונטיינר נהרג על ידי OOM killer, למרות ש-`free` על המכונה מראה עשרות GB פנויים. מה ההסבר הסביר?",
+      "choices": [
+        "באג בקרנל",
+        "ה-swap של המכונה מלא",
+        "ה-cgroup של הקונטיינר הגיע ל-memory.max שלו. הגבול חל על ה-group בלבד, והקרנל מפעיל OOM בתוכו אחרי שניסה לפנות את ה-page cache של ה-group, בלי קשר לזיכרון הפנוי במכונה",
+        "overcommit_memory מוגדר ל-1"
+      ],
+      "answer": 2,
+      "explanation": "memcg סופר זיכרון אנונימי, page cache וזיכרון קרנל של ה-group. כשה-group מגיע לגבול, הקרנל מנסה reclaim בתוכו, ואם אין מה לפנות הוא הורג process בתוך ה-group. רואים את זה ב-memory.events (oom, oom_kill) ובהודעת dmesg שמזכירה את ה-memcg. overcommit = 1 רק מאשר כל הקצאה, ולא קובע מי נהרג.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q27",
+      "level": 4,
+      "type": "multi",
+      "prompt": "thread RT לא אמור לקבל אף page fault בנתיב החם. אילו שיטות מבטיחות שבאפר אנונימי של 256MB יהיה מאוכלס לפני תחילת העבודה?",
+      "choices": [
+        "mlockall(MCL_CURRENT | MCL_FUTURE) לפני ההקצאה",
+        "mmap עם MAP_POPULATE",
+        "כתיבה של בית אחד בכל דף של 4KB באתחול",
+        "קריאה של בית אחד בכל דף באתחול",
+        "malloc של 256MB באתחול, בלי לגעת בזיכרון"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "קריאה מזיכרון אנונימי ממפה את ה-zero page, והכתיבה הראשונה בזמן ריצה עדיין תגרום ל-fault של COW מה-zero page. malloc גדול רק יוצר VMA. mlockall עם MCL_FUTURE ו-MAP_POPULATE מאכלסים בזמן היצירה, וכתיבה לכל דף מאכלסת באופן ידני. בנוסף לזה צריך להימנע מ-swap (mlock) ומשחרור הזיכרון בזמן ריצה.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q28",
+      "level": 5,
+      "type": "short",
+      "prompt": "process ממפה אזור אנונימי של 1TB (דפים של 4KB, THP כבוי, 4 רמות) וכותב בית אחד בתחילת כל 2MB. בערך כמה זיכרון תופסות טבלאות ה-PT (הרמה האחרונה) בלבד? ענה ב-GB.",
+      "accept": [
+        "2",
+        "2GB",
+        "2 GB",
+        "2GiB"
+      ],
+      "explanation": "טבלת PT אחת מכסה 512 × 4KB = 2MB. נגיעה אחת בכל 2MB פירושה שכל דף נוגע ב-PT אחר: 1TB / 2MB = 524,288 טבלאות × 4KB = 2GB. הנתונים עצמם: 524,288 × 4KB = 2GB נוספים. טבלאות PD: 1024 בלבד (4MB). בזיכרון דליל כזה הטבלאות שוקלות כמו הנתונים, ולא מופיעות ב-RSS של הנתונים (רואים אותן ב-PageTables ב-/proc/meminfo).",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q29",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "process עם threads על כמה cores משנה הרשאות של אזור עם mprotect. מבחינת נכונות, באיזה מקרה הקרנל **חייב** לבצע TLB shootdown לפני ש-mprotect חוזר?",
+      "choices": [
+        "רק בשינוי מ-RO ל-RW",
+        "בשינוי מ-RW ל-RO (צמצום הרשאה). core אחר עם תרגום ישן ב-TLB עדיין יכול לכתוב. בהרחבה (RO ל-RW) תרגום ישן רק יגרום ל-fault מיותר, שהקרנל יפתור כשיראה שה-PTE כבר מתיר",
+        "בשני הכיוונים באותה מידה",
+        "אף פעם, כי ה-TLB מתעדכן אוטומטית כשה-PTE משתנה"
+      ],
+      "answer": 1,
+      "explanation": "ה-TLB לא coherent עם הטבלאות: שינוי PTE בזיכרון לא מבטל עותקים ב-TLB של cores אחרים. תרגום ישן עם פחות הרשאות הוא בטוח (במקרה הגרוע fault מיותר). תרגום ישן עם יותר הרשאות הוא חור: כתיבה לדף שאמור להיות מוגן, או גישה לדף שכבר שוחרר אחרי munmap. לכן munmap וצמצום הרשאות עולים IPIs, ומעבדים כמו AMD עם INVLPGB מנסים להוזיל זאת בחומרה.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "sys.virtual-memory.q30",
+      "level": 5,
+      "type": "oral",
+      "prompt": "מערכת SDR על שרת עם 2 sockets צריכה ring buffer של 16GB לדגימות, שאליו thread RX כותב ו-threads של DSP קוראים. תכנן את ניהול הזיכרון: גודל דפים, NUMA, נעילה ומה קורה תחת לחץ זיכרון.",
+      "modelAnswer": "גודל דפים: 16GB בדפים של 4KB הם 4 מיליון דפים, 32MB של PTEs, ו-TLB reach של כמה MB, כלומר TLB miss כמעט בכל בלוק חדש. עדיף hugetlbfs: 1GB pages (16 דפים בלבד, מוקצים ב-boot עם hugepagesz=1G hugepages=16 על ה-node הנכון) או 2MB pages. לא להסתמך על THP במצב always בגלל compaction ו-khugepaged, ולהגדיר אותו madvise. NUMA: לבדוק לאיזה socket ה-NIC מחובר (sysfs numa_node), להקצות את ה-ring שם (MAP_HUGETLB עם mbind או numactl), ולהריץ את RX ואת ה-DSP על אותו socket. אם DSP חייב לרוץ על שני ה-sockets, לשקול שני rings או העתקה מבוקרת במקום לקרוא מרחוק. נעילה ואכלוס: hugetlbfs לא עובר swap, אבל עדיין צריך לגעת בכל דף באתחול (או MAP_POPULATE), ו-mlockall לשאר הזיכרון של ה-process, עם stacks קטנים לכל thread בגלל MCL_FUTURE. לא לשחרר ולא למפות מחדש בזמן ריצה, כדי לא לגרום ל-TLB shootdowns לכל ה-threads, כולל אלה שעל cores מבודדים. לחץ זיכרון: process אחר יכול לגרום ל-reclaim. ה-ring נעול, אבל ה-OOM killer עלול לבחור את ה-process הגדול ביותר, כלומר אותנו, ולכן oom_score_adj = -1000 ו-cgroup עם memory.min או הפרדה למכונה ייעודית. overcommit: hugetlbfs מוקצה מראש, כך ש-mmap ייכשל מיד אם אין דפים, ולא מאוחר ב-fault, וזה עדיף. ניטור: /proc/meminfo (HugePages_Free), numastat לגישות מרוחקות, ו-perf עם dTLB-load-misses.",
+      "rubric": [
+        "חישוב TLB reach ועלות page tables, ובחירה מנומקת ב-hugetlbfs (2MB או 1GB) מול THP",
+        "NUMA: זיהוי ה-node של ה-NIC והקצאה ו-threads עליו",
+        "אכלוס מראש, mlockall עם מודעות ל-stacks, ובלי munmap בזמן ריצה (shootdowns)",
+        "OOM: oom_score_adj, memcg, וכישלון מוקדם עדיף על מאוחר",
+        "כלי ניטור: meminfo, numastat, perf dTLB"
+      ],
+      "explanation": "השאלה מחברת TLB, NUMA, page faults ו-OOM לתכנון אחד. התשובה החזקה מבוססת על מספרים ולא על רשימת דגלים.",
+      "lesson": "sys.virtual-memory",
+      "tags": [
+        "nvidia"
+      ]
     }
   ]
 }
