@@ -179,6 +179,18 @@
         {
           "term": "Catastrophic cancellation ו-ULP",
           "def": "חיסור שני מספרי floating point גדולים וקרובים מאבד את רוב הספרות המשמעותיות. ULP הוא המרחק בין שני ערכים סמוכים; ב-float32 ליד 10⁷ הוא 1."
+        },
+        {
+          "term": "Weighted random pick",
+          "def": "בחירת אינדקס בהסתברות יחסית למשקל: prefix sums של המשקלים, הגרלת r אחיד ו-binary search לקטע שמכיל את r. צריך התאמה בין טווח ההגרלה ([1, total] או [0, total)) לבין lower_bound/upper_bound."
+        },
+        {
+          "term": "אינדקס ראשון מול ספירה ב-prefix map",
+          "def": "כשסופרים תתי-מערכים שומרים ב-map כמה פעמים הופיע כל prefix. כשמחפשים את הארוך ביותר, או אורך מינימלי, שומרים את האינדקס הראשון בלבד ולא מעדכנים אותו."
+        },
+        {
+          "term": "נקודת חיתוך (split point)",
+          "def": "בעיות 'חלק שמאלי מול חלק ימני' נפתרות במעבר על כל n + 1 נקודות החיתוך עם ספירה מצטברת משמאל ו-total פחות השמאל מימין, ב-O(n) ובלי מערך נוסף."
         }
       ]
     }
@@ -849,6 +861,282 @@
       "tags": [
         "nvidia"
       ],
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "tags": [
+        "nvidia",
+        "microsoft",
+        "meta"
+      ],
+      "problem": "LeetCode 238 · Product of Array Except Self",
+      "prompt": "Product of Array Except Self: res[i] היא מכפלת כל האיברים חוץ מ-a[i], בלי חילוק. אילו טענות נכונות? (בחר את כל הנכונות)",
+      "choices": [
+        "res[i] = (מכפלת a[0..i−1]) · (מכפלת a[i+1..n−1]), וכל אחד משני החלקים נבנה במעבר אחד: משמאל לימין ומימין לשמאל",
+        "אפשר להגיע לזיכרון נוסף O(1) מלבד מערך הפלט: כותבים את מכפלות ה-prefix לתוך הפלט, ובמעבר מימין מכפילים במשתנה suffix רץ",
+        "הפתרון total / a[i] שקול לו, וההבדל היחיד הוא דיוק ב-floating point",
+        "על a = [1, 2, 0, 4] התוצאה היא [0, 0, 8, 0]",
+        "כשיש שני אפסים או יותר, פתרון ה-prefix·suffix צריך טיפול מיוחד, אחרת הוא מחזיר תוצאה שגויה"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "המכפלה 'חוץ מ-i' מתפרקת ל-prefix שלפני i כפול suffix שאחרי i, ושניהם נבנים במעבר לינארי. החילוק נכשל באפסים (חילוק ב-0, או תוצאה שגויה), ואילו prefix·suffix מטפל באפסים באופן טבעי: כל מכפלה שכוללת אפס יוצאת 0.",
+      "notes": [
+        "נכון: זה פירוק הבעיה. prefix[i] = a[0]·…·a[i−1] ו-suffix[i] = a[i+1]·…·a[n−1], וכל אחד נבנה ב-O(n).",
+        "נכון: מערך הפלט לא נחשב לזיכרון נוסף. אחרי המעבר הראשון res[i] = prefix[i], ובמעבר מימין מכפילים ב-suffix רץ ומעדכנים אותו ב-a[i].",
+        "שגוי: total / a[i] נכשל כש-a[i] = 0 (חילוק באפס), וכשיש אפס במקום אחר total = 0 ואי אפשר לשחזר את המכפלה של השאר. זו בעיה של נכונות, לא של דיוק.",
+        "נכון: רק במקום של האפס המכפלה של השאר שונה מ-0: 1·2·4 = 8. בכל מקום אחר המכפלה כוללת את האפס.",
+        "שגוי: עם שני אפסים כל prefix·suffix כולל לפחות אפס אחד, ולכן התוצאה כולה אפסים – וזה בדיוק הנכון. אין צורך בטיפול מיוחד."
+      ],
+      "id": "alg.prefix-sums.q32",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "tags": [
+        "nvidia",
+        "microsoft",
+        "meta"
+      ],
+      "problem": "LeetCode 560 · Subarray Sum Equals K",
+      "prompt": "כתוב פונקציה שסופרת כמה תתי-מערכים רציפים (לא ריקים) יש לסכום k בדיוק. המספרים יכולים להיות שליליים, ו-|a[i]| עד 10⁹. זמן O(n) בתוחלת.\n\nדוגמה: a = [2, −1, 1, 2], k = 2 → 4 ([2], [2, −1, 1], [−1, 1, 2], [2] האחרון).",
+      "starter": "int subarraySum(const std::vector<int>& a, int k);",
+      "modelAnswer": "int subarraySum(const std::vector<int>& a, int k) {\n    std::unordered_map<long long, int> seen;\n    seen[0] = 1;\n    long long s = 0;\n    int res = 0;\n    for (int x : a) {\n        s += x;\n        auto it = seen.find(s - k);\n        if (it != seen.end()) res += it->second;\n        seen[s]++;\n    }\n    return res;\n}",
+      "rubric": [
+        "prefix sum רץ + hash map שסופר כמה פעמים כל prefix הופיע, עם seen[0] = 1 לתתי-מערכים שמתחילים באינדקס 0",
+        "סדר נכון: קודם מוסיפים את seen[s − k] ורק אחר כך מגדילים את seen[s] (אחרת k = 0 סופר תת-מערך ריק)",
+        "prefix ב-long long: סכום של עד 2·10⁴ ערכים של 10⁹ חורג מ-int",
+        "זמן O(n) בתוחלת, זיכרון O(n); מסביר למה sliding window לא עובד עם שליליים"
+      ],
+      "explanation": "תת-מערך (i, j] סכומו P[j] − P[i], ולכן לכל j סופרים כמה prefixes קודמים שווים ל-P[j] − k. בגלל השליליים אין מונוטוניות, ולכן sliding window לא תקף וצריך hash map.",
+      "id": "alg.prefix-sums.q33",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "tags": [
+        "nvidia"
+      ],
+      "problem": "LeetCode 2270 · Number of Ways to Split Array",
+      "prompt": "חותכים את המערך a = [10, 4, −8, 7] לשני חלקים לא ריקים: a[0..i] ו-a[i+1..n−1]. חיתוך 'טוב' אם סכום החלק השמאלי ≥ סכום החלק הימני. כמה חיתוכים טובים יש?",
+      "accept": [
+        "2"
+      ],
+      "explanation": "הסכום הכולל 13. עם סכום שמאלי רץ: i=0: 10 מול 3 – טוב; i=1: 14 מול −1 – טוב; i=2: 6 מול 7 – לא. i=3 אסור כי הצד הימני ריק. לכן 2. כל בדיקה היא O(1) כי right = total − left, וסך הכול O(n).",
+      "id": "alg.prefix-sums.q34",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "tags": [
+        "nvidia"
+      ],
+      "problem": "LeetCode 2270 · Number of Ways to Split Array",
+      "prompt": "נתון מערך באורך n ≥ 2, עם ערכים בין −10⁵ ל-10⁵ ו-n עד 10⁵. חיתוך באינדקס i (0 ≤ i < n − 1) מחלק אותו ל-a[0..i] ול-a[i+1..n−1]. החיתוך טוב אם סכום השמאלי ≥ סכום הימני. החזר את מספר החיתוכים הטובים ב-O(n) זמן ו-O(1) זיכרון.\n\nדוגמה: [3, −2, 5, 1] → 1 (רק החיתוך אחרי 5 טוב: שמאל 6, ימין 1). [1, 1] → 1.",
+      "starter": "int waysToSplitArray(const std::vector<int>& a);",
+      "modelAnswer": "int waysToSplitArray(const std::vector<int>& a) {\n    long long total = 0;\n    for (int x : a) total += x;\n    long long left = 0;\n    int ways = 0;\n    for (size_t i = 0; i + 1 < a.size(); i++) {\n        left += a[i];\n        if (left >= total - left) ways++;\n    }\n    return ways;\n}",
+      "rubric": [
+        "סכום כולל פעם אחת, ואז סכום שמאלי רץ; הימני = total − left",
+        "long long: הסכום יכול להגיע ל-10¹⁰ וחורג מ-int",
+        "הלולאה עוצרת ב-n − 2, כך שהחלק הימני לא ריק",
+        "זמן O(n), זיכרון O(1) (לא מערך prefix מלא)"
+      ],
+      "explanation": "צריך לכל נקודת חיתוך את סכום השמאל ואת סכום הימין. עם total ידוע, הימין הוא total − left, כך שמספיק משתנה אחד. המלכודות הן overflow של int והחיתוך האחרון שמשאיר צד ימני ריק.",
+      "id": "alg.prefix-sums.q35",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "tags": [
+        "nvidia"
+      ],
+      "problem": "LeetCode 930 · Binary Subarrays With Sum",
+      "prompt": "סופרים תתי-מערכים רציפים במערך של 0 ו-1 שסכומם goal בדיוק. מימוש sliding window מכווץ את l כל עוד sum > goal, ומוסיף 1 לתשובה כש-sum == goal. למה הוא מחזיר פחות מהנכון, ומה התיקון?",
+      "choices": [
+        "צריך לכווץ כל עוד sum ≥ goal ולא רק sum > goal",
+        "הבעיה היא רק goal = 0; אם מטפלים בו בנפרד, השאר עובד",
+        "אפסים בתחילת החלון: לאותו r יכולים להיות כמה l עם אותו סכום, והחלון סופר רק אחד. התיקון: atMost(goal) − atMost(goal − 1), או prefix sums עם hash map",
+        "sliding window לא מתאים כי יש מספרים שליליים; צריך prefix sums"
+      ],
+      "answer": 2,
+      "explanation": "לכל r, הקבוצה של l שנותנים סכום goal היא טווח רציף, כי אפסים לא משנים את הסכום. חלון יחיד מייצג רק l אחד, ולכן מפספס את השאר. ספירה של 'סכום ≤ goal' כן מונוטונית (לכל r מוסיפים r − l + 1), ולכן atMost(goal) − atMost(goal − 1) נותן 'בדיוק goal'. חלופה: מונה של prefix sums ב-O(n) זמן ו-O(n) זיכרון.",
+      "notes": [
+        "שגוי: כיווץ גם כשהסכום שווה goal רק מאבד את החלון התקין, ועדיין לא סופר את כל ה-l האפשריים עם אפסים מובילים.",
+        "שגוי: הבעיה לא מיוחדת ל-goal = 0. למשל [0, 0, 1] עם goal = 1: יש 3 תתי-מערכים שמסתיימים ב-1, והחלון סופר אחד בלבד.",
+        "נכון: זה בדיוק הכשל – ריבוי של l לכל r. atMost(k) סופר r − l + 1 לכל r כי 'סכום ≤ k' מונוטוני בחלון, וההפרש נותן בדיוק k. גם prefix count עם {0: 1} נכון.",
+        "שגוי: במערך בינארי אין שליליים, והסכום מונוטוני בהרחבה. הבעיה היא אפסים, לא שליליים."
+      ],
+      "id": "alg.prefix-sums.q36",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 3,
+      "type": "code",
+      "lang": "python",
+      "tags": [
+        "nvidia"
+      ],
+      "problem": "LeetCode 930 · Binary Subarrays With Sum",
+      "prompt": "כתוב פונקציה שמקבלת מערך של 0 ו-1 ומספר goal ≥ 0, ומחזירה כמה תתי-מערכים רציפים לא ריקים יש עם סכום goal בדיוק. זמן O(n).\n\nדוגמה: [0, 1, 0, 1], goal = 1 → 6. [0, 0, 0], goal = 0 → 6.",
+      "starter": "def num_subarrays_with_sum(a, goal):\n    ...",
+      "modelAnswer": "def num_subarrays_with_sum(a, goal):\n    seen = {0: 1}          # prefix sum -> how many times it appeared\n    s = res = 0\n    for x in a:\n        s += x\n        res += seen.get(s - goal, 0)\n        seen[s] = seen.get(s, 0) + 1\n    return res",
+      "rubric": [
+        "prefix sum רץ ומונה (dict) של prefixes קודמים, עם {0: 1}; לכל מיקום מוסיפים את מונה s − goal",
+        "או: atMost(goal) − atMost(goal − 1) ב-sliding window, עם atMost(−1) = 0",
+        "מטפל ב-goal = 0 ובאפסים מובילים (לא sliding window פשוט שסופר 1 לכל r)",
+        "זמן O(n); זיכרון O(n) לגרסת ה-prefix או O(1) לגרסת atMost"
+      ],
+      "explanation": "כמו Subarray Sum Equals K: לכל סוף j סופרים prefixes קודמים שווים ל-P[j] − goal. אפשר גם להשתמש במערך מונים בגודל n + 1, כי ה-prefix בין 0 ל-n.",
+      "id": "alg.prefix-sums.q37",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "tags": [
+        "microsoft"
+      ],
+      "problem": "LeetCode 525 · Contiguous Array",
+      "prompt": "נתון מערך בינארי (0 ו-1), עד 10⁵ איברים. החזר את האורך המקסימלי של תת-מערך רציף עם מספר שווה של 0 ושל 1. זמן O(n).\n\nדוגמה: [1, 1, 0, 1, 0, 0, 1] → 6 (למשל [1, 0, 1, 0, 0, 1]).",
+      "starter": "int findMaxLength(const std::vector<int>& a);",
+      "modelAnswer": "int findMaxLength(const std::vector<int>& a) {\n    int n = (int)a.size();\n    std::vector<int> first(2 * n + 1, -2);  // -2 = not seen yet\n    first[n] = -1;                           // balance 0 before index 0\n    int bal = 0, best = 0;\n    for (int i = 0; i < n; i++) {\n        bal += a[i] == 1 ? 1 : -1;\n        int& f = first[bal + n];\n        if (f == -2) f = i;\n        else best = std::max(best, i - f);\n    }\n    return best;\n}",
+      "rubric": [
+        "מתרגמים 0 ל-−1; תת-מערך מאוזן ⇔ שני prefixes שווים",
+        "שומרים לכל ערך prefix את האינדקס **הראשון** בלבד (כדי למקסם אורך), עם prefix 0 באינדקס −1",
+        "המאזן בטווח [−n, n], ולכן אפשר מערך בגודל 2n + 1 עם offset במקום hash map",
+        "זמן O(n), זיכרון O(n); מערך ריק → 0"
+      ],
+      "explanation": "אם המאזן (1 → +1, 0 → −1) שווה בשני מיקומים, תת-המערך שביניהם מאוזן. כדי לקבל את הארוך ביותר שומרים את המופע הראשון של כל מאזן. ההתחלה במאזן 0 באינדקס −1 מטפלת בתת-מערך שמתחיל באינדקס 0.",
+      "id": "alg.prefix-sums.q38",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "tags": [
+        "microsoft"
+      ],
+      "problem": "LeetCode 974 · Subarray Sums Divisible by K",
+      "prompt": "כתוב פונקציה שסופרת תתי-מערכים רציפים לא ריקים שסכומם מתחלק ב-k (k ≥ 2, עד 10⁴). המספרים יכולים להיות שליליים. זמן O(n + k).\n\nדוגמה: a = [3, −3, 1, 2], k = 3 → 6 ([3], [−3], [3, −3], [1, 2], [−3, 1, 2], והמערך כולו).",
+      "starter": "long long subarraysDivByK(const std::vector<int>& a, int k);",
+      "modelAnswer": "long long subarraysDivByK(const std::vector<int>& a, int k) {\n    std::vector<long long> cnt(k, 0);\n    cnt[0] = 1;\n    long long s = 0, res = 0;\n    for (int x : a) {\n        s += x;\n        int m = (int)(((s % k) + k) % k);\n        res += cnt[m];\n        cnt[m]++;\n    }\n    return res;\n}",
+      "rubric": [
+        "שני prefixes עם אותה שארית mod k ⇔ תת-המערך ביניהם מתחלק ב-k; סופרים לכל שארית כמה prefixes היו, עם cnt[0] = 1",
+        "נרמול שארית שלילית ב-C++: ((s % k) + k) % k, כי s % k שלילי כש-s שלילי",
+        "מונים ב-vector בגודל k (לא hash map), והתשובה ב-long long (עד n²/2)",
+        "זמן O(n + k), זיכרון O(k)"
+      ],
+      "explanation": "P[j] − P[i] מתחלק ב-k בדיוק כשהשאריות של P[i] ו-P[j] שוות. ב-C++ האופרטור % שומר על הסימן של המחולק, ולכן −1 % 3 == −1 ואינדקס שלילי במערך המונים הוא UB. ב-Python % כבר מחזיר שארית אי-שלילית.",
+      "id": "alg.prefix-sums.q39",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 2,
+      "type": "code",
+      "lang": "cpp",
+      "tags": [
+        "microsoft"
+      ],
+      "problem": "LeetCode 724 · Find Pivot Index",
+      "prompt": "החזר את האינדקס השמאלי ביותר i שבו סכום האיברים משמאל ל-i שווה לסכום האיברים מימין ל-i (בלי a[i] עצמו; סכום ריק = 0). אם אין כזה, החזר −1. זמן O(n), זיכרון O(1).\n\nדוגמה: [3, 1, 5, 2, 2] → 2 (שמאל 3 + 1 = 4, ימין 2 + 2 = 4). [1, −1, 4] → 2 (שמאל 0, ימין ריק = 0). [0] → 0.",
+      "starter": "int pivotIndex(const std::vector<int>& a);",
+      "modelAnswer": "int pivotIndex(const std::vector<int>& a) {\n    long long total = 0;\n    for (int x : a) total += x;\n    long long left = 0;\n    for (int i = 0; i < (int)a.size(); i++) {\n        if (left == total - left - a[i]) return i;\n        left += a[i];\n    }\n    return -1;\n}",
+      "rubric": [
+        "סכום כולל פעם אחת, וסכום שמאלי רץ; ימין = total − left − a[i]",
+        "מחזירים את הראשון שמתאים (סורקים משמאל) ומעדכנים את left רק אחרי הבדיקה",
+        "מקרי קצה: אינדקס 0 (שמאל ריק), האינדקס האחרון (ימין ריק), מערך ריק → −1, שליליים",
+        "זמן O(n), זיכרון O(1); long long לסכומים גדולים"
+      ],
+      "explanation": "שני מעברים: אחד לסכום הכולל ואחד עם סכום שמאלי רץ. הטעות הנפוצה היא לעדכן את left לפני הבדיקה (ואז a[i] נספר בשמאל), או לשכוח שהסכום הריק בקצוות הוא 0.",
+      "id": "alg.prefix-sums.q40",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "tags": [
+        "meta"
+      ],
+      "problem": "LeetCode 523 · Continuous Subarray Sum",
+      "prompt": "בודקים אם יש תת-מערך רציף באורך **2 לפחות** שסכומו כפולה של k (גם 0 נחשב כפולה). המספרים אי-שליליים. עבור אילו קלטים התשובה true? (בחר את כל הנכונות)",
+      "choices": [
+        "[5, 0], k = 3",
+        "[0, 0], k = 7",
+        "[2, 4, 3], k = 6",
+        "[3, 1], k = 3",
+        "[1, 2, 3], k = 5",
+        "[6], k = 6"
+      ],
+      "answer": [
+        1,
+        2,
+        4
+      ],
+      "explanation": "הפתרון: prefix mod k ו-map משארית לאינדקס הראשון שבו הופיעה, עם {0: −1}. אם השארית חוזרת באינדקס j ומרחק j − first ≥ 2, יש תשובה. הנקודה העדינה: לשמור את האינדקס הראשון ולא לעדכן אותו, כך שהמרחק יהיה מקסימלי ולא יפספס אורך ≥ 2.",
+      "notes": [
+        "false: [5, 0] סכומו 5. ה-0 לבד מתחלק ב-3, אבל אורכו 1. ב-map: שארית 2 נשמרת באינדקס 0 וחוזרת באינדקס 1 – מרחק 1 בלבד.",
+        "true: [0, 0] סכומו 0, ו-0 הוא כפולה של כל k. שארית 0 נמצאת ב-{0: −1} וחוזרת באינדקס 1, מרחק 2.",
+        "true: [2, 4] סכומו 6. השאריות: 2, 0 – ה-0 חוזר מול האינדקס −1 עם מרחק 2.",
+        "false: תת-המערך היחיד באורך ≥ 2 הוא [3, 1] = 4. ה-3 לבד מתחלק ב-3 אבל אורכו 1.",
+        "true: [2, 3] סכומו 5. השאריות: 1, 3, 1 – השארית 1 חוזרת באינדקס 2 מול אינדקס 0, מרחק 2.",
+        "false: אורך 1 בלבד. האיבר מתחלק ב-k, אבל הדרישה היא אורך ≥ 2."
+      ],
+      "id": "alg.prefix-sums.q41",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "python",
+      "tags": [
+        "meta"
+      ],
+      "problem": "LeetCode 523 · Continuous Subarray Sum",
+      "prompt": "כתוב פונקציה שמחזירה True אם במערך של שלמים אי-שליליים יש תת-מערך רציף באורך 2 לפחות שסכומו כפולה של k (k ≥ 1; גם סכום 0 נחשב כפולה). זמן O(n).\n\nדוגמה: [4, 1, 6, 2], k = 7 → True ([1, 6]). [7, 3], k = 7 → False. [0, 0], k = 5 → True.",
+      "starter": "def check_subarray_sum(a, k):\n    ...",
+      "modelAnswer": "def check_subarray_sum(a, k):\n    first = {0: -1}        # remainder -> earliest prefix index\n    s = 0\n    for i, x in enumerate(a):\n        s = (s + x) % k\n        if s in first:\n            if i - first[s] >= 2:\n                return True\n        else:\n            first[s] = i\n    return False",
+      "rubric": [
+        "prefix mod k; שתי שאריות שוות ⇔ תת-המערך ביניהן מתחלק ב-k",
+        "dict משארית לאינדקס **הראשון** (לא מעדכנים אחרי שנשמר), עם {0: −1}",
+        "בודקים מרחק ≥ 2 כדי לא לקבל תת-מערך באורך 1 (למשל [k] או 0 בודד)",
+        "זמן O(n), זיכרון O(min(n, k))"
+      ],
+      "explanation": "ההבדל מ-Subarray Sums Divisible by K הוא דרישת האורך. לכן שומרים את המופע הראשון של כל שארית ובודקים מרחק. אם מעדכנים את האינדקס בכל מופע, אפס בודד אחרי prefix עם אותה שארית 'דורס' את המופע הקודם ומפספס תשובות.",
+      "id": "alg.prefix-sums.q42",
+      "lesson": "alg.prefix-sums"
+    },
+    {
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "tags": [
+        "meta"
+      ],
+      "problem": "LeetCode 1074 · Number of Submatrices That Sum to Target",
+      "prompt": "נתונה מטריצה R×C (עד 100×100) של שלמים, כולל שליליים, ומספר target. ספור כמה תתי-מטריצות מלבניות (לא ריקות) סכומן target בדיוק. זמן O(min(R,C)² · max(R,C)) בתוחלת.\n\nדוגמה: [[1, −1], [−1, 1]], target = 0 → 5 (שתי שורות, שתי עמודות, והמטריצה כולה).",
+      "starter": "int numSubmatrixSumTarget(std::vector<std::vector<int>> M, int target);",
+      "modelAnswer": "int numSubmatrixSumTarget(std::vector<std::vector<int>> M, int target) {\n    if (M.empty() || M[0].empty()) return 0;\n    int R = M.size(), C = M[0].size();\n    if (R > C) {  // fix pairs along the shorter side\n        std::vector<std::vector<int>> T(C, std::vector<int>(R));\n        for (int i = 0; i < R; i++)\n            for (int j = 0; j < C; j++) T[j][i] = M[i][j];\n        M.swap(T);\n        std::swap(R, C);\n    }\n    int res = 0;\n    std::vector<long long> col(C);\n    std::unordered_map<long long, int> cnt;\n    for (int top = 0; top < R; top++) {\n        std::fill(col.begin(), col.end(), 0);\n        for (int bot = top; bot < R; bot++) {\n            for (int c = 0; c < C; c++) col[c] += M[bot][c];\n            cnt.clear();\n            cnt[0] = 1;\n            long long s = 0;\n            for (int c = 0; c < C; c++) {\n                s += col[c];\n                auto it = cnt.find(s - target);\n                if (it != cnt.end()) res += it->second;\n                cnt[s]++;\n            }\n        }\n    }\n    return res;\n}",
+      "rubric": [
+        "מקבעים זוג שורות (top, bottom), מכווצים לסכומי עמודות, ופותרים Subarray Sum Equals K חד-ממדי עם hash map ו-{0: 1}",
+        "מצטברים את סכומי העמודות כש-bottom גדל, בלי לחשב מחדש – O(R² · C) בסך הכול",
+        "בוחרים את הממד הקטן לזוגות (transpose אם R > C) כדי לקבל O(min² · max)",
+        "סכומים ב-long long; מטריצה ריקה מחזירה 0"
+      ],
+      "explanation": "תת-מטריצה נקבעת בשתי שורות ושתי עמודות. אחרי קיבוע השורות, כל עמודה הופכת למספר אחד (סכום העמודה בין השורות), והבעיה היא ספירת תתי-מערכים עם סכום target. מעבר על כל ארבעת הגבולות עם 2D prefix sum הוא O(R² · C²), איטי פי C.",
+      "id": "alg.prefix-sums.q43",
       "lesson": "alg.prefix-sums"
     }
   ]
