@@ -168,6 +168,10 @@
         {
           "term": "autocomplete top-k",
           "def": "שמירת k ההשלמות הפופולריות בכל צומת מראש, כך ששאילתה היא O(P). מעדכנים ב-batch ומחליפים אטומית."
+        },
+        {
+          "term": "Top-k cache per trie node",
+          "def": "שמירה של k התוצאות המובילות בכל node של trie, כדי שכל prefix יענה מיד. עדכון נכון בקלות כשמונים רק עולים (מיזוג מקומי), ונשבר כשמונים יורדים."
         }
       ]
     }
@@ -850,6 +854,53 @@
         "cur לא יכול להיות nullptr: כל מספר שהוכנס יוצר מסלול באורך 31, אז אם ch[b^1] חסר, ch[b] בהכרח קיים.",
         "1 << 30 = 1073741824, וזה נכנס ב-int של 32 ביט. גלישה הייתה רק ב-1 << 31."
       ]
+    },
+    {
+      "id": "alg.tries.q32",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-autocomplete מבוסס trie מחזירים לכל prefix את 3 המשפטים עם המונה הגבוה ביותר. כדי ש-input יהיה מהיר, כל node שומר cache של 3 המשפטים המובילים שמתחתיו. כשמשתמש מסיים משפט, המונה שלו עולה ב-1, ומעדכנים את ה-cache בכל node במסלול שלו. למה העדכון הזה נכון בלי לסרוק את תת-העץ, ומתי הוא יפסיק להיות נכון?",
+      "choices": [
+        "הוא נכון תמיד, גם כשמונים יורדים, כי כל node מכיר את כל המשפטים שמתחתיו",
+        "הוא לא נכון גם עכשיו: אחרי כל עלייה של מונה צריך לסרוק את כל תת-העץ כדי לבנות את ה-top-3 מחדש",
+        "מונה רק עולה, ולכן המשפט שהשתנה יכול רק להיכנס ל-top-3 או לעלות בו. מספיק למזג אותו לרשימה בכל node. אם מונים יכולים לרדת (מחיקה), המקום הרביעי שלא נשמר עלול להיכנס, וה-cache לא מכיל אותו",
+        "הוא נכון רק אם המשפטים ממוינים לקסיקוגרפית בתוך ה-trie"
+      ],
+      "answer": 2,
+      "explanation": "ה-trade-off: cache של top-k בכל node נותן input ב-O(1) לכל תו, תמורת זיכרון O(total chars · k) ועדכון O(L·k). במערכת אמיתית עושים את זה offline בבנייה תקופתית, ומוסיפים שכבה קטנה של עדכונים טריים.",
+      "notes": [
+        "שגוי: ה-cache מכיל רק 3 משפטים, לא את כולם. כשמשפט יורד מה-top-3, מי שצריך להחליף אותו לא נמצא ב-cache.",
+        "שגוי: עלייה של מונה לא יכולה להוריד משפט אחר מהדירוג, חוץ מזה שנדחק החוצה למקום הרביעי. לכן מיזוג מקומי מספיק, ב-O(L·k) לעדכון.",
+        "נכון: זה האינוריאנט. עם עליות בלבד, top-k של node הוא top-k של (ה-cache הישן + המשפט שהשתנה). ירידה שוברת את זה, ואז צריך heap מלא לכל node, או לחשב מחדש מתת-העץ.",
+        "שגוי: סדר לקסיקוגרפי הוא רק שובר השוויון. נכונות ה-cache תלויה בכיוון השינוי של המונים, לא בסדר הילדים."
+      ],
+      "problem": "LeetCode 642 · Design Search Autocomplete System",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.tries"
+    },
+    {
+      "id": "alg.tries.q33",
+      "level": 5,
+      "type": "code",
+      "lang": "python",
+      "prompt": "ממש מערכת השלמה אוטומטית. הבנאי מקבל רשימת משפטים היסטוריים ומונה לכל אחד. `input(c)` מקבל תו אחד בכל פעם: אם c הוא '#', המשפט שהוקלד עד עכשיו נשמר בהיסטוריה (המונה שלו עולה ב-1), ה-prefix מתאפס ומוחזרת רשימה ריקה. אחרת c מתווסף ל-prefix, ומוחזרים עד 3 משפטים מההיסטוריה שמתחילים ב-prefix, ממוינים לפי מונה יורד, ובשוויון בסדר לקסיקוגרפי (ASCII, כך שרווח קודם לאותיות).\n\nדוגמה: היסטוריה {\"ab\": 3, \"ac\": 3, \"b\": 9}. input('a') מחזיר [\"ab\", \"ac\"]. input('c') מחזיר [\"ac\"]. input('#') מחזיר [] ומעלה את \"ac\" ל-4. input('a') מחזיר עכשיו [\"ac\", \"ab\"].",
+      "starter": "class AutocompleteSystem:\n    def __init__(self, sentences: list[str], times: list[int]): ...\n    def input(self, c: str) -> list[str]: ...",
+      "modelAnswer": "class TrieNode:\n    __slots__ = (\"children\", \"sentences\")\n\n    def __init__(self):\n        self.children = {}\n        self.sentences = {}      # every sentence below this node -> its count\n\n\nclass AutocompleteSystem:\n    def __init__(self, sentences: list[str], times: list[int]):\n        self.root = TrieNode()\n        for s, t in zip(sentences, times):\n            self._add(s, t)\n        self.prefix = []\n        self.node = self.root    # node for the current prefix; None = no match\n\n    def _add(self, sentence: str, count: int) -> None:\n        node = self.root\n        for ch in sentence:\n            node = node.children.setdefault(ch, TrieNode())\n            node.sentences[sentence] = node.sentences.get(sentence, 0) + count\n\n    def input(self, c: str) -> list[str]:\n        if c == \"#\":                                  # end of sentence: record it, reset\n            self._add(\"\".join(self.prefix), 1)\n            self.prefix = []\n            self.node = self.root\n            return []\n        self.prefix.append(c)\n        if self.node is not None:\n            self.node = self.node.children.get(c)     # O(1) step from the previous prefix\n        if self.node is None:\n            return []\n        ranked = sorted(self.node.sentences.items(), key=lambda kv: (-kv[1], kv[0]))\n        return [s for s, _ in ranked[:3]]",
+      "rubric": [
+        "trie של המשפטים, עם מעקב אחרי ה-node של ה-prefix הנוכחי כך שכל תו מתקדם צעד אחד ולא מתחיל מהשורש",
+        "מיון לפי (-count, sentence) ולקיחת 3",
+        "'#' שומר את המשפט (כולל משפט חדש), מאפס את ה-prefix ואת ה-node",
+        "prefix שאין לו התאמה נשאר 'ללא התאמה' עד '#', בלי לקרוס",
+        "דיון בסיבוכיות: מיון של המשפטים תחת ה-node, מול cache של top-3 בכל node (עדכון O(L) עם מונים שרק עולים)"
+      ],
+      "explanation": "הבעיה בודקת trie, מצב בין קריאות, ומיון עם שובר שוויון. השאלה המעניינת בראיון היא איפה לשלם: בזמן input (מיון) או בזמן עדכון (cache).",
+      "problem": "LeetCode 642 · Design Search Autocomplete System",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.tries"
     }
   ]
 }

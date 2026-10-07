@@ -167,6 +167,18 @@
         {
           "term": "ABA problem",
           "def": "ערך שחזר לאותה כתובת (A → B → A) גורם ל-CAS להצליח למרות שהמבנה השתנה. פתרונות: tagged pointers, hazard pointers, epoch-based reclamation."
+        },
+        {
+          "term": "Sentinel node",
+          "def": "node דמה שלא מחזיק נתונים ומשמש כראש וכזנב של הרשימה. בגרסה מעגלית, sentinel.next הוא הראש ו-sentinel.prev הוא הזנב. מבטל מקרי קצה של רשימה ריקה, ראש וזנב."
+        },
+        {
+          "term": "Reservoir sampling",
+          "def": "בחירה אחידה מ-stream באורך לא ידוע ב-O(1) זיכרון: האיבר ה-i מחליף את הבחירה בהסתברות 1/i. ההסתברות הסופית של כל איבר היא (1/i)·(i/n) = 1/n."
+        },
+        {
+          "term": "Rule of three",
+          "def": "מחלקה שמנהלת משאב (למשל nodes שהוקצו ב-new) וצריכה destructor, צריכה גם copy constructor ו-copy assignment, או למחוק אותם. אחרת העתקה תיצור double free."
         }
       ]
     }
@@ -825,6 +837,105 @@
         "אין rebalancing: האיזון נובע מההגרלה של הגובה בהכנסה, והכנסה משנה רק pointers מקומיים בכל רמה.",
         "נכון: החיפוש יורד ברמות ועובר O(1) nodes בתוחלת בכל רמה, על פני O(log n) רמות; הזיכרון בערך 2 pointers לכל node; ובלי rotations כל הכנסה היא עדכון מקומי, ולכן קל לממש lock-free עם CAS."
       ],
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q31",
+      "level": 3,
+      "type": "multi",
+      "prompt": "מממשים רשימה מקושרת דו-כיוונית עם sentinel מעגלי: node דמה אחד שה-next שלו הוא הראש וה-prev שלו הוא הזנב, וברשימה ריקה הוא מצביע על עצמו. אילו מקרי קצה כבר לא דורשים קוד מיוחד בזכות ה-sentinel?",
+      "choices": [
+        "הכנסה בראש כשהרשימה ריקה",
+        "מחיקה של ה-node היחיד ברשימה",
+        "הוספה בסוף (addAtIndex עם index == size)",
+        "בדיקה ש-index נמצא בטווח החוקי",
+        "שחרור כל ה-nodes ב-destructor"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "sentinel הופך את כל ההכנסות וההוצאות לאותה פעולה של 'בין שני nodes קיימים', כי לכל node אמיתי תמיד יש prev ו-next. מה שנשאר הוא בדיקת טווח ותנאי עצירה נכון בסריקה.",
+      "notes": [
+        "נכון: הכנסה לפני sentinel.next עובדת גם כש-sentinel.next הוא ה-sentinel עצמו. אין head == nullptr לטפל בו.",
+        "נכון: מחיקה היא תמיד prev->next = next ו-next->prev = prev. כשה-node יחיד, שני השכנים הם ה-sentinel, והרשימה חוזרת בדיוק למצב הריק.",
+        "נכון: הוספה בסוף היא הכנסה לפני ה-sentinel, אותה פעולה בדיוק כמו בכל מקום אחר, בלי לחפש את הזנב.",
+        "שגוי: הבדיקה ש-0 <= index <= size (או < size) עדיין נחוצה. ה-sentinel לא יודע כמה איברים יש.",
+        "שגוי: עדיין צריך לעבור על הרשימה ולשחרר כל node, ולעצור כשחוזרים ל-sentinel (לא ב-nullptr). ה-sentinel רק משנה את תנאי העצירה."
+      ],
+      "problem": "LeetCode 707 · Design Linked List",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q32",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש רשימה מקושרת משלך (בלי std::list) עם: `get(index)` שמחזיר את הערך או -1, `addAtHead(val)`, `addAtTail(val)`, `addAtIndex(index, val)` שמכניס לפני האיבר ה-index (אם index == size מוסיף בסוף, ואם index > size לא עושה כלום), ו-`deleteAtIndex(index)` שמוחק אם index תקין. בלי דליפות זיכרון.\n\nדוגמה: addAtHead(5), addAtTail(9), addAtIndex(1,7) נותן 5,7,9. get(1) מחזיר 7. deleteAtIndex(0) ואז get(0) מחזיר 7.",
+      "starter": "class MyLinkedList {\npublic:\n  int get(int index);\n  void addAtHead(int val);\n  void addAtTail(int val);\n  void addAtIndex(int index, int val);\n  void deleteAtIndex(int index);\n};",
+      "modelAnswer": "class MyLinkedList {\n  struct Node { int val; Node* prev; Node* next; };\n  Node sentinel_{0, &sentinel_, &sentinel_};       // circular: sentinel.next = head, sentinel.prev = tail\n  int size_ = 0;\n\n  Node* at(int index) {                            // 0 <= index < size_, walk from the closer end\n    if (index < size_ / 2) {\n      Node* p = sentinel_.next;\n      while (index--) p = p->next;\n      return p;\n    }\n    Node* p = sentinel_.prev;\n    for (int i = size_ - 1; i > index; --i) p = p->prev;\n    return p;\n  }\n  void insertBefore(Node* pos, int val) {\n    Node* n = new Node{val, pos->prev, pos};\n    pos->prev->next = n;\n    pos->prev = n;\n    ++size_;\n  }\npublic:\n  MyLinkedList() = default;\n  MyLinkedList(const MyLinkedList&) = delete;\n  MyLinkedList& operator=(const MyLinkedList&) = delete;\n  ~MyLinkedList() {\n    Node* p = sentinel_.next;\n    while (p != &sentinel_) { Node* nx = p->next; delete p; p = nx; }\n  }\n  int get(int index) {\n    if (index < 0 || index >= size_) return -1;\n    return at(index)->val;\n  }\n  void addAtHead(int val) { insertBefore(sentinel_.next, val); }\n  void addAtTail(int val) { insertBefore(&sentinel_, val); }\n  void addAtIndex(int index, int val) {\n    if (index < 0 || index > size_) return;\n    insertBefore(index == size_ ? &sentinel_ : at(index), val);\n  }\n  void deleteAtIndex(int index) {\n    if (index < 0 || index >= size_) return;\n    Node* n = at(index);\n    n->prev->next = n->next;\n    n->next->prev = n->prev;\n    delete n;\n    --size_;\n  }\n};",
+      "rubric": [
+        "sentinel (או dummy head) שמבטל מקרי קצה של ראש, זנב ורשימה ריקה",
+        "בדיקות טווח מדויקות: get ו-delete דורשים index < size, ו-addAtIndex מאפשר index == size",
+        "מונה size, ו-addAtTail ב-O(1) (רשימה דו-כיוונית או מצביע לזנב)",
+        "destructor שמשחרר את כל ה-nodes; העתקה מבוטלת או ממומשת כמו שצריך (rule of three)",
+        "אופציונלי: הליכה מהקצה הקרוב (index < size/2) שחוסכת חצי מהסריקה"
+      ],
+      "explanation": "השאלה בודקת עבודה נקייה עם מצביעים. ב-C++ מראיין ישים לב ל-destructor ולעותקים: מחלקה שמחזיקה raw pointers בלי rule of three היא באג שמחכה לקרות.",
+      "problem": "LeetCode 707 · Design Linked List",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q33",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בוחרים node אקראי מרשימה מקושרת באורך לא ידוע במעבר אחד: הבחירה מתחילה בצומת הראשון, והצומת ה-i (מ-1) מחליף אותה בהסתברות 1/i. ברשימה של 4 צמתים, מה ההסתברות שהצומת הראשון יהיה התוצאה הסופית?",
+      "choices": [
+        "1/24",
+        "1/2",
+        "1/4",
+        "3/4"
+      ],
+      "answer": 2,
+      "explanation": "זה reservoir sampling עם k=1. ההוכחה הכללית: הצומת ה-i נבחר בהסתברות 1/i ושורד את כל הבאים בהסתברות (i/(i+1))·...·((n-1)/n) = i/n, וביחד 1/n. אין צורך לדעת את n מראש.",
+      "notes": [
+        "שגוי: זו המכפלה 1 · 1/2 · 1/3 · 1/4, כלומר ההסתברות שכל צומת יחליף. צריך את ההסתברות שאף אחד מהבאים לא יחליף: (1-1/i).",
+        "שגוי: זו רק ההסתברות לשרוד את הצומת השני. צריך לשרוד גם את השלישי (2/3) ואת הרביעי (3/4).",
+        "נכון: 1 · (1/2) · (2/3) · (3/4) = 1/4. המכפלה מתקזזת לכל אורך n ונותנת 1/n, ולכן הבחירה אחידה.",
+        "שגוי: 3/4 היא רק ההסתברות שהצומת הרביעי לא יחליף. יש עוד שני שלבים לשרוד."
+      ],
+      "problem": "LeetCode 382 · Linked List Random Node",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "alg.linked-lists"
+    },
+    {
+      "id": "alg.linked-lists.q34",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "נתון ראש של רשימה מקושרת חד-כיוונית לא ריקה, שאורכה לא ידוע ויכול להיות עצום. ממש `getRandom()` שמחזיר את הערך של צומת אקראי, כשלכל הצמתים הסתברות שווה. דרישה: O(1) זיכרון נוסף, בלי להעתיק את הרשימה ובלי לשמור את האורך מראש.\n\nדוגמה: עבור 10 → 20 → 30, כל אחד מהערכים מוחזר בהסתברות 1/3.",
+      "starter": "struct ListNode { int val; ListNode* next; };\nclass Solution {\npublic:\n  explicit Solution(ListNode* head);\n  int getRandom();\n};",
+      "modelAnswer": "#include <random>\n\nstruct ListNode { int val; ListNode* next; };\n\nclass Solution {\n  ListNode* head_;\n  std::mt19937 rng_{std::random_device{}()};\npublic:\n  explicit Solution(ListNode* head) : head_(head) {}\n\n  // One pass, O(1) memory, works even if the length is unknown or huge:\n  // node number i (1-based) becomes the answer with probability 1/i.\n  int getRandom() {\n    int result = head_->val, i = 1;\n    for (ListNode* p = head_->next; p; p = p->next) {\n      ++i;\n      if (std::uniform_int_distribution<int>(0, i - 1)(rng_) == 0) result = p->val;\n    }\n    return result;\n  }\n};",
+      "rubric": [
+        "reservoir sampling: הצומת ה-i מחליף את התוצאה בהסתברות 1/i",
+        "אחידות מוכחת: (1/i) כפול הסתברות ההישרדות i/n",
+        "random engine כ-member ו-uniform_int_distribution, לא rand() % i",
+        "O(n) לכל קריאה ו-O(1) זיכרון; מזכיר שאם מותר זיכרון, העתקה למערך נותנת O(1) לקריאה"
+      ],
+      "explanation": "הנקודה היא האורך הלא ידוע. אם הוא ידוע, אפשר להגריל אינדקס וללכת אליו, אבל reservoir עובד גם על stream שעובר פעם אחת בלבד.",
+      "problem": "LeetCode 382 · Linked List Random Node",
       "tags": [
         "nvidia"
       ],

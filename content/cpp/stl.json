@@ -227,6 +227,38 @@
         {
           "term": "direct-initialization",
           "def": "אתחול בסגנון `T x(args)`. מאפשר לקרוא ל-constructor שהוא `explicit`. emplace משתמש בו, ולכן `emplace_back(new T)` מתקמפל ל-vector של unique_ptr."
+        },
+        {
+          "term": "LFU (Least Frequently Used)",
+          "def": "מדיניות eviction שמוציאה את הפריט עם הכי מעט גישות, ובשוויון את זה שהגישה האחרונה אליו הכי ישנה. מימוש O(1): buckets לפי תדירות, בכל אחד list לפי ותק, ומשתנה minFreq."
+        },
+        {
+          "term": "minFreq",
+          "def": "התדירות הנמוכה ביותר שקיימת כרגע ב-LFU cache. מתעדכן בלי סריקה: מתאפס ל-1 בהכנסת מפתח חדש, ועולה ב-1 כשה-bucket המינימלי מתרוקן בגלל גישה."
+        },
+        {
+          "term": "Circular queue / ring buffer",
+          "def": "תור על מערך קבוע שבו האינדקסים מתקדמים מודולו הקיבולת. כדי להבדיל בין ריק למלא מוסיפים מונה, או משאירים תא אחד ריק (מערך בגודל k+1)."
+        },
+        {
+          "term": "upper_bound / lower_bound",
+          "def": "ב-std::map וב-<algorithm>: lower_bound(x) מחזיר את האיבר הראשון שאינו קטן מ-x, ו-upper_bound(x) את הראשון שגדול מ-x. 'האחרון שקטן או שווה ל-x' הוא prev(upper_bound(x)), אם upper_bound אינו begin."
+        },
+        {
+          "term": "First-fit allocation",
+          "def": "אסטרטגיית הקצאה שבוחרת את הבלוק הפנוי הראשון (לפי כתובת) שמספיק גדול. פשוטה ומהירה. החלופות: best-fit (הבלוק הקטן ביותר שמספיק) ו-buddy allocator."
+        },
+        {
+          "term": "Coalescing (איחוד בלוקים)",
+          "def": "בשחרור זיכרון מאחדים את הבלוק המשוחרר עם בלוקים פנויים סמוכים משמאל ומימין. בלי איחוד נוצר fragmentation מלאכותי: יש מספיק זיכרון פנוי בסך הכל, אבל אין בלוק רציף גדול מספיק."
+        },
+        {
+          "term": "External fragmentation",
+          "def": "מצב שבו הזיכרון הפנוי מפוזר בהרבה חורים קטנים, כך שבקשה גדולה נכשלת למרות שסך הזיכרון הפנוי מספיק לה."
+        },
+        {
+          "term": "Counter trick (Tic-Tac-Toe)",
+          "def": "מונה אחד לכל שורה, עמודה ואלכסון: +1 לשחקן אחד ו-1- לשני. ערך מוחלט n אפשרי רק כשכל התאים שייכים לאותו שחקן, ולכן בדיקת ניצחון היא O(1) לכל מהלך."
         }
       ]
     }
@@ -916,6 +948,260 @@
         "שגוי: rehash מבטל iterators, אבל pointers ו-references נשארים תקינים כי ה-nodes לא זזים. רק השיוך שלהם ל-buckets משתנה.",
         "נכון: סדר האיטרציה תלוי ב-bucket של כל node, והתקן לא מגדיר אותו. אחרי rehash מספר ה-buckets משתנה ואיתו הסדר."
       ]
+    },
+    {
+      "id": "cpp.stl.q31",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מממשים LFU cache ב-O(1): map ממפתח ל-node, map מתדירות ל-list של nodes (בראש ה-list השימוש האחרון), ומשתנה `minFreq` שאומר מאיזה bucket מוציאים. איך שומרים על `minFreq` נכון בלי לסרוק את ה-buckets אף פעם?",
+      "choices": [
+        "צריך min-heap של התדירויות הקיימות, ולעדכן אותו אחרי כל get ו-put",
+        "minFreq משתנה רק בשני מקרים: הכנסת מפתח חדש מאפסת אותו ל-1, ו-get/put שמרוקן את ה-bucket של minFreq מעלה אותו ב-1 בדיוק",
+        "אחרי eviction סורקים את ה-buckets כלפי מעלה עד שמוצאים bucket לא ריק. זה amortized O(1) כי התדירויות חסומות",
+        "minFreq תמיד 1, כי כל מפתח נכנס עם תדירות 1, ולכן אין צורך לשמור אותו בכלל"
+      ],
+      "answer": 1,
+      "explanation": "ב-LFU התדירות של פריט עולה רק ב-1 בכל גישה, ומפתח חדש נכנס תמיד עם 1. לכן minFreq מתעדכן בשתי נקודות בלבד ובלי סריקה: איפוס ל-1 בהכנסה, ו-+1 כשה-bucket המינימלי מתרוקן ב-touch. זה מה שמאפשר O(1) בלי heap.",
+      "notes": [
+        "שגוי: heap עובד, אבל כל עדכון עולה O(log n) ולא O(1). כל הטריק של LFU ב-O(1) הוא שאין צורך במבנה ממוין, כי התדירות של פריט עולה תמיד בדיוק ב-1.",
+        "נכון: touch מזיז פריט מ-f ל-f+1. אם ה-bucket של f התרוקן ו-f היה המינימום, המינימום החדש הוא f+1, כי הפריט שהוזז נמצא שם. eviction תמיד בא לפני הכנסת מפתח חדש, ושם minFreq מתאפס ל-1, כך שלא צריך לחשב אותו אחרי eviction.",
+        "שגוי: אחרי eviction תמיד מכניסים מפתח חדש עם תדירות 1, ולכן minFreq נקבע ל-1 בלי סריקה. סריקה כלפי מעלה גם לא חסומה: התדירויות יכולות להגיע למספר הפעולות.",
+        "שגוי: אחרי כמה get כל המפתחות יכולים להיות בתדירות גבוהה מ-1. למשל קיבולת 2, put(a), put(b), get(a), get(b): המינימום הוא 2, וה-bucket של 1 ריק."
+      ],
+      "problem": "LeetCode 460 · LFU Cache",
+      "tags": [
+        "nvidia",
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q32",
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש LFU cache בקיבולת קבועה. `int get(int key)` מחזיר את הערך או -1. `void put(int key, int value)` מכניס או מעדכן. כל get או put על מפתח קיים מגדילים את מונה השימושים שלו ב-1. כשהקיבולת מלאה ונכנס מפתח חדש, מוציאים את המפתח עם מונה השימושים הנמוך ביותר, ובשוויון את זה שהשימוש האחרון בו הכי ישן. שתי הפעולות ב-O(1) בממוצע.\n\nדוגמה בקיבולת 2: put(1,1), put(2,2), get(1) מחזיר 1, put(3,3) מוציא את 2 (שימוש אחד מול שניים). אחר כך get(2) מחזיר -1.",
+      "starter": "class LFUCache {\npublic:\n  explicit LFUCache(int capacity);\n  int get(int key);\n  void put(int key, int value);\n};",
+      "modelAnswer": "#include <list>\n#include <unordered_map>\n\nclass LFUCache {\n  struct Node { int key, val, freq; };\n  int cap_, minFreq_ = 0;\n  std::unordered_map<int, std::list<Node>> byFreq_;            // freq -> nodes, front = most recent\n  std::unordered_map<int, std::list<Node>::iterator> idx_;     // key -> node\n\n  void touch(std::list<Node>::iterator it) {                   // freq++ and move to the next bucket\n    int f = it->freq;\n    auto& from = byFreq_[f];\n    auto& to = byFreq_[f + 1];\n    to.splice(to.begin(), from, it);                           // the iterator stays valid\n    it->freq = f + 1;\n    if (from.empty()) {\n      byFreq_.erase(f);\n      if (minFreq_ == f) minFreq_ = f + 1;\n    }\n  }\npublic:\n  explicit LFUCache(int capacity) : cap_(capacity) {}\n\n  int get(int key) {\n    auto it = idx_.find(key);\n    if (it == idx_.end()) return -1;\n    touch(it->second);\n    return it->second->val;\n  }\n\n  void put(int key, int value) {\n    if (cap_ <= 0) return;\n    if (auto it = idx_.find(key); it != idx_.end()) {\n      it->second->val = value;\n      touch(it->second);\n      return;\n    }\n    if ((int)idx_.size() == cap_) {                            // evict: lowest freq, then least recent\n      auto& bucket = byFreq_[minFreq_];\n      idx_.erase(bucket.back().key);\n      bucket.pop_back();\n      if (bucket.empty()) byFreq_.erase(minFreq_);\n    }\n    auto& b1 = byFreq_[1];\n    b1.push_front({key, value, 1});\n    idx_[key] = b1.begin();\n    minFreq_ = 1;                                              // a new key always has freq 1\n  }\n};",
+      "rubric": [
+        "map ממפתח ל-iterator, ו-map מתדירות ל-std::list (בראש: השימוש האחרון), כדי לשבור שוויון לפי ותק ב-O(1)",
+        "touch מעביר node ל-bucket של f+1 עם splice, ומעדכן minFreq רק אם ה-bucket הישן התרוקן והיה המינימום",
+        "eviction מה-back של ה-bucket של minFreq, מוחק גם מה-map, ואחרי הכנסה minFreq = 1",
+        "put על מפתח קיים מעדכן ערך וגם מעלה תדירות, ולא יוצר כפילות; קיבולת 0 מטופלת",
+        "מציין O(1) ממוצע לכל פעולה, ושההקצאות של list הן עלות אמיתית (pool או אינדקסים במערך כאופטימיזציה)"
+      ],
+      "explanation": "ההבדל מ-LRU הוא שני מפתחות מיון: תדירות ואז ותק. buckets לפי תדירות, כשבכל bucket יש list לפי ותק, נותנים את שניהם ב-O(1). הנקודה העדינה היא תחזוקת minFreq בלי סריקה.",
+      "problem": "LeetCode 460 · LFU Cache",
+      "tags": [
+        "nvidia",
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q33",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מממשים תור מעגלי בקיבולת k עם מערך בגודל k ושני אינדקסים בלבד: `head` (האיבר הבא להוצאה) ו-`tail` (המקום הבא לכתיבה), שניהם מתקדמים מודולו k. אין שום שדה נוסף. מה הבעיה המהותית?",
+      "choices": [
+        "צריך ש-k יהיה חזקה של 2, אחרת `% k` נותן תוצאה שגויה",
+        "כשמגיעים לסוף המערך האינדקסים גולשים, וצריך לאפס אותם ידנית",
+        "המצב `head == tail` מתקבל גם בתור ריק וגם בתור מלא, ואי אפשר להבדיל ביניהם",
+        "Front ו-Rear לא יכולים להיות O(1) בלי לסרוק את המערך"
+      ],
+      "answer": 2,
+      "explanation": "עם שני אינדקסים בלבד יש k+1 מצבי מילוי (0 עד k) אבל רק k זוגות (head, tail) שונים זה מזה. לכן מוסיפים מונה, דגל, או משאירים תא אחד ריק. זו אותה בעיה כמו ב-ring buffer של DMA או של SPSC queue.",
+      "notes": [
+        "שגוי: `%` נכון לכל k חיובי. חזקה של 2 רק מאפשרת להחליף את `%` ב-`& (k-1)`, שזו אופטימיזציה ולא דרישת נכונות.",
+        "שגוי: בדיוק בשביל זה עושים מודולו. האינדקסים לעולם לא יוצאים מ-[0, k).",
+        "נכון: אחרי k הכנסות tail חוזר ל-head, ובתור ריק הם גם שווים. הפתרונות: מונה count, או מערך בגודל k+1 שבו 'מלא' פירושו `(tail+1) % (k+1) == head`.",
+        "שגוי: Front הוא `buf[head]` ו-Rear הוא `buf[(tail - 1 + k) % k]`, שניהם O(1)."
+      ],
+      "problem": "LeetCode 622 · Design Circular Queue",
+      "tags": [
+        "nvidia",
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q34",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש תור מעגלי בקיבולת k על מערך קבוע (בלי הקצאות אחרי הבנייה): `enQueue(v)` ו-`deQueue()` מחזירים bool לפי הצלחה, `Front()` ו-`Rear()` מחזירים את האיבר הראשון או האחרון, או -1 אם התור ריק, ו-`isEmpty()` ו-`isFull()`. כל הפעולות O(1).\n\nדוגמה בקיבולת 2: enQueue(5) ו-enQueue(6) מצליחים, enQueue(7) נכשל, Rear() מחזיר 6, deQueue() ואז enQueue(7) מצליח ו-Front() מחזיר 6.",
+      "starter": "class MyCircularQueue {\npublic:\n  explicit MyCircularQueue(int k);\n  bool enQueue(int value);\n  bool deQueue();\n  int Front() const;\n  int Rear() const;\n  bool isEmpty() const;\n  bool isFull() const;\n};",
+      "modelAnswer": "#include <vector>\n\nclass MyCircularQueue {\n  std::vector<int> buf_;\n  int head_ = 0, count_ = 0;          // count_ tells \"full\" apart from \"empty\"\npublic:\n  explicit MyCircularQueue(int k) : buf_(k) {}\n  bool enQueue(int v) {\n    if (isFull()) return false;\n    buf_[(head_ + count_) % buf_.size()] = v;\n    ++count_;\n    return true;\n  }\n  bool deQueue() {\n    if (isEmpty()) return false;\n    head_ = (head_ + 1) % buf_.size();\n    --count_;\n    return true;\n  }\n  int Front() const { return isEmpty() ? -1 : buf_[head_]; }\n  int Rear() const { return isEmpty() ? -1 : buf_[(head_ + count_ - 1) % buf_.size()]; }\n  bool isEmpty() const { return count_ == 0; }\n  bool isFull() const { return count_ == (int)buf_.size(); }\n};",
+      "rubric": [
+        "מערך בגודל קבוע, head ומונה count (או מערך בגודל k+1) כדי להבדיל בין ריק למלא",
+        "Rear מחושב כ-(head + count - 1) % k, בלי אינדקס שלילי",
+        "enQueue/deQueue בודקים מלא/ריק ומחזירים false במקום לדרוס או לקרוא זבל",
+        "Front/Rear מחזירים -1 בתור ריק; כל הפעולות O(1) ובלי הקצאות"
+      ],
+      "explanation": "המבנה הבסיסי של כל ring buffer. בראיון ב-NVIDIA כדאי להזכיר את הגרסה עם k חזקה של 2 ו-mask, ואת ההבדל מגרסת SPSC lock-free שבה head ו-tail שייכים ל-threads שונים.",
+      "problem": "LeetCode 622 · Design Circular Queue",
+      "tags": [
+        "nvidia",
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q35",
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "ב-key-value store עם גרסאות, `get(t)` צריך להחזיר את הערך של הגרסה האחרונה שה-timestamp שלה קטן או שווה ל-t, או \"-\" אם אין. מה מדפיס המימוש הזה?",
+      "code": "std::map<int, std::string> v{{1, \"a\"}, {4, \"b\"}, {9, \"c\"}};\nauto get = [&](int t) -> std::string {\n  auto it = v.lower_bound(t);\n  if (it == v.begin()) return \"-\";\n  return std::prev(it)->second;\n};\nstd::cout << get(5) << get(4) << get(0);",
+      "choices": [
+        "bb-",
+        "ba-",
+        "bc-",
+        "ab-"
+      ],
+      "answer": 1,
+      "explanation": "lower_bound(t) מחזיר את הראשון שאינו קטן מ-t, ולכן כש-t קיים בדיוק, prev מדלג עליו. לשאלה 'האחרון שקטן או שווה ל-t' משתמשים ב-upper_bound(t) ואז prev. זו טעות off-by-one קלאסית בבעיה הזאת.",
+      "notes": [
+        "זה הפלט הנכון לפי ההגדרה, אבל לא מה שהקוד מדפיס: get(4) מחזיר \"a\" ולא \"b\" בגלל lower_bound. היה נכון עם upper_bound.",
+        "נכון: get(5): lower_bound(5) הוא 9, וה-prev הוא 4, כלומר \"b\". get(4): lower_bound(4) מצביע על 4 עצמו, וה-prev הוא 1, כלומר \"a\" (באג: הגרסה של 4 נדלגת). get(0): lower_bound הוא begin, כלומר \"-\".",
+        "שגוי: lower_bound(5) מחזיר את 9, אבל הקוד לוקח את ה-prev שלו, כלומר 4 ו-\"b\". get(4) גם הוא לא מחזיר \"c\".",
+        "שגוי: get(5) מחזיר \"b\" ולא \"a\", כי ה-prev של 9 הוא 4."
+      ],
+      "problem": "LeetCode 981 · Time Based Key-Value Store",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q36",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש מחלקה ששומרת היסטוריית ערכים לכל מפתח: `set(key, value, timestamp)` שומר גרסה, ו-`get(key, timestamp)` מחזיר את הערך של הגרסה עם ה-timestamp הגדול ביותר שעדיין קטן או שווה ל-timestamp המבוקש, או מחרוזת ריקה אם אין כזו. אל תניח שה-timestamps מגיעים בסדר עולה.\n\nדוגמה: set(\"x\",\"v10\",10), set(\"x\",\"v20\",20). אז get(\"x\",15) מחזיר \"v10\", get(\"x\",20) מחזיר \"v20\" ו-get(\"x\",9) מחזיר \"\".",
+      "starter": "class TimeMap {\npublic:\n  void set(const std::string& key, const std::string& value, int timestamp);\n  std::string get(const std::string& key, int timestamp) const;\n};",
+      "modelAnswer": "#include <iterator>\n#include <map>\n#include <string>\n#include <unordered_map>\n\nclass TimeMap {\n  // key -> (timestamp -> value), each inner map sorted by timestamp\n  std::unordered_map<std::string, std::map<int, std::string>> data_;\npublic:\n  void set(const std::string& key, const std::string& value, int timestamp) {\n    data_[key][timestamp] = value;\n  }\n  std::string get(const std::string& key, int timestamp) const {\n    auto it = data_.find(key);\n    if (it == data_.end()) return \"\";\n    const auto& versions = it->second;\n    auto v = versions.upper_bound(timestamp);   // first version strictly after timestamp\n    if (v == versions.begin()) return \"\";       // every version is newer than the query\n    return std::prev(v)->second;                // the latest version <= timestamp\n  }\n};",
+      "rubric": [
+        "unordered_map ממפתח למבנה ממוין לפי timestamp (std::map, או vector + binary search אם ידוע שה-timestamps עולים)",
+        "get משתמש ב-upper_bound ואז prev, או לחלופין חיפוש 'האחרון שקטן או שווה', ומטפל במקרה שכל הגרסאות חדשות יותר",
+        "מפתח שלא קיים מחזיר \"\" בלי להכניס אותו (find ולא operator[] בפונקציה const)",
+        "סיבוכיות: set ב-O(log v), get ב-O(log v), כאשר v מספר הגרסאות של המפתח",
+        "מזכיר את ה-trade-off: vector עם push_back מהיר יותר ו-cache friendly כשה-timestamps מונוטוניים"
+      ],
+      "explanation": "הבעיה היא hash map שבתוכו חיפוש בינארי לפי זמן. ב-LeetCode ה-timestamps עולים ולכן vector מספיק, אבל בלי ההנחה הזו צריך מבנה ממוין. ההבחנה הזו היא בדיוק מה שמראיין רוצה לשמוע.",
+      "problem": "LeetCode 981 · Time Based Key-Value Store",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q37",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "allocator על זיכרון של 4 יחידות, first-fit, שומר את הבלוקים הפנויים ב-`std::map<start, len>`, אבל בשחרור הוא רק מכניס את הבלוק בחזרה למפה ולא מאחד אותו עם שכנים. מבצעים: allocate(2, id=1) מחזיר 0, allocate(2, id=2) מחזיר 2, free(id=1), free(id=2), ואז allocate(4, id=3). מה מוחזר?",
+      "choices": [
+        "0",
+        "2",
+        "-1",
+        "התוכנית קורסת, כי שני בלוקים עם אותו start נכנסים למפה"
+      ],
+      "answer": 2,
+      "explanation": "בשחרור חייבים לאחד את הבלוק עם השכן משמאל (אם `prev.start + prev.len == start`) ועם השכן מימין (אם `start + len == next.start`). std::map נותן את שני השכנים ב-O(log F), ובלי האיחוד ה-allocator מסרב לבקשות שיש להן מספיק מקום.",
+      "notes": [
+        "זו התשובה הנכונה רק במימוש שמאחד בלוקים סמוכים: [0,2) ו-[2,4) יתאחדו ל-[0,4), ו-allocate(4) יחזיר 0.",
+        "שגוי: אין שום בלוק פנוי שמתחיל ב-2 ובאורך 4. הבלוק ב-2 הוא באורך 2 בלבד.",
+        "נכון: המפה מכילה {0:2, 2:2}. כל 4 היחידות פנויות, אבל אין בלוק בודד באורך 4, ולכן first-fit נכשל. זה external fragmentation מלאכותי שנוצר רק מחוסר איחוד.",
+        "שגוי: ה-starts הם 0 ו-2, שונים זה מזה, ואין התנגשות במפה."
+      ],
+      "problem": "LeetCode 2502 · Design Memory Allocator",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q38",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש allocator לזיכרון של n יחידות (אינדקסים 0 עד n-1). `allocate(size, mID)` מוצא את הבלוק הרציף הפנוי השמאלי ביותר באורך size לפחות, מסמן size יחידות מתחילתו כשייכות ל-mID ומחזיר את האינדקס הראשון, או -1 אם אין. `freeMemory(mID)` משחרר את כל היחידות של mID (ייתכן שהוא קיבל כמה בלוקים) ומחזיר כמה יחידות שוחררו.\n\nדוגמה עם n=6: allocate(2,7) מחזיר 0, allocate(1,8) מחזיר 2, allocate(2,7) מחזיר 3. freeMemory(7) מחזיר 4, ואחר כך allocate(3,9) מחזיר 3 (יחידה 2 עדיין תפוסה).\n\nהפתרון הנאיבי עם מערך של n תאים עובד. כתוב גרסה שלא תלויה ב-n: שמור את הבלוקים הפנויים כמבנה ממוין.",
+      "starter": "class Allocator {\npublic:\n  explicit Allocator(int n);\n  int allocate(int size, int mID);\n  int freeMemory(int mID);\n};",
+      "modelAnswer": "#include <iterator>\n#include <map>\n#include <unordered_map>\n#include <vector>\n\nclass Allocator {\n  std::map<int, int> free_;                                   // start -> length, disjoint and merged\n  std::unordered_map<int, std::vector<std::pair<int, int>>> owned_;   // mID -> blocks (start, len)\npublic:\n  explicit Allocator(int n) { free_[0] = n; }\n\n  int allocate(int size, int mID) {\n    for (auto it = free_.begin(); it != free_.end(); ++it) {  // first fit = leftmost block that fits\n      auto [start, len] = *it;\n      if (len < size) continue;\n      free_.erase(it);\n      if (len > size) free_[start + size] = len - size;       // keep the leftover tail\n      owned_[mID].push_back({start, size});\n      return start;\n    }\n    return -1;\n  }\n\n  int freeMemory(int mID) {\n    auto o = owned_.find(mID);\n    if (o == owned_.end()) return 0;\n    int total = 0;\n    for (auto [start, len] : o->second) {\n      total += len;\n      auto it = free_.emplace(start, len).first;\n      if (auto nx = std::next(it); nx != free_.end() && start + len == nx->first) {\n        it->second += nx->second;                              // merge with the right neighbour\n        free_.erase(nx);\n      }\n      if (it != free_.begin()) {\n        auto pv = std::prev(it);\n        if (pv->first + pv->second == it->first) {             // merge with the left neighbour\n          pv->second += it->second;\n          free_.erase(it);\n        }\n      }\n    }\n    owned_.erase(o);\n    return total;\n  }\n};",
+      "rubric": [
+        "free list ממוינת לפי כתובת (std::map<start,len>) עם בלוקים זרים",
+        "allocate עובר מהשמאלי ביותר (first-fit), מפצל בלוק ומחזיר את השארית לרשימה",
+        "freeMemory מאחד כל בלוק משוחרר עם השכנים משמאל ומימין, אחרת נוצר fragmentation מלאכותי",
+        "שומר לכל mID רשימת בלוקים, מוחק אותה בסוף, ומחזיר 0 ל-mID לא מוכר",
+        "סיבוכיות: allocate O(F), freeMemory O(b log F); מזכיר best-fit, buddy allocator או size classes כחלופות"
+      ],
+      "explanation": "זו מיניאטורה של malloc: free list, first-fit, פיצול ואיחוד. בראיון ב-NVIDIA זה פתח לדבר על fragmentation, על allocators של GPU memory ועל pools בגודל קבוע ב-real-time.",
+      "problem": "LeetCode 2502 · Design Memory Allocator",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q39",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בלוח n×n בודקים ניצחון אחרי כל מהלך ב-O(1): לכל שורה, עמודה ושני האלכסונים יש מונה אחד, שחקן 1 מוסיף +1 ושחקן 2 מוסיף -1, ומנצח מי שהביא מונה לערך מוחלט n. למה מונה יחיד לכל שורה מספיק, בלי מונה נפרד לכל שחקן?",
+      "choices": [
+        "כי המהלכים חוקיים, כלומר כל תא נתפס פעם אחת, ולכן |מונה| = n רק אם כל n התאים בשורה שייכים לאותו שחקן",
+        "כי השחקנים מתחלפים, ולכן המונה של כל שורה תמיד 0 או ±1 עד הניצחון",
+        "זה לא מספיק: המונים יכולים להתקזז ולפספס ניצחון, ולכן צריך שני מונים לכל שורה",
+        "כי בודקים רק את השורה והעמודה של המהלך האחרון, ושם אין תאים של השחקן השני"
+      ],
+      "answer": 0,
+      "explanation": "ה-trick הוא שהמונה סופר 'כמה תאים בשורה של שחקן 1 פחות של שחקן 2', ו-|n| אפשרי רק בשורה טהורה. כך כל מהלך עולה O(1), והזיכרון O(n) במקום O(n²).",
+      "notes": [
+        "נכון: בשורה יש n תאים, וכל אחד תורם +1 או -1 פעם אחת לכל היותר. הסכום מגיע ל-+n רק אם כל n התאים של שחקן 1, ול--n רק אם כולם של שחקן 2.",
+        "שגוי: ההחלפה בין השחקנים לא מגבילה את השורות. שחקן אחד יכול לשים כמה סימנים באותה שורה בזמן שהשני משחק במקום אחר, והמונה מגיע ל-±2 ויותר.",
+        "שגוי: התקזזות קורית רק כשבשורה יש תאים של שני השחקנים, ואז ממילא אף אחד מהם לא יכול לנצח בה. לכן היא לא מפספסת ניצחון.",
+        "שגוי: בשורה של המהלך האחרון יכולים להיות גם תאים של השחקן השני. המונה הסכומי הוא שמטפל בזה, לא ההנחה."
+      ],
+      "problem": "LeetCode 348 · Design Tic-Tac-Toe",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q40",
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש משחק איקס-עיגול על לוח n×n. `move(row, col, player)` (player הוא 1 או 2, וכל מהלך חוקי: תא ריק, ועדיין אין מנצח) מחזיר 0 אם אין עדיין מנצח, או את מספר השחקן שהשלים שורה, עמודה או אלכסון שלמים. נדרש O(1) לכל מהלך, כלומר בלי לסרוק את הלוח.\n\nדוגמה ב-n=2: move(0,0,1) מחזיר 0, move(1,1,2) מחזיר 0, move(0,1,1) מחזיר 1 (שורה 0 מלאה).",
+      "starter": "class TicTacToe {\npublic:\n  explicit TicTacToe(int n);\n  int move(int row, int col, int player);\n};",
+      "modelAnswer": "#include <cstdlib>\n#include <vector>\n\nclass TicTacToe {\n  int n_;\n  std::vector<int> rows_, cols_;   // player 1 adds +1, player 2 adds -1\n  int diag_ = 0, anti_ = 0;\npublic:\n  explicit TicTacToe(int n) : n_(n), rows_(n), cols_(n) {}\n\n  // Returns 0 if nobody has won yet, otherwise the winner (1 or 2). O(1) per move.\n  int move(int row, int col, int player) {\n    int d = (player == 1) ? 1 : -1;\n    rows_[row] += d;\n    cols_[col] += d;\n    if (row == col) diag_ += d;\n    if (row + col == n_ - 1) anti_ += d;\n    if (std::abs(rows_[row]) == n_ || std::abs(cols_[col]) == n_ ||\n        std::abs(diag_) == n_ || std::abs(anti_) == n_)\n      return player;\n    return 0;\n  }\n};",
+      "rubric": [
+        "מונים לשורות, לעמודות ולשני האלכסונים, עם +1/-1 לפי השחקן",
+        "האלכסון הראשי מזוהה ב-row == col והמשני ב-row + col == n - 1 (תא האמצע ב-n אי-זוגי שייך לשניהם)",
+        "בדיקת ניצחון על |count| == n, ב-O(1) לכל מהלך וזיכרון O(n)",
+        "מזכיר שאפשר גם לשמור את הלוח אם צריך לאמת מהלכים, ושזה לא משנה את בדיקת הניצחון"
+      ],
+      "explanation": "הגרסה הנאיבית סורקת שורה, עמודה ואלכסונים בכל מהלך, כלומר O(n). המונים הסכומיים מורידים את זה ל-O(1).",
+      "problem": "LeetCode 348 · Design Tic-Tac-Toe",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
+    },
+    {
+      "id": "cpp.stl.q41",
+      "level": 2,
+      "type": "short",
+      "prompt": "איקס-עיגול 3×3. A מתחיל והשחקנים מתחלפים. המהלכים לפי הסדר (שורה, עמודה): (0,0), (1,1), (0,1), (0,2), (2,0), (2,2). התשובה היא \"A\" או \"B\" אם מישהו ניצח, \"Draw\" אם הלוח מלא בלי מנצח, ו-\"Pending\" אם המשחק עוד לא נגמר. מה התשובה?",
+      "accept": [
+        "Pending"
+      ],
+      "explanation": "ל-A יש (0,0), (0,1), (2,0) ול-B יש (1,1), (0,2), (2,2). לאף אחד אין שורה, עמודה או אלכסון שלמים: לשורה 0 של A חסר (0,2) שתפוס על ידי B, ול-B חסר (0,0) באלכסון הראשי. שוחקו רק 6 מהלכים מתוך 9, ולכן התשובה \"Pending\" ולא \"Draw\". המלכודת היא לשכוח את ההבחנה בין לוח מלא ללוח חלקי.",
+      "problem": "LeetCode 1275 · Find Winner on a Tic Tac Toe Game",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "cpp.stl"
     }
   ]
 }

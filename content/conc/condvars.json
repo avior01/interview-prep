@@ -170,6 +170,18 @@
         {
           "term": "happens-before דרך cv",
           "def": "notify עצמו לא מסנכרן זיכרון. הנראות מגיעה מ-unlock של המודיע ו-lock מחדש של הממתין על אותו mutex."
+        },
+        {
+          "term": "notify_one vs notify_all",
+          "def": "notify_one מעיר waiter שרירותי אחד, ומתאים רק כשכל ה-waiters על ה-cv שקולים. כשהם מחכים לתנאים שונים צריך notify_all (במחיר thundering herd), או cv נפרד לכל תנאי."
+        },
+        {
+          "term": "std::promise / std::future",
+          "def": "ערוץ חד-פעמי בין threads: set_value ב-promise מסנכרן עם get או wait ב-future (יחס happens-before). מתאים לאירוע שקורה פעם אחת."
+        },
+        {
+          "term": "std::binary_semaphore",
+          "def": "semaphore עם ערך 0 או 1 (C++20). release מגדיל ו-acquire מחכה עד שאפשר להקטין. release מסנכרן עם ה-acquire שאחריו. מתאים להעברת 'תור' בין threads."
         }
       ]
     }
@@ -837,6 +849,105 @@
       "tags": [
         "nvidia"
       ]
+    },
+    {
+      "id": "conc.condvars.q31",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ארבעה threads (fizz, buzz, fizzbuzz, number) מדפיסים יחד את 1 עד n בסדר. כולם חולקים mutex אחד, condition variable אחד ומונה cur. כל thread מחכה עם predicate עד ש-cur 'שייך לו', מדפיס, מגדיל את cur וקורא ל-notify. מה קורה אם קוראים ל-notify_one במקום notify_all?",
+      "choices": [
+        "כלום: בכל רגע רק thread אחד צריך להתעורר, ולכן notify_one מספיק ואף יעיל יותר",
+        "data race על cur, כי notify_one לא מסנכרן זיכרון",
+        "התוכנית עלולה להיתקע: notify_one עשוי להעיר thread שה-predicate שלו false, הוא חוזר לישון, וה-thread הנכון לא מתעורר לעולם",
+        "spurious wakeups יגרמו להדפסות כפולות"
+      ],
+      "answer": 2,
+      "explanation": "notify_one בטוח רק כשכל ה-waiters על אותו cv שקולים, כלומר כל אחד מהם יכול לטפל באירוע. כשה-waiters מחכים לתנאים שונים, צריך notify_all, או cv נפרד לכל תנאי. ה-trade-off: notify_all גורם ל-thundering herd, ו-cv לכל thread מסבך את הקוד.",
+      "notes": [
+        "שגוי: נכון שרק thread אחד צריך להתקדם, אבל notify_one לא בוחר אותו. כל ה-waiters מחכים על אותו cv, וההתראה הולכת ל-waiter שרירותי.",
+        "שגוי: cur מוגן על ידי ה-mutex, וה-notify לא אחראי על סנכרון הזיכרון. ה-lock וה-unlock הם שמסנכרנים.",
+        "נכון: אם ההתראה מגיעה ל-thread הלא נכון, הוא בודק את ה-predicate, מגלה false וחוזר לישון. אף אחד לא שולח התראה נוספת, וכל ה-threads ישנים: lost wakeup. הפתרונות: notify_all, או cv נפרד (או semaphore) לכל thread.",
+        "שגוי: ה-predicate ב-wait מגן מפני spurious wakeups. thread שהתעורר בלי סיבה בודק את התנאי וחוזר לישון."
+      ],
+      "problem": "LeetCode 1195 · Fizz Buzz Multithreaded",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q32",
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש מחלקה `FizzBuzz(n)` עם ארבע מתודות. כל אחת נקראת פעם אחת, מ-thread נפרד, בסדר לא ידוע: `fizz(printFizz)`, `buzz(printBuzz)`, `fizzbuzz(printFizzBuzz)` ו-`number(printNumber)`. ביחד הן צריכות להדפיס את הרצף של 1 עד n לפי הסדר: מספר שמתחלק ב-3 וב-5 מודפס על ידי fizzbuzz, מספר שמתחלק רק ב-3 על ידי fizz, רק ב-5 על ידי buzz, וכל השאר על ידי number (שמקבל את המספר). כל thread חייב לסיים כשהרצף נגמר. בלי busy-waiting.\n\nדוגמה עבור n=5: 1, 2, Fizz, 4, Buzz.",
+      "starter": "class FizzBuzz {\npublic:\n  explicit FizzBuzz(int n);\n  void fizz(std::function<void()> printFizz);\n  void buzz(std::function<void()> printBuzz);\n  void fizzbuzz(std::function<void()> printFizzBuzz);\n  void number(std::function<void(int)> printNumber);\n};",
+      "modelAnswer": "#include <condition_variable>\n#include <functional>\n#include <mutex>\n\n// Four threads call fizz(), buzz(), fizzbuzz() and number() once each.\n// Together they must print 1..n in order; each thread prints only its own kind.\nclass FizzBuzz {\n  int n_, cur_ = 1;                 // the next number to handle\n  std::mutex m_;\n  std::condition_variable cv_;\n\n  // Each thread loops: wait until cur_ is \"mine\" or we are done, print, advance, wake all.\n  void run(const std::function<bool(int)>& mine, const std::function<void(int)>& print) {\n    std::unique_lock lk(m_);\n    while (true) {\n      cv_.wait(lk, [&] { return cur_ > n_ || mine(cur_); });\n      if (cur_ > n_) return;        // everyone must be able to leave at the end\n      print(cur_);\n      ++cur_;\n      cv_.notify_all();             // the next number may belong to any of the other 3\n    }\n  }\npublic:\n  explicit FizzBuzz(int n) : n_(n) {}\n  void fizz(std::function<void()> printFizz) {\n    run([](int i) { return i % 3 == 0 && i % 5 != 0; }, [&](int) { printFizz(); });\n  }\n  void buzz(std::function<void()> printBuzz) {\n    run([](int i) { return i % 5 == 0 && i % 3 != 0; }, [&](int) { printBuzz(); });\n  }\n  void fizzbuzz(std::function<void()> printFizzBuzz) {\n    run([](int i) { return i % 15 == 0; }, [&](int) { printFizzBuzz(); });\n  }\n  void number(std::function<void(int)> printNumber) {\n    run([](int i) { return i % 3 != 0 && i % 5 != 0; }, printNumber);\n  }\n};",
+      "rubric": [
+        "מונה משותף מוגן ב-mutex, ו-wait עם predicate: 'המספר הנוכחי שלי, או שהרצף נגמר'",
+        "notify_all אחרי כל קידום (או cv/semaphore נפרד לכל thread), כדי למנוע lost wakeup",
+        "תנאי סיום שכל ה-threads רואים (cur > n), כך שאף אחד לא נשאר תקוע",
+        "ההדפסה נעשית תחת ה-lock או לפני הקידום, כך שהסדר נשמר",
+        "דיון: thundering herd עם notify_all מול 4 semaphores (C++20 std::binary_semaphore)"
+      ],
+      "explanation": "הבעיה בודקת שלושה דברים: predicate נכון, בחירה בין notify_one ל-notify_all, ותנאי יציאה לכל ה-threads. החלופה עם semaphores מעבירה את 'התור' ישירות ל-thread הבא, בלי להעיר את כולם.",
+      "problem": "LeetCode 1195 · Fizz Buzz Multithreaded",
+      "tags": [
+        "nvidia"
+      ],
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q33",
+      "level": 2,
+      "type": "multi",
+      "prompt": "שלושה threads קוראים ל-first(), second() ו-third() באותו אובייקט, בסדר לא ידוע. ההדפסות חייבות לצאת first, second, third. אילו מנגנונים מבטיחים את זה נכון?",
+      "choices": [
+        "mutex, condition_variable ומונה stage, עם wait שיש לו predicate",
+        "שני std::promise<void>: first עושה set_value לראשון, second מחכה ל-future שלו ואז עושה set_value לשני, ו-third מחכה לשני",
+        "שני std::binary_semaphore (C++20) שמתחילים ב-0: first משחרר את הראשון, second עושה לו acquire ומשחרר את השני",
+        "משתנה `bool done1 = false;` רגיל, ו-second מחכה עם `while (!done1) {}`",
+        "second עושה sleep_for(10ms) ו-third עושה sleep_for(20ms) לפני ההדפסה"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "כל מנגנון שיוצר happens-before בין סוף first לתחילת second מתאים: condvar עם predicate, promise/future, semaphore, או std::latch. זמנים (sleep) ומשתנים לא מסונכרנים אף פעם לא מבטיחים סדר.",
+      "notes": [
+        "נכון: ה-predicate מגן מפני spurious wakeup ומפני lost wakeup (אם first כבר רץ, ה-wait חוזר מיד), וה-mutex מסנכרן את stage.",
+        "נכון: set_value ו-get/wait על future יוצרים יחס happens-before. זה מנגנון חד-פעמי שמתאים בדיוק לאירוע שקורה פעם אחת.",
+        "נכון: release ב-semaphore מסנכרן עם acquire. מתחילים ב-0, ולכן second חוסם עד ש-first מסיים.",
+        "שגוי: גישה לא מסונכרנת ל-bool משני threads היא data race, כלומר undefined behavior. בפועל הקומפיילר רשאי להוציא את הקריאה מהלולאה ולהיתקע לנצח. צריך לפחות std::atomic<bool>, וגם אז זה busy-wait ששורף CPU.",
+        "שגוי: sleep לא מבטיח סדר. אם first מתעכב (עומס, scheduling), second מדפיס לפניו. זה race שמחכה לקרות."
+      ],
+      "problem": "LeetCode 1114 · Print in Order",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "conc.condvars"
+    },
+    {
+      "id": "conc.condvars.q34",
+      "level": 2,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש מחלקה `Foo` עם שלוש מתודות: `first(printFirst)`, `second(printSecond)` ו-`third(printThird)`. כל אחת נקראת פעם אחת, מ-thread אחר, והסדר שבו ה-threads מתחילים לא ידוע. ההדפסות חייבות לצאת תמיד בסדר first, second, third. בלי busy-waiting ובלי sleep.\n\nדוגמה: גם אם ה-thread של third מתחיל ראשון, הפלט הוא \"firstsecondthird\".",
+      "starter": "class Foo {\npublic:\n  void first(std::function<void()> printFirst);\n  void second(std::function<void()> printSecond);\n  void third(std::function<void()> printThird);\n};",
+      "modelAnswer": "#include <condition_variable>\n#include <functional>\n#include <mutex>\n\n// Three threads call first(), second(), third() in any order and at any time.\n// The prints must always come out first, second, third.\nclass Foo {\n  std::mutex m_;\n  std::condition_variable cv_;\n  int stage_ = 1;                   // which call may run now; guarded by m_\npublic:\n  void first(std::function<void()> printFirst) {\n    std::lock_guard lk(m_);\n    printFirst();\n    stage_ = 2;\n    cv_.notify_all();               // notify_all: both waiters share one cv\n  }\n  void second(std::function<void()> printSecond) {\n    std::unique_lock lk(m_);\n    cv_.wait(lk, [this] { return stage_ == 2; });   // predicate: no lost wakeup, no spurious run\n    printSecond();\n    stage_ = 3;\n    cv_.notify_all();\n  }\n  void third(std::function<void()> printThird) {\n    std::unique_lock lk(m_);\n    cv_.wait(lk, [this] { return stage_ == 3; });\n    printThird();\n  }\n};",
+      "rubric": [
+        "מצב משותף (stage) מוגן ב-mutex, ו-wait עם predicate",
+        "notify_all (שני waiters על cv אחד עם תנאים שונים), או cv נפרד לכל שלב",
+        "עובד בכל סדר הפעלה, כולל אם first מסיים לפני שהאחרים התחילו לחכות",
+        "מזכיר חלופות: promise/future, std::binary_semaphore, std::latch"
+      ],
+      "explanation": "הבעיה הקלה ביותר בסדרת הסנכרון, והיא בודקת את הבסיס: predicate נגד lost wakeup, ו-notify_all כש-waiters שונים מחכים על אותו cv.",
+      "problem": "LeetCode 1114 · Print in Order",
+      "tags": [
+        "microsoft"
+      ],
+      "lesson": "conc.condvars"
     }
   ]
 }
