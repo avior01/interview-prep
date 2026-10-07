@@ -260,6 +260,12 @@
       ],
       "answer": 2,
       "explanation": "asyncio מאפשר ל-thread אחד לנהל הרבה פעולות שמחכות ל-I/O, כי בזמן ההמתנה ה-loop מריץ אחרות. הוא לא נותן מקביליות של CPU ולא עוקף את ה-GIL; חישוב כבד אפילו יעצור את כל ה-coroutines.",
+      "notes": [
+        "asyncio רץ על thread אחד ולא מנצל כמה cores; חישוב כבד אף יקפיא את כל ה-coroutines. לזה מתאימים multiprocessing או ProcessPoolExecutor.",
+        "asyncio לא מאיץ קוד Python עצמו: כל שורה רצה באותה מהירות. הוא רק מנצל זמני המתנה ל-I/O.",
+        "נכון: בזמן שפעולה אחת מחכה לרשת או לדיסק, ה-event loop מריץ אחרות, וכך thread אחד מנהל אלפי חיבורים בעלות זיכרון נמוכה.",
+        "asyncio לא נוגע ב-GIL: כל ה-coroutines רצות ב-thread אחד, ממילא בלי מקביליות CPU."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -277,6 +283,12 @@
       ],
       "answer": 2,
       "explanation": "קריאה לפונקציית async לא מריצה את הגוף; היא יוצרת אובייקט coroutine. כדי לקבל 1 צריך await f() בתוך coroutine אחרת, או asyncio.run(f()). כאן גם תופיע RuntimeWarning: coroutine 'f' was never awaited.",
+      "notes": [
+        "זה היה נכון אם הקריאה הייתה מריצה את הגוף. 1 מתקבל רק עם `await f()` או `asyncio.run(f())`.",
+        "`f` עצמו הוא function, אבל `f()` היא תוצאת הקריאה, וזו coroutine.",
+        "נכון: קריאה לפונקציית `async def` לא מריצה את הגוף אלא מחזירה אובייקט coroutine; לכן גם מופיעה האזהרה `never awaited`.",
+        "Task נוצר רק כשעוטפים במפורש עם `asyncio.create_task`; קריאה ישירה לא מתזמנת כלום."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -292,6 +304,12 @@
       ],
       "answer": 1,
       "explanation": "asyncio הוא cooperative multitasking: אין preemption בין coroutines. זה גם יתרון (קטע בלי await הוא 'אטומי' ביחס ל-coroutines אחרות באותו loop) וגם חיסרון (לולאה ארוכה בלי await מקפיאה את הכל). 5 ms הוא ה-switch interval של ה-GIL בין threads, נושא אחר.",
+      "notes": [
+        "זה התיאור של preemptive scheduling של מערכת ההפעלה. ב-asyncio אין הפקעה: ה-loop לא יכול לעצור coroutine באמצע.",
+        "נכון: asyncio הוא cooperative multitasking; coroutine מוותרת על השליטה רק ב-`await` שבאמת ממתין, וקטע בלי await רץ ברצף.",
+        "5 ms הוא ה-switch interval של ה-GIL בין threads, מנגנון אחר לגמרי. ה-event loop לא מחלק זמן לפי שעון.",
+        "coroutine מוותרת על השליטה גם בכל `await` ממתין לאורך הדרך, לא רק בסיום; אחרת asyncio לא היה מאפשר שום חפיפה."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -309,6 +327,12 @@
       ],
       "answer": 1,
       "explanation": "gather מריץ את שתי ה-coroutines במקביל. b ישנה 0.1 שניות ו-a ישנה 0.2, ולכן b מסיימת ומדפיסה קודם. הסדר שבו הועברו ל-gather משפיע רק על סדר התוצאות ברשימה שמוחזרת, לא על סדר הביצוע.",
+      "notes": [
+        "זה מניח שהסדר ב-gather קובע את סדר הביצוע. שתיהן רצות במקביל, ו-b מתעוררת קודם כי היא ישנה פחות.",
+        "נכון: gather מתזמן את שתיהן יחד; b ישנה 0.1 שניות ומדפיסה קודם, a ישנה 0.2 ומדפיסה אחריה.",
+        "gather מחכה לכל ה-awaitables, ולכן גם b רצה עד הסוף ומדפיסה.",
+        "הסדר נקבע לפי זמני ה-sleep, ופער של 0.1 שניות הוא דטרמיניסטי לחלוטין ב-loop."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -324,6 +348,12 @@
       ],
       "answer": 1,
       "explanation": "time.sleep חוסם את ה-thread, וה-loop רץ באותו thread. אותו דבר קורה עם requests.get, קריאות DB סינכרוניות או חישוב ארוך. הפתרון: גרסאות async (aiohttp, asyncpg) או await asyncio.to_thread(func).",
+      "notes": [
+        "`time.sleep` חוסם את ה-thread כולו, וה-loop רץ באותו thread, ולכן כולם מחכים, לא רק ה-handler הזה.",
+        "נכון: `time.sleep` לא מחזיר שליטה ל-loop, ולכן במשך 2 שניות שום coroutine אחרת לא מתקדמת ושום בקשה לא מטופלת.",
+        "Python לא ממיר קריאות סינכרוניות לאסינכרוניות; את זה עושים ידנית עם `asyncio.sleep` או `asyncio.to_thread`.",
+        "קריאה חוסמת בתוך coroutine היא חוקית ושקטה; היא רק הורסת את ה-latency. debug mode יכול לדווח עליה, אבל לא נזרקת שגיאה."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -339,6 +369,12 @@
       ],
       "answer": 0,
       "explanation": "await ברצף הוא סדרתי: השני מתחיל רק כשהראשון גמר. gather מתזמן את שתיהן כ-tasks במקביל, ולכן מחכים לארוכה מביניהן. טעות נפוצה היא לכתוב לולאה עם await לכל בקשה ולתהות למה async לא מאיץ.",
+      "notes": [
+        "נכון: ב-A שני ה-await סדרתיים, כל אחד שנייה, סך הכל 2; ב-B gather מריץ את שניהם במקביל, ומחכים לארוך מביניהם, שנייה.",
+        "A סדרתי: ה-sleep השני מתחיל רק אחרי שהראשון הסתיים, ולכן הוא לוקח שתי שניות.",
+        "זה הפוך: gather הוא הגרסה המקבילית, ו-await ברצף הוא הסדרתי.",
+        "gather מתזמן את שני ה-sleep כ-tasks שרצים בחפיפה, ולכן B לוקח שנייה ולא שתיים."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -356,6 +392,12 @@
       ],
       "answer": 0,
       "explanation": "create_task מתזמן את child ל-loop אבל לא מריץ אותה מיד. main ממשיכה לרוץ עד ה-await הראשון שבו היא מוותרת על השליטה (await t), ורק אז ה-loop מריץ את child. הסדר דטרמיניסטי.",
+      "notes": [
+        "נכון: `create_task` רק מתזמן את child; main ממשיכה ומדפיסה parent עד ה-`await t`, ורק אז ה-loop מריץ את child.",
+        "זה מניח ש-`create_task` מריץ את ה-coroutine מיד. הוא רק מכניס אותה לתור, ו-main לא ויתרה על השליטה עד ה-await.",
+        "`await t` מחכה ש-child תסתיים, ולכן child בוודאי מדפיסה.",
+        "סדר הריצה ב-loop דטרמיניסטי: main רצה עד נקודת await, ורק אז tasks אחרים מקבלים תור."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -371,6 +413,12 @@
       ],
       "answer": 1,
       "explanation": "Semaphore מגביל כמה coroutines נמצאות בקטע הקריטי בו-זמנית, והשאר ממתינות בלי לחסום את ה-loop. דפוס ה-workers עם Queue חוסך גם את יצירת 10,000 coroutines מראש. gather בלי הגבלה יפתח 10,000 חיבורים (או יתקע ב-connection pool), ו-time.sleep חוסם את ה-loop.",
+      "notes": [
+        "gather בלי הגבלה ינסה לפתוח 10,000 חיבורים בבת אחת (או ייתקע ב-connection pool), ויפר את מגבלת השרת.",
+        "נכון: Semaphore(20) מאפשר לכל היותר 20 בקשות בקטע הקריטי, והשאר ממתינות ב-await בלי לחסום את ה-loop. worker pool עם `asyncio.Queue` משיג אותו דבר בלי ליצור 10,000 coroutines מראש.",
+        "`time.sleep` חוסם את ה-loop כולו, וגם לא מגביל את מספר החיבורים במקביל אלא רק מאט.",
+        "aiohttp הוא כבר אסינכרוני; threads רק מוסיפים מורכבות ו-loops נפרדים, ולא מגבילים חיבורים בצורה נקייה יותר מ-Semaphore."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -410,6 +458,13 @@
         4
       ],
       "explanation": "אין מקביליות אמיתית בתוך loop, אבל יש interleaving בכל await. check-then-act שעובר דרך await (קורא cache, await fetch, כותב) עלול לרוץ פעמיים במקביל, ולכן asyncio.Lock שימושי. חישוב ארוך תופס את ה-thread ומעכב את כולם.",
+      "notes": [
+        "נכון: event loop רץ על thread אחד, וכל ה-coroutines שלו מבוצעות על אותו thread.",
+        "נכון: ב-loop אחד רק coroutine אחת מבצעת קוד Python בכל רגע; ההחלפה קורית רק ב-await.",
+        "asyncio.Lock נחוץ כשקטע check-then-act עובר דרך await: coroutine אחרת יכולה לרוץ בזמן ההמתנה ולשנות את המצב. היעדר threads לא מבטל interleaving.",
+        "נכון: כל await הוא נקודת interleaving, ולכן מצב שנבדק לפני await יכול להשתנות עד שממשיכים; זה race condition לוגי.",
+        "נכון: חישוב CPU-bound לא מגיע ל-await, ולכן הוא מחזיק את ה-thread של ה-loop ומעכב את כל השאר."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -427,6 +482,12 @@
       ],
       "answer": 2,
       "explanation": "sleep(0) נותן ל-worker להתחיל ולהגיע ל-sleep(10). cancel() מסמן ביטול, וכשה-loop מחדש את ה-worker נזרק CancelledError בנקודת ה-await: מודפס cancelled, ה-raise ממשיך את הביטול, finally רץ, ו-await t ב-main מקבל CancelledError. בלי ה-sleep(0), ה-task היה מבוטל לפני שהתחיל, ושום דבר מתוך worker לא היה מודפס.",
+      "notes": [
+        "זה מתעלם מכך שה-worker כבר התחיל (בזכות `sleep(0)`) ונמצא בתוך ה-try, ולכן ה-CancelledError נזרק אצלו וה-except וה-finally שלו רצים.",
+        "ה-finally רץ אחרי ה-except, לא לפניו: ה-except מטפל בחריג ועושה raise, ורק ביציאה מה-try רץ ה-finally.",
+        "נכון: CancelledError נזרק ב-`await asyncio.sleep(10)`, ה-except מדפיס cancelled ועושה raise, ה-finally מדפיס finally, ו-`await t` ב-main מקבל את ה-CancelledError.",
+        "ה-finally תמיד רץ ביציאה מה-try, גם כשהחריג ממשיך לעלות."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -442,6 +503,12 @@
       ],
       "answer": 1,
       "explanation": "התיעוד של create_task מזהיר במפורש: שמרו הפניה ל-task. הדפוס המקובל: background_tasks.add(task); task.add_done_callback(background_tasks.discard). בנוסף, exception ב-task שאף אחד לא מחכה לו מדווח רק כ-'Task exception was never retrieved' כשה-task נאסף, ולכן קל לפספס כשלים.",
+      "notes": [
+        "`create_task` מתזמן את ה-coroutine מיד, גם בלי await; ה-task מתחיל לרוץ ב-iteration הבא של ה-loop.",
+        "נכון: ה-loop מחזיק רק weak reference ל-tasks, ו-task בלי הפניה חזקה עלול להיאסף באמצע. שומרים אותו בסט ומסירים ב-`add_done_callback`, או משתמשים ב-TaskGroup.",
+        "create_task לא יוצר thread; ה-task רץ על אותו loop ואותו thread.",
+        "exception ב-task לא נבלע \"תמיד\": הוא נשמר ב-task ומדווח כ-`Task exception was never retrieved`. זה מקשה לראות אותו, אבל לא מסביר היעלמות של tasks תקינים."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -457,6 +524,12 @@
       ],
       "answer": 0,
       "explanation": "TaskGroup (3.11) מממש structured concurrency: אין tasks שממשיכים לרוץ אחרי שהבלוק יצא, ושגיאות לא הולכות לאיבוד (except* מטפל ב-ExceptionGroup). ב-gather, ה-tasks האחרים ממשיכים ברקע בלי שאף אחד מחכה להם. return_exceptions=True ב-gather הוא מודל שלישי: אוספים הכל כערכים.",
+      "notes": [
+        "נכון: gather (ברירת מחדל) מעביר את ה-exception הראשון ל-await אבל משאיר את האחרות רצות ברקע; TaskGroup מבטל את האחרות, מחכה להן, ומרים ExceptionGroup עם כל השגיאות.",
+        "יש הבדל מהותי: TaskGroup מממש structured concurrency, ו-gather עלול להשאיר tasks רצים בלי בעלים.",
+        "TaskGroup לא מתעלם משגיאות; הוא אוסף את כולן ל-ExceptionGroup, שמטפלים בו עם `except*`.",
+        "זה הפוך: gather לא מבטל את האחרות כשאחת נכשלת, ו-TaskGroup כן."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -472,6 +545,12 @@
       ],
       "answer": 1,
       "explanation": "to_thread מעביר את העבודה ל-default executor (thread pool), וזה מתאים לקריאות I/O חוסמות. לקוד Python CPU-bound, ה-GIL מחלק את הזמן בין ה-thread לבין ה-loop, כך שה-loop רץ אבל ה-latency שלו נפגע (convoy). אם heavy היא NumPy שמשחרר GIL, to_thread דווקא מתאים.",
+      "notes": [
+        "קוד Python טהור עדיין מוגבל ב-GIL, ולכן thread נוסף לא מאיץ אותו. אם בכלל, ההחלפות בין threads מאטות מעט.",
+        "נכון: ה-loop יכול להמשיך, אבל ה-thread של heavy מתחרה איתו על ה-GIL, וה-loop מקבל רק חלק מהזמן. ל-CPU-bound אמיתי עדיף ProcessPoolExecutor דרך `run_in_executor`.",
+        "`to_thread` מריץ את הפונקציה ב-default executor, שהוא thread pool נפרד, לא ב-thread של ה-loop.",
+        "asyncio תומך היטב ב-threads דרך `to_thread`, `run_in_executor` ו-`run_coroutine_threadsafe`."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -489,6 +568,12 @@
       ],
       "answer": 2,
       "explanation": "asyncio.timeout מממש timeout על ידי ביטול ה-task, ובסוף הבלוק הוא ממיר CancelledError ל-TimeoutError. כאן הקוד בלע את ה-CancelledError, ולכן הבלוק יצא כרגיל בלי exception, וה-timeout לא דיווח על כלום: הקוד חושב שהכל הצליח. זו הסיבה לא לבלוע CancelledError, או לבצע raise מחדש אחרי ניקוי.",
+      "notes": [
+        "TimeoutError לא נזרק: ה-CancelledError שבאמצעותו timeout מממש את הפקיעה נבלע בקוד, ולכן אין מה להמיר ל-TimeoutError.",
+        "אחרי שהביטול נבלע, הבלוק ממשיך ויוצא כרגיל: `still inside` מודפס ואין TimeoutError.",
+        "נכון: ה-timeout מבטל את ה-task, ה-except בולע את ה-CancelledError ומדפיס swallowed, הבלוק ממשיך ומדפיס still inside ויוצא בלי exception, ולכן אחר כך רק done.",
+        "`asyncio.timeout` ממיר ל-TimeoutError רק אם CancelledError באמת יוצא מהבלוק. כאן הוא נבלע, ולכן לא מודפס timeout."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -504,6 +589,12 @@
       ],
       "answer": 3,
       "explanation": "handler שמודד את עצמו לא רואה את הזמן שבו חיכה ל-loop תפוס. אם קוד כלשהו (parsing של JSON ענק, קריאה סינכרונית, regex כבד) מחזיק את ה-loop 400 ms, כל הבקשות שמחכות סובלות. debug mode מתעד callbacks איטיים (ברירת מחדל 100 ms). uvloop מהיר יותר אבל לא יפתור קוד חוסם.",
+      "notes": [
+        "worker pool לא יעזור אם הבעיה היא קוד שחוסם את ה-loop thread עצמו; ה-handlers מחכים ל-loop, לא ל-threads.",
+        "הגדלת timeout רק מסתירה את הסימפטום אצל הלקוח ולא מאבחנת מה תוקע את ה-loop.",
+        "uvloop מאיץ את ה-overhead של ה-loop, אבל לא יפתור קוד חוסם של 400 ms בין awaits.",
+        "נכון: handler שמודד את עצמו לא רואה את הזמן שחיכה ל-loop תפוס. debug mode (callbacks מעל `slow_callback_duration`) או מוניטור lag מוצאים את הקוד שחוסם את ה-loop."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -538,6 +629,12 @@
       ],
       "answer": 3,
       "explanation": "create_task עוטף את ה-coroutine ב-Task ומתזמן אותו מיד על ה-loop הנוכחי, בלי לחכות לסיום. ה-Task הוא Future, ולכן אפשר `await t`, `t.cancel()` ו-`t.done()`. קריאה רגילה ל-`fetch()` מחזירה coroutine שלא תוזמן בכלל, ו-asyncio לא יוצר threads לכל task.",
+      "notes": [
+        "`create_task` לא מחכה לסיום; הוא חוזר מיד. התוצאה מתקבלת רק עם `await t`.",
+        "`fetch()` לבד מחזיר coroutine שלא מתוזמן; `create_task` עוטף אותו ב-Task ומתזמן אותו על ה-loop, וזה ההבדל.",
+        "asyncio לא יוצר threads ל-tasks; כל ה-tasks רצים על ה-thread של ה-loop.",
+        "נכון: מתקבל Task, תת-מחלקה של Future, שכבר מתוזמן ל-loop; אפשר `await t`, `t.cancel()` ו-`t.done()`."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -567,6 +664,12 @@
       ],
       "answer": 0,
       "explanation": "sleep(0) הוא מקרה מיוחד: הוא לא מחכה זמן, אבל מחזיר את השליטה ל-loop ומכניס את ה-task לסוף ה-ready queue. כך tasks שנוצרו עם create_task מקבלים הזדמנות להתחיל. time.sleep(0) לעומתו לא מעורב ב-loop בכלל, ושום task אחר לא רץ בזמנו.",
+      "notes": [
+        "נכון: `sleep(0)` לא מחכה זמן, אבל מחזיר את השליטה ל-loop ומכניס את ה-task לסוף ה-ready queue, כך ש-tasks מוכנים רצים קודם.",
+        "זמן ההמתנה אפס, אבל עצם ה-await מוותר על השליטה לסיבוב אחד של ה-loop, וזו כל המטרה.",
+        "`asyncio.sleep(0)` לא חוסם את ה-thread; `time.sleep(0)` מוותר על ה-CPU ל-threads אחרים של מערכת ההפעלה, אבל לא מריץ שום task.",
+        "ה-coroutine ממשיכה מהשורה הבאה אחרי שה-loop מחזיר אליה את השליטה."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -582,6 +685,12 @@
       ],
       "answer": 2,
       "explanation": "async with קורא ל-`await sem.__aenter__()` בכניסה ול-`await __aexit__` ביציאה. אם אין permit פנוי, ה-task מוותר על השליטה ומחכה, וה-loop ממשיך להריץ אחרים. אין כאן thread, ו-`with` רגיל על asyncio.Semaphore לא עובד כי הוא לא מממש את הפרוטוקול הסינכרוני.",
+      "notes": [
+        "אין thread נפרד: `async with` רץ על אותו loop, והכניסה פשוט יכולה להיות await.",
+        "ההבדל מהותי: `async with` קורא ל-`__aenter__` ו-`__aexit__` עם await, ו-`with` רגיל על asyncio.Semaphore לא עובד.",
+        "נכון: context manager אסינכרוני: אם אין permit פנוי, `await sem.__aenter__()` משעה את ה-task וה-loop ממשיך להריץ אחרים.",
+        "בתוך בלוק `async with` מותר ואף נפוץ לעשות await; זה בדיוק השימוש ב-Semaphore להגבלת בקשות רשת."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -599,6 +708,12 @@
       ],
       "answer": 3,
       "explanation": "w(2) ישנה פחות ולכן מדפיסה ראשונה, אבל gather מחזיר את התוצאות בסדר הארגומנטים ולא בסדר הסיום, ולכן הרשימה היא [10, 20]. מי שצריך תוצאות לפי סדר סיום משתמש ב-as_completed.",
+      "notes": [
+        "סדר ההדפסות נקבע לפי זמני ה-sleep, ו-w(2) ישנה פחות, ולכן 2 מודפס לפני 1.",
+        "סדר ההדפסות נכון, אבל gather מחזיר תוצאות בסדר הארגומנטים, לא בסדר הסיום, ולכן `[10, 20]`.",
+        "זה הפוך בשני החלקים: ההדפסות לפי סדר הסיום (2 קודם), והתוצאות לפי סדר הארגומנטים.",
+        "נכון: w(2) מסיימת ראשונה ומדפיסה 2, אחריה 1; gather מחזיר את התוצאות בסדר שבו הועברו: `[10, 20]`."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -617,6 +732,12 @@
       ],
       "answer": 0,
       "explanation": "`gather(coros)` מקבל ארגומנט אחד מסוג list, שאינו coroutine, Task או Future, ולכן נזרק TypeError (ההודעה היא `unhashable type: 'list'`, כי gather מכניס כל ארגומנט כמפתח ל-dict פנימי לפני שהוא בודק את הטיפוס), וה-coroutines שנוצרו מקבלים never awaited. התיקון הוא `*coros`. ה-comprehension רק יוצר אובייקטי coroutine ולא מריץ אותם; await בתוכו היה עובד אבל סדרתי; ו-gather עוטף coroutines ב-tasks בעצמו.",
+      "notes": [
+        "נכון: gather מצפה ל-awaitables כארגומנטים נפרדים; רשימה אינה awaitable ולכן נזרק TypeError (בפועל `unhashable type: 'list'`). התיקון: `gather(*coros)`.",
+        "ה-comprehension רק יוצר אובייקטי coroutine בלי להריץ אותם; לכן גם מופיעה האזהרה `never awaited`.",
+        "`await` בתוך ה-comprehension היה עובד, אבל היה מריץ את הבקשות סדרתית ומבטל את הטעם ב-gather; זה לא מה שגורם ל-TypeError.",
+        "gather מקבל coroutines ועוטף אותן ב-Tasks בעצמו; אין צורך ב-create_task מראש."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -632,6 +753,12 @@
       ],
       "answer": 3,
       "explanation": "ב-3.7 CancelledError ירש מ-Exception, וקוד עם `except Exception` בלע ביטולים בטעות. ב-3.8 הוא הועבר ל-BaseException בדיוק כדי למנוע את זה. מי שכותב `except BaseException` או `except:` ריק עדיין בולע ביטול. ביטול תמיד מתבטא כ-exception ב-await, לא כעצירה שקטה.",
+      "notes": [
+        "זו הייתה ההתנהגות ב-3.7, כש-CancelledError ירש מ-Exception. מ-3.8 `except Exception` לא תופס אותו.",
+        "ביטול לא נדחה לסוף ה-try; הוא מתבטא כ-CancelledError שנזרק מיד בנקודת ה-await.",
+        "ביטול תמיד מתבטא כ-exception בנקודת ה-await; אין \"עצירה שקטה\" של task.",
+        "נכון: מ-3.8 CancelledError יורש מ-BaseException, ולכן `except Exception` לא בולע אותו והביטול ממשיך לעלות. `except BaseException` או `except:` ריק עדיין היו בולעים אותו."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -649,6 +776,12 @@
       ],
       "answer": 2,
       "explanation": "create_task רק מכניס את t1 ואת t2 לתור, ולכן main מדפיסה 0 קודם. sleep(0) מכניס את main לסוף התור, אחרי t1 ו-t2, והם רצים לפי סדר היצירה (FIFO) ומדפיסים 1 ו-2. רק אז main חוזרת ומדפיסה 3. בלי sleep(0), 3 היה מודפס לפני 1 ו-2.",
+      "notes": [
+        "`create_task` לא מריץ מיד; main ממשיכה ומדפיסה 0 לפני שה-tasks מקבלים תור.",
+        "זה היה נכון בלי `sleep(0)`. ה-`sleep(0)` מוותר על השליטה, ו-t1 ו-t2 רצים לפני ש-main חוזרת להדפיס 3.",
+        "נכון: main מדפיסה 0; `sleep(0)` מכניס אותה לסוף התור אחרי t1 ו-t2, שרצים לפי סדר היצירה (FIFO) ומדפיסים 1 ו-2; ואז main מדפיסה 3.",
+        "ה-ready queue של ה-loop הוא FIFO, ולכן t1, שנוצר קודם, רץ לפני t2."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -680,6 +813,12 @@
       ],
       "answer": 3,
       "explanation": "asyncio.wait מחזיר שתי קבוצות ולא נוגע ב-pending: הם ממשיכים לרוץ ברקע. לכן עושים `for t in pending: t.cancel()` ואפשר `await asyncio.gather(*pending, return_exceptions=True)`. wait לא זורק TimeoutError גם עם timeout (זה wait_for), ואין deadlock אם לא מחכים להם, רק דליפה.",
+      "notes": [
+        "`asyncio.wait` לא נוגע ב-pending: הם ממשיכים לרוץ ברקע. מי שבוחר בזה מבלבל עם `wait_for` או TaskGroup, שכן מבטלים.",
+        "אין deadlock אם לא מחכים ל-pending; הם פשוט ממשיכים לרוץ ולצרוך משאבים. מחכים להם רק אם באמת צריך את התוצאות.",
+        "`asyncio.wait` לא זורק TimeoutError, גם עם timeout: הוא מחזיר את מה שסיים ואת מה שלא. TimeoutError הוא ההתנהגות של `wait_for`.",
+        "נכון: wait רק מחזיר את קבוצות done ו-pending; צריך `t.cancel()` לכל pending ורצוי `await gather(*pending, return_exceptions=True)` כדי שהביטול יסתיים והחיבורים ישתחררו."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -698,6 +837,12 @@
       ],
       "answer": 1,
       "explanation": "asyncio.run תמיד יוצר loop חדש, ולכן הוא זורק `RuntimeError: asyncio.run() cannot be called from a running event loop` כשקוראים לו מתוך coroutine (בעקיפין דרך פונקציה סינכרונית). זה לא deadlock אלא בדיקה מפורשת. הפתרון: async מקצה לקצה, או, אם חייבים קוד סינכרוני, להריץ אותו ב-thread אחר ושם לקרוא ל-asyncio.run.",
+      "notes": [
+        "`asyncio.run` מחזיר את התוצאה (ה-dict), לא coroutine; הבעיה היא שהוא בכלל נכשל לפני שהוא מחזיר.",
+        "נכון: `asyncio.run` תמיד יוצר loop חדש ובודק שאין loop רץ ב-thread; כאן הוא נקרא מתוך main דרך פונקציה סינכרונית, ולכן נזרק `RuntimeError: asyncio.run() cannot be called from a running event loop`. הפתרון: async מקצה לקצה.",
+        "אין deadlock: זו בדיקה מפורשת שנכשלת מיד עם RuntimeError, לפני שה-loop הפנימי נוצר.",
+        "get_config יכולה להישאר async; הבעיה היא שהקורא שלה סינכרוני ומנסה להריץ loop חדש בתוך loop קיים."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -715,6 +860,12 @@
       ],
       "answer": 0,
       "explanation": "אחרי 0.1 שניות wait_for מבטל את מה שקיבל, אבל זו עטיפת ה-shield ולא t עצמו, ולכן נזרק TimeoutError ומודפס timeout, ו-t ממשיך לרוץ. await t מחכה עוד כ-0.1 שניות, job מדפיסה job done ומחזירה 42. בלי shield, t היה מבוטל ו-await t היה זורק CancelledError. ההגבלה ל-3.11+ חשובה: לפני כן asyncio.TimeoutError לא היה ה-TimeoutError המובנה, ו-except TimeoutError לא היה תופס.",
+      "notes": [
+        "נכון: wait_for מבטל את עטיפת ה-shield אחרי 0.1 שניות ומרים TimeoutError, אבל t עצמו לא מבוטל; `await t` מחכה עוד כ-0.1 שניות, job מדפיסה `job done` ומחזירה 42.",
+        "ה-timeout כן פוקע אחרי 0.1 שניות, לפני ש-job מסיימת (0.2), ולכן timeout מודפס קודם.",
+        "זה היה קורה בלי shield: wait_for היה מבטל את t עצמו, ו-`await t` היה זורק CancelledError.",
+        "`print(await t)` מחכה ש-job תסתיים, ו-job מדפיסה `job done` לפני שהיא מחזירה 42."
+      ],
       "tags": [
         "nvidia"
       ],
@@ -740,6 +891,14 @@
         5
       ],
       "explanation": "time.sleep, requests.get ו-json.loads על קלט ענק מחזיקים את ה-loop thread. hashlib אכן משחרר את ה-GIL, אבל זה עוזר רק ל-threads אחרים: ה-loop thread עצמו תקוע בקריאה עד שהיא חוזרת, ולכן הוא חוסם בדיוק כמו השאר. asyncio.sleep מוותר על השליטה, ו-run_in_executor מריץ את requests ב-thread pool בזמן שה-loop ממשיך.",
+      "notes": [
+        "נכון: `time.sleep` חוסם את ה-loop thread לחצי שנייה, ושום coroutine אחרת לא רצה.",
+        "`await asyncio.sleep` מוותר על השליטה ל-loop, ולכן שאר ה-coroutines ממשיכות לרוץ בזמן ההמתנה.",
+        "נכון: parsing של 50 MB הוא עבודת CPU סינכרונית שמחזיקה את ה-loop thread לזמן ארוך.",
+        "`run_in_executor` מריץ את `requests.get` ב-thread pool, וה-`await` מוותר על השליטה, כך שה-loop ממשיך לרוץ.",
+        "נכון: hashlib משחרר את ה-GIL, אבל זה עוזר רק ל-threads אחרים; ה-loop thread עצמו תקוע בקריאה עד שהיא חוזרת.",
+        "נכון: `requests.get` הוא I/O סינכרוני שחוסם את ה-thread עד שהתשובה מגיעה."
+      ],
       "tags": [
         "nvidia"
       ],
@@ -779,6 +938,12 @@
       ],
       "answer": 3,
       "explanation": "ה-loop ורוב אובייקטי asyncio אינם thread-safe. asyncio.create_task מ-thread בלי loop רץ זורק RuntimeError (no running event loop). loop.create_task מ-thread זר הוא race על מבני הנתונים של ה-loop, וה-loop גם לא מתעורר מה-selector עד אירוע אחר. asyncio.run יוצר loop נפרד ב-thread של ה-driver, שמחזיק אותו עד הסיום, ואובייקטים של ה-loop הראשי לא עובדים בו. run_coroutine_threadsafe מחזיר concurrent.futures.Future שאפשר לחכות לו מה-thread.",
+      "notes": [
+        "`asyncio.create_task` דורש loop רץ ב-thread הנוכחי; מ-thread של driver הוא זורק `RuntimeError: no running event loop`.",
+        "`loop.create_task` מ-thread זר הוא race על מבני הנתונים הלא thread-safe של ה-loop, וה-loop גם עלול לא להתעורר מה-selector עד אירוע אחר.",
+        "`asyncio.run` יוצר loop חדש ב-thread של ה-driver וחוסם אותו עד הסיום; אובייקטים של ה-loop הראשי לא עובדים בו, וה-callback יאט את קבלת ה-buffers.",
+        "נכון: `run_coroutine_threadsafe` ו-`call_soon_threadsafe` הם ה-API ה-thread-safe היחיד להגשת עבודה ל-loop מ-thread אחר; הם גם מעירים את ה-loop."
+      ],
       "tags": [
         "nvidia"
       ],
@@ -799,6 +964,12 @@
       ],
       "answer": 2,
       "explanation": "אחרי 0.1 שניות bad נכשל. TaskGroup מבטל את slow, ה-finally שלה רץ ומדפיס slow cleanup, וה-TaskGroup מחכה שהיא תסתיים לפני שהוא יוצא מהבלוק. רק אז נזרק ExceptionGroup עם ה-ValueError היחיד (ה-CancelledError של slow לא נכלל), ו-except* מדפיס caught 1. after block לא מודפס, כי הבלוק יצא עם exception. זה ההבדל מ-gather: אין task שממשיך לרוץ אחרי השגיאה.",
+      "notes": [
+        "חסר `slow cleanup`: TaskGroup מבטל את slow ומחכה שה-finally שלה ירוץ לפני שהוא מרים את ה-ExceptionGroup.",
+        "הסדר הפוך: TaskGroup לא יוצא מהבלוק (ולא מרים exception) עד שכל ה-tasks, כולל slow המבוטלת, הסתיימו.",
+        "נכון: bad נכשל, TaskGroup מבטל את slow, ה-finally שלה מדפיס `slow cleanup`, ורק אז נזרק ExceptionGroup עם ה-ValueError היחיד ו-`except*` מדפיס `caught 1`.",
+        "`after block` לא מודפס, כי הבלוק יוצא עם ExceptionGroup ולא כרגיל."
+      ],
       "lesson": "py.asyncio"
     },
     {
@@ -816,6 +987,12 @@
       ],
       "answer": 0,
       "explanation": "await על coroutine לא מוותר על השליטה מעצמו: fast מחזירה מיד בלי להגיע ל-Future ממתין, ולכן זו קריאת פונקציה רגילה ו-ticker לא מקבלת הזדמנות לרוץ. רק `await t` מגיע ל-Future שלא הושלם, ואז ticker רצה. במצב אמיתי, לולאה שעושה await על cache hits בלבד יכולה להרעיב את כל ה-loop; פתרון הוא `await asyncio.sleep(0)` מדי פעם.",
+      "notes": [
+        "נכון: `await fast()` על coroutine שמסיימת בלי להגיע ל-Future ממתין היא כמו קריאת פונקציה רגילה ולא מוותרת על השליטה; ticker רצה רק ב-`await t`.",
+        "`create_task` לא מריץ את ticker מיד; היא תרוץ רק כש-main תוותר על השליטה.",
+        "`await fast()` לא נותן ל-ticker לרוץ, כי fast לא מגיעה לשום Future ממתין. await על coroutine לא אומר אוטומטית החלפה.",
+        "`await t` כן מוותר על השליטה, כי t עוד לא הסתיים, ולכן ticker רצה ומדפיסה tick בסוף."
+      ],
       "tags": [
         "nvidia"
       ],
@@ -834,6 +1011,12 @@
       ],
       "answer": 3,
       "explanation": "ביטול של gather מתפשט לכל הילדים שעוד לא סיימו. wait_for לא חוזר מיד: הוא מחכה שה-awaitable המבוטל יסתיים, ורק אז ממיר את הביטול ל-TimeoutError, ולכן ניקוי ארוך מאריך את הקריאה (ואם ילד בולע את הביטול לגמרי, היא יכולה להיתקע). ההתנהגות של ילדים שממשיכים לרוץ שייכת ל-gather שנכשל מ-exception של ילד, או ל-asyncio.wait עם timeout, לא לביטול של gather עצמו.",
+      "notes": [
+        "ביטול של gather עצמו (לא כישלון של ילד) מתפשט לכל הילדים, ולכן a ו-b מבוטלות.",
+        "wait_for לא חוזר מיד אחרי הביטול: הוא מחכה שה-awaitable המבוטל יסתיים, כולל חצי השנייה של הניקוי.",
+        "wait_for ממיר את הביטול שהוא עצמו יזם ל-TimeoutError; ה-CancelledError של הילדים לא יוצא החוצה כפי שהוא.",
+        "נכון: wait_for מבטל את ה-gather, שמבטל את a ו-b; wait_for מחכה שהביטול יסתיים בפועל (כחצי שנייה של ניקוי), ורק אז מרים TimeoutError, אחרי כ-1.5 שניות."
+      ],
       "tags": [
         "nvidia"
       ],

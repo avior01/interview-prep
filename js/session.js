@@ -6,6 +6,7 @@ import { md, esc, codeBlock, inlineMd } from './md.js';
 import { schedule, recordLevel, timeLimit, checkShort, shuffle, isDesktop } from './engine.js';
 import * as ai from './ai.js';
 import { lessonHtml } from './lesson.js';
+import { companyName } from './companies.js';
 
 const TYPE_NAMES = { mcq: 'בחירה', multi: 'כמה תשובות', output: 'מה הפלט', bug: 'מצא את הבאג', order: 'סידור', short: 'תשובה קצרה', oral: 'בעל-פה', code: 'כתיבת קוד' };
 const LEVEL_NAMES = ['', 'בסיס', "ג'וניור", 'mid', 'סניור', 'סניור חזק'];
@@ -54,7 +55,8 @@ function header(q) {
       <span class="chip accent">${esc(sub?.name || '')}</span>
       <span class="chip">רמה ${q.level} · ${LEVEL_NAMES[q.level]}</span>
       <span class="chip">${TYPE_NAMES[q.type]}${q.lang ? ' · ' + (q.lang === 'cpp' ? 'C++' : 'Python') : ''}</span>
-      ${q.tags?.map((t) => `<span class="chip warn">${t === 'nvidia' ? 'NVIDIA' : 'Microsoft'}</span>`).join('') || ''}
+      ${q.tags?.map((t) => `<span class="chip warn">${companyName(t)}</span>`).join('') || ''}
+      ${q.problem ? `<span class="chip" dir="ltr">${esc(q.problem)}</span>` : ''}
     </div>
   </div>`;
 }
@@ -69,7 +71,7 @@ function choiceButtons(q) {
       cls = right ? 'right' : selected ? 'wrong' : '';
     } else if (selected) cls = 'sel';
     return `<button class="choice ${cls}" data-choice="${ci}" ${ui.done ? 'disabled' : ''} aria-pressed="${selected}">
-      <span class="key">${q.type === 'multi' ? (selected ? '✓' : '') : keys[pos]}</span><span class="rich">${inlineMd(q.choices[ci])}</span></button>`;
+      <span class="key">${q.type === 'multi' ? (selected ? '✓' : '') : keys[pos]}</span><span class="choice-body"><span class="rich">${inlineMd(q.choices[ci])}</span>${ui.done && q.notes?.[ci] ? `<span class="choice-note">${inlineMd(q.notes[ci])}</span>` : ''}</span></button>`;
   }).join('')}</div>`;
 }
 

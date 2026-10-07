@@ -202,6 +202,12 @@
         "כשמשתמשים ב-std::atomic עם memory_order_relaxed"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: קריאות בלבד אף פעם אינן data race; דרושה לפחות כתיבה אחת.",
+        "נכון: זו ההגדרה בתקן: אותו memory location, לפחות כתיבה אחת, לפחות גישה אחת לא atomic, ואין happens-before ביניהן. תוכנית כזו היא UB.",
+        "שגוי: זו הגדרה של race condition, מושג רחב יותר שיכול להתקיים גם עם atomics בלבד, בלי data race.",
+        "שגוי: גישות atomic אינן data race, גם עם memory_order_relaxed. relaxed רק לא נותן ordering לנתונים אחרים."
+      ],
       "explanation": "זו ההגדרה מהתקן, ותוכנית עם data race היא UB. קריאות בלבד אינן race. 'תוצאה תלויה בתזמון' היא race condition, מושג רחב יותר שיכול להתקיים גם בלי data race. גישות atomic, גם relaxed, אינן data race.",
       "lesson": "bugs.races"
     },
@@ -217,6 +223,12 @@
         "Valgrind memcheck"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: ASan מזהה שגיאות זיכרון כמו out-of-bounds ו-use-after-free, לא races.",
+        "שגוי: UBSan מזהה UB מקומי כמו signed overflow ו-shift לא חוקי; הוא לא עוקב אחרי threads.",
+        "נכון: TSan (-fsanitize=thread) עוקב אחרי יחסי happens-before בין גישות ומדווח על גישות סותרות בלי סנכרון.",
+        "שגוי: memcheck מזהה זיכרון לא מאותחל ודליפות. ל-Valgrind יש כלי נפרד, Helgrind, ל-races."
+      ],
       "explanation": "ThreadSanitizer (`-fsanitize=thread`) עוקב אחרי יחסי happens-before בין גישות לזיכרון ומדווח על גישות סותרות בלי סנכרון. ASan מיועד לשגיאות זיכרון, UBSan ל-UB כמו overflow, ו-memcheck לזיכרון לא מאותחל ודליפות. ל-Valgrind יש כלי נפרד, Helgrind, אבל memcheck עצמו לא מזהה races.",
       "lesson": "bugs.races"
     },
@@ -232,6 +244,12 @@
         "הקומפיילר ימזג את שתי הפעולות לפעולה אטומית אחת"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: כל פעולה בנפרד אטומית, אבל הצירוף check-then-act לא. שני threads יכולים לראות 1 ושניהם להוריד.",
+        "שגוי: כל הגישות ל-seats הן atomic, ולכן אין data race ואין UB; הבעיה לוגית.",
+        "נכון: אין data race כי כל גישה atomic, אבל בין ה-load ל-fetch_sub thread אחר יכול להוריד. זה race condition לוגי שמוריד את seats ל-−1.",
+        "שגוי: קומפיילר לא ממזג פעולות atomic נפרדות לפעולה אחת; זה היה משנה את הסמנטיקה."
+      ],
       "explanation": "כל גישה בנפרד אטומית, ולכן אין data race ואין UB. אבל בין הבדיקה להורדה thread אחר יכול להוריד, ושני threads יכולים לראות 1 ולהוריד ל-1-. זה race condition: באג לוגי של תזמון. קומפיילר לא ממזג פעולות atomic נפרדות.",
       "lesson": "bugs.races"
     },
@@ -250,6 +268,12 @@
         "`++hits` הוא read-modify-write לא אטומי על משתנה משותף: data race ו-lost updates"
       ],
       "answer": 3,
+      "notes": [
+        "שגוי: int מחזיק עד כ-2.1 מיליארד, הרבה מעל 200000.",
+        "שגוי: הלולאה מ-0 עד 99999 רצה בדיוק 100000 פעמים; האינדקס לא קשור לבאג.",
+        "שגוי: volatile לא נותן אטומיות: ++ עדיין load, add, store, ושני threads עדיין דורסים זה את זה.",
+        "נכון: ++hits הוא load, add, store לא אטומי על משתנה משותף. שני threads קוראים אותו ערך ואחד העדכונים אובד. זה data race, UB."
+      ],
       "explanation": "`++hits` הוא load, add, store. כששני threads עושים load לאותו ערך, אחד העדכונים נדרס. מבחינת התקן זה UB, ובפועל הקומפיילר אף עשוי לצבור ברגיסטר ולכתוב פעם אחת בסוף. תיקון: `std::atomic<int>` עם `fetch_add`, או עדיף, counter מקומי לכל thread וחיבור בסוף. volatile לא נותן אטומיות. int מחזיק עד כ-2.1 מיליארד.",
       "lesson": "bugs.races"
     },
@@ -267,6 +291,12 @@
         "RuntimeError על שינוי global מתוך thread"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: ה-GIL מגן על מבני ה-interpreter, לא על פעולות מורכבות בקוד שלך. n += 1 הוא כמה bytecodes, ומעבר thread ביניהם מאבד עדכון.",
+        "שגוי: threads באותו תהליך חולקים globals; זה בדיוק מה שמאפשר את הבאג.",
+        "נכון: n += 1 מתורגם ל-load, add, store, וה-GIL יכול לעבור thread ביניהם. לכן התוצאה לא מובטחת, וב-free-threaded Python אובדן עדכונים נפוץ.",
+        "שגוי: global n מאפשר כתיבה ל-global מתוך thread בלי שגיאה."
+      ],
       "explanation": "ה-GIL מגן על מבני הנתונים של ה-interpreter, לא על פעולות מורכבות בקוד שלך. `n += 1` מתורגם ל-LOAD_GLOBAL, BINARY_OP, STORE_GLOBAL, ומעבר thread ביניהם מאבד עדכונים. בגרסאות מסוימות של CPython זה קורה לעיתים רחוקות, וזה בדיוק מה שהופך את הבאג למסוכן; ב-free-threaded Python (3.13t) זה קורה הרבה. תיקון: `threading.Lock`.",
       "lesson": "bugs.races"
     },
@@ -281,7 +311,16 @@
         "להגדיר `volatile int counter`",
         "להריץ את התהליך עם affinity לליבה אחת"
       ],
-      "answer": [0, 1],
+      "answer": [
+        0,
+        1
+      ],
+      "notes": [
+        "נכון: fetch_add (או ++ על atomic) הוא RMW אטומי אחד, ולכן אין data race ואין lost updates.",
+        "נכון: mutex משותף לכל הגישות נותן אטומיות וסדר (happens-before) בין ה-threads.",
+        "שגוי: volatile רק מונע מהקומפיילר להשמיט גישות; ++ עדיין load, add, store, וזה עדיין data race.",
+        "שגוי: preemption יכול לקרות בין ה-load ל-store גם על ליבה אחת, ומבחינת התקן זה עדיין UB."
+      ],
       "explanation": "atomic RMW ו-mutex משותף שניהם נותנים אטומיות וסדר. volatile רק מונע מהקומפיילר להשמיט גישות, אבל `++` עדיין load/add/store וזה עדיין data race. ליבה אחת לא עוזרת: preemption יכול לקרות בין ה-load ל-store, ומבחינת התקן זה עדיין UB שהקומפיילר מנצל.",
       "lesson": "bugs.races"
     },
@@ -300,6 +339,12 @@
         "חסר `volatile` על credits"
       ],
       "answer": 0,
+      "notes": [
+        "נכון: check-then-act: כש-credits = 1 שני threads יכולים לראות 1 בשורה 4 ושניהם להוריד ל-−1. צריך compare_exchange או fetch_sub ובדיקת הערך הקודם.",
+        "שגוי: seq_cst הוא כבר ברירת המחדל של load ו-fetch_sub; ordering לא פותר את חלון הזמן בין הבדיקה להורדה.",
+        "שגוי: fetch_sub על std::atomic<int> הוא RMW אטומי.",
+        "שגוי: volatile לא מוסיף אטומיות; credits כבר atomic, והבעיה היא הצירוף של שתי פעולות."
+      ],
       "explanation": "כל פעולה אטומית בנפרד, אבל הצירוף לא. כש-credits=1 שני threads יכולים לראות 1 ושניהם מורידים ל-1-. זה race condition בלי data race. תיקון: לולאת compare_exchange שמורידה רק אם הערך שנקרא עדיין חיובי, או `fetch_sub` ובדיקת הערך הקודם עם החזרה (`fetch_add(1)`) אם הוא היה 0 או פחות. ברירת המחדל של load ו-fetch_sub היא כבר seq_cst.",
       "lesson": "bugs.races"
     },
@@ -318,9 +363,17 @@
         "צריך `sleep` בתוך הלולאה כדי לאפשר ל-thread השני לרוץ"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: volatile 'עובד' בפועל ב-GCC/Clang, אבל זה עדיין data race לפי התקן ולא נותן ordering לנתונים אחרים. התיקון הוא std::atomic<bool>.",
+        "נכון: stop הוא bool רגיל משותף, כלומר data race ו-UB. הקומפיילר רשאי להניח שאף thread לא משנה אותו, לקרוא אותו פעם אחת ולהפוך את הלולאה לאינסופית.",
+        "שגוי: noexcept לא קשור לנראות של stop בין threads.",
+        "שגוי: sleep לא יוצר סנכרון; הוא אולי מסתיר את הבעיה, אבל זה עדיין data race שהקומפיילר רשאי לנצל."
+      ],
       "explanation": "מאחר ש-data race הוא UB, הקומפיילר רשאי להניח שאף thread אחר לא משנה את `stop`. כש-processBlock inlined ולא נוגע ב-stop, `while(!stop)` הופך ל-`if(!stop) for(;;)`. התיקון: `std::atomic<bool> stop{false}` (אפשר load עם relaxed או acquire). volatile 'עובד' בפועל ב-GCC/Clang אבל זה עדיין data race לפי התקן ולא נותן ordering לנתונים אחרים.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q09",
@@ -337,6 +390,12 @@
         "unordered_map דורש `std::shared_mutex`"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: at זורק std::out_of_range על מפתח חסר, וזה exception מוגדר שאפשר לתפוס, לא crash אקראי.",
+        "שגוי: lock_guard משחרר רק ב-destructor, בסוף ה-scope של update, אחרי הכתיבה.",
+        "נכון: get קורא בלי lock בזמן ש-update כותב תחת lock: data race. insert של מפתח חדש יכול לעשות rehash ולשחרר את מערך ה-buckets שהקורא עובר עליו.",
+        "שגוי: shared_mutex הוא אופטימיזציה לקוראים רבים. מה שחובה הוא שגם get ייקח את אותו mutex."
+      ],
       "explanation": "'רק קורא' זה לא פטור: קריאה בלי lock מול כתיבה עם lock היא data race. `table[k]` עם מפתח חדש מכניס צומת ועלול לעשות rehash, ובזמן הזה get עובר על buckets משוחררים. תיקון: אותו lock ב-get (shared_mutex הוא אופטימיזציה, לא חובה). `at` אכן זורק על מפתח חסר, אבל זה exception מוגדר ולא crash אקראי.",
       "lesson": "bugs.races"
     },
@@ -355,6 +414,12 @@
         "צריך `RLock` במקום `Lock`"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: ב-CPython קריאה בודדת מ-dict היא אטומית תחת ה-GIL; הבעיה היא הצירוף של בדיקה והשמה.",
+        "נכון: הבדיקה בשורה 5 מחוץ ל-lock ולא חוזרת בתוכו. שני threads רואים שהמפתח חסר, ושניהם קוראים ל-expensive בזה אחר זה. צריך לבדוק שוב בתוך ה-lock.",
+        "שגוי: with משחרר את ה-lock גם כש-expensive זורק; זה בדיוק תפקידו של context manager.",
+        "שגוי: RLock נחוץ רק כשאותו thread נועל שוב; כאן אין נעילה רקורסיבית."
+      ],
       "explanation": "check-then-act. שני threads עוברים את הבדיקה, אחד נכנס ל-lock ופותח, השני מחכה ואז פותח שוב ודורס. תיקון: לבדוק שוב בתוך ה-lock (double-checked), או לבצע את כל הבדיקה בתוך ה-lock. ב-CPython קריאה בודדת מ-dict בטוחה, ו-with משחרר את ה-lock גם ב-exception.",
       "lesson": "bugs.races"
     },
@@ -373,9 +438,17 @@
         "TSan צודק: הקריאה הראשונה של `g_cfg` היא בלי סנכרון מול הכתיבה. thread יכול לראות מצביע לא-null ולקרוא שדות של Config שעוד לא נראים לו"
       ],
       "answer": 3,
+      "notes": [
+        "שגוי: הבדיקה הכפולה מונעת יצירה כפולה, אבל הקריאה הראשונה (שורה 5) עדיין לא מסונכרנת מול הכתיבה, ולכן TSan צודק.",
+        "שגוי: lock_guard מספיק כאן; unique_lock נדרש רק לשחרור ידני או condition_variable.",
+        "שגוי: make_unique לא פותר את בעיית הפרסום; הבעיה היא הקריאה הלא מסונכרנת של g_cfg.",
+        "נכון: הקריאה בשורה 5 בלי סנכרון מול הכתיבה, ואין release/acquire. thread יכול לראות מצביע לא-null ולקרוא שדות של Config שעוד לא נראים לו. תיקון: magic static, call_once או atomic עם acquire/release."
+      ],
       "explanation": "הקריאה בשורה 5 לא מוגנת, וה-write ל-g_cfg לא release, ולכן אין happens-before בין בניית Config לקריאת השדות שלו ב-thread אחר. גם הקומפיילר רשאי לכתוב את המצביע לפני שסיים לאתחל. תיקונים: `static Config cfg = load(); return cfg;` (magic statics, thread-safe מ-C++11), `std::call_once`, או `std::atomic<Config*>` עם acquire בקריאה ו-release בכתיבה.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q12",
@@ -392,9 +465,17 @@
         "צריך `std::move` בהשמה"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: ה-refcount ב-control block מעודכן אטומית; זו בדיוק ההנחה הנכונה שמטעה אנשים לחשוב שכל shared_ptr בטוח.",
+        "נכון: g_params עצמו (שני מצביעים) נקרא ונכתב משני threads בלי סנכרון: data race. הקורא יכול לקבל מצביע חדש עם control block ישן. תיקון: std::atomic<std::shared_ptr> או mutex קצר.",
+        "שגוי: const Params מונע שינוי של האובייקט המוצבע, לא של המופע g_params שמוחלף.",
+        "שגוי: make_shared כבר מחזיר rvalue, כך ש-std::move לא משנה דבר; ובכל מקרה זה לא נוגע ל-race."
+      ],
       "explanation": "ה-refcount אכן מעודכן אטומית, ולכן שני threads יכולים להחזיק עותקים נפרדים בבטחה. אבל קריאה וכתיבה של אותו אובייקט shared_ptr (שני מצביעים) אינן אטומיות: הקורא יכול לקרוא את מצביע האובייקט החדש עם control block ישן, או להעלות refcount של בלוק שכבר שוחרר. תיקון: `std::atomic<std::shared_ptr<const Params>>` (C++20) או mutex קצר סביב ההעתקה. זה גם הדפוס הנכון ל-RCU פשוט.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q13",
@@ -411,6 +492,12 @@
         "unique_lock צריך להיות lock_guard"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: notify מחוץ ל-lock תקין, ואף חוסך התעוררות מיותרת שמיד נחסמת על ה-mutex.",
+        "שגוי: יש consumer אחד, ו-notify_all לא פותר הודעה שאבדה לפני שה-consumer התחיל לחכות.",
+        "נכון: wait בלי predicate: אם ה-producer הודיע לפני שה-consumer נרדם, ההודעה אובדת והוא נתקע; spurious wakeup מעיר אותו בלי ש-ready נכון. התיקון: cv.wait(lk, []{ return ready; }).",
+        "שגוי: condition_variable::wait דורש unique_lock, כי הוא משחרר ולוקח מחדש את ה-lock; lock_guard לא יתקמפל."
+      ],
       "explanation": "condition variable לא זוכר הודעות. התיקון: `cv.wait(lk, []{ return ready; });`, שבודק את ה-predicate לפני ההמתנה ואחרי כל התעוררות, תחת ה-lock. notify מחוץ ל-lock תקין ואף חוסך התעוררות מיותרת. lock_guard לא עובד עם wait.",
       "lesson": "bugs.races"
     },
@@ -426,7 +513,17 @@
         "הוא מדווח על race בין שני `std::atomic` עם memory_order_relaxed",
         "הוא מבין סנכרון שמומש ב-inline assembly בלי annotations"
       ],
-      "answer": [0, 2],
+      "answer": [
+        0,
+        2
+      ],
+      "notes": [
+        "נכון: TSan הוא happens-before detector: הוא תופס race גם בלי התנגשות בפועל באותו רגע, אבל רק על נתיבי קוד שרצו.",
+        "שגוי: TSan ו-ASan לא משתלבים באותו build; מריצים אותם בנפרד.",
+        "נכון: ההאטה הטיפוסית של TSan היא פי 5–15, והזיכרון גדל בערך פי 5–10.",
+        "שגוי: גישות atomic אינן data race, גם relaxed, ולכן TSan לא מדווח עליהן.",
+        "שגוי: סנכרון ב-inline asm שקוף ל-TSan; בלי annotations הוא ידווח false positives."
+      ],
       "explanation": "TSan הוא happens-before detector: הוא תופס race גם אם ה-threads לא התנגשו בפועל באותו רגע, אבל רק על נתיבי קוד שרצו. TSan ו-ASan לא משתלבים באותו build. גישות atomic אינן data race, גם relaxed. סנכרון ידני ב-asm שקוף לו ודורש annotations, אחרת יהיו false positives.",
       "lesson": "bugs.races"
     },
@@ -446,7 +543,9 @@
       ],
       "explanation": "CAS הופך check-then-act לפעולה אחת: אם ערך אחר נכתב בין הקריאה לניסיון, ה-CAS נכשל ומנסה שוב עם הערך העדכני. אם הערך הגיע ל-0, יוצאים בלי להוריד.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q16",
@@ -463,9 +562,17 @@
         "`tail.store` ב-pop צריך להיות seq_cst"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: ה-acquire על tail ב-push נכון: הוא מבטיח שה-consumer סיים לקרוא את ה-slot לפני שה-producer דורס אותו.",
+        "נכון: head.store עם relaxed לא מפרסם את buf[h % N]. ה-acquire של הצרכן מסתנכרן רק עם store-release, ולכן על ARM הוא יכול לראות head חדש לפני הדגימה.",
+        "שגוי: % N נכון לכל N כל עוד האינדקסים רצים מונוטונית; חזקה של 2 רק חוסכת חלוקה (ונדרשת לעטיפה של size_t, שקורית אחרי 2^64).",
+        "שגוי: release על tail.store כבר מספיק לפרסום ה-slot הפנוי; seq_cst לא נדרש."
+      ],
       "explanation": "publish דורש זוג release/acquire: כתיבת הנתונים, ואז store עם release על האינדקס; הצד השני load עם acquire ורק אז קורא את הנתונים. עם relaxed אין synchronizes-with, ולכן הקריאה של `buf` היא data race. על x86 (TSO) ה-store לא מוקדם בחומרה, אז זה 'עובד' כל עוד הקומפיילר לא מסדר מחדש; ARM מסדר מחדש stores. `% N` נכון לכל N כש-head ו-tail רצים מונוטונית (wrap של size_t דורש N חזקה של 2, אבל זה רק אחרי 2^64). `tail.store` עם release כבר נכון.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q17",
@@ -479,9 +586,17 @@
         "`std::atomic<uint64_t>`; הכותב עושה `c.store(c.load(relaxed) + 1, relaxed)` והקורא `c.load(relaxed)`"
       ],
       "answer": 3,
+      "notes": [
+        "שגוי: volatile עדיין data race לפי התקן, גם אם store מיושר של 64 ביט אטומי בחומרה.",
+        "שגוי: נכון אבל לא הזול ביותר: fetch_add מתקמפל ל-lock xadd, RMW עם lock prefix שעולה כ-20 מחזורים ויותר במסלול החם.",
+        "שגוי: mutex נכון אבל היקר מכולם במסלול שרץ מיליוני פעמים בשנייה.",
+        "נכון: עם כותב יחיד אין צורך ב-RMW אטומי. load ו-store relaxed נפרדים מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם."
+      ],
       "explanation": "volatile עדיין data race לפי התקן (גם אם עובד בפועל). `fetch_add` נכון אבל מתקמפל ל-`lock xadd`, RMW עם lock prefix שעולה בערך 20 מחזורים ויותר. כשיש כותב יחיד, אין צורך ב-RMW אטומי: load ו-store נפרדים עם relaxed מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם. mutex נכון אבל היקר מכולם במסלול החם.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q18",
@@ -498,7 +613,9 @@
       ],
       "explanation": "מראיין מחפש גישה שיטתית ולא 'להוסיף mutex בכל מקום': הבנת מגבלות הכלי, הגדלת כיסוי, וזיהוי הגורם לפני תיקון.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q19",
@@ -512,6 +629,12 @@
         "קריאה מכתובת שכבר שוחררה (use-after-free)"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: זה stale read: ערך שלם ולגיטימי שנכתב פעם, ויכול לקרות גם עם atomics. tearing הוא ערך שאף אחד לא כתב.",
+        "נכון: torn read רואה חלק מהבתים מכתיבה אחת וחלק מאחרת, למשל uint64_t שנכתב בשתי כתיבות 32 ביט. std::atomic<T> מבטיח שאין tearing.",
+        "שגוי: זו חסימה (blocking) על mutex, לא tearing.",
+        "שגוי: use-after-free הוא באג lifetime, לא קריאה של ערך חצוי."
+      ],
       "explanation": "דוגמה קלאסית: `uint64_t` על מעבד 32 ביט נכתב בשתי כתיבות, וקורא באמצע רואה חצי ישן וחצי חדש, ערך שאף thread לא כתב. גם העתקת struct גדול נקרעת. `std::atomic<T>` מבטיח שאין tearing. ערך ישן (stale) הוא תופעה אחרת: הוא ערך שלם ולגיטימי שנכתב פעם, ויכול לקרות גם עם atomics. use-after-free הוא באג lifetime, לא tearing.",
       "lesson": "bugs.races"
     },
@@ -520,7 +643,13 @@
       "level": 1,
       "type": "short",
       "prompt": "באיזה memory_order משתמשות פעולות של `std::atomic` (כמו `load`, `store`, `++`) כשלא מציינים אחד במפורש?",
-      "accept": ["seq_cst", "memory_order_seq_cst", "std::memory_order_seq_cst", "sequentially consistent", "sequential consistency"],
+      "accept": [
+        "seq_cst",
+        "memory_order_seq_cst",
+        "std::memory_order_seq_cst",
+        "sequentially consistent",
+        "sequential consistency"
+      ],
       "explanation": "ברירת המחדל היא `memory_order_seq_cst`, החזקה ביותר: acquire/release ובנוסף סדר כולל אחד על כל פעולות ה-seq_cst. זה הבטוח ביותר אבל לא תמיד הזול ביותר; relaxed מספיק ל-counters, ו-acquire/release ל-publish.",
       "lesson": "bugs.races"
     },
@@ -536,9 +665,17 @@
         "אין data race והתוצאה נכונה, כי כל איבר הוא memory location נפרד; אבל יש false sharing שפוגע בביצועים"
       ],
       "answer": 3,
+      "notes": [
+        "שגוי: data race מוגדר לפי memory location, ואיברי מערך שונים הם locations נפרדים; cache line לא רלוונטי להגדרה.",
+        "שגוי: ה-cache coherence שומר את ה-line עקבי, והחומרה כותבת ברזולוציה של בתים; השכן לא נדרס.",
+        "שגוי: הנכונות תקינה, אבל יש בעיית ביצועים: ה-line קופץ בין הליבות בכל כתיבה.",
+        "נכון: כל איבר הוא memory location נפרד, ולכן אין data race. אבל שני האיברים באותו cache line, וכל כתיבה מבטלת את ה-line אצל הליבה השנייה: false sharing."
+      ],
       "explanation": "data race מוגדר לפי memory location, ואיברי מערך שונים הם locations נפרדים. ה-cache coherence שומר את ה-line עקבי והחומרה כותבת ברזולוציה של בתים, כך שהשכן לא נדרס. אבל ה-line קופץ בין הליבות בכל כתיבה (false sharing), והלולאה מאטה מאוד. תיקון: `alignas(64)` לכל counter, או צבירה מקומית.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q22",
@@ -555,6 +692,12 @@
         "שני mutex-ים באותה תוכנית גורמים ל-deadlock"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: lock_guard משחרר רק ב-destructor בסוף ה-scope, אחרי ה-push_back.",
+        "שגוי: unique_lock ו-lock_guard שקולים כאן; אף אחד מהם לא 'נועל את הווקטור', הם נועלים mutex.",
+        "נכון: addA נועלת mA ו-addB נועלת mB, ולכן שני ה-push_back יכולים לרוץ במקביל. mutex מגן על נתונים רק מפני מי שנועל את אותו mutex.",
+        "שגוי: deadlock דורש thread שמחזיק נעילה ומחכה לשנייה; כאן כל פונקציה לוקחת mutex אחד בלבד."
+      ],
       "explanation": "mutex לא 'מגן על קוד', הוא מגן על נתונים, ורק מפני מי שנועל אותו. כאן addA ו-addB יכולים להריץ push_back במקביל, ו-push_back שעושה reallocation באמצע push_back אחר משבש את הווקטור. תיקון: mutex אחד לכל events, מוגדר לידו. Clang `-Wthread-safety` עם `GUARDED_BY` תופס זאת בקומפילציה. אין deadlock כי כל פונקציה לוקחת mutex אחד בלבד, ו-lock_guard משחרר רק ב-destructor בסוף ה-scope.",
       "lesson": "bugs.races"
     },
@@ -572,6 +715,12 @@
         "מספר קטן מ-400000, אלא אם עוטפים את append ב-`threading.Lock`"
       ],
       "answer": 0,
+      "notes": [
+        "נכון: items.append(i) היא קריאה יחידה למתודה ב-C שרצה כולה תחת ה-GIL, ולכן אטומית בפועל. 4 × 100000 = 400000.",
+        "שגוי: append הוא פעולה אחת ב-C, בניגוד ל-n += 1 שהוא כמה bytecodes עם אפשרות החלפת thread ביניהם.",
+        "שגוי: השגיאה הזו נזרקת כשמשנים מבנה בזמן iteration עליו (כמו dict); כאן אין iteration על items.",
+        "שגוי: lock נחוץ לצירופים כמו בדיקה ואז append, לא ל-append בודד."
+      ],
       "explanation": "`items.append(i)` הוא קריאה יחידה למתודה ממומשת ב-C, שרצה כולה תחת ה-GIL, ולכן אטומית בפועל; גם ב-free-threaded Python יש ל-list lock פנימי. זה שונה מ-`n += 1`, שהוא כמה bytecodes עם אפשרות החלפת thread ביניהם. אבל כל צירוף, כמו `if x not in items: items.append(x)` או `items[i] += 1`, אינו אטומי ודורש lock. אין כאן iteration על הרשימה בזמן שינוי.",
       "lesson": "bugs.races"
     },
@@ -590,6 +739,12 @@
         "`total = total + 1` הוא load אטומי ואחריו store אטומי נפרד; thread אחר יכול לכתוב ביניהם, ועדכון אובד. צריך `++total` או `fetch_add(1)`, שהם RMW אטומי אחד"
       ],
       "answer": 3,
+      "notes": [
+        "שגוי: כל גישה ל-total אטומית, ולכן אין data race ואין UB; יש race condition לוגי.",
+        "שגוי: int מחזיק עד כ-2.1 מיליארד, הרבה מעל 2000000.",
+        "שגוי: seq_cst כבר ברירת המחדל, ו-ordering לא הופך load ו-store נפרדים לפעולה אחת.",
+        "נכון: total = total + 1 הוא load אטומי ואחריו store אטומי נפרד; thread אחר יכול לכתוב ביניהם ועדכון אובד. ++total או fetch_add(1) הם RMW אחד."
+      ],
       "explanation": "כל גישה בנפרד אטומית, ולכן אין data race ואין UB, אבל יש race condition של lost update. בהרצה אמיתית מתקבל בערך 1.2 מיליון. `++total` על atomic הוא `fetch_add(1)`, RMW אחד (ב-x86 `lock xadd`). seq_cst כבר ברירת המחדל, ו-int מחזיק עד כ-2.1 מיליארד.",
       "lesson": "bugs.races"
     },
@@ -605,6 +760,12 @@
         "באג היסטורי בספריות שתוקן ב-C++11, ובקוד מודרני אין צורך להתגונן"
       ],
       "answer": 0,
+      "notes": [
+        "נכון: התקן מתיר ל-wait לחזור בלי notify (futex, signals). wait(lk, pred) בודק את התנאי לפני השינה ואחרי כל התעוררות.",
+        "שגוי: זה הפוך: condition_variable לא שומר notify, וההודעה אובדת (missed wakeup). notify_all לא פותר את זה; predicate כן.",
+        "שגוי: notify_one מעיר thread ממתין כלשהו, וזה תכנון ולא spurious wakeup.",
+        "שגוי: spurious wakeups מותרים בתקן גם היום, ולכן תמיד בודקים predicate."
+      ],
       "explanation": "התקן מתיר ל-wait לחזור בלי notify, מסיבות מימוש (futex, signals). `wait(lk, pred)` בודק את ה-predicate לפני השינה ואחרי כל התעוררות, ולכן מכסה גם את זה. ההפך הוא הנכון לגבי הודעות מוקדמות: condition variable לא שומר notify, וההודעה אובדת (missed wakeup), ולכן גם שם ה-predicate הוא שמציל. notify_one מעיר thread ממתין כלשהו, וזה תכנון ולא באג.",
       "lesson": "bugs.races"
     },
@@ -623,9 +784,17 @@
         "חסר std::mutex סביב גוף הפונקציה"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: ofstream נסגר ב-destructor (RAII) בסוף הפונקציה; זה לא גורם לשני תהליכים לקבל true.",
+        "שגוי: fs::exists שזורק היה מפיל את הפונקציה עם exception, לא מחזיר true.",
+        "נכון: TOCTOU: הבדיקה והיצירה שתי פעולות נפרדות, ותהליך אחר יכול ליצור את הקובץ ביניהן; ofstream פשוט פותח ודורס. צריך יצירה אטומית, כמו O_CREAT | O_EXCL.",
+        "שגוי: std::mutex מסנכרן threads באותו תהליך; המתחרה כאן הוא תהליך אחר."
+      ],
       "explanation": "זה check-then-act מול מערכת הקבצים. שני תהליכים רואים שהקובץ לא קיים, ושניהם יוצרים או פותחים אותו בהצלחה. mutex לא עוזר כי המתחרה הוא תהליך אחר. התיקון הוא שה-OS יבצע check ו-act יחד: `O_CREAT | O_EXCL` (POSIX), `CREATE_NEW` (Windows) או `std::ios::noreplace` (C++23). ofstream נסגר ב-destructor (RAII), ו-`fs::exists` שזורק היה מפיל את הפונקציה, לא מחזיר true.",
       "lesson": "bugs.races",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     },
     {
       "id": "bugs.races.q27",
@@ -641,6 +810,12 @@
         "תמיד `3 3 3`, כי threads מתחילים לרוץ רק אחרי שהלולאה מסתיימת"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: אין שום הבטחה ש-thread מתחיל לרוץ לפני שהלולאה ממשיכה; יצירת thread לא מחכה להרצה שלו.",
+        "נכון: [&] לוכד את i ב-reference, ולכן יש data race בין הקריאה ב-thread ל-++i, ואחרי הלולאה i כבר לא קיים. זה UB, ובפועל רואים לעיתים קרובות 3 3 3.",
+        "שגוי: זה הפלט האפשרי עם [i], כלומר לכידה by value. עם [&] כל thread קורא את אותו משתנה משותף.",
+        "שגוי: גם 'רק אחרי שהלולאה מסתיימת' לא מובטח, ובכל מקרה אז i כבר מחוץ ל-scope, כך שהקריאה UB ולא בהכרח 3."
+      ],
       "explanation": "`[&]` לוכד את i עצמו, לא את ערכו. ה-threads קוראים אותו בזמן שה-main מגדיל אותו (data race), ואחרי סוף הלולאה הוא יוצא מה-scope, אז threads שעוד לא רצו קוראים משתנה מת. בהרצה עם g++ -O2 התקבל `3 3 3`, אבל זה לא מובטח. עם `[i]` כל thread מקבל עותק, והפלט הוא אז 0, 1, 2 בסדר כלשהו: סדר הריצה של threads לא מובטח, וגם לא שהם מתחילים מיד או רק בסוף.",
       "lesson": "bugs.races"
     },
@@ -659,7 +834,10 @@
       ],
       "explanation": "מראיינים בודקים שהמועמד לא משתמש בשני המושגים כמילים נרדפות, ושהוא מבין ש-atomic פותר data race אבל לא בהכרח race condition.",
       "lesson": "bugs.races",
-      "tags": ["nvidia", "microsoft"]
+      "tags": [
+        "nvidia",
+        "microsoft"
+      ]
     },
     {
       "id": "bugs.races.q29",
@@ -675,9 +853,17 @@
         "`0 0`, `0 1` או `1 0`; הפלט `1 1` בלתי אפשרי"
       ],
       "answer": 2,
+      "notes": [
+        "שגוי: 1 1 אפשרי, אבל לא היחיד: אם thread a רץ כולו לפני ש-y.store של b מתבצע, r1 = 0.",
+        "שגוי: 0 0 מותר רק עם release/acquire או relaxed. עם seq_cst יש סדר כולל אחד, וה-load האחרון בו תמיד רואה 1.",
+        "נכון: seq_cst נותן סדר כולל על ארבע הפעולות. הפעולה האחרונה היא load ששני ה-stores קודמים לה, ולכן לפחות אחד מ-r1, r2 הוא 1: אפשרי 0 1, 1 0 או 1 1.",
+        "שגוי: 1 1 אפשרי כששני ה-stores קודמים לשני ה-loads בסדר הכולל, ו-0 0 הוא דווקא הבלתי אפשרי."
+      ],
       "explanation": "ללא ארגומנט, הפעולות הן seq_cst, ויש סדר כולל אחד על ארבעתן. הפעולה האחרונה בסדר הזה היא load, ושני ה-stores קודמים לה, ולכן היא קוראת 1: לפחות אחד מ-r1, r2 הוא 1. `1 1` אפשרי כששני ה-stores קודמים לשני ה-loads. עם release/acquire או relaxed, `0 0` מותר וקורה בפועל אפילו ב-x86 בגלל ה-store buffer, ולכן seq_cst store ב-x86 עולה `xchg` או `mfence`. r1 ו-r2 הרגילים נקראים אחרי join, ש-synchronizes, ולכן אין עליהם data race.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q30",
@@ -694,6 +880,12 @@
         "חייבים `notify_all` במקום `notify`"
       ],
       "answer": 0,
+      "notes": [
+        "נכון: if במקום while: בין ה-notify לרגע שה-consumer מקבל מחדש את ה-lock, consumer אחר יכול לקחת את האיבר. אחרי ה-wait התור שוב ריק; צריך while not queue: cv.wait().",
+        "שגוי: cv.wait() כן משחרר את ה-lock בזמן ההמתנה ולוקח אותו מחדש ביציאה.",
+        "שגוי: כל הגישות ל-list כאן תחת ה-lock של ה-Condition. queue.Queue הוא חלופה טובה, אבל לא התיקון לבאג.",
+        "שגוי: notify_all רק מעיר יותר consumers ומחמיר את התחרות; עם if הבעיה נשארת."
+      ],
       "explanation": "זה stolen wakeup: C1 ממתין, ה-producer מוסיף ומודיע, אבל C2 שהגיע זה עתה תופס את ה-lock ראשון, רואה איבר ולוקח אותו. C1 מתעורר עם התנאי שוב שקרי. תיקון: `while not queue: cv.wait()` או `cv.wait_for(lambda: queue)`. wait כן משחרר את ה-lock בזמן ההמתנה. כל הגישות ל-list כאן תחת ה-lock, כך שהוא לא הבעיה (`queue.Queue` הוא חלופה טובה, לא התיקון לבאג). notify_all רק מעיר יותר threads ומחמיר את התחרות.",
       "lesson": "bugs.races"
     },
@@ -711,9 +903,17 @@
         "הפלט תמיד 4000000: כל תא הוא memory location נפרד, ו-join מסנכרן את הקריאה בסוף. הבעיה היא ביצועים: התאים צמודים באותו cache line, ויש false sharing"
       ],
       "answer": 3,
+      "notes": [
+        "שגוי: כל thread כותב לתא אחר, ותאים שונים הם memory locations נפרדים, ולכן אין data race.",
+        "שגוי: cache coherence לא דורס בתים שכנים; כתיבה לתא משנה רק את הבתים שלו.",
+        "שגוי: הפלט נכון, אבל יש בעיית ביצועים חמורה: התאים באותו cache line, ו-false sharing מאט את הלולאה.",
+        "נכון: כל תא הוא memory location נפרד, ו-join יוצר happens-before לקריאה בסוף, ולכן 4000000. הבעיה: false sharing, כי ה-line קופץ בין ארבע הליבות."
+      ],
       "explanation": "data race דורש אותו memory location; תאים שונים במערך הם locations נפרדים, וקריאת הסכום באה אחרי join, שיוצר happens-before. ה-coherence של ה-cache לא דורס בתים שכנים. אבל כל כתיבה דורשת בעלות בלעדית על ה-line, והוא קופץ בין ארבע הליבות. ב-O2 הקומפיילר עשוי לצבור ברגיסטר ולהעלים את התופעה ב-micro-benchmark, אבל בקוד אמיתי עם עבודה בין ההגדלות היא חוזרת. תיקון: struct עם `alignas(64)` לכל counter, או משתנה מקומי וכתיבה אחת בסוף.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q32",
@@ -728,10 +928,24 @@
         "להשמיט את הארגומנט של ה-store, כך שיהיה seq_cst",
         "להחליף את ה-store ב-`ready.exchange(true, std::memory_order_relaxed)`"
       ],
-      "answer": [0, 1, 4],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "notes": [
+        "נכון: store-release שה-acquire קורא את ערכו יוצר synchronizes-with, ולכן data = 42 נראה לצרכן.",
+        "נכון: release fence לפני store relaxed מסתנכרן עם acquire שקורא את ערך ה-store, לפי כללי ה-fences בתקן.",
+        "שגוי: fence אחרי ה-store לא מסדר את data = 42 ביחס ל-store; הצרכן יכול לראות ready לפני data.",
+        "שגוי: volatile לא יוצר happens-before בין threads, והגישה ל-data נשארת data race.",
+        "נכון: store בלי ארגומנט הוא seq_cst, שכולל סמנטיקת release, ולכן מסתנכרן עם ה-acquire.",
+        "שגוי: exchange עם relaxed הוא RMW אטומי בלי סמנטיקת release, ולכן לא מפרסם את data."
+      ],
       "explanation": "acquire בצד אחד לא מספיק; צריך פעולת release בצד הכותב שה-acquire קורא את ערכה. store-release עושה זאת, וגם store seq_cst (שהוא גם release). release fence שבא **לפני** store relaxed מסתנכרן עם ה-acquire שקורא את ערך ה-store, לפי כללי ה-fences בתקן. fence אחרי ה-store לא מסדר את `data = 42` ביחס ל-store. volatile לא יוצר happens-before, ו-exchange עם relaxed הוא RMW אטומי בלי סמנטיקת release.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q33",
@@ -748,9 +962,17 @@
         "notify_all חייב להיקרא כשה-mutex נעול, אחרת ההודעה תמיד אובדת"
       ],
       "answer": 1,
+      "notes": [
+        "שגוי: notify_one היה מחמיר אם יש כמה workers, ולא סוגר את החלון בין הבדיקה להירדמות.",
+        "נכון: stop משתנה בלי להחזיק את m, ולכן יכול להשתנות אחרי שה-worker בדק את ה-predicate ולפני שנרדם, וה-notify נשלח כשאיש לא ממתין: missed wakeup. צריך לשנות את stop תחת m.",
+        "שגוי: ה-load כבר seq_cst; הבעיה היא חלון הזמן ביחס ל-mutex, לא visibility.",
+        "שגוי: notify מחוץ ל-lock תקין. מה שחשוב הוא שהשינוי של stop ייעשה תחת ה-lock, לא שה-notify יהיה בתוכו."
+      ],
       "explanation": "`wait(lk, pred)` הוא לולאה של בדיקה ואז שחרור-והירדמות, וזה אטומי רק ביחס למי שלוקח את m. shutdown לא לוקח את m, ולכן יכול לשנות את stop ולהודיע בדיוק בחלון בין הבדיקה להירדמות. תיקון: `{ std::lock_guard<std::mutex> g(m); stop = true; } cv.notify_all();`. ה-notify עצמו יכול להישאר מחוץ ל-lock; מה שחשוב הוא שהשינוי נעשה תחתיו (אפילו lock ו-unlock ריקים בין ה-store ל-notify מספיקים). atomic לא פותר את זה, כי הבעיה היא החלון ולא ה-visibility; ה-load כבר seq_cst כברירת מחדל.",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q34",
@@ -767,9 +989,17 @@
         "bit-field unsigned ברוחב ביט אחד יכול להחזיק רק 0; צריך signed"
       ],
       "answer": 0,
+      "notes": [
+        "נכון: לפי התקן, רצף bit-fields סמוכים הוא memory location אחד. כל כתיבה היא read-modify-write של המילה, ולכן זה data race שבו כתיבה אחת דורסת את השנייה.",
+        "שגוי: bit-fields סמוכים אינם שדות נפרדים מבחינת memory model; זה data race אמיתי, לא רק false sharing.",
+        "שגוי: Status st{} מבצע value-initialization ומאפס את כל השדות, כולל bit-fields. וגם משתנה גלובלי מאותחל לאפס ממילא.",
+        "שגוי: unsigned ברוחב ביט אחד מחזיק 0 ו-1; דווקא signed ברוחב ביט אחד בעייתי (0 ו-−1)."
+      ],
       "explanation": "לפי התקן, רצף bit-fields סמוכים ברוחב שונה מאפס הוא memory location אחד. אין לחומרה כתיבה של ביט בודד, ולכן הקומפיילר קורא את המילה, משנה ביט וכותב: TX יכול לכתוב חזרה ערך ישן של rxOverflow. זה data race אמיתי, לא false sharing. תיקון: bit-field ברוחב אפס (`unsigned : 0;`) בין השדות, שדות bool נפרדים, או `std::atomic<uint32_t>` עם `fetch_or`. `{}` מאפס את כל השדות, ו-unsigned של ביט אחד מחזיק 0 ו-1 (דווקא signed של ביט אחד בעייתי).",
       "lesson": "bugs.races",
-      "tags": ["nvidia"]
+      "tags": [
+        "nvidia"
+      ]
     },
     {
       "id": "bugs.races.q35",
@@ -788,7 +1018,9 @@
       ],
       "explanation": "הגרסה הנאיבית בודקת `if key not in cache` מחוץ ל-lock (check-then-act), או מחזיקה lock גלובלי בזמן החישוב ומסדרת את כל המפתחות בתור. ה-Future הוא placeholder שנרשם אטומית: רק ה-thread שרשם אותו מחשב, וכל השאר מחכים לאותו אובייקט. זה אותו רעיון כמו `std::call_once` לכל מפתח.",
       "lesson": "bugs.races",
-      "tags": ["microsoft"]
+      "tags": [
+        "microsoft"
+      ]
     }
   ]
 }

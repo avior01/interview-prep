@@ -5,6 +5,7 @@ import { lessonHtml, lessonText } from './lesson.js';
 import { buildSession, counts, currentWeek, levelOf, PLAN, isDesktop } from './engine.js';
 import { startSession, renderSession, renderSummary, stopSessionTimer } from './session.js';
 import * as ai from './ai.js';
+import { COMPANIES, companyName } from './companies.js';
 import { syncNow, canSync } from './sync.js';
 
 const app = document.getElementById('app');
@@ -55,7 +56,7 @@ function home() {
   const ivDays = s.interviewDate ? Math.ceil((Date.parse(s.interviewDate) - Date.now()) / 86400000) : null;
   app.innerHTML = `
     <h1>שלום 👋</h1>
-    <p class="muted">שבוע ${week} מתוך 16${ivDays !== null && ivDays >= 0 ? ` · ${ivDays} ימים לראיון` : ''}${s.company ? ` · ${s.company === 'nvidia' ? 'NVIDIA' : 'Microsoft'}` : ''}</p>
+    <p class="muted">שבוע ${week} מתוך 16${ivDays !== null && ivDays >= 0 ? ` · ${ivDays} ימים לראיון` : ''}${s.company ? ` · ${companyName(s.company)}` : ''}</p>
     ${cur ? `<div class="card"><p><strong>יש סשן פתוח</strong> (${cur.idx}/${cur.ids.length}).</p>
       <div class="actions"><a class="btn primary" href="#/session">להמשיך את הסשן</a><button class="btn" id="dropCur">לסגור אותו</button></div></div>` : ''}
     <div class="card">
@@ -121,7 +122,7 @@ function practice(params) {
     if (m === 'sub') h = `<label class="field"><span>תת-נושא</span><select id="scope">${subOpts}</select></label>${levelSelect(true)}${lenSelect}`;
     if (m === 'domain') h = `<label class="field"><span>תחום</span><select id="scope">${domainOpts}</select></label>${levelSelect(true)}${lenSelect}`;
     if (m === 'exam') h = `<p class="muted">שאלות אקראיות מכל התחומים, עם שעון. בסוף מקבלים ציון לכל תחום.</p>${levelSelect(false)}${lenSelect}
-      ${st().settings.company ? `<label class="check"><input type="checkbox" id="co"> רק שאלות שמתאימות ל-${st().settings.company === 'nvidia' ? 'NVIDIA' : 'Microsoft'}</label>` : ''}`;
+      ${st().settings.company ? `<label class="check"><input type="checkbox" id="co"> רק שאלות שמתאימות ל-${companyName(st().settings.company)}</label>` : ''}`;
     if (m === 'review') h = `<p class="muted">רק שאלות שטעית בהן וחזרות שהגיע זמנן.</p>${lenSelect}`;
     if (m === 'interview') h = `<p class="muted">סימולציית ראיון: שאלות בעל-פה${isDesktop() ? ' ושאלות קוד' : ''} מתחומים שונים, עם שעון. המראיין בודק כל תשובה ושואל שאלת המשך.</p>
       ${ai.hasKey() ? '' : '<p class="feedback bad small">לא הוגדר מפתח API בהגדרות, אז הבדיקה תהיה עצמית.</p>'}
@@ -225,7 +226,7 @@ function settings() {
       <h2>ראיון</h2>
       <label class="field"><span>תאריך הראיון</span><input type="date" id="interviewDate" value="${esc(s.interviewDate)}"></label>
       <label class="field"><span>חברה</span><select id="company">
-        <option value="">כללי</option><option value="nvidia" ${s.company === 'nvidia' ? 'selected' : ''}>NVIDIA</option><option value="microsoft" ${s.company === 'microsoft' ? 'selected' : ''}>Microsoft</option></select></label>
+        <option value="">כללי</option>${Object.entries(COMPANIES).map(([id, n]) => `<option value="${id}" ${s.company === id ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
       <label class="field"><span>תחילת התוכנית</span><input type="date" id="startDate" value="${esc(s.startDate)}"></label>
     </div>
     <div class="card">

@@ -1,0 +1,1298 @@
+{
+  "domain": "dsp",
+  "subtopic": "interview",
+  "lessons": [
+    {
+      "id": "dsp.interview",
+      "title": "שאלות ראיון DSP/SDR מחברות",
+      "what": "ריכוז של משפחות השאלות שחברות כמו NVIDIA (Aerial), Qualcomm, Apple, Intel, Analog Devices, TI, Keysight, Ettus/NI, Broadcom, MediaTek, Samsung ו-Rafael/Elbit/IAI שואלות בראיונות DSP ו-wireless. המטרה: לדעת לענות מהר ובמספרים על שאלות יסוד (sampling, FFT, filters), ולהחזיק דיון עומק סניורי על סנכרון, OFDM, impairments, fixed-point ותוכנת SDR בזמן אמת על CPU ו-GPU.",
+      "when": [
+        "ראיון לתפקיד modem/PHY, systems engineer, DSP algorithm או SDR software: כמעט תמיד יש סבב אחד או יותר של 'שאלות יסוד' מהירות ואחריו שאלת design.",
+        "כשהמראיין מבקש 'לחשב על הלוח' מספר: noise floor, link budget, רזולוציית FFT, Doppler, CFO, bit growth. הוא בודק שאתה זוכר את הנוסחאות ויודע יחידות.",
+        "כשהשאלה מתחילה ב'מה יקרה אם...' (מה רואים במסך, מה רואים ב-spectrum analyzer, מה יוצא מ-FFT של FFT): המראיין בודק אינטואיציה, לא שינון.",
+        "בראיון NVIDIA Aerial או חברת SDR: שאלה שמחברת אלגוריתם PHY לביצועים (GPU batching, deadlines של slot, buffers ו-overflow)."
+      ],
+      "how": [
+        "הקשב לסוג השאלה: הגדרה (רמה 1), חישוב מספרי (2–3), trade-off (4) או design פתוח (5). ענה בהתאם: משפט אחד להגדרה, נוסחה + מספר לחישוב, שתי חלופות עם מחיר לכל אחת ב-trade-off.",
+        "בחישוב: כתוב את הנוסחה במילים, הצב יחידות, ובדוק סדר גודל (למשל noise floor של 20 MHz חייב להיות סביב -100 dBm).",
+        "בשאלת 'מה רואים': תאר את התופעה הפיזיקלית (aliasing, leakage, הרמוניות) ואז את המספר.",
+        "בשאלת design: התחל מהדרישות (קצב, latency, SNR), צייר שרשרת בלוקים, ציין לכל בלוק אלגוריתם ומחיר חישובי, וסיים ב-failure modes ובמה היית מודד.",
+        "תמיד הוסף follow-up אחד שמראה עומק: 'וזה נשבר כש...' (CFO מעבר לחצי subcarrier, overflow ב-accumulator, IQ imbalance שמשתנה עם תדר)."
+      ],
+      "complexity": "FFT באורך N: O(N log N), כלומר log2(N) שלבים של N/2 butterflies. FIR באורך M: M כפל-חיבור (MAC) לכל דגימה; polyphase decimation ב-M מחלק את העלות ב-M. ZF/MMSE לכל subcarrier ב-SISO: O(1); ב-MIMO עם n אנטנות: O(n^3) להיפוך מטריצה לכל subcarrier.",
+      "pitfalls": [
+        "לבלבל בין dB של הספק (10log) ל-dB של אמפליטודה (20log). EVM של 5% הוא 26 dB, לא 13.",
+        "לשכוח שתדר מינימלי לדגימה הוא 2·fmax ולא 2·רוחב סרט, אלא אם מדובר ב-bandpass sampling שעומד בתנאי הקצוות.",
+        "לחשוב ש-zero-padding משפר רזולוציה. הוא רק מצפף את הדגימה של אותו ספקטרום; הרזולוציה נקבעת באורך ההקלטה.",
+        "להגיד ש-ZF הוא תמיד הכי טוב כי הוא 'מבטל את הערוץ'. ב-SNR נמוך ובערוץ עם deep fade הוא מגביר רעש.",
+        "לשכוח את גבול החד-ערכיות (ambiguity) של הערכת CFO מקורלציה: הפאזה עוטפת ב-±π.",
+        "ב-fixed-point: לשכוח את המקרה -1×-1 ב-Q15, ולשכוח ש-overflow של signed ב-C++ הוא Undefined Behavior."
+      ],
+      "senior": [
+        "לכמת: לא 'יש רעש' אלא 'noise floor של -94 dBm, SNR של 16 dB, מספיק ל-16QAM עם מרווח של כמה dB'.",
+        "לדבר על תקציב שגיאות (EVM budget): רעש תרמי, phase noise, IQ image ו-quantization מתחברים כהספקים.",
+        "לדעת מתי לבחור אלגוריתם לפי המימוש: CIC בלי כפלים ל-FPGA, polyphase ב-CPU, batched FFT ב-GPU.",
+        "ב-SDR בזמן אמת: thread קליטה שלא עושה כלום חוץ מהעתקה ל-ring buffer, pinning ל-cores, ומדידת tail latency ולא ממוצע.",
+        "להזכיר מגבלות של כל שיטה: CP-correlation מוגבל ל-±חצי subcarrier, ZF מגביר רעש, MMSE דורש הערכת σ², IQ imbalance תלוי-תדר דורש מסנן ולא מקדם אחד."
+      ],
+      "diagram": "OFDM symbol (time):\n+----+---------------------+\n| CP |   N samples (IFFT)  |\n+----+---------------------+\n  ^ copy of the tail\nRX: drop CP -> FFT -> /H[k]\n\nRX chain:\nADC>AGC>sync>CFO>FFT>chEst>EQ>LLR",
+      "details": [
+        {
+          "title": "איך נראים הראיונות האלה",
+          "body": "בחברות שבבים ומודמים (Qualcomm, Broadcom, MediaTek, Samsung, Intel) הראיון הטכני הוא בדרך כלל כמה סבבים של 40–60 דקות. סבב אחד הוא C/C++ ו-embedded (ביטים, circular buffer, volatile), וסבבים אחרים הם DSP ותקשורת: Fourier, convolution, FIR/IIR, sampling, ואחר כך OFDM, MIMO, equalizers וסנכרון. מועמדים מדווחים שהמראיינים צוללים לעומק: מי שזורק buzzwords בלי לדעת לגזור נתקע מהר.\n\nב-Apple (wireless/baseband) מופיעים coherence time ו-coherence bandwidth, התפלגות דגימות OFDM, PAPR ומגברי הספק, ארכיטקטורות מקלט ו-coexistence. ב-Analog Devices ו-TI הדגש על sampling, ADC/DAC, fixed-point (Q-format, חילוק בלי מחלק) ו-firmware. ב-Keysight מדברים בשפה של מדידה: EVM, noise figure, spectrum analyzer. ב-Rafael/Elbit/IAI יש שאלות 'מה רואים במנתח ספקטרום', אותות אורתוגונליים, estimation ו-localization.\n\nב-NVIDIA Aerial (5G על GPU) הדרישות הן שילוב: תיאוריית תקשורת ו-3GPP PHY יחד עם CUDA, ניהול זיכרון ועמידה ב-deadline קשיח של slot. גם בראיונות NVIDIA כלליים לחומרה דווחו שאלות DSP ושאלות אינטואיציה כמו 'מה יראה סקופ של 1 GHz כשמודדים גל ריבועי של 1 GHz'."
+        },
+        {
+          "title": "Sampling, aliasing ו-spectral analysis",
+          "body": "משפט הדגימה: אות שתוכנו עד fmax משוחזר אם fs > 2·fmax. אות ממשי בתדר f נדגם ב-fs נראה בתדר |f - k·fs| הקרוב ביותר בטווח [0, fs/2]; למשל 70 kHz ב-fs=100 kHz נראה ב-30 kHz. באות מרוכב (IQ) אין קיפול סביב fs/2: התדר פשוט נלקח מודולו fs לטווח [-fs/2, fs/2), ולכן -700 Hz ב-fs=1000 נראה ב-+300 Hz.\n\nBandpass sampling: אות צר בין fL ל-fH אפשר לדגום מתחת ל-2·fH, אם כל הפס נופל בתוך אזור Nyquist אחד (אין חציה של כפולה של fs/2). התנאי: 2·fH/n ≤ fs ≤ 2·fL/(n-1) עבור n שלם. זה נפוץ ב-IF sampling ב-ADC מהירים.\n\nDFT באורך N ב-fs נותן bin spacing של fs/N (ב-LTE: 30.72 MHz / 2048 = 15 kHz). FFT מחשב אותו ב-log2(N) שלבים. FFT של FFT מחזיר את האות ההפוך בזמן כפול N: x[(-n) mod N]·N. Zero-padding מצפף את הדגימה של ה-DTFT (שימושי לאינטרפולציית שיא), אבל לא מוסיף רזולוציה. טון שנופל בין bins מתפזר (leakage) ושיאו יורד בעד 3.9 dB (scalloping, פקטור 2/π בחצי bin). חלון (Hann, Hamming, Kaiser) מוריד את ה-sidelobes במחיר main lobe רחב יותר. הערכת תדר של טון: FFT, שיא, ואינטרפולציה (פרבולית או לפי היחס בין bins שכנים)."
+        },
+        {
+          "title": "Filters ו-multirate",
+          "body": "FIR: יציאה תלויה רק בכניסות; תמיד יציב (BIBO) ויכול להיות linear phase (מקדמים סימטריים, group delay קבוע). IIR: יש משוב; יעיל יותר במקדמים אבל יציב רק אם כל הקטבים בתוך מעגל היחידה, ורגיש לכימות. Gibbs: חיתוך sinc אידאלי (חלון מלבני) נותן overshoot של כ-9% ליד המעבר שלא קטן כשמאריכים את המסנן, רק מצטופף. חלון חלק מוריד אותו.\n\nConvolution לעומת correlation: correlation היא convolution עם האות השני הפוך בזמן ומצומד. Matched filter הוא correlation עם הפולס הידוע, ממקסם SNR ברגע הדגימה. כפל ספקטרומים של DFT נותן circular convolution; כדי לקבל linear convolution משתמשים ב-overlap-save או overlap-add: ב-overlap-save עם FFT באורך N ומסנן באורך M, כל בלוק מייצר N-M+1 דגימות תקינות ומשליכים את M-1 הראשונות.\n\nMultirate: decimation ב-M דורשת anti-alias filter לפני ההורדה. Polyphase מפצל את המסנן ל-M תת-מסננים שרצים בקצב הנמוך, כך שלא מחשבים יציאות שיושלכו: אותה תוצאה בדיוק, פי M פחות MACs. CIC (cascaded integrator-comb) הוא מסנן בלי כפלים, מתאים להורדת קצב גדולה ב-FPGA, אבל ה-bit growth שלו הוא N·log2(R·M) ביטים (N שלבים, R יחס decimation, M השהיית comb), ויש לו droop שמתקנים ב-FIR קטן אחריו."
+        },
+        {
+          "title": "אפנון, פולסים ומה רואים על המסך",
+          "body": "BPSK/QPSK עם פולס מלבני מייצרים ספקטרום sinc²: main lobe ברוחב null-to-null של 2·Rs סביב הנושא, ו-sidelobes שיורדים לאט (הראשון כ-13 dB מתחת). עם נתונים אקראיים אין קו נושא בולט. Raised cosine עם roll-off α מגביל את הרוחב ל-Rs·(1+α); מחלקים אותו ל-root raised cosine (RRC) במשדר ובמקלט, כך שהצירוף הוא Nyquist (בלי ISI) והמקלט הוא matched filter.\n\nFSK עם שני טונים: הם אורתוגונליים על סימבול באורך T כשהמרווח הוא כפולה של 1/(2T) בגילוי קוהרנטי (MSK משתמש במינימום הזה), ו-1/T בגילוי לא קוהרנטי (כשהפאזה לא ידועה).\n\nשאלת הסקופ: גל ריבועי מורכב מהרמוניות אי-זוגיות; ההרמוניה הבסיסית גבוהה פי 4/π מחצי ה-Vpp. סקופ ברוחב 1 GHz (נקודת -3 dB) שמודד ריבוע של 1 GHz מעביר כמעט רק את הבסיסית, מונחתת ב-3 dB (פקטור 0.707), ולכן רואים בערך סינוס עם Vpp של כ-0.9 מהמקורי. כדי לראות ריבוע סביר צריך רוחב סרט של פי 5 לפחות.\n\nכפל מספרים ברוחב גדול ביחידות כפל צרות: 32×32 ביט עם מכפלים של 8×8 בשיטת בית הספר דורש 4×4 = 16 מכפלות חלקיות, כל אחת מוזזת ב-8·(i+j) ביט ונסכמת (Karatsuba יכול להוריד ל-9)."
+        },
+        {
+          "title": "סנכרון: זמן, תדר ו-frame",
+          "body": "שרשרת מקלט OFDM טיפוסית: AGC, סנכרון זמן גס (קורלציה של ה-CP או preamble), הערכה ותיקון CFO בתחום הזמן, הסרת CP ו-FFT, הערכת ערוץ מ-pilots, equalization, demapping ל-LLR ופענוח.\n\nCFO מסובב את האות ב-e^{j2π·Δf·t}. בקורלציה בין ה-CP לזנב הסימבול (מרחק N דגימות) הפאזה היא 2π·ε, כש-ε הוא ה-CFO ביחידות subcarrier spacing. לכן Δf = (φ/2π)·Δf_sc, והטווח החד-ערכי הוא |ε| < 0.5 (±7.5 kHz ב-15 kHz). preamble עם שני חצאים זהים (Schmidl & Cox) מקצר את ה-lag ל-N/2 ומרחיב את הטווח ל-±1 subcarrier; את החלק השלם מוצאים בשלב נוסף. CFO שאריתי גורם ל-ICI (הפרת אורתוגונליות) ולסיבוב פאזה משותף שגדל עם הזמן.\n\nTiming offset: אם חלון ה-FFT מתחיל מוקדם מדי אבל עדיין בתוך החלק הנקי של ה-CP, הסימבול רק מוזז מעגלית, וזה מופיע כרמפת פאזה ליניארית ב-k (e^{-j2πkd/N}); הערכת הערוץ בולעת את זה. מאוחר מדי או מוקדם מעבר ל-CP: ISI. Sampling frequency offset (SFO) של δ ppm: רמפת פאזה שגדלה גם עם אינדקס ה-subcarrier וגם עם אינדקס הסימבול, ובסוף צריך להחליק דגימה או לבצע resampling.\n\nבמערכות single-carrier: timing recovery עם TED (למשל Gardner, שעובד בשתי דגימות לסימבול ולא תלוי בפאזת הנושא) ולולאה מסדר שני, ו-carrier recovery עם Costas loop או PLL מכוון החלטות."
+        },
+        {
+          "title": "ערוץ, equalization ו-OFDM",
+          "body": "Delay spread (פיזור השהיות בין מסלולים) קובע את coherence bandwidth (בערך 1/delay spread); כשרוחב הסרט של הסימבול גדול ממנו הערוץ סלקטיבי בתדר ונוצר ISI. OFDM מפרק את הערוץ ל-subcarriers צרים, שכל אחד רואה ערוץ כמעט שטוח, וה-CP (ארוך מה-delay spread) הופך את ה-linear convolution של הערוץ ל-circular, כך שאחרי FFT מקבלים Y[k] = H[k]·X[k] + N[k].\n\nDoppler: f_d = v·fc/c. ב-3.5 GHz וב-120 קמ\"ש זה כ-389 Hz; coherence time בערך 0.423/f_d, כלומר כ-1 ms. Doppler מול subcarrier spacing קובע ICI.\n\nהערכת ערוץ: LS על ה-pilots (H = Y/X) ואינטרפולציה בתדר ובזמן; MMSE מוסיף ידע סטטיסטי. Equalization לכל subcarrier: ZF מחלק ב-H (מבטל את הערוץ אבל מגביר רעש פי 1/|H|² ב-deep fade), MMSE משתמש ב-H*/(|H|²+σ²) ומאזן בין ביטול ערוץ להגברת רעש; ב-SNR גבוה הם מתכנסים. ב-MIMO זה (HᴴH+σ²I)^{-1}Hᴴ לכל subcarrier.\n\nבתחום הזמן, דגימות OFDM הן סכום של הרבה סימבולים בלתי תלויים, ולכן לפי משפט הגבול המרכזי הן בקירוב גאוסיות מרוכבות והמעטפת Rayleigh: רוב הזמן נמוכה, לפעמים שיאים גבוהים. זה ה-PAPR, שמכריח את ה-PA לעבוד עם back-off. הורדת PAPR: clipping ו-filtering, SLM, PTS, tone reservation, ו-DFT-s-OFDM (SC-FDMA ב-uplink)."
+        },
+        {
+          "title": "Link budget, noise figure, EVM ו-impairments",
+          "body": "רעש תרמי: -174 dBm/Hz בטמפרטורת חדר, ועוד 10log10(BW), ועוד NF. ב-20 MHz זה -174 + 73 = -101 dBm, ועם NF של 7 dB: -94 dBm. Friis לשרשרת: F = F1 + (F2-1)/G1 + ...; לכן LNA עם הגבר גבוה בהתחלה קובע את ה-NF. FSPL = 20log10(4πd/λ); ב-2.4 GHz ו-1 km זה כ-100 dB.\n\nEVM הוא rms של וקטור השגיאה חלקי rms של הקונסטלציה; SNR ≈ -20log10(EVM). מקורות שגיאה בלתי תלויים מתחברים כהספקים: EVM_total² = Σ EVM_i².\n\nIQ imbalance (הבדל הגבר או פאזה שאינה 90° בין I ל-Q) מייצר תמונת מראה: אות בתדר f מופיע גם ב-f-, וב-OFDM subcarrier k מפריע ל-k-. מודל: y = μ·x + ν·x*; image rejection ratio הוא |μ|²/|ν|². התיקון: הערכת ν (מ-pilots או סטטיסטיקה, למשל E[y²] שאמור להיות אפס לאות proper) והחסרה של w·y*. כשה-imbalance תלוי תדר (מסננים שונים ב-I ו-Q) צריך מסנן תיקון ולא מקדם אחד.\n\nDC offset ו-LO leakage במקלט zero-IF (direct conversion) מופיעים כקו ב-0 Hz, במרכז הספקטרום. פתרונות: הסרת DC (HPF או הערכת ממוצע), השארת ה-DC subcarrier ריק (כמו ב-LTE downlink), או כיוונון LO בהיסט ותיקון דיגיטלי."
+        },
+        {
+          "title": "Fixed-point, SDR בזמן אמת ו-GPU",
+          "body": "Q15: מספר ב-[-1, 1) בתוך int16. מכפלה של שני Q15 היא Q30 ב-int32; מזיזים ימינה ב-15 (רצוי עם עיגול, הוספת 2^14) ומרווים. המקרה היחיד שגולש הוא -1×-1, שנותן +1 שאי אפשר לייצג; cast רגיל יחזיר -32768, ולכן צריך saturation. סכום של M מכפלות Q30 ב-int32 בטוח רק אם Σ|h| < 2 בערך (במונחים ממשיים); אחרת צריך guard bits, למשל accumulator של 40 ביט כמו ב-DSP של TI. חילוק בלי מחלק: restoring/non-restoring division, הזזה, השוואה וחיסור, ביט אחד של מנה בכל איטרציה.\n\nSDR על host (למשל USRP X310 עם UHD): ב-200 MS/s ו-sc16 כל ערוץ הוא 800 MB/s. אם ה-host לא קורא מספיק מהר ה-buffer במכשיר מתמלא ו-UHD מדפיס O (overflow); D מסמן חבילות שאבדו ברשת. הפתרונות: thread קליטה ייעודי שרק מעתיק ל-ring buffer, buffers גדולים ב-socket וב-num_recv_frames, jumbo frames, pinning ל-cores באותו NUMA node של ה-NIC, CPU governor במצב performance, בלי הקצאות זיכרון ובלי I/O בנתיב החם.\n\nGPU (NVIDIA Aerial, cuPHY): ב-5G NR עם 30 kHz SCS יש slot של 0.5 ms, וכל העיבוד של uplink (הערכת ערוץ, equalization, soft demapping, LDPC decode) חייב להיגמר לפני ה-deadline. FFT בודד של 4096 נקודות לא ממלא GPU, ולכן מאגדים (batch) את כל הסימבולים והאנטנות בהשקה אחת (cuFFT batched), משתמשים ב-CUDA graphs ו-streams כדי להוריד launch overhead, שומרים layout רציף לגישה coalesced, ומודדים latency בזנב ההתפלגות. ב-O-RAN split 7.2x ה-FFT וה-CP נעשים ב-RU, וה-GPU מתחיל מהערכת הערוץ."
+        }
+      ],
+      "examples": [
+        {
+          "title": "דוגמה: link budget מקצה לקצה",
+          "body": "נתונים: משדר 20 dBm, אנטנות איזוטרופיות (0 dBi), 2.4 GHz, מרחק 1 km בחלל חופשי, רוחב סרט 20 MHz, NF של המקלט 5 dB.\n\n- λ = c/f = 0.125 m. FSPL = 20log10(4π·1000/0.125) ≈ 100 dB.\n- הספק קליטה: 20 - 100 = -80 dBm.\n- noise floor: -174 + 10log10(20e6) + 5 = -174 + 73 + 5 = -96 dBm.\n- SNR = -80 - (-96) = 16 dB.\n\nמה לומדים: 16 dB מספיק בנוחות ל-QPSK ובקושי ל-16QAM לא מקודד. כל הכפלה של המרחק עולה 6 dB; כל dB של NF יורד ישר מה-SNR."
+        },
+        {
+          "title": "דוגמה: CFO מתוך קורלציית CP",
+          "body": "OFDM עם 15 kHz subcarrier spacing. מחשבים סכום של conj(r[n])·r[n+N] על אורך ה-CP ומקבלים פאזה של 0.6 rad.\n\n- ε = 0.6 / (2π) ≈ 0.0955 subcarrier.\n- Δf = 0.0955 · 15 kHz ≈ 1432 Hz.\n\nאם ה-CFO האמיתי היה 0.7 subcarrier, הפאזה הייתה 2π·0.7 = 4.40 rad, שעוטפת ל-4.40 - 2π = -1.88 rad, והמעריך היה מחזיר -0.3 subcarrier: שגיאה של subcarrier שלם. לכן צריך שלב הערכה של החלק השלם (preamble או סנכרון תדר גס)."
+        },
+        {
+          "title": "דוגמה: bandpass sampling של IF",
+          "body": "אות בין 60 ל-80 MHz (IF של 70, רוחב 20). דגימה רגילה דורשת יותר מ-160 MS/s. התנאי 2·fH/n ≤ fs ≤ 2·fL/(n-1):\n\n- n=2: 80 ≤ fs ≤ 120.\n- n=3: 53.3 ≤ fs ≤ 60.\n- n=4: 40 ≤ fs ≤ 40 (קצה בלי מרווח, לא מעשי).\n\nלכן 56 MS/s תקין (הפס נופל כולו באזור Nyquist השלישי, בין 56 ל-84), אבל 50 (הפס חוצה את 75) ו-65 (חוצה את 65) לא. בפועל משאירים מרווח לסינון anti-alias ו-jitter של השעון, שהשפעתו גדלה עם תדר הכניסה."
+        },
+        {
+          "title": "דוגמה: תקציב EVM",
+          "body": "מקלט עם SNR תרמי של 30 dB (EVM 3.16%), phase noise שתורם EVM של 2%, ו-IQ image ברמה של -35 dBc (EVM 1.78%).\n\n- בהספקים: 10^-3 + 0.0004 + 10^-3.5 ≈ 0.001716.\n- EVM כולל = √0.001716 ≈ 4.14%, כלומר SNR אפקטיבי של כ-27.7 dB.\n\nמה לומדים: אי אפשר לחבר אחוזים ישירות; מחברים ריבועים. ה-IQ image וה-phase noise לבדם כבר מגבילים את המערכת מתחת ל-30 dB, ולכן שיפור NF לא יעזור הרבה."
+        }
+      ],
+      "glossary": [
+        {
+          "term": "Nyquist rate / aliasing",
+          "def": "קצב הדגימה המינימלי הוא 2·fmax. תוכן מעל fs/2 מתקפל לתדר |f - k·fs| ואי אפשר להפריד אותו אחר כך, ולכן שמים anti-alias filter לפני ה-ADC."
+        },
+        {
+          "term": "Bandpass sampling",
+          "def": "דגימה של אות צר מתחת ל-2·fH, בתנאי שכל הפס נמצא באזור Nyquist אחד: 2fH/n ≤ fs ≤ 2fL/(n-1). נפוץ בדגימת IF."
+        },
+        {
+          "term": "Complex (IQ) sampling",
+          "def": "דגימה של I ו-Q יחד; אין קיפול סביב fs/2 אלא wrap מודולו fs לטווח [-fs/2, fs/2). תדרים חיוביים ושליליים נבדלים."
+        },
+        {
+          "term": "DFT / FFT",
+          "def": "DFT באורך N ממפה N דגימות ל-N bins ברווח fs/N. FFT מחשב אותו ב-O(N log N), ב-log2(N) שלבים של N/2 butterflies (radix-2). FFT כפול מחזיר N·x[(-n) mod N]."
+        },
+        {
+          "term": "Zero-padding",
+          "def": "הוספת אפסים לפני FFT מצפפת את דגימת ה-DTFT ומשפרת מיקום שיא, אבל לא משפרת יכולת להפריד שני טונים קרובים."
+        },
+        {
+          "term": "Spectral leakage / scalloping",
+          "def": "טון שלא נופל על bin מתפזר לכל ה-bins. בחצי bin השיא יורד לפקטור 2/π (כ-3.9 dB). חלון מקטין sidelobes במחיר main lobe רחב."
+        },
+        {
+          "term": "Gibbs phenomenon",
+          "def": "overshoot של כ-9% ליד קפיצה כשחותכים טור/תגובה אידאלית בחלון מלבני; לא נעלם עם הארכה. מקטינים בחלון חלק."
+        },
+        {
+          "term": "FIR / IIR, BIBO stability",
+          "def": "FIR בלי משוב, תמיד יציב ויכול להיות linear phase. IIR עם משוב, יציב רק אם כל קטבי H(z) בתוך מעגל היחידה (|p|<1)."
+        },
+        {
+          "term": "Linear phase / group delay",
+          "def": "FIR עם מקדמים סימטריים מעכב את כל התדרים באותו זמן ((M-1)/2 דגימות), כך שצורת הפולס נשמרת."
+        },
+        {
+          "term": "Convolution / correlation / matched filter",
+          "def": "correlation היא convolution עם העתק הפוך-בזמן ומצומד. matched filter מתאם עם הפולס הידוע ומקסם SNR ברגע הדגימה."
+        },
+        {
+          "term": "Circular convolution / overlap-save",
+          "def": "כפל DFTs נותן convolution מעגלית. overlap-save: בלוקים חופפים באורך N, משליכים M-1 דגימות ראשונות ושומרים N-M+1."
+        },
+        {
+          "term": "Polyphase decimation",
+          "def": "פירוק מסנן ה-anti-alias ל-M תת-מסננים שרצים בקצב הנמוך; אותה תוצאה בדיוק, פי M פחות חישובים."
+        },
+        {
+          "term": "CIC filter",
+          "def": "שרשרת integrators ו-combs בלי כפלים להורדת קצב גדולה. bit growth = N·log2(R·M); יש droop שמתקנים ב-FIR."
+        },
+        {
+          "term": "Raised cosine / RRC / roll-off",
+          "def": "פולס Nyquist בלי ISI; הרוחב התפוס Rs·(1+α). מפצלים ל-RRC במשדר ובמקלט, כך שהמקלט הוא matched filter."
+        },
+        {
+          "term": "Spectrum של BPSK/QPSK מלבני",
+          "def": "צורת sinc² סביב הנושא, main lobe null-to-null של 2·Rs, sidelobe ראשון כ-13 dB מתחת; עם נתונים אקראיים אין קו נושא."
+        },
+        {
+          "term": "FSK orthogonality",
+          "def": "שני טונים על סימבול T אורתוגונליים במרווח k/(2T) בגילוי קוהרנטי (MSK במינימום), ו-k/T בגילוי לא קוהרנטי."
+        },
+        {
+          "term": "OFDM / subcarrier spacing",
+          "def": "ריבוב של הרבה נושאות אורתוגונליות בעזרת IFFT. spacing = fs/N (LTE: 15 kHz; NR: 15·2^μ kHz)."
+        },
+        {
+          "term": "Cyclic prefix (CP)",
+          "def": "העתקת זנב הסימבול לתחילתו. אם הוא ארוך מה-delay spread, הערוץ נראה כ-convolution מעגלית ואין ISI: Y[k]=H[k]X[k]."
+        },
+        {
+          "term": "PAPR",
+          "def": "יחס הספק שיא לממוצע. ב-OFDM הדגימות כמעט גאוסיות, ולכן PAPR גבוה. מורידים ב-clipping+filtering, SLM, PTS, tone reservation, DFT-s-OFDM."
+        },
+        {
+          "term": "Rayleigh envelope",
+          "def": "המעטפת של משתנה גאוסי מרוכב; כך מתפלגת אמפליטודת דגימות OFDM כשיש הרבה subcarriers."
+        },
+        {
+          "term": "CFO / ICI",
+          "def": "היסט תדר בין מתנדי המשדר והמקלט. ב-OFDM מסובב פאזה ושובר אורתוגונליות (ICI). מעריכים מקורלציית CP או preamble."
+        },
+        {
+          "term": "Schmidl & Cox",
+          "def": "סנכרון OFDM עם preamble שחציו הראשון זהה לשני: מטריקה לזמן, ופאזת הקורלציה ל-CFO בטווח ±1 subcarrier."
+        },
+        {
+          "term": "Timing offset / SFO",
+          "def": "חלון FFT מוקדם בתוך ה-CP נותן רמפת פאזה ב-k בלבד. SFO (שעון דגימה שונה) נותן רמפה שגדלה גם עם k וגם עם אינדקס הסימבול."
+        },
+        {
+          "term": "Gardner TED / Costas loop",
+          "def": "Gardner: מגלה שגיאת תזמון בשתי דגימות לסימבול, לא רגיש לפאזת נושא. Costas: לולאת שחזור נושא ל-BPSK/QPSK."
+        },
+        {
+          "term": "Delay spread / coherence bandwidth",
+          "def": "פיזור ההשהיות בערוץ multipath; coherence bandwidth בערך ההופכי שלו. רוחב סרט גדול ממנו = ערוץ סלקטיבי בתדר."
+        },
+        {
+          "term": "Doppler / coherence time",
+          "def": "f_d = v·fc/c; coherence time בערך 0.423/f_d. קובע כמה מהר צריך לעדכן הערכת ערוץ."
+        },
+        {
+          "term": "LS channel estimation",
+          "def": "על pilot ידוע: Ĥ = Y/X, ואחר כך אינטרפולציה בתדר ובזמן."
+        },
+        {
+          "term": "ZF / MMSE equalizer",
+          "def": "ZF: 1/H, מבטל ערוץ ומגביר רעש. MMSE: H*/(|H|²+σ²), מאזן; ב-MIMO (HᴴH+σ²I)^{-1}Hᴴ."
+        },
+        {
+          "term": "Thermal noise / noise figure",
+          "def": "-174 dBm/Hz + 10log10(BW) + NF. NF הוא כמה ה-SNR מתדרדר בבלוק."
+        },
+        {
+          "term": "Friis formula",
+          "def": "F = F1 + (F2-1)/G1 + (F3-1)/(G1G2) + ... ביחידות לינאריות; הבלוק הראשון שולט."
+        },
+        {
+          "term": "FSPL / link budget",
+          "def": "FSPL = 20log10(4πd/λ). link budget: Pt + G - FSPL - noise floor = SNR."
+        },
+        {
+          "term": "EVM",
+          "def": "rms של וקטור השגיאה חלקי rms של הקונסטלציה; SNR ≈ -20log10(EVM). מקורות בלתי תלויים מתחברים כריבועים."
+        },
+        {
+          "term": "IQ imbalance / image",
+          "def": "אי-התאמה בהגבר או בפאזה בין I ל-Q: y = μx + νx*. נוצרת תמונה ב-f- (ב-OFDM מ-k ל-k-). מתקנים בהחסרת w·y*."
+        },
+        {
+          "term": "DC offset / LO leakage / zero-IF",
+          "def": "במקלט direct conversion דליפת LO ו-self-mixing יוצרים קו ב-0 Hz. מתקנים בהסרת DC, DC subcarrier ריק או LO offset."
+        },
+        {
+          "term": "Q15 / saturation",
+          "def": "פורמט שבר ב-int16. מכפלה Q30, הזזה ב-15 ועיגול; -1×-1 גולש ולכן מרווים ל-32767."
+        },
+        {
+          "term": "Guard bits / accumulator",
+          "def": "סכום של M מכפלות יכול לגדול ב-log2(M) ביטים; accumulator רחב (40 ביט ב-DSP) או חסם Σ|h| מונעים overflow."
+        },
+        {
+          "term": "Restoring division",
+          "def": "חילוק בשלבי הזזה, השוואה וחיסור; ביט מנה אחד לכל איטרציה, בלי כפל."
+        },
+        {
+          "term": "Partial products",
+          "def": "כפל רחב מורכב ממכפלות של חלקים צרים, מוזזות ונסכמות: 32×32 ב-8×8 דורש 16."
+        },
+        {
+          "term": "Square-wave harmonics / scope bandwidth",
+          "def": "ריבוע = הרמוניות אי-זוגיות 1/k; הבסיסית בגובה 4/π מחצי ה-Vpp. סקופ ברוחב f מראה ריבוע של f כסינוס מונחת."
+        },
+        {
+          "term": "UHD overflow (O)",
+          "def": "ה-host לא קרא דגימות בזמן וה-buffer במכשיר התמלא; דגימות אבדו. D מסמן אובדן חבילות ברשת."
+        },
+        {
+          "term": "Batched cuFFT / CUDA graphs",
+          "def": "הרבה FFTs קטנים בהשקה אחת כדי למלא את ה-GPU; CUDA graphs ו-streams מורידים launch overhead של pipeline קבוע."
+        },
+        {
+          "term": "Slot / TTI deadline",
+          "def": "ב-5G NR, slot של 14 סימבולים: 1 ms ב-15 kHz, 0.5 ms ב-30 kHz. כל העיבוד חייב להסתיים לפני ה-deadline של HARQ."
+        }
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "id": "dsp.interview.q01",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מערכת שמקליטה ומשמיעה רעש אקוסטי בתחום 2 kHz עד 20 kHz. מה קצב הדגימה המינימלי התיאורטי (דגימה ממשית רגילה)?",
+      "choices": [
+        "40 kHz",
+        "36 kHz, פעמיים רוחב הסרט",
+        "20 kHz, כי זה התדר המקסימלי",
+        "4 kHz, פעמיים התדר הנמוך"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: 2·fmax = 2·20 kHz. כל רכיב מעל fs/2 יתקפל לתוך התחום.",
+        "2·B מספיק רק ב-bandpass sampling כשהתנאי על הקצוות מתקיים; כאן fL=2 kHz קרוב לאפס, אין אזור Nyquist שמכיל את כל הפס מתחת ל-40 kHz.",
+        "דגימה בדיוק ב-fmax מקפלת את כל החצי העליון של הפס; צריך פי שניים.",
+        "תדר הקצה התחתון לא רלוונטי לדגימה רגילה; זה היה מקפל כמעט את כל הפס."
+      ],
+      "explanation": "משפט הדגימה דורש fs > 2·fmax = 40 kHz. רוחב הסרט (18 kHz) לא קובע כאן, כי ה-bandpass sampling עם fH/B ≈ 1.1 לא מאפשר שום אזור Nyquist נמוך יותר. בפועל בוחרים 44.1 או 48 kHz כדי להשאיר מרווח ל-anti-alias filter.",
+      "lesson": "dsp.interview",
+      "problem": "Analog Devices embedded/DSP interview"
+    },
+    {
+      "id": "dsp.interview.q02",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו טענה על FIR ו-IIR נכונה תמיד?",
+      "choices": [
+        "IIR תמיד דורש יותר מקדמים מ-FIR לאותה חדות",
+        "כל FIR הוא linear phase",
+        "FIR עם מקדמים סופיים תמיד יציב (BIBO)",
+        "IIR יציב אם כל האפסים בתוך מעגל היחידה"
+      ],
+      "answer": 2,
+      "notes": [
+        "הפוך: המשוב מאפשר ל-IIR להשיג חדות עם מעט מקדמים; זה היתרון העיקרי שלו.",
+        "רק FIR עם מקדמים סימטריים או אנטי-סימטריים הוא linear phase; FIR כללי יכול להיות minimum phase למשל.",
+        "נכון: אין משוב, היציאה היא סכום סופי של כניסות חסומות כפול מקדמים סופיים.",
+        "יציבות נקבעת לפי הקטבים (שורשי המכנה), לא לפי האפסים. אפסים קובעים minimum phase."
+      ],
+      "explanation": "FIR הוא סכום סופי של כניסות בלבד, ולכן כל כניסה חסומה נותנת יציאה חסומה. IIR יציב רק אם כל הקטבים בתוך מעגל היחידה. linear phase אפשרי ב-FIR סימטרי, לא מובטח בכל FIR, ו-IIR מגיע לרוב לאותה חדות עם הרבה פחות מקדמים.",
+      "lesson": "dsp.interview",
+      "problem": "Broadcom DSP interview"
+    },
+    {
+      "id": "dsp.interview.q03",
+      "level": 1,
+      "type": "short",
+      "prompt": "כמה שלבים (stages) של butterflies יש ב-FFT radix-2 באורך 1024?",
+      "accept": [
+        "10",
+        "עשרה"
+      ],
+      "explanation": "radix-2 מחלק את הבעיה לחצי בכל שלב: log2(1024) = 10 שלבים, ובכל שלב 512 butterflies, סה\"כ O(N log N).",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm DSP interview (FFT algorithms)"
+    },
+    {
+      "id": "dsp.interview.q04",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התפקיד העיקרי של ה-cyclic prefix ב-OFDM?",
+      "choices": [
+        "להוריד את ה-PAPR של הסימבול",
+        "לשמש כ-pilot להערכת ערוץ",
+        "להגדיל את ה-SNR על ידי חזרה על דגימות",
+        "לבלוע את ה-delay spread ולהפוך את הערוץ ל-convolution מעגלית, כך שאין ISI ו-equalization היא כפל אחד לכל subcarrier"
+      ],
+      "answer": 3,
+      "notes": [
+        "ה-CP הוא העתק של דגימות קיימות ולא משנה את התפלגות השיאים.",
+        "ה-CP משמש לסנכרון זמן ותדר (קורלציה), אבל הערכת ערוץ נעשית מ-pilots ידועים ב-subcarriers.",
+        "המקלט זורק את ה-CP; האנרגיה שלו היא הפסד, לא רווח SNR.",
+        "נכון: זה המנגנון שהופך ערוץ סלקטיבי בתדר ל-N ערוצים שטוחים."
+      ],
+      "explanation": "כשה-CP ארוך מה-delay spread, ההשהיות של הערוץ 'נבלעות' בו, ובחלון ה-FFT הערוץ פועל כ-convolution מעגלית. אז Y[k] = H[k]·X[k] ו-equalization היא חלוקה אחת לכל subcarrier. ה-CP הוא overhead, לא מוסיף הגנה מפני רעש ולא מוריד PAPR.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm wireless systems interview"
+    },
+    {
+      "id": "dsp.interview.q05",
+      "level": 1,
+      "type": "short",
+      "prompt": "ב-LTE דוגמים ב-30.72 MHz ומשתמשים ב-FFT של 2048. מה ה-subcarrier spacing ב-kHz?",
+      "accept": [
+        "15",
+        "15khz",
+        "15000",
+        "15000hz"
+      ],
+      "explanation": "spacing = fs/N = 30.72e6/2048 = 15,000 Hz. ב-5G NR עם μ=1 ה-spacing כפול (30 kHz) וה-slot מתקצר ל-0.5 ms.",
+      "lesson": "dsp.interview",
+      "problem": "NVIDIA Aerial 5G PHY interview topic",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.interview.q06",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה הקשר בין correlation של x עם y לבין convolution?",
+      "choices": [
+        "correlation שווה ל-convolution של x עם y הפוך בזמן ומצומד",
+        "correlation היא convolution בתחום התדר בלבד",
+        "הן זהות לחלוטין לכל אות",
+        "correlation מוגדרת רק לאותות ממשיים"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: היפוך הזמן והצמדה הם כל ההבדל; זה הבסיס ל-matched filter.",
+        "שתיהן מוגדרות בתחום הזמן; בתחום התדר correlation היא X·Y* ו-convolution היא X·Y.",
+        "רק אם y סימטרי וממשי; באופן כללי התוצאות שונות.",
+        "correlation מרוכבת נפוצה מאוד (סנכרון IQ); לכן מופיע הצמוד."
+      ],
+      "explanation": "r_xy[l] = Σ x[n+l]·y*[n], וזה בדיוק convolution של x עם y*[-n]. לכן matched filter הוא FIR שמקדמיו הם הפולס הפוך בזמן ומצומד. ההבדל איננו בכמות החישוב.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm DSP interview (convolution)"
+    },
+    {
+      "id": "dsp.interview.q07",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "טון ממשי של 70 kHz נדגם ב-100 kHz בלי מסנן anti-alias. באיזה תדר הוא יופיע בתחום [0, 50] kHz?",
+      "choices": [
+        "70 kHz",
+        "20 kHz",
+        "30 kHz",
+        "50 kHz"
+      ],
+      "answer": 2,
+      "notes": [
+        "70 kHz מעל fs/2 = 50 kHz ולא יכול להיראות בתחום.",
+        "20 kHz מתקבל אם מחסירים 70 מ-fs/2 ומוסיפים בטעות; הקיפול הוא סביב 50, כלומר 50 - (70-50) = 30.",
+        "נכון: 100 - 70 = 30 kHz (קיפול סביב fs/2 = 50).",
+        "fs/2 הוא גבול האזור, לא המקום שאליו מתקפל הטון."
+      ],
+      "explanation": "התדר הנראה הוא |f - k·fs| הקרוב: |70 - 100| = 30 kHz. זה aliasing ואי אפשר להבדיל אחרי הדגימה בינו לבין טון אמיתי של 30 kHz.",
+      "lesson": "dsp.interview",
+      "problem": "Analog Devices interview (Nyquist and aliasing)"
+    },
+    {
+      "id": "dsp.interview.q08",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "במקלט direct-conversion (zero-IF) רואים קו חזק בדיוק במרכז הספקטרום שמופיע גם בלי אות. מה המקור הסביר?",
+      "choices": [
+        "DC offset ו-LO leakage שמתערבב עם עצמו",
+        "IQ imbalance",
+        "aliasing של שידור חזק מחוץ לפס",
+        "phase noise של ה-LO"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: ב-zero-IF התדר 0 של ה-baseband הוא בדיוק ה-LO, ולכן כל self-mixing ו-offset נוחת שם.",
+        "IQ imbalance יוצר תמונת מראה של אות קיים ב-f-, לא קו קבוע בלי אות.",
+        "alias ייפול בתדר שתלוי ב-fs ובתדר המפריע, לא דווקא ב-0 Hz.",
+        "phase noise מרחיב קווים קיימים (חצאיות סביב נושא), לא יוצר קו DC."
+      ],
+      "explanation": "דליפת LO ל-RF וערבוב עצמי, יחד עם offsets ב-mixer וב-baseband, יוצרים DC ב-I וב-Q, כלומר קו ב-0 Hz. מקלט IF או low-IF לא סובל מזה באותה צורה. LTE downlink משאיר את ה-DC subcarrier ריק בדיוק בגלל זה.",
+      "lesson": "dsp.interview",
+      "problem": "Apple RF systems interview (receiver architectures)"
+    },
+    {
+      "id": "dsp.interview.q09",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איך מוגדר EVM (Error Vector Magnitude)?",
+      "choices": [
+        "היחס בין הספק השיא להספק הממוצע",
+        "rms של ההפרש בין הנקודה הנמדדת לאידאלית, חלקי rms של הקונסטלציה האידאלית",
+        "אחוז הביטים השגויים",
+        "ההפרש בין הספק הערוץ להספק הערוץ הסמוך"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה PAPR, מדד של האות, לא של איכות האפנון.",
+        "נכון: זה המדד הסטנדרטי ב-3GPP ובמכשירי מדידה; כולל רעש, phase noise, IQ imbalance ועיוותים.",
+        "זה BER, נמדד אחרי פענוח ומושפע מ-FEC.",
+        "זה ACLR, מדד של דליפה לערוצים שכנים."
+      ],
+      "explanation": "EVM משווה את הנקודה שנמדדה לנקודה האידאלית בקונסטלציה: rms של וקטור השגיאה חלקי rms של הנקודות האידאליות, לרוב באחוזים או ב-dB. אם השגיאה רעש בלבד, SNR ≈ -20log10(EVM).",
+      "lesson": "dsp.interview",
+      "problem": "Keysight signal-analysis interview topic"
+    },
+    {
+      "id": "dsp.interview.q10",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה ידפיס הקוד?",
+      "lang": "python",
+      "code": "import numpy as np\nx = np.array([1, 2, 3, 4])\ny = np.fft.fft(np.fft.fft(x)) / len(x)\nprint(np.round(y.real).astype(int))",
+      "choices": [
+        "[1 2 3 4]",
+        "[1 4 3 2]",
+        "[4 3 2 1]",
+        "[10 0 0 0]"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה היה נכון עם ifft בשלב השני; fft פעמיים לא הופך את עצמו.",
+        "נכון: x[(-n) mod 4] = x[0], x[3], x[2], x[1].",
+        "היפוך מלא שוכח שאינדקס 0 נשאר במקומו (מודולו N).",
+        "10 הוא ה-DC של fft אחד (סכום האיברים), לא התוצאה אחרי שני FFTs."
+      ],
+      "explanation": "DFT של DFT נותן N·x[(-n) mod N]: האיבר הראשון נשאר, והשאר מתהפכים. לכן אחרי חלוקה ב-N מתקבל [1, 4, 3, 2]. כדי לקבל את x חזרה צריך ifft, או לבצע conj-fft-conj.",
+      "lesson": "dsp.interview",
+      "problem": "DSP interview: FFT(FFT(x))"
+    },
+    {
+      "id": "dsp.interview.q11",
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו שיטות מורידות בפועל את ה-PAPR של אות OFDM? (בחר את כל הנכונות)",
+      "choices": [
+        "clipping ואחריו filtering",
+        "Selected Mapping (SLM)",
+        "Partial Transmit Sequence (PTS)",
+        "DFT-spread OFDM (SC-FDMA)",
+        "הגדלת מספר ה-subcarriers",
+        "הארכת ה-CP"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "notes": [
+        "נכון: חותך שיאים ומסנן את ה-out-of-band; המחיר הוא עיוות in-band (EVM).",
+        "נכון: משדרים את הגרסה עם PAPR נמוך מבין כמה סיבובי פאזה; צריך side information.",
+        "נכון: מחלקים לתת-בלוקים ומבחרים פאזות לכל אחד כדי לבטל שיאים.",
+        "נכון: זה מה ש-LTE uplink משתמש בו כדי לחסוך בהספק ה-PA בטלפון.",
+        "שגוי: יותר subcarriers מגדילים את ה-PAPR המקסימלי האפשרי ומחזקים את הגאוסיות.",
+        "שגוי: ה-CP הוא העתק של דגימות הסימבול, לא משנה את השיאים."
+      ],
+      "explanation": "clipping+filtering, SLM ו-PTS פועלים על האות או על בחירת פאזות, ו-DFT-s-OFDM מפזר כל סימבול על כל ה-subcarriers וכך מקבל התנהגות קרובה ל-single carrier. הגדלת N רק מקרבת את ההתפלגות לגאוסית, ו-CP ארוך לא משנה את התפלגות השיאים.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: combating PAPR in OFDM"
+    },
+    {
+      "id": "dsp.interview.q12",
+      "level": 2,
+      "type": "short",
+      "prompt": "QPSK בקצב 20 Msym/s עם RRC ו-roll-off של 0.25. מה הרוחב התפוס (MHz)?",
+      "accept": [
+        "25",
+        "25mhz",
+        "25e6"
+      ],
+      "explanation": "רוחב raised cosine הוא Rs·(1+α) = 20·1.25 = 25 MHz (כ-±12.5 MHz סביב הנושא). QPSK לא משנה את הרוחב לעומת BPSK באותו קצב סימבולים; הוא מכפיל את קצב הביטים.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm DSP interview (modulation)"
+    },
+    {
+      "id": "dsp.interview.q13",
+      "level": 2,
+      "type": "short",
+      "prompt": "מה ה-noise floor (dBm) של מקלט ברוחב 20 MHz עם NF של 7 dB בטמפרטורת חדר? (מספר שלם)",
+      "accept": [
+        "-94",
+        "-94dbm",
+        "-93.99",
+        "-94.0"
+      ],
+      "explanation": "-174 dBm/Hz + 10log10(20e6) ≈ -174 + 73 = -101 dBm, ועוד 7 dB NF: -94 dBm. כל הכפלה של רוחב הסרט מוסיפה 3 dB.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm RF/modem interview (noise figure)"
+    },
+    {
+      "id": "dsp.interview.q14",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה משתמשים במבנה polyphase ב-decimation ב-M?",
+      "choices": [
+        "הוא משפר את הנחתת ה-stopband של המסנן",
+        "הוא מבטל את הצורך במסנן anti-alias",
+        "הוא מחשב רק את היציאות שנשמרות, ולכן חוסך פי M בחישוב עם תוצאה זהה",
+        "הוא מוריד את ה-latency של המסנן לאפס"
+      ],
+      "answer": 2,
+      "notes": [
+        "המקדמים זהים; אותה תגובת תדר בדיוק. זה שינוי מבנה, לא תכנון.",
+        "המסנן עדיין שם, רק מפורק לפאזות; בלעדיו יהיה aliasing.",
+        "נכון: M תת-מסננים באורך L/M רצים בקצב fs/M, כלומר L/M MACs לכל דגימת כניסה במקום L.",
+        "ה-group delay של ה-FIR נשאר (M-1)/2 דגימות בקצב הגבוה; polyphase לא משנה אותו."
+      ],
+      "explanation": "במימוש נאיבי מסננים בקצב הגבוה וזורקים M-1 מכל M יציאות. polyphase מחלק את המקדמים ל-M תת-מסננים שכל אחד רץ בקצב הנמוך על פאזה אחרת של הכניסה, כך שמחשבים רק את היציאות שנשמרות. התוצאה זהה מתמטית; תגובת התדר והצורך במסנן לא משתנים.",
+      "lesson": "dsp.interview",
+      "problem": "DSP interview: why polyphase for decimation/interpolation"
+    },
+    {
+      "id": "dsp.interview.q15",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה ידפיס הקוד?",
+      "lang": "python",
+      "code": "import numpy as np\na = np.array([1, 2, 3])\nb = np.array([1, 1, 0])\ny = np.fft.ifft(np.fft.fft(a) * np.fft.fft(b))\nprint(np.round(y.real).astype(int))",
+      "choices": [
+        "[1 3 5 3]",
+        "[1 3 5]",
+        "[4 3 5]",
+        "[3 5 4]"
+      ],
+      "answer": 2,
+      "notes": [
+        "זו convolution לינארית (np.convolve) באורך 4; ה-DFT באורך 3 לא יכול להחזיר 4 ערכים.",
+        "זו convolution לינארית חתוכה; שוכח שהאיבר הרביעי (3) עוטף ומתווסף לאינדקס 0.",
+        "נכון: y[0]=a0+a2=4, y[1]=a1+a0=3, y[2]=a2+a1=5.",
+        "זה סיבוב של התשובה הנכונה, כאילו העטיפה הלכה לסוף ולא להתחלה."
+      ],
+      "explanation": "כפל DFTs באורך 3 נותן convolution מעגלית: הדגימה האחרונה של ה-convolution הלינארית ([1 3 5 3]) עוטפת לאינדקס 0, ולכן 1+3=4. זה בדיוק מה שה-CP מנצל ב-OFDM, ומה ש-overlap-save מונע כשרוצים convolution לינארית.",
+      "lesson": "dsp.interview",
+      "problem": "DSP interview: circular vs linear convolution (OFDM CP)"
+    },
+    {
+      "id": "dsp.interview.q16",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שני מספרים ב-Q15 (int16) מוכפלים לתוך int32. מה צריך לעשות כדי לקבל תוצאה ב-Q15?",
+      "choices": [
+        "להזיז ימינה ב-16 כי זה חצי מ-32 ביט",
+        "להזיז ימינה ב-15 (רצוי עם עיגול) ולהרוות את המקרה -1×-1",
+        "להזיז שמאלה ב-1 ולקחת את 16 הביטים העליונים, בלי שום מקרה קצה",
+        "לחלק ב-32768 ב-float ולהמיר חזרה"
+      ],
+      "answer": 1,
+      "notes": [
+        "הזזה ב-16 נותנת Q14, כלומר תוצאה קטנה פי 2.",
+        "נכון: Q30 >> 15 = Q15; עיגול ב-2^14 וסטורציה של 0x40000000.",
+        "הזזה שמאלה ב-1 ואז 16 עליונים שקולה מתמטית להזזה ב-15, אבל -1×-1 נותן 0x80000000 שגולש; בלי saturation זה -1 במקום ~+1.",
+        "עובד אבל מבטל את כל הטעם ב-fixed-point על מעבד בלי FPU, ואיטי."
+      ],
+      "explanation": "Q15×Q15 = Q30. הזזה ימינה ב-15 מחזירה ל-Q15; הוספת 2^14 לפני ההזזה נותנת עיגול במקום חיתוך. המקרה -1×-1 = +1 לא ניתן לייצוג ב-Q15 ולכן צריך saturation ל-32767.",
+      "lesson": "dsp.interview",
+      "problem": "Texas Instruments DSP interview (fixed-point Q format)"
+    },
+    {
+      "id": "dsp.interview.q17",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מתכננים LPF בשיטת החלון עם sinc אידאלי חתוך (חלון מלבני). מגדילים את אורך המסנן מ-31 ל-301. מה קורה ל-ripple ליד תדר הקטעון?",
+      "choices": [
+        "ה-ripple נעלם כמעט לגמרי",
+        "ה-ripple קטן פי 10, ביחס לאורך",
+        "ה-ripple גדל כי יש יותר מקדמים",
+        "השיא נשאר בערך 9%, רק נעשה צר יותר והמעבר חד יותר"
+      ],
+      "answer": 3,
+      "notes": [
+        "זו האינטואיציה השגויה הנפוצה; ההתכנסות היא בממוצע ריבועי, לא נקודתית.",
+        "רוחב ה-transition קטן בערך ביחס לאורך, אבל לא גובה ה-overshoot.",
+        "הגובה לא גדל; הוא מתכנס לערך קבוע של כ-9% מהקפיצה.",
+        "נכון: Gibbs. רק חלון חלק יותר מוריד את השיא."
+      ],
+      "explanation": "זו תופעת Gibbs: ה-overshoot של כ-9% (הפס-עובר מגיע לכ-1.09) נשאר כמעט קבוע, רק נעשה צר יותר ומתקרב לקצה. כדי להקטין אותו מחליפים חלון (Hamming, Kaiser) ומשלמים ב-transition band רחב יותר.",
+      "lesson": "dsp.interview",
+      "problem": "Intel DSP interview: Gibbs phenomenon in filter design"
+    },
+    {
+      "id": "dsp.interview.q18",
+      "level": 2,
+      "type": "output",
+      "prompt": "מכנה של IIR מסדר 2 הוא 1 - 1.5z^-1 + 0.7z^-2. מה ידפיס הקוד?",
+      "lang": "python",
+      "code": "import numpy as np\na = [1, -1.5, 0.7]\np = np.roots(a)\nprint(np.round(np.abs(p), 3), np.all(np.abs(p) < 1))",
+      "choices": [
+        "[0.837 0.837] True",
+        "[0.7 1.] False",
+        "[1.5 0.7] False",
+        "[0.837 0.837] False"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: |p|² = 0.7 (מכפלת השורשים), שני הקטבים בתוך מעגל היחידה.",
+        "בלבול בין מקדמי הפולינום לשורשים שלו.",
+        "המקדמים אינם הקטבים; צריך לפתור את הפולינום.",
+        "הגדלים נכונים אבל המסקנה הפוכה: 0.837 < 1 ולכן True."
+      ],
+      "explanation": "שורשי z² - 1.5z + 0.7 מרוכבים צמודים עם |p| = √0.7 ≈ 0.837 < 1, ולכן המסנן יציב (BIBO). לקטבים מרוכבים צמודים ב-z²+a1z+a2, הרדיוס הוא √a2.",
+      "lesson": "dsp.interview",
+      "problem": "Broadcom interview: is this IIR stable?"
+    },
+    {
+      "id": "dsp.interview.q19",
+      "level": 2,
+      "type": "short",
+      "prompt": "צריך לכפול שני מספרים של 32 ביט, אבל בחומרה יש רק מכפלים של 8×8 ביט. בשיטת בית הספר (בלי Karatsuba), כמה מכפלות חלקיות 8×8 צריך?",
+      "accept": [
+        "16",
+        "שש עשרה",
+        "שש-עשרה"
+      ],
+      "explanation": "כל מספר מתפרק ל-4 בתים; כל זוג בתים מוכפל: 4×4 = 16 מכפלות, כל אחת מוזזת ב-8·(i+j) ביט ונסכמת לתוצאה של 64 ביט. Karatsuba רקורסיבי מוריד ל-9 במחיר יותר חיבורים.",
+      "lesson": "dsp.interview",
+      "problem": "DSP interview: multiply 32-bit numbers with 8-bit multipliers"
+    },
+    {
+      "id": "dsp.interview.q20",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "משדר BPSK בקצב 1 Mbps עם פולסים מלבניים על נושא של 100 MHz, נתונים אקראיים. מה רואים ב-spectrum analyzer?",
+      "choices": [
+        "קו בודד ב-100 MHz",
+        "שני קווים ב-99.5 ו-100.5 MHz",
+        "מלבן שטוח ברוחב 1 MHz סביב 100 MHz",
+        "צורת sinc² סביב 100 MHz עם main lobe ברוחב 2 MHz בין האפסים ו-sidelobes יורדים"
+      ],
+      "answer": 3,
+      "notes": [
+        "זה נושא לא מאופנן. ב-BPSK עם נתונים אקראיים ממוצע הסימבולים אפס ואין קו נושא.",
+        "זה ספקטרום של AM בטון 0.5 MHz או של רצף 1010 קבוע, לא של נתונים אקראיים.",
+        "מלבן ברוחב Rs מתקבל רק עם פולסי sinc אידאליים (roll-off 0), לא מלבניים.",
+        "נכון: sinc² עם אפסים ב-±1 MHz, ±2 MHz וכן הלאה מהנושא."
+      ],
+      "explanation": "פולס מלבני ברוחב T נותן ספקטרום sinc² עם אפסים בכפולות של 1/T = 1 MHz מהמרכז, ולכן main lobe של 2 MHz null-to-null, ו-sidelobes שיורדים לאט (הראשון כ-13 dB מתחת). נתונים אקראיים עם ממוצע אפס מדכאים את קו הנושא.",
+      "lesson": "dsp.interview",
+      "problem": "Elbit Systems interview: how a signal looks on a spectrum analyzer"
+    },
+    {
+      "id": "dsp.interview.q21",
+      "level": 3,
+      "type": "order",
+      "prompt": "סדר את שלבי מקלט OFDM טיפוסי, מהכניסה מה-ADC ועד הביטים.",
+      "items": [
+        "AGC וקביעת רמה ב-ADC",
+        "סנכרון זמן גס (קורלציית CP או preamble)",
+        "הערכה ותיקון CFO בתחום הזמן",
+        "הסרת CP ו-FFT",
+        "הערכת ערוץ מה-pilots",
+        "equalization לכל subcarrier",
+        "soft demapping ל-LLR ופענוח FEC"
+      ],
+      "explanation": "קודם קובעים רמה וגבולות סימבול, כי בלי זמן אין מה לתקן. CFO מתקנים לפני ה-FFT כי אחריו הוא כבר הפך ל-ICI. אחרי FFT יש ערוץ שטוח לכל subcarrier: מעריכים מ-pilots, מאזנים, ומוציאים LLRs לפענוח.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: signal processing procedure at the receiver"
+    },
+    {
+      "id": "dsp.interview.q22",
+      "level": 3,
+      "type": "short",
+      "prompt": "OFDM עם subcarrier spacing של 15 kHz. הפאזה של Σ conj(r[n])·r[n+N] על אורך ה-CP יצאה 0.6 rad. מה ה-CFO המוערך ב-Hz? (מספר שלם)",
+      "accept": [
+        "1432",
+        "1430",
+        "1432hz",
+        "1.43khz",
+        "1.432khz",
+        "1433"
+      ],
+      "explanation": "הפאזה היא 2π·ε כש-ε ביחידות subcarrier: ε = 0.6/(2π) ≈ 0.0955, ו-Δf = ε·15 kHz ≈ 1432 Hz. השיטה תקפה רק ל-|ε| < 0.5 (±7.5 kHz), אחרת הפאזה עוטפת.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: OFDM time and frequency offset estimation"
+    },
+    {
+      "id": "dsp.interview.q23",
+      "level": 3,
+      "type": "output",
+      "prompt": "subcarrier אחד עם ערוץ חלש h = 0.1 ושונות רעש σ² = 0.1. מה ידפיס הקוד?",
+      "lang": "python",
+      "code": "import numpy as np\nh, s2 = 0.1, 0.1\ng_zf = 1 / h\ng_mmse = np.conj(h) / (abs(h)**2 + s2)\nprint(round(g_zf, 2), round(g_mmse, 2))",
+      "choices": [
+        "10.0 10.0",
+        "10.0 0.91",
+        "10.0 9.09",
+        "0.1 0.91"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה היה נכון רק כש-σ² ≪ |h|²; כאן הרעש גדול פי 10 מ-|h|².",
+        "נכון: 1/0.1 = 10, ו-0.1/(0.01+0.1) = 0.909.",
+        "9.09 = 1/0.11, כלומר שכחו את ה-h* במונה.",
+        "ZF הוא 1/h ולא h; h הוא ה-matched filter, לא המשווה."
+      ],
+      "explanation": "ZF מחלק ב-h ומגביר פי 10 (ואת הרעש פי 100 בהספק). MMSE נותן h*/(|h|²+σ²) = 0.1/0.11 ≈ 0.91: כמעט לא מגביר, כי ב-SNR של -10 dB על ה-subcarrier הזה הגברה רק מזיקה. ב-SNR גבוה σ²→0 והשניים מתכנסים.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm/Marvell interview: ZF vs MMSE equalizer"
+    },
+    {
+      "id": "dsp.interview.q24",
+      "level": 3,
+      "type": "short",
+      "prompt": "LNA עם הגבר 15 dB ו-NF של 1 dB, ואחריו mixer עם NF של 10 dB. מה ה-NF הכולל ב-dB? (ספרה אחת אחרי הנקודה)",
+      "accept": [
+        "1.9",
+        "1.89",
+        "1.88",
+        "1.885",
+        "1.9db"
+      ],
+      "explanation": "Friis ביחידות לינאריות: F1 = 1.259, F2 = 10, G1 = 31.6. F = 1.259 + 9/31.6 = 1.544, כלומר 1.9 dB. ה-mixer הרועש תורם רק 0.9 dB בזכות ההגבר של ה-LNA לפניו.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm RF/modem interview (noise figure)"
+    },
+    {
+      "id": "dsp.interview.q25",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מדדו EVM של 5% rms, והשגיאה נשלטת על ידי רעש. מה ה-SNR האפקטיבי?",
+      "choices": [
+        "13 dB",
+        "20 dB",
+        "26 dB",
+        "34 dB"
+      ],
+      "answer": 2,
+      "notes": [
+        "10log10(1/0.05) = 13; EVM הוא יחס של rms אמפליטודות, לכן 20log.",
+        "20 dB מתאים ל-EVM של 10%.",
+        "נכון: 20log10(20) ≈ 26 dB.",
+        "34 dB מתאים ל-EVM של כ-2%."
+      ],
+      "explanation": "EVM הוא יחס אמפליטודות: SNR ≈ -20log10(0.05) = 26 dB. שימוש ב-10log נותן 13 dB, טעות נפוצה.",
+      "lesson": "dsp.interview",
+      "problem": "Keysight interview (EVM)"
+    },
+    {
+      "id": "dsp.interview.q26",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה ידפיס הקוד (C++20)?",
+      "lang": "cpp",
+      "code": "#include <cstdint>\n#include <iostream>\nint main() {\n    int16_t a = -32768, b = -32768;\n    int32_t p = int32_t(a) * b;\n    int16_t r = int16_t(p >> 15);\n    std::cout << p << \" \" << r << \"\\n\";\n}",
+      "choices": [
+        "1073741824 32767",
+        "1073741824 -32768",
+        "-1073741824 -32768",
+        "Undefined Behavior: הכפל גולש"
+      ],
+      "answer": 1,
+      "notes": [
+        "32767 היה מתקבל רק עם saturation מפורש; cast רגיל לא מרווה.",
+        "נכון: 2^30 נכנס ב-int32, ו-32768 עוטף ל-int16 כ-32768-.",
+        "מכפלה של שני שליליים חיובית; 2^30 לא גולש ב-int32.",
+        "אין UB: האופרנדים מקודמים ל-int (32 ביט) והתוצאה 2^30 בטווח."
+      ],
+      "explanation": "int16 מקודם ל-int לפני הכפל, ולכן אין overflow בכפל: p = 2^30. אחרי הזזה ב-15 מקבלים 32768, שלא נכנס ל-int16; ההמרה ב-C++20 מוגדרת מודולו 2^16 ומחזירה -32768 (לפני C++20 זה היה implementation-defined, בפועל אותה תוצאה). לכן Q15 multiply חייב saturation.",
+      "lesson": "dsp.interview",
+      "problem": "Texas Instruments DSP interview (fixed-point overflow)"
+    },
+    {
+      "id": "dsp.interview.q27",
+      "level": 3,
+      "type": "short",
+      "prompt": "טלפון נע ב-120 קמ\"ש, נושא 3.5 GHz. מה תדר Doppler המקסימלי ב-Hz? (מספר שלם)",
+      "accept": [
+        "389",
+        "388.9",
+        "388",
+        "390",
+        "389hz"
+      ],
+      "explanation": "f_d = v·fc/c = 33.33 m/s · 3.5e9 / 3e8 ≈ 389 Hz. coherence time בקירוב 0.423/f_d ≈ 1.1 ms, כלומר הערוץ משתנה בתוך כמה slots, ולכן צריך DMRS נוספים בזמן.",
+      "lesson": "dsp.interview",
+      "problem": "Apple wireless interview (coherence time, Doppler)"
+    },
+    {
+      "id": "dsp.interview.q28",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-OFDM עם 1024 subcarriers ונתוני QAM בלתי תלויים, איך מתפלגות בקירוב הדגימות בתחום הזמן אחרי ה-IFFT?",
+      "choices": [
+        "גאוסיות מרוכבות בקירוב, עם מעטפת Rayleigh",
+        "אמפליטודה קבועה, כמו ב-PSK",
+        "אותה התפלגות כמו נקודות ה-QAM",
+        "התפלגות אחידה על ריבוע"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: CLT על הרבה סימבולים בלתי תלויים; זו הסיבה ל-PAPR ול-back-off של ה-PA.",
+        "אמפליטודה קבועה יש לאות single-carrier PSK ברגעי הדגימה, לא לסכום של הרבה נושאות.",
+        "זה נכון בתחום התדר (על ה-subcarriers), לא אחרי ה-IFFT.",
+        "אין סיבה לאחידות; הסכום מתרכז סביב אפס עם זנבות גאוסיים."
+      ],
+      "explanation": "כל דגימה היא סכום של 1024 תרומות בלתי תלויות, ולכן לפי משפט הגבול המרכזי היא בקירוב גאוסית מרוכבת עם I ו-Q בלתי תלויים, והמעטפת Rayleigh. זה מה שיוצר PAPR גבוה: שיאים נדירים אבל גדולים.",
+      "lesson": "dsp.interview",
+      "problem": "Apple wireless interview: OFDM sample distribution"
+    },
+    {
+      "id": "dsp.interview.q29",
+      "level": 3,
+      "type": "short",
+      "prompt": "overlap-save עם FFT באורך 1024 ומסנן FIR באורך 129. כמה דגימות יציאה תקינות מתקבלות מכל בלוק?",
+      "accept": [
+        "896"
+      ],
+      "explanation": "בכל בלוק M-1 = 128 הדגימות הראשונות מזוהמות מ-wrap-around של convolution מעגלית, ולכן נשארות N-M+1 = 1024-128 = 896. מתקדמים ב-896 דגימות בכל בלוק.",
+      "lesson": "dsp.interview",
+      "problem": "Wireless systems interview: block convolution (overlap-save)"
+    },
+    {
+      "id": "dsp.interview.q30",
+      "level": 3,
+      "type": "output",
+      "prompt": "אות מרוכב בתדר -700 Hz נדגם ב-1000 Hz. מה ידפיס הקוד?",
+      "lang": "python",
+      "code": "import numpy as np\nfs, N = 1000, 1000\nn = np.arange(N)\nx = np.exp(-2j*np.pi*700*n/fs)\nk = np.argmax(np.abs(np.fft.fft(x)))\nprint(np.fft.fftfreq(N, 1/fs)[k])",
+      "choices": [
+        "-700.0",
+        "-300.0",
+        "300.0",
+        "700.0"
+      ],
+      "answer": 2,
+      "notes": [
+        "-700 מחוץ לטווח [-500, 500) ש-fftfreq מחזיר.",
+        "זה קיפול של אות ממשי (|f - fs|) עם סימן; אבל אות מרוכב לא מתקפל, הוא עוטף.",
+        "נכון: -700 mod 1000 = 300, ו-fftfreq מחזיר 300 ל-bin הזה.",
+        "גם 700 מחוץ לטווח, וגם הסימן הפוך."
+      ],
+      "explanation": "בדגימה מרוכבת התדר נלקח מודולו fs לטווח [-500, 500): -700 + 1000 = 300. אין קיפול סימטרי כמו באות ממשי; התדר נשאר 'עם סימן'.",
+      "lesson": "dsp.interview",
+      "problem": "Analog Devices interview (aliasing, complex sampling)"
+    },
+    {
+      "id": "dsp.interview.q31",
+      "level": 3,
+      "type": "oral",
+      "prompt": "הסבר את ההבדל בין ZF ל-MMSE equalizer ב-OFDM (SISO ו-MIMO), גזור את שני הביטויים, ואמור מתי כל אחד עדיף.",
+      "modelAnswer": "מודל: לכל subcarrier y = H·x + n, עם E[|x|²]=1 ו-E[|n|²]=σ².\n\n- ZF: מחפשים W כך ש-W·H = I. ב-SISO W = 1/H; ב-MIMO W = (HᴴH)^{-1}Hᴴ (pseudo-inverse). אין הפרעה שיורית, אבל הרעש אחרי המשווה הוא n/H, כלומר הספק σ²/|H|²: ב-deep fade הרעש מתפוצץ.\n- MMSE: ממזערים E[|Wy - x|²]. גוזרים לפי W ומשווים לאפס: W = E[xyᴴ]E[yyᴴ]^{-1} = Hᴴ(HHᴴ+σ²I)^{-1} = (HᴴH+σ²I)^{-1}Hᴴ. ב-SISO: H*/(|H|²+σ²).\n- השוואה: ב-SNR גבוה σ²→0 ו-MMSE שואף ל-ZF. ב-SNR נמוך MMSE משאיר מעט הפרעה אבל לא מגביר רעש, ונותן SINR יציאה גבוה יותר. MMSE דורש הערכת σ² ומוטה (צריך לנרמל את הגבר לפני חישוב LLR).\n- מחיר: ב-MIMO n×n היפוך O(n³) לכל subcarrier; ב-GPU מבצעים batched Cholesky על אלפי מטריצות קטנות. חלופות: SIC, sphere decoding, ML לקונסטלציות קטנות.",
+      "rubric": [
+        "כותב את המודל y=Hx+n וגוזר ZF כ-pseudo-inverse",
+        "גוזר MMSE ממזעור שגיאה ריבועית ומגיע ל-(HᴴH+σ²I)^{-1}Hᴴ",
+        "מסביר noise enhancement ב-deep fade והתכנסות ב-SNR גבוה",
+        "מזכיר הטיה של MMSE ונרמול לפני LLR או את המחיר O(n³)"
+      ],
+      "explanation": "המראיין מצפה לגזירה מסודרת, להבנת noise enhancement, ולקשר ל-MIMO ולמחיר החישובי.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: derive ZF and MMSE"
+    },
+    {
+      "id": "dsp.interview.q32",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "צריך לממש חילוק של שני מספרים fixed-point על מעבד שיש לו רק חיבור, חיסור והזזות. איזו שיטה נותנת מספר איטרציות שתלוי במספר הביטים של המנה ולא בערכה?",
+      "choices": [
+        "Newton-Raphson לחישוב 1/d ואז כפל",
+        "חיסור חוזר של המחלק וספירה",
+        "restoring division: הזזה, ניסיון חיסור וקביעת ביט מנה אחד בכל צעד",
+        "טבלת log ו-antilog בלי שום חיסור"
+      ],
+      "answer": 2,
+      "notes": [
+        "מתכנס ריבועית אבל כל איטרציה דורשת כפלים, שלא קיימים כאן.",
+        "נכון מבחינת תוצאה, אבל מספר האיטרציות שווה למנה עצמה (עד 2^16), לא למספר הביטים.",
+        "נכון: N איטרציות למנה של N ביט, רק הזזה וחיסור.",
+        "טבלת log דורשת זיכרון ונותנת דיוק מוגבל, וגם בה מחסירים לוגריתמים."
+      ],
+      "explanation": "restoring (או non-restoring) division היא 'חילוק ארוך' בבסיס 2: בכל איטרציה מזיזים את השארית שמאלה, מנסים להחסיר את המחלק ומחליטים על ביט אחד של המנה. מנה של 16 ביט = 16 איטרציות. Newton-Raphson מהיר יותר אבל דורש כפל.",
+      "lesson": "dsp.interview",
+      "problem": "Texas Instruments interview: fixed-point division with add/subtract only"
+    },
+    {
+      "id": "dsp.interview.q33",
+      "level": 4,
+      "type": "short",
+      "prompt": "משדר 20 dBm, אנטנות 0 dBi, 2.4 GHz, מרחק 1 km בחלל חופשי, רוחב סרט 20 MHz ו-NF של 5 dB. מה ה-SNR במקלט ב-dB? (מספר שלם)",
+      "accept": [
+        "16",
+        "15.9",
+        "15.94",
+        "16db"
+      ],
+      "explanation": "λ = 0.125 m, FSPL = 20log10(4π·1000/0.125) ≈ 100 dB, ולכן Pr ≈ -80 dBm. noise floor = -174 + 73 + 5 = -96 dBm. SNR ≈ 16 dB.",
+      "lesson": "dsp.interview",
+      "problem": "Apple wireless interview: link budget"
+    },
+    {
+      "id": "dsp.interview.q34",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מעריכים CFO ב-OFDM מקורלציה בין ה-CP לזנב הסימבול (lag של N דגימות), subcarrier spacing של 15 kHz. מה טווח ה-CFO שהשיטה מעריכה בלי עמימות?",
+      "choices": [
+        "±15 kHz",
+        "±7.5 kHz",
+        "±fs/2",
+        "אין מגבלה, אפשר לבצע phase unwrapping"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה הטווח של Schmidl & Cox עם חזרה של חצי סימבול, לא של lag באורך N.",
+        "נכון: |ε| < 0.5 subcarrier, כלומר ±Δf/2.",
+        "fs/2 הוא גבול ה-Nyquist של הדגימה, לא של מעריך מבוסס פאזה עם lag ארוך.",
+        "יש מדידת פאזה אחת; unwrapping דורש מדידות ביניים שאין כאן, ו-0.7 ו-(-0.3) נותנים אותה פאזה."
+      ],
+      "explanation": "הפאזה היא 2π·ε ועוטפת כש-|ε| ≥ 0.5, כלומר ±7.5 kHz. preamble עם שני חצאים זהים (lag של N/2) מכפיל את הטווח ל-±15 kHz, ואת החלק השלם מוצאים בשלב נוסף.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: OFDM frequency-offset estimation"
+    },
+    {
+      "id": "dsp.interview.q35",
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על IQ imbalance במקלט OFDM נכונות? (בחר את כל הנכונות)",
+      "choices": [
+        "subcarrier k מקבל הפרעה מ-subcarrier k-",
+        "עם image rejection של 25 dB, ה-SINR על subcarrier שהמראה שלו טעונה באותו הספק מוגבל לכ-25 dB",
+        "מסנן DC notch מתקן אותו",
+        "imbalance שלא תלוי בתדר אפשר לתקן במקדם מרוכב אחד: y - w·y*",
+        "הוא משפיע רק על האמפליטודה של נקודות ה-QAM, לא על הפאזה"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "notes": [
+        "נכון: הצמוד x* ממפה את תדר f ל-f-, וב-OFDM זה המראה של ה-subcarrier.",
+        "נכון: התמונה מגיעה ברמת -IRR יחסית לאות במראה, ולכן היא מתנהגת כרעש ברמה הזו.",
+        "שגוי: DC notch מטפל ב-DC offset, לא באינטראקציה בין k ל-k-.",
+        "נכון: מעריכים w (למשל מ-E[y²] שאמור להיות אפס לאות proper) ומחסירים; תלוי-תדר דורש מסנן.",
+        "שגוי: ההפרעה היא מרוכבת ומעוותת גם פאזה; גם חוסר אורתוגונליות של 90° עצמו הוא שגיאת פאזה."
+      ],
+      "explanation": "IQ imbalance הופך את האות ל-μx + νx*: הצמוד יוצר תמונה ב-f-, כלומר subcarrier k מפריע ל-k-. התיקון הוא החסרה של w·y*, ומקדם אחד מספיק כשה-imbalance לא תלוי בתדר. מסנן DC לא עוזר, והאפקט פוגע גם בפאזה.",
+      "lesson": "dsp.interview",
+      "problem": "MediaTek/Apple interview topic: RF impairments (IQ imbalance)"
+    },
+    {
+      "id": "dsp.interview.q36",
+      "level": 4,
+      "type": "short",
+      "prompt": "CIC decimator עם 4 שלבים, יחס decimation של 64, השהיית comb של 1, וכניסה של 16 ביט. כמה ביטים צריך ברגיסטרים הפנימיים כדי שלא יהיה איבוד מידע?",
+      "accept": [
+        "40",
+        "40bits",
+        "40ביט"
+      ],
+      "explanation": "bit growth = N·log2(R·M) = 4·log2(64) = 24. רגיסטרים של 16 + 24 = 40 ביט. ה-integrators גולשים בדרך, אבל בחשבון two's complement (מודולו) התוצאה ב-comb נכונה כל עוד הרוחב מספיק לטווח הסופי.",
+      "lesson": "dsp.interview",
+      "problem": "FPGA/SDR DSP interview: CIC decimation"
+    },
+    {
+      "id": "dsp.interview.q37",
+      "level": 4,
+      "type": "output",
+      "prompt": "טון מרוכב ב-10.5 bins מתוך 64 דגימות. מה ידפיס הקוד?",
+      "lang": "python",
+      "code": "import numpy as np\nn = np.arange(64)\nx = np.exp(2j*np.pi*10.5*n/64)\nk = np.argmax(np.abs(np.fft.fft(x, 256)))\nprint(k, np.abs(np.fft.fft(x))[9:13].round(2))",
+      "choices": [
+        "42 [13.59 40.75 40.75 13.59]",
+        "10 [13.59 40.75 40.75 13.59]",
+        "42 [ 0. 64. 64.  0.]",
+        "42 [ 0. 32. 32.  0.]"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: 10.5·256/64 = 42, ובחצי bin הגובה 64·2/π עם leakage לשכנים.",
+        "שוכח שאחרי padding ל-256 כל bin מקורי הוא 4 bins חדשים.",
+        "64 הוא גובה של טון שנופל בדיוק על bin; בחצי bin יש scalloping ו-leakage.",
+        "חלוקה שווה של האנרגיה לשני bins בלי leakage לא קורית; וגם 32 שגוי, הגובה הוא 64·2/π."
+      ],
+      "explanation": "zero-padding ל-256 מצפף את ה-bins פי 4, ולכן השיא ב-10.5·4 = 42. בלי padding הטון נופל באמצע בין bins 10 ו-11: שניהם 64·(2/π) ≈ 40.75 (scalloping של 3.9 dB), והשכנים 13.59. ה-padding לא משפר את היכולת להפריד שני טונים, רק את מיקום השיא.",
+      "lesson": "dsp.interview",
+      "problem": "DSP interview: frequency estimation with FFT and zero-padding"
+    },
+    {
+      "id": "dsp.interview.q38",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מחברים גל ריבועי של 1 GHz ב-1 Vpp לסקופ שרוחב הסרט שלו (נקודת -3 dB) 1 GHz. מה יוצג בקירוב?",
+      "choices": [
+        "ריבוע עם פינות מעוגלות, 1 Vpp",
+        "סינוס בערך, כ-0.9 Vpp",
+        "סינוס בערך, כ-0.71 Vpp",
+        "סינוס בערך, כ-1.27 Vpp"
+      ],
+      "answer": 1,
+      "notes": [
+        "כדי לראות ריבוע סביר צריך להעביר לפחות את ההרמוניה ה-3 וה-5, כלומר רוחב של 5 GHz בערך.",
+        "נכון: 1.27 Vpp של הבסיסית כפול 0.707 ≈ 0.9 Vpp.",
+        "שוכח שהבסיסית של ריבוע גבוהה פי 4/π מהריבוע עצמו; מחיל רק את ה-3 dB על 1 Vpp.",
+        "זו הבסיסית בלי ההנחתה של 3 dB בתדר הקטעון."
+      ],
+      "explanation": "ריבוע = סכום הרמוניות אי-זוגיות; לבסיסית יש אמפליטודת שיא של (4/π)·0.5 V ≈ 0.64 V. ב-1 GHz הסקופ מנחית 3 dB (פקטור 0.707), וההרמוניה השלישית ב-3 GHz כמעט נעלמת. התוצאה: סינוס של 1 GHz עם כ-0.9 Vpp.",
+      "lesson": "dsp.interview",
+      "problem": "NVIDIA hardware interview: 1 GHz square wave on a 1 GHz scope",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.interview.q39",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מערכת משדרת ביט אחד בכל סימבול באורך T בעזרת אחד משני טונים, cos(2πf1·t) או cos(2πf2·t). מה המרווח המינימלי |f1 - f2| שהופך אותם לאורתוגונליים?",
+      "choices": [
+        "1/(2T) בגילוי קוהרנטי, 1/T בלא קוהרנטי",
+        "1/T תמיד",
+        "2/T תמיד",
+        "כל מרווח שגדול מרוחב הסרט של הפולס"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: אפסי ה-sinc של המכפלה הפנימית ב-k/(2T); בלי ידיעת פאזה המינימום מוכפל.",
+        "נכון רק לגילוי לא קוהרנטי; עם פאזה ידועה מספיק חצי מזה (MSK).",
+        "מספיק, אבל לא מינימלי; בזבוז רוחב סרט.",
+        "הפרדה בתדר מקטינה הפרעה, אבל אורתוגונליות מדויקת קורית רק במרווחים מסוימים."
+      ],
+      "explanation": "המכפלה הפנימית על [0,T] היא בקירוב sin(2πΔf·T)/(2πΔf), ומתאפסת ב-Δf = k/(2T). זה תקף כשהמקלט קוהרנטי (פאזה ידועה), וזה המרווח של MSK. כשהפאזה לא ידועה צריך שגם רכיבי ה-sin יהיו אורתוגונליים, ולכן 1/T.",
+      "lesson": "dsp.interview",
+      "problem": "Rafael algorithm interview: bits over two orthogonal cosines"
+    },
+    {
+      "id": "dsp.interview.q40",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-GPU צריך לבצע FFT של 4096 נקודות לכל אחד מ-14 סימבולים ו-64 אנטנות בכל slot. מה המימוש הנכון?",
+      "choices": [
+        "896 השקות נפרדות של FFT, כל אחת על stream משלה",
+        "plan אחד של batched cuFFT על 896 FFTs בבאפר רציף, בהשקה אחת",
+        "לבצע את ה-FFTs ב-CPU עם FFTW ולהעתיק את התוצאה ל-GPU",
+        "FFT אחד באורך 896·4096 על כל הנתונים"
+      ],
+      "answer": 1,
+      "notes": [
+        "streams עוזרים לחפיפה, אבל 896 השקות קטנות נשארות launch-bound עם overhead שמצטבר.",
+        "נכון: מקסימום מקביליות, השקה אחת, layout רציף. אפשר גם להכניס ל-CUDA graph.",
+        "ה-CPU יהיה צוואר בקבוק, וה-PCIe מוסיף latency שמכרסם ב-deadline.",
+        "מתמטית שגוי: FFT ארוך אחד לא שווה ל-896 FFTs קצרים בלתי תלויים."
+      ],
+      "explanation": "FFT בודד של 4096 נקודות קטן מכדי למלא GPU, וכל השקת kernel עולה מיקרו-שניות. plan אחד של cuFFT עם batch=896 מבצע את כולם בהשקה אחת על נתונים רציפים, עם גישה coalesced. כך עומדים ב-deadline של slot של 0.5 ms.",
+      "lesson": "dsp.interview",
+      "problem": "NVIDIA Aerial interview: GPU signal processing for 5G",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.interview.q41",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במקלט OFDM חלון ה-FFT מתחיל d דגימות מוקדם מדי, אבל עדיין בתוך החלק של ה-CP שלא מושפע מ-ISI. מה ההשפעה על Y[k]?",
+      "choices": [
+        "ICI בין subcarriers שכנים",
+        "רמפת פאזה ליניארית ב-k, שהערכת הערוץ בולעת",
+        "סיבוב פאזה משותף לכל ה-subcarriers שגדל עם הזמן",
+        "ISI מהסימבול הקודם"
+      ],
+      "answer": 1,
+      "notes": [
+        "ICI נובע מ-CFO או Doppler שמפר אורתוגונליות, לא מהזזה בתוך ה-CP.",
+        "נכון: הזזה מעגלית ↔ כפל ברמפת פאזה ב-DFT.",
+        "זה סימן של CFO שאריתי, לא של timing offset קבוע.",
+        "ISI קורה רק אם החלון יוצא מהחלק הנקי של ה-CP או מאחר ונכנס לסימבול הבא."
+      ],
+      "explanation": "החלון רואה הזזה מעגלית של הסימבול, ולפי תכונת ההזזה של DFT מתקבלת רמפת פאזה ליניארית e^{-j2πkd/N}, בלי ISI ובלי ICI. היא נראית כמו השהיה נוספת בערוץ, והערכת הערוץ מה-pilots בולעת אותה (כל עוד ה-pilots צפופים מספיק בתדר).",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: OFDM timing offset"
+    },
+    {
+      "id": "dsp.interview.q42",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "אות IF בין 60 ל-80 MHz נדגם ב-ADC בלי המרת תדר. איזה קצב דגימה מבין הבאים חוקי (אין חפיפה של aliases בתוך הפס)?",
+      "choices": [
+        "45 MS/s",
+        "50 MS/s",
+        "56 MS/s",
+        "65 MS/s"
+      ],
+      "answer": 2,
+      "notes": [
+        "fs/2 = 22.5; הכפולה 67.5 נמצאת בתוך 60–80 והפס מתקפל על עצמו.",
+        "fs/2 = 25; הכפולה 75 בתוך הפס.",
+        "נכון: n=3, הפס יושב בין 56 ל-84 בלי לחצות כפולה של 28.",
+        "fs/2 = 32.5; הכפולה 65 בתוך הפס. נראה 'גדול מ-2·B' אבל זה לא מספיק."
+      ],
+      "explanation": "התנאי 2fH/n ≤ fs ≤ 2fL/(n-1): ל-n=3 מתקבל 53.3 ≤ fs ≤ 60, ולכן 56 MS/s תקין: הפס כולו בין 56 ל-84 (אזור Nyquist שלישי, מתהפך). 45, 50 ו-65 מציבים כפולה של fs/2 בתוך הפס. בפועל צריך גם מרווח למסנן ו-jitter נמוך, כי SNR של jitter תלוי בתדר הכניסה ולא ב-fs.",
+      "lesson": "dsp.interview",
+      "problem": "Analog Devices interview: IF / bandpass sampling"
+    },
+    {
+      "id": "dsp.interview.q43",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "FIR של 128 מקדמים ב-Q15 על נתוני Q15 (כולל -1). המכפלות (Q30) נסכמות לתוך int32. מתי מובטח שה-accumulator לא יגלוש לכל כניסה אפשרית?",
+      "choices": [
+        "אף פעם; צריך 30+7 = 37 ביט",
+        "כאשר Σ|h[k]| קטן מ-2 (בערכים ממשיים)",
+        "כאשר Σh[k] (ה-DC gain) קטן או שווה ל-1",
+        "כאשר כל מקדם קטן מ-1/128"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה החסם הגרוע ביותר לכל מקדמים; עם מקדמים מנורמלים הוא מיותר. ב-DSP בוחרים 40 ביט כדי לא להתעסק בזה.",
+        "נכון: |acc| ≤ 2^30·Σ|h| < 2^31. נשאר לבצע saturation בהמרה ל-Q15 אם התוצאה ≥ 1.",
+        "Σh יכול להיות 0 בעוד Σ|h| גדול; כניסה ב-sign(h[k]) תגרום ל-overflow.",
+        "תנאי מספיק (Σ|h| < 1) אבל לא הכרחי, וגם לא 'מתי' המדויק; פוסל מסננים תקינים."
+      ],
+      "explanation": "כל מכפלה חסומה ב-2^30·|h_k| (כאשר |x| ≤ 1), ולכן הסכום חסום ב-2^30·Σ|h_k|. int32 מחזיק עד 2^31, ולכן Σ|h| < 2 (במונחים ממשיים) מספיק, בלי קשר לאורך. הכלל 'log2(128)=7 guard bits' שמרני אבל לא הכרחי. DC gain (Σh) לא חוסם כי מקדמים עם סימנים מתחלפים יכולים להצטבר עם כניסה בסימנים תואמים.",
+      "lesson": "dsp.interview",
+      "problem": "Texas Instruments interview: fixed-point FIR accumulator overflow"
+    },
+    {
+      "id": "dsp.interview.q44",
+      "level": 5,
+      "type": "multi",
+      "prompt": "אפליקציית UHD קולטת 200 MS/s (sc16) מ-USRP X310 ב-10GbE, ומדפיסה מדי פעם O. אילו צעדים נכונים? (בחר את כל הנכונות)",
+      "choices": [
+        "thread קליטה ייעודי שרק מעתיק ל-ring buffer lock-free, והעיבוד ב-threads אחרים",
+        "להגדיל socket buffers ו-num_recv_frames ולהפעיל jumbo frames (MTU 9000)",
+        "להחליף את פורמט ה-wire מ-sc16 ל-fc32 כדי לחסוך המרה",
+        "pinning של ה-threads ל-cores באותו NUMA node של ה-NIC ו-governor במצב performance",
+        "להדפיס שורת לוג לכל buffer כדי לזהות מתי זה קורה"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "notes": [
+        "נכון: recv() חייב להיקרא ברצף; כל עיבוד או הקצאה בנתיב הזה מעכבים אותו.",
+        "נכון: buffers גדולים בולעים jitter של מערכת ההפעלה, ו-jumbo frames מורידים מספר packets ו-interrupts.",
+        "שגוי: fc32 ב-wire הוא 8 בתים לדגימה, 1.6 GB/s, יותר מ-10GbE. ההמרה ל-fc32 ב-host זולה יחסית.",
+        "נכון: גישה לזיכרון מרוחק ושינויי תדר CPU מוסיפים latency לא צפוי.",
+        "שגוי: I/O סינכרוני בנתיב החם הוא בדיוק מה שגורם ל-overflow."
+      ],
+      "explanation": "O אומר שה-host לא שלף דגימות בזמן וה-buffer התמלא; דגימות אבדו. הפתרון: נתיב קליטה מינימלי וצפוי, buffers גדולים ושליטה ב-CPU. sc16 ב-wire הוא 4 בתים לדגימה = 800 MB/s; fc32 ב-wire היה מכפיל, ולוג לכל buffer מכניס I/O לנתיב החם.",
+      "lesson": "dsp.interview",
+      "problem": "NI/Ettus USRP real-time streaming (SDR software interview)"
+    },
+    {
+      "id": "dsp.interview.q45",
+      "level": 5,
+      "type": "oral",
+      "prompt": "במקלט OFDM wideband (100 MHz) יש IQ imbalance שתלוי בתדר. איך תעריך ותתקן אותו, ומה ישתנה אם יש גם CFO?",
+      "modelAnswer": "מודל: y[n] = (μ * x)[n] + (ν * x*)[n], כשבמקרה הקבוע μ ו-ν מקדמים, ובמקרה התלוי-תדר אלה מסננים (מסנני baseband שונים ב-I וב-Q). בתדר: Y[k] = μ[k]X[k] + ν[k]X*[-k], כלומר subcarrier k מקבל הפרעה מ-k- ברמת IRR[k] = |μ[k]|²/|ν[k]|².\n\nהערכה:\n- עם pilots: משדרים pilot רק ב-k ולא ב-k- (או רצפי אימון מתאימים) ומודדים את התמונה; פותרים לכל זוג (k, -k) מערכת 2×2. בשילוב עם ערוץ מעריכים יחד את H ואת ν.\n- עיוור: אות תקשורת הוא proper (circular), כלומר E[x²] = 0. לכן E[y·y] או הקורלציה E[Y[k]Y[-k]] שונה מאפס רק בגלל ה-imbalance; ממזערים אותה באלגוריתם אדפטיבי (LMS על מסנן w עם כמה taps).\n\nתיקון: z = y - w * y* עם מסנן w קצר (מספר taps לפי ההבדל בין מסנני I ו-Q), או תיקון בתחום התדר לכל זוג subcarriers.\n\nCFO: ה-CFO מזיז את האות ואת התמונה בכיוונים הפוכים, כך שהתמונה כבר לא נופלת על k- בדיוק אלא בין subcarriers, וגם מעוות את הערכת ה-CFO עצמה. לכן מתקנים IQ לפני תיקון CFO (ה-imbalance נוצר ב-RF, לפני שה-CFO הדיגיטלי מתוקן), או מעריכים במשותף. כיול ב-factory/power-up עם loopback ועדכון איטי ברקע מול טמפרטורה. מדד הצלחה: IRR אחרי תיקון (למשל מ-25 dB ל-45 dB) ו-EVM.",
+      "rubric": [
+        "כותב את מודל μx + νx* ואת ההשלכה על זוג subcarriers k ו--k",
+        "מבחין בין imbalance קבוע (מקדם) לתלוי-תדר (מסנן תיקון)",
+        "מציע הערכה עם pilots או עיוורת על בסיס E[x²]=0 (proper signal)",
+        "מסביר את הסדר מול CFO (קודם IQ, או הערכה משותפת) ואיך מודדים הצלחה (IRR, EVM)"
+      ],
+      "explanation": "בודק הבנת המודל, ההבדל בין imbalance קבוע לתלוי-תדר, דרכי הערכה עם ובלי pilots, והאינטראקציה עם CFO.",
+      "lesson": "dsp.interview",
+      "problem": "Apple/MediaTek interview topic: RF impairment calibration"
+    },
+    {
+      "id": "dsp.interview.q46",
+      "level": 5,
+      "type": "oral",
+      "prompt": "תכנן את שרשרת הסנכרון (זמן, תדר, frame) למקלט burst MIMO-OFDM (למשל Wi-Fi) שמגיע עם CFO של עד ±100 kHz ב-subcarrier spacing של 312.5 kHz. מה כל שלב מעריך ומה גבולותיו?",
+      "modelAnswer": "דרישות: 100 kHz הם 0.32 subcarrier, כך שאפשר להסתפק בהערכה בטווח ±0.5 subcarrier, אבל רצוי שלב גס עם טווח רחב יותר.\n\n1. גילוי packet ו-AGC: על ה-short training field (STF), שמורכב מ-10 חזרות של 0.8 µs: קורלציה עצמית עם lag של 16 דגימות (ב-20 MS/s) ונרמול באנרגיה. הסף קובע trade-off בין false alarm ל-miss.\n2. CFO גס: הפאזה של אותה קורלציה עם lag של 16 דגימות: טווח חד-ערכי של ±fs/(2·16) = ±625 kHz, מכסה בנוחות ±100 kHz אבל רועש יותר (חלון קצר).\n3. תזמון עדין: cross-correlation עם ה-long training field (LTF) הידוע; מוצאים את הדגימה הראשונה ומקדימים בכמה דגימות לתוך ה-CP כדי להיות עמידים ל-delay spread (רמפת הפאזה שנוצרת נבלעת בהערכת הערוץ).\n4. CFO עדין: שני סימבולי LTF זהים, lag של 64 דגימות: טווח ±156 kHz ודיוק גבוה. משתמשים בו אחרי תיקון הגס.\n5. אחרי FFT: הערכת ערוץ מה-LTF (ב-MIMO, LTF לכל stream עם קוד P אורתוגונלי כדי להפריד את ה-H בין אנטנות), ומעקב pilots לכל סימבול נתונים לתיקון CFO שאריתי ו-SFO (רמפה שגדלה עם k ועם הזמן).\n\nMIMO: מבצעים קורלציה על כל אנטנות הקליטה ומשלבים (סכום לא קוהרנטי או MRC) כדי לשפר גילוי; ה-CFO משותף לכל השרשראות אם יש LO משותף. Failure modes: CFO מעבר לטווח של השלב העדין בלי שלב גס, multipath שגורם לשיא מוקדם או מאוחר, AGC שלא התייצב.",
+      "rubric": [
+        "שלבים בסדר נכון: גילוי/AGC, CFO גס, תזמון עדין, CFO עדין, ערוץ ו-tracking",
+        "מחשב גבולות עמימות לפי lag (±fs/(2L)) ומראה ש-±100 kHz מכוסה",
+        "מסביר הקדמת חלון ה-FFT לתוך ה-CP ו-tracking של CFO שאריתי ו-SFO מ-pilots",
+        "מתייחס ל-MIMO: שילוב בין אנטנות והפרדת ערוצים ב-LTF"
+      ],
+      "explanation": "בודק ידיעה של preamble design, גבולות עמימות, סדר שלבים והשפעת MIMO.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: synchronization in MIMO-OFDM"
+    },
+    {
+      "id": "dsp.interview.q47",
+      "level": 5,
+      "type": "mcq",
+      "prompt": "לשעון הדגימה של המקלט יש סטייה של 20 ppm לעומת המשדר (SFO), ואין שום תיקון. איך זה נראה בנקודות הקונסטלציה אחרי FFT, לאורך packet ארוך?",
+      "choices": [
+        "כל ה-subcarriers מסתובבים באותה זווית שגדלה עם הזמן",
+        "רמפת פאזה קבועה ב-k שלא משתנה בין סימבולים",
+        "סיבוב פאזה שגדל גם עם אינדקס ה-subcarrier וגם עם אינדקס הסימבול",
+        "רק הקטנת אמפליטודה בלי שינוי פאזה"
+      ],
+      "answer": 2,
+      "notes": [
+        "זה CFO שאריתי (common phase error), לא SFO.",
+        "זה timing offset קבוע; ב-SFO ההזזה מצטברת.",
+        "נכון: φ(k,l) ≈ 2π·k·δ·l·(N+Ncp)/N.",
+        "אובדן אמפליטודה זניח (ICI קטן); האפקט העיקרי הוא בפאזה."
+      ],
+      "explanation": "SFO מזיז את חלון הדגימה בהדרגה; כל סימבול מוזז ב-δ·(N+Ncp) דגימות נוספות. הזזה בזמן = רמפת פאזה ב-k, והיא גדלה עם אינדקס הסימבול. לכן subcarriers בקצוות מסתובבים הכי מהר, ובסוף צריך גם להחליק דגימה שלמה. יש גם ICI קטן. מתקנים בעזרת pilots (הערכת השיפוע לאורך k) או resampling.",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: OFDM synchronization impairments"
+    },
+    {
+      "id": "dsp.interview.q48",
+      "level": 5,
+      "type": "oral",
+      "prompt": "NVIDIA Aerial: תכנן את עיבוד ה-uplink (PUSCH) של תא 5G NR עם 100 MHz, 30 kHz SCS ו-4 אנטנות על GPU, כך שיעמוד ב-deadline של slot. מה ה-pipeline, איך מארגנים זיכרון והשקות, ומה מודדים?",
+      "modelAnswer": "מספרים: 273 PRB × 12 = 3276 subcarriers, 14 סימבולים ב-slot של 0.5 ms, 4 אנטנות. ב-O-RAN split 7.2x ה-RU כבר מבצע FFT והסרת CP, וה-DU מקבל IQ בתחום התדר דרך fronthaul (eCPRI).\n\nPipeline לכל slot: קליטת fronthaul ישר לזיכרון GPU (GPU-direct, למשל DOCA GPUNetIO, בלי מעבר דרך CPU) → פירוק דחיסה (BFP) → הערכת ערוץ מ-DMRS (LS + אינטרפולציה/MMSE בתדר ובזמן) → הערכת רעש → MIMO equalization (MMSE לכל subcarrier, batched מטריצות קטנות 4×layers) → soft demapping ל-LLR → descrambling ו-de-rate-matching → LDPC decode → CRC.\n\nארגון: layout של structure-of-arrays עם subcarrier כממד הרציף לגישה coalesced; FP16 כשהדיוק מספיק (הערכת ערוץ, LLR) ו-FP32 בהיפוך מטריצה. Batching של כל ה-UEs וה-cells ב-slot בהשקה אחת לכל שלב; CUDA graphs לכל ה-pipeline כדי לבטל launch overhead; streams נפרדים ל-uplink ול-downlink; לפעמים persistent kernels שממתינים לדגל של הגעת נתונים. LDPC הוא השלב הכבד ובעל זמן משתנה (מספר איטרציות), ולכן מגבילים איטרציות ומשתמשים ב-early termination.\n\nDeadline: ה-HARQ feedback קובע כמה slots יש עד שצריך תשובה; מתכננים לזמן גרוע (worst-case load), לא לממוצע. מודדים latency לכל שלב עם events ו-Nsight Systems, ומסתכלים על p99.9 ועל jitter, וגם על throughput כשמוסיפים cells. Failure modes: contention בין cells, הקצאת זיכרון בזמן ריצה, סינכרון CPU-GPU מיותר, והשפעה של DMRS configuration על עומס.",
+      "rubric": [
+        "מגדיר דרישות במספרים: subcarriers, סימבולים, slot של 0.5 ms, split 7.2x",
+        "מפרט pipeline מלא מהערכת ערוץ ועד LDPC ו-CRC",
+        "batching, CUDA graphs/streams, layout coalesced ודיוק מעורב",
+        "עמידה ב-deadline לפי worst case ומדידת tail latency (p99.9)"
+      ],
+      "explanation": "בודק שילוב של PHY עם הנדסת GPU: מבנה הנתונים, batching, overhead, deadline ומדידה.",
+      "lesson": "dsp.interview",
+      "problem": "NVIDIA Aerial interview: GPU-accelerated 5G PHY",
+      "tags": [
+        "nvidia"
+      ]
+    },
+    {
+      "id": "dsp.interview.q49",
+      "level": 5,
+      "type": "output",
+      "prompt": "מה ידפיס הקוד? (ה-CFO האמיתי הוא 0.7 subcarrier)",
+      "lang": "python",
+      "code": "import numpy as np\nrng = np.random.default_rng(0)\nN, cp, eps = 64, 16, 0.7\ns = np.fft.ifft(rng.choice([1, -1, 1j, -1j], N))\nx = np.concatenate([s[-cp:], s])\nn = np.arange(N + cp)\nr = x * np.exp(2j*np.pi*eps*n/N)\nc = np.sum(np.conj(r[:cp]) * r[N:N+cp])\nprint(round(np.angle(c) / (2*np.pi), 2))",
+      "choices": [
+        "0.7",
+        "-0.3",
+        "0.3",
+        "0.35"
+      ],
+      "answer": 1,
+      "notes": [
+        "רק אם |ε| < 0.5; ל-0.7 הפאזה כבר עטפה.",
+        "נכון: angle מחזיר בטווח (-π, π], ו-0.7 - 1 = -0.3.",
+        "הערך המוחלט נכון אבל הסימן לא: העטיפה היא 0.7 - 1, לא 1 - 0.7.",
+        "0.35 היה מתקבל עם lag של N/2 שמכפיל את הטווח, לא כאן (lag = N)."
+      ],
+      "explanation": "המעריך מקורלציית CP מחזיר angle/(2π) בטווח [-0.5, 0.5). הפאזה האמיתית 2π·0.7 עוטפת ל-2π·(-0.3), ולכן מתקבל -0.3: שגיאה של subcarrier שלם. אחרי 'תיקון' כזה כל הנתונים מוזזים ב-subcarrier אחד ונכשלים לגמרי. פתרון: שלב גס (lag קצר יותר, או חיפוש integer CFO על pilots אחרי FFT).",
+      "lesson": "dsp.interview",
+      "problem": "Qualcomm interview: limits of OFDM CFO estimation"
+    },
+    {
+      "id": "dsp.interview.q50",
+      "level": 5,
+      "type": "short",
+      "prompt": "מקלט עם SNR תרמי של 30 dB, phase noise שתורם EVM של 2%, ו-IQ image ברמה של -35 dBc. כל המקורות בלתי תלויים. מה ה-EVM הכולל באחוזים? (ספרה אחת אחרי הנקודה)",
+      "accept": [
+        "4.1",
+        "4.14",
+        "4.1%",
+        "4.14%"
+      ],
+      "explanation": "מחברים הספקים: 10^-3 + 0.02² + 10^-3.5 = 0.001 + 0.0004 + 0.000316 = 0.001716. EVM = √0.001716 ≈ 4.1%, כלומר SNR אפקטיבי של כ-27.7 dB. חיבור ישיר של אחוזים (3.16+2+1.78 ≈ 6.9%) היא הטעות הנפוצה.",
+      "lesson": "dsp.interview",
+      "problem": "Keysight interview topic: EVM budget"
+    }
+  ]
+}

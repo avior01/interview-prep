@@ -12,7 +12,7 @@ const defaults = () => ({
   settings: {
     startDate: '2026-10-04',
     interviewDate: '2027-01-15',
-    company: '',            // '', 'nvidia', 'microsoft'
+    company: '',            // '' or a key of COMPANIES (companies.js)
     sessionLen: 10,
     timer: true,            // timer in regular sessions at levels 4–5 (exam: always on)
     theme: 'auto',

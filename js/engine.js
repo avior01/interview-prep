@@ -18,7 +18,7 @@ export const PLAN = [
   ['dsp.filters', 'dsp.fixed-point', 'dsp.simd', 'dsp.windows', 'py.data-model', 'py.generators', 'py.numpy'],
   ['design.producer-consumer', 'design.backpressure', 'design.latency-budget', 'design.pipelines', 'design.scaling', 'design.observability', 'design.rt-design', 'bugs.races', 'bugs.ub-bugs', 'bugs.overflow', 'cpp.ub'],
   ['cv.fft-rates', 'alg.greedy', 'alg.tries', 'alg.bits', 'sys.virtual-memory', 'sys.caches', 'sys.scheduling'],
-  ['conc.rt-scheduling', 'conc.latency-jitter', 'dsp.multirate', 'dsp.nco', 'py.gil', 'py.asyncio', 'beh.failure', 'beh.conflict', 'beh.leadership', 'bugs.leaks'],
+  ['conc.rt-scheduling', 'conc.latency-jitter', 'dsp.multirate', 'dsp.nco', 'dsp.interview', 'py.gil', 'py.asyncio', 'beh.failure', 'beh.conflict', 'beh.leadership', 'bugs.leaks'],
   [], // week 16: weak spots + company focus
 ];
 

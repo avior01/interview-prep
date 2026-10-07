@@ -202,7 +202,13 @@
       ],
       "answer": 2,
       "explanation": "`c++` על atomic הוא `fetch_add(1)`, פעולה אטומית אחת. אין הבטחה לסדר בין ה-threads, ו-context switch יכול לקרות לפני או אחרי הפעולה אבל לא \"באמצע\" שלה מבחינת מה שאחרים רואים. atomic דווקא מחייב גישה לזיכרון.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: atomic לא שולט ב-scheduler. context switch יכול לקרות בכל רגע, אבל ההגדלה עצמה היא הוראה אטומית אחת (למשל `lock xadd`), כך שאף thread לא רואה מצב ביניים.",
+        "שגוי: ההפך. atomic מחייב שכל פעולה תגיע ל-coherent memory (cache), והקומפיילר לא רשאי להחזיק את הערך ברגיסטר בין גישות כמו במשתנה רגיל.",
+        "נכון: `c++` על atomic הוא `fetch_add(1)` עם seq_cst, RMW אחד בלתי ניתן לחלוקה. לכן כל הגדלה נספרת, ואין data race כי כל הגישות אטומיות.",
+        "שגוי: אין שום הבטחת הוגנות או סדר בין threads. thread אחד יכול לבצע אלפי הגדלות ברצף לפני שהשני מתחיל; מובטח רק שאף הגדלה לא הולכת לאיבוד."
+      ]
     },
     {
       "id": "conc.atomics.q02",
@@ -217,7 +223,13 @@
       ],
       "answer": 3,
       "explanation": "רק `std::atomic_flag` מובטח lock-free. בפועל atomic<int> ו-atomic<bool> הם lock-free כמעט בכל מקום, אבל התקן לא מחייב את זה, ולכן יש `is_always_lock_free` לבדיקה בזמן קומפילציה.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: atomic של pointer הוא lock-free כמעט בכל מקום בפועל, אבל התקן לא מחייב את זה. צריך לבדוק `is_always_lock_free`.",
+        "שגוי: מפתה לחשוב שבוליאני פשוט מספיק, אבל התקן לא מבטיח lock-free גם ל-atomic<bool>, למרות שבכל פלטפורמה מוכרת הוא כזה.",
+        "שגוי: lock-free בכל פלטפורמה מיינסטרים, אבל זו תכונת מימוש ולא דרישה של התקן. ב-C++20 יש אליאסים `atomic_signed_lock_free` כדי לקבל טיפוס שלם שמובטח lock-free.",
+        "נכון: `std::atomic_flag` הוא הטיפוס היחיד שהתקן מחייב להיות lock-free, והוא אבן הבניין שממנה אפשר לבנות את כל השאר (גם עם locks)."
+      ]
     },
     {
       "id": "conc.atomics.q03",
@@ -249,7 +261,13 @@
       ],
       "answer": 1,
       "explanation": "`x = x + 1` מבצע load אטומי ואז store אטומי, ושני threads יכולים לקרוא את אותו ערך ולכתוב את אותה תוצאה. אין UB, כי כל גישה בנפרד אטומית, אבל ה-RMW כולו לא. `++x` או `x.fetch_add(1)` נותנים בדיוק 2000000.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: data race מוגדר רק כשלפחות אחת הגישות המתנגשות אינה אטומית. כאן גם ה-load וגם ה-store אטומיים, ולכן אין UB, רק race לוגי.",
+        "נכון: `x + 1` מבצע load אטומי, ואז `x = ...` מבצע store אטומי נפרד. שני threads יכולים לקרוא את אותו ערך ולכתוב את אותה תוצאה, כך שהגדלות הולכות לאיבוד.",
+        "שגוי: זה נכון רק עבור `++x`, `x += 1` או `fetch_add`, שהם RMW אחד. הטעות היא להניח שכל ביטוי על atomic אטומי כולו, בעוד שכאן יש שתי פעולות נפרדות.",
+        "שגוי: יש המרה מרומזת `operator T()` מ-atomic<int> ל-int (שמבצעת load), ו-`operator=(int)` שמבצע store, ולכן הקוד מתקמפל."
+      ]
     },
     {
       "id": "conc.atomics.q05",
@@ -267,6 +285,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: volatile רק מבטיח שכל גישה תתבצע בפועל (נועד ל-MMIO). אין לו אטומיות ל-RMW, אין fence בחומרה ואין happens-before, ולכן לפי מודל הזיכרון של C++ גישה מקבילית אליו היא data race ו-UB.",
+        "שגוי: volatile אינו בטוח לתקשורת בין threads בכלל. הוא גם לא בהכרח איטי יותר; ההבדל הוא בסמנטיקה, לא בביצועים.",
+        "שגוי: גם דגל דורש atomic, כי בלי acquire/release אין הבטחה שהנתונים שפורסמו לפני הדגל ייראו אחריו, והגישה עצמה היא data race. החלוקה הזו היא מיתוס נפוץ מימי C לפני C++11.",
+        "שגוי: גם ב-x86 הקומפיילר רשאי לבצע reordering של גישות רגילות סביב volatile, ו-`flag++` על volatile אינו RMW עם lock. ה-TSO של החומרה לא מציל מאופטימיזציות של הקומפיילר."
       ]
     },
     {
@@ -282,7 +306,13 @@
       ],
       "answer": 0,
       "explanation": "בכישלון ה-CAS כותב ל-expected את הערך שראה, וזה מה שמאפשר לולאת CAS בלי load נוסף: מחשבים desired חדש מ-expected המעודכן ומנסים שוב.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "נכון: בכישלון ה-CAS לא כותב ל-a, ובמקום זה טוען את הערך הנוכחי של a לתוך expected (שמועבר by reference). כך לולאת CAS יכולה לחשב desired חדש בלי load נוסף.",
+        "שגוי: זה היה הופך את ה-CAS ל-exchange בלתי מותנה. כל המטרה היא שהכתיבה תקרה רק אם a שווה ל-expected.",
+        "שגוי: expected עובר by reference בדיוק כדי שיתעדכן בכישלון. מי שחושב שצריך load מחדש מפספס את זה, וכותב קריאה מיותרת בכל איטרציה.",
+        "שגוי: compare_exchange הוא noexcept ומדווח על כישלון דרך ערך החזרה false, לא דרך exception."
+      ]
     },
     {
       "id": "conc.atomics.q07",
@@ -302,7 +332,14 @@
         4
       ],
       "explanation": "weak רשאי להיכשל spuriously (ב-LL/SC זה טבעי), ולכן משתמשים בו בלולאה. atomic לא ניתן להעתקה, כי העתקה של שני אטומיים יחד אינה פעולה אטומית אחת. std::string אינו trivially copyable ולכן אסור. C++20 הוסיף fetch_add/fetch_sub ל-floating-point atomics.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "נכון: התקן דורש ש-T יהיה trivially copyable (וגם copy/move constructible ו-assignable), כי המימוש מעתיק אותו כבתים ומשווה ייצוג.",
+        "נכון: C++20 הוסיף התמחויות ל-float, double ו-long double עם fetch_add ו-fetch_sub (בלי פעולות ביטים).",
+        "שגוי: ה-copy constructor וה-copy assignment של std::atomic מחוקים, כי העתקה מ-atomic אחד לאחר היא load ו-store נפרדים ולא פעולה אטומית אחת.",
+        "שגוי: std::string אינו trivially copyable (יש לו destructor ו-copy constructor לא טריוויאליים, ו-SSO עם pointer פנימי), ולכן זה לא מתקמפל.",
+        "נכון: weak רשאי להיכשל spuriously, בעיקר בארכיטקטורות LL/SC שבהן ה-reservation יכול ללכת לאיבוד, ולכן משתמשים בו בתוך לולאה."
+      ]
     },
     {
       "id": "conc.atomics.q08",
@@ -320,7 +357,13 @@
       ],
       "answer": 2,
       "explanation": "כל פעולה אטומית לחוד, אבל הצירוף לא. התיקון: `int cur = slots.load(); while (cur > 0 && !slots.compare_exchange_weak(cur, cur - 1)) {} return cur > 0;`. memory order לא משנה את הבעיה, כי היא באטומיות של הצירוף ולא בסדר.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: volatile לא נותן אטומיות לצירוף של בדיקה והורדה, ואפילו מחליש את מה שיש (אין RMW אטומי ואין סנכרון בין threads).",
+        "שגוי: ה-load הוא כבר seq_cst כברירת מחדל, שחזק יותר מ-acquire. הבעיה אינה ב-memory order אלא בחלון שבין הבדיקה להורדה.",
+        "נכון: check-then-act. שני threads יכולים לבצע load ולראות 1 לפני שאחד מהם מוריד, ואז שניהם מורידים ושניהם מחזירים true. צריך שהבדיקה וההורדה יהיו RMW אחד, כלומר CAS loop.",
+        "שגוי: fetch_sub הוא RMW אטומי. כל פעולה בנפרד תקינה; הבאג הוא בכך שהצירוף של שתיהן אינו אטומי."
+      ]
     },
     {
       "id": "conc.atomics.q09",
@@ -338,6 +381,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: relaxed חוסך ordering אבל לא את ההעברה של ה-cache line בין cores. ב-x86 זה נשאר `lock xadd`, וצוואר הבקבוק הוא ה-coherence traffic על line אחת.",
+        "שגוי: mutex מחמיר את המצב: גם ה-lock עצמו הוא cache line מתחרה, ובנוסף יש serialization ואולי sleep.",
+        "שגוי: volatile לא אטומי, ולכן יאבדו הגדלות ויהיה data race. הוא גם לא פותר את קפיצות ה-cache line.",
+        "נכון: sharding. כל thread מגדיל מונה ב-cache line משלו (alignas(64)), כך שאין תחרות, והקורא סוכם את כולם. הסכום אולי לא snapshot עקבי, וזה מקובל לסטטיסטיקה."
       ]
     },
     {
@@ -377,6 +426,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: ב-TSO מותר store-load reordering דרך ה-store buffer, ו-seq_cst אוסר אותו. לכן seq_cst store מתקמפל ל-`xchg` (או `mov` ואחריו `mfence`).",
+        "נכון: x86 הוא TSO, כל load כבר בעל סמנטיקת acquire, וה-fence של seq_cst ממומש בצד ה-store. לכן seq_cst load הוא `mov` רגיל.",
+        "שגוי: relaxed משחרר רק את הסדר, לא את האטומיות. RMW חייב `lock xadd` כדי שאף core לא יכתוב באמצע, וב-x86 lock prefix הוא ממילא full barrier.",
+        "שגוי: כל CAS ב-x86 הוא `lock cmpxchg`, ללא תלות ב-memory order. הטעות היא לחשוב ש-relaxed מוריד את ה-lock prefix."
       ]
     },
     {
@@ -395,6 +450,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: גם weak וגם strong מעדכנים את expected לערך הנוכחי בכישלון, כולל בכישלון spurious של weak (שם expected מקבל את אותו ערך שהיה בו).",
+        "שגוי: ה-memory order נבחר בנפרד דרך פרמטרים, ושתי הגרסאות מקבלות אותם פרמטרים. ההבחנה weak/strong נוגעת ל-spurious failure, לא לסדר.",
+        "נכון: ב-LL/SC ה-store-conditional יכול להיכשל גם כשאף אחד לא שינה את הערך (reservation אבד). strong חייב לולאה פנימית שמסתירה את זה, ובתוך לולאת CAS חיצונית weak חוסך את הלולאה המקוננת.",
+        "שגוי: שתיהן lock-free באותה מידה על טיפוס lock-free. strong רק עוטף את ה-LL/SC בלולאה, שעדיין lock-free."
       ]
     },
     {
@@ -413,6 +474,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: make_shared עצמו thread-safe כמו כל הקצאה. הבעיה היא בהשמה לאובייקט shared_ptr משותף שנקרא במקביל.",
+        "נכון: ה-reference count ב-control block אטומי, אבל אובייקט ה-shared_ptr (pointer לאובייקט ו-pointer ל-control block) לא. כתיבה וקריאה מקבילות לאותו אובייקט הן data race, והקורא עלול להגדיל count של control block שכבר שוחרר.",
+        "שגוי: const על Config מגן על התוכן של האובייקט המוצבע, לא על אובייקט ה-shared_ptr הגלובלי שמוחלף. ה-race הוא על ה-pointers עצמם.",
+        "שגוי: זו הטעות הנפוצה. אטומיות ה-count מבטיחה רק ש-threads עם עותקים שונים יכולים להעתיק ולהרוס בלי סנכרון, לא שאפשר לכתוב ולקרוא את אותו עותק במקביל."
       ]
     },
     {
@@ -449,6 +516,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: std::atomic<T> חוקי לכל T שהוא trivially copyable, בלי קשר לגודל. is_lock_free רק מדווח על המימוש, לא מונע קומפילציה.",
+        "שגוי: התקן מחייב אטומיות גם כשאין lock-free, ולכן אין tearing. המימוש פשוט משיג אותה דרך lock.",
+        "שגוי: בין threads של אותו process הוא אכן בטוח, אבל לא בכל הקשר: ב-signal handler ובין processes ה-lock הפנימי הופך לבעיה.",
+        "נכון: libatomic משתמש בטבלת locks לפי hash של הכתובת. signal handler שניגש לאובייקט בזמן שה-thread שנקטע מחזיק את ה-lock יגיע ל-deadlock, ו-process אחר שממפה את אותו shared memory משתמש בטבלת locks נפרדת, כך שאין הדדיות."
       ]
     },
     {
@@ -471,6 +544,13 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: לכל atomic יש modification order אחד, ו-RMW תמיד קורא את הערך האחרון בסדר הזה, גם ב-relaxed. לכן אין עדכונים אבודים, ו-join נותן happens-before לקריאה הסופית.",
+        "שגוי: read-read coherence אוסר זאת. קריאות של אותו atomic באותו thread לא יכולות ללכת אחורה ב-modification order, גם ב-relaxed.",
+        "שגוי: store relaxed לא יוצר synchronizes-with, ולכן הכתיבה לבאפר לא happens-before הקריאה שלו. זה data race על הבאפר; צריך release ב-store ו-acquire בקריאה.",
+        "שגוי: B קורא את אותו משתנה, ולכן coherence חל: אחרי שראה 2 (מאוחר יותר ב-modification order) הוא לא יכול לראות 1.",
+        "נכון: relaxed לא נותן שום סדר בין משתנים שונים. B יכול לראות את הכתיבה ל-y לפני הכתיבה ל-x, למשל בגלל reordering של הקומפיילר או של החומרה (ARM, POWER)."
       ]
     },
     {
@@ -491,6 +571,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: זה היה נכון אם ה-CAS היה משווה עם `==`, שלפיו -0.0 == 0.0. אבל compare_exchange משווה ייצוג בזיכרון כמו memcmp, וביט הסימן שונה.",
+        "נכון: ההשוואה לפי bits נכשלת (ביט הסימן שונה), ולכן ok הוא 0, a נשאר -0.0 ש-cout מדפיס כ-`-0`, ו-e מקבל את הערך הנוכחי -0.0 כך ש-signbit(e) הוא 1.",
+        "שגוי: מניח הצלחה לפי `==`, ובנוסף מניח ש-e מתעדכן גם בהצלחה. בפועל ה-CAS נכשל, ובכל מקרה expected לא משתנה בהצלחה.",
+        "שגוי: נכון שה-CAS נכשל ו-a נשאר -0, אבל שוכח שבכישלון e מתעדכן לערך הנוכחי של a, כלומר -0.0, ולכן signbit(e) הוא 1."
       ]
     },
     {
@@ -519,7 +605,13 @@
       ],
       "answer": 1,
       "explanation": "fetch_or קורא את הערך, מחשב OR עם 4 וכותב, הכול כפעולה אטומית אחת, ומחזיר את הערך הישן. load רק קורא, store רק כותב, ו-is_lock_free בכלל לא ניגש לערך אלא מדווח על המימוש.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: load רק קורא את הערך, בלי כתיבה, ולכן אינו RMW.",
+        "נכון: fetch_or קורא את הערך, מחשב OR עם 4, כותב את התוצאה ומחזיר את הערך הישן, הכול כפעולה אטומית אחת. זו ההגדרה של RMW.",
+        "שגוי: store רק כותב, בלי לקרוא ובלי להחזיר את הערך הקודם. RMW שכותב בלתי מותנה ומחזיר את הישן הוא exchange.",
+        "שגוי: is_lock_free לא ניגש לערך בכלל; הוא שאילתה על המימוש (האם הטיפוס ממומש בלי locks)."
+      ]
     },
     {
       "id": "conc.atomics.q20",
@@ -534,7 +626,13 @@
       ],
       "answer": 3,
       "explanation": "tearing קורה למשל כשמשתנה של 64 ביט נכתב בשתי הוראות של 32 ביט, וקורא באמצע רואה חצי-חצי. std::atomic מבטיח שאין tearing. כישלון בלי סיבה של weak נקרא spurious failure, ופינוי line בגלל כתיבה של אחר הוא invalidation.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: זו preemption בתוך critical section, תופעה של scheduling. היא לא גורמת לקריאה של ערך חצוי.",
+        "שגוי: זה invalidation של cache line במסגרת פרוטוקול ה-coherence (MESI), לא tearing.",
+        "שגוי: זה spurious failure של compare_exchange_weak, מושג אחר לגמרי.",
+        "נכון: tearing הוא קריאה שרואה חלק מהערך הישן וחלק מהחדש, למשל משתנה של 64 ביט שנכתב בשתי כתיבות של 32 ביט. std::atomic מבטיח שזה לא קורה."
+      ]
     },
     {
       "id": "conc.atomics.q21",
@@ -551,7 +649,13 @@
       ],
       "answer": 2,
       "explanation": "כל פעולות fetch_* מחזירות את הערך **שלפני** השינוי, ולכן r הוא 5, ו-a אחרי ההוספה הוא 8. אם צריך את הערך החדש כותבים `a.fetch_add(3) + 3` או `a += 3`, שמחזיר את הערך החדש.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: מניח ש-fetch_add מחזיר את הערך החדש. זו ההתנהגות של `a += 3`, לא של fetch_add.",
+        "שגוי: מניח ש-a לא השתנה. fetch_add כן כותב את הסכום, ולכן a הוא 8.",
+        "נכון: fetch_add מחזיר את הערך שלפני השינוי, 5, וכותב 5+3=8 ל-a. ההדפסה של a מבצעת load ומחזירה 8.",
+        "שגוי: הופך את התפקידים: הערך המוחזר הוא הישן (5) והערך שנשאר ב-a הוא החדש (8)."
+      ]
     },
     {
       "id": "conc.atomics.q22",
@@ -566,7 +670,13 @@
       ],
       "answer": 2,
       "explanation": "exchange הוא RMW בלתי מותנה: כותב תמיד ומחזיר את הערך הקודם. הוא שימושי למשל ב-spinlock (exchange(true) והחזרה false אומרת שתפסת) או ל-\"קח את כל העבודה שהצטברה ואפס\". כתיבה מותנית היא compare_exchange.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: זו הסמנטיקה של compare_exchange, כתיבה מותנית. exchange כותב תמיד.",
+        "שגוי: old רק מקבל את ערך ההחזרה ולא משתתף בפעולה. זה לא swap של שני משתנים, ו-swap אטומי בין שני מיקומי זיכרון בכלל לא קיים ב-std::atomic.",
+        "נכון: exchange הוא RMW בלתי מותנה: כותב 7 ומחזיר את הערך הקודם, כפעולה אטומית אחת.",
+        "שגוי: אין שום תנאי ב-exchange. בנוסף, קריאה ואחריה כתיבה מותנית כשתי פעולות נפרדות לא הייתה אטומית בכלל."
+      ]
     },
     {
       "id": "conc.atomics.q23",
@@ -584,7 +694,13 @@
       ],
       "answer": 1,
       "explanation": "העתקה של atomic דורשת לקרוא מאחד ולכתוב לשני, ושתי הפעולות האלה לא אטומיות יחד, ולכן התקן מוחק copy ו-move. זה גם הסיבה ש-`std::vector<std::atomic<int>>` לא יכול לגדול עם push_back. atomic מקומי חוקי לגמרי.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "שגוי: memory order לא רלוונטי כאן. אין בכלל פעולת העתקה שאפשר לתת לה memory order, כי ה-copy constructor מחוק.",
+        "נכון: `atomic(const atomic&) = delete`, כי העתקה היא load מ-a ו-store ל-b, ולא פעולה אטומית אחת. אתחול מפורש מהערך, `std::atomic<int> b{a.load()};`, מתקמפל.",
+        "שגוי: atomic מקומי חוקי לגמרי. הוא פשוט לא שימושי לסנכרון אם אף thread אחר לא רואה אותו.",
+        "שגוי: load הוא member function רגילה שזמינה על כל atomic, בלי קשר ל-storage duration שלו."
+      ]
     },
     {
       "id": "conc.atomics.q24",
@@ -607,6 +723,13 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: 8 מונים של 8 בתים הם בדיוק 64 בתים, cache line אחת. ה-coherence עובד ברמת line, ולכן כל כתיבה דורשת בעלות בלעדית על כל ה-line, והיא קופצת בין cores. זה false sharing.",
+        "שגוי: relaxed לא משנה את יחידת ה-coherence. ב-x86 ההגדלה נשארת `lock xadd`, וה-line עדיין עוברת בין cores בכל כתיבה.",
+        "נכון: struct עם alignas(64) גדל ל-64 בתים לפחות, כך שכל איבר במערך יושב ב-line נפרדת וה-cores לא מתחרים. במעבדים שמביאים זוגות lines עדיף 128.",
+        "נכון: `std::hardware_destructive_interference_size` נוסף ב-C++17 (ב-<new>), וערכו implementation-defined (למשל 64 ב-x86, לפעמים 128 ב-ARM).",
+        "שגוי: זו בדיוק הטעות שמובילה ל-false sharing. החומרה לא יודעת שהמשתנים נפרדים לוגית; היא עוקבת אחרי בעלות על line שלמה."
       ]
     },
     {
@@ -624,7 +747,13 @@
       ],
       "answer": 0,
       "explanation": "ה-CAS הראשון: a (10) שונה מ-e (7), לכן נכשל, a לא משתנה, ו-e מתעדכן ל-10. ה-CAS השני: a (10) שווה ל-e (10), לכן מצליח ו-a נהיה 30. בהצלחה expected **לא** משתנה, ולכן e נשאר 10. זה בדיוק מה שמאפשר CAS loop בלי load נוסף.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "נכון: CAS ראשון: 10 != 7, נכשל (r1=0) ו-e מתעדכן ל-10. CAS שני: 10 == 10, מצליח (r2=1), a נהיה 30, ו-e לא משתנה בהצלחה ונשאר 10.",
+        "שגוי: שוכח ש-e מתעדכן ל-10 אחרי הכישלון הראשון. בפועל ה-CAS השני רואה expected תואם ומצליח.",
+        "שגוי: מניח ש-expected מתעדכן גם בהצלחה, לערך החדש. בהצלחה expected לא נוגעים בו, ולכן e נשאר 10.",
+        "שגוי: מניח שה-CAS הראשון מצליח למרות ש-a (10) שונה מ-e (7), ושוכח את העדכון של e. בפועל הראשון נכשל ו-e הופך ל-10."
+      ]
     },
     {
       "id": "conc.atomics.q26",
@@ -645,6 +774,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: test_and_set הוא RMW אטומי בכל memory order, ולכן ההדדיות נשמרת גם ב-relaxed. הבאג בנראות, לא בהדדיות.",
+        "שגוי: atomic_flag הוא הבסיס הקלאסי ל-spinlock והוא lock-free. החלפה ל-atomic<bool> עם אותו relaxed לא תתקן כלום.",
+        "נכון: ה-release של המשחרר הקודם מסתנכרן רק עם קריאה של הדגל ב-acquire. ב-relaxed אין happens-before, ולכן על ARM הגישה ל-balance יכולה להתבצע לפני שהתפיסה הושלמה ולראות ערך ישן. צריך `test_and_set(std::memory_order_acquire)`.",
+        "שגוי: release מספיק בצד המשחרר. הבעיה היא בצד התופס, ו-seq_cst ב-clear לא היה עוזר בלי acquire בתפיסה. \"להגיע לזיכרון\" היא גם תפיסה שגויה, כי הנושא הוא סדר ונראות ולא flush."
       ]
     },
     {
@@ -665,7 +800,14 @@
         3
       ],
       "explanation": "wait מבצע בלולאה: השוואה לערך הישן, ואם שווה חוסם עד notify או התעוררות spurious. לכן הוא חוזר רק כשראה ערך שונה. אם הערך חזר ל-0 לפני שהממתין בדק (ABA), הוא יחזור לישון. ההשוואה היא לפי ייצוג, לא לפי ==. ב-Linux המימוש מעל futex, ומימושים מסוימים מסתובבים מעט לפני שהם נרדמים, אבל זה לא busy-wait.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "notes": [
+        "נכון: wait בודק בלולאה אם הערך עדיין שווה ל-0, וחוסם אם כן. התעוררות spurious או notify שלא שינו את הערך פשוט מחזירות אותו לישון, כך שהוא חוזר רק כשראה ערך שונה.",
+        "נכון: זה ABA. כשה-notify מגיע הערך כבר חזר ל-0, אז A בודק, רואה 0 וחוזר לישון. wait לא זוכר שהיה שינוי ביניים.",
+        "שגוי: במימושים נפוצים (libstdc++, libc++ על Linux) wait מסתובב מעט ואז נרדם על futex או מקבילה, ולכן הוא כן חוסך CPU.",
+        "נכון: התקן מבטיח שחרור רק דרך notify (או spurious). כתיבה לערך בלבד לא מעירה את הממתין, ולכן תמיד מצמידים notify לשינוי.",
+        "שגוי: wait משווה value representation, כמו compare_exchange, ולא operator==. זה משנה למשל ב--0.0 מול 0.0."
+      ]
     },
     {
       "id": "conc.atomics.q28",
@@ -685,6 +827,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: זה נכון ל-`int` רגיל, אבל התקן מגדיר שחשבון fetch_add על atomic של טיפוס שלם עם סימן מתבצע ב-two's complement בלי תוצאות לא מוגדרות.",
+        "שגוי: אין רוויה (saturation) באף פעולה אטומית בתקן. הגלישה עוטפת.",
+        "שגוי: התוצאה אינה תלוית מימוש: התקן מגדיר במפורש wrap-around של two's complement.",
+        "נכון: החישוב מוגדר כאילו בוצע ב-unsigned והומר חזרה (two's complement), ולכן INT_MAX+1 עוטף ל-INT_MIN, כלומר -2147483648, בלי UB."
       ]
     },
     {
@@ -703,6 +851,12 @@
       "lesson": "conc.atomics",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: atomic_ref לא הופך את האובייקט לאטומי, אלא רק את הגישות שעוברות דרכו. כל עוד יש גישה דרך atomic_ref, גישה ישירה מקבילית היא data race. בנוסף האובייקט חייב להיות מיושר ל-required_alignment, שיכול להיות גדול מ-alignof(int).",
+        "שגוי: מותר ליצור ולהרוס atomic_ref זמניים רבים לאותו אובייקט. האטומיות נובעת מכך שכל הגישות אטומיות, לא מאורך החיים של אובייקט ref מסוים.",
+        "שגוי: קריאה ישירה לא-אטומית במקביל לכתיבה דרך atomic_ref היא data race ו-UB. גם הקוראים חייבים לעבור דרך atomic_ref בשלב המקבילי.",
+        "שגוי: אין שום דרישה על storage duration. atomic_ref עובד על כל אובייקט מתאים ומיושר, כולל מערך סטטי או על ה-stack."
       ]
     },
     {

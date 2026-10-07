@@ -209,6 +209,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: ב-deadlock יש מעגל המתנה ואף אחד לא מתקדם לעולם. ב-priority inversion אין מעגל: M בסוף מסיים, L משחרר את ה-lock ו-H ממשיך, רק מאוחר מדי.",
+        "נכון: זו ההגדרה הקלאסית. H חסום על lock של L, ו-M שלא קשור ל-lock דוחק את L, כך ש-H מחכה בפועל ל-M לזמן לא חסום.",
+        "שגוי: ה-scheduler עושה בדיוק את מה שהוא אמור, מריץ את ה-thread המוכן בעדיפות הגבוהה ביותר. ה\"היפוך\" נובע מהתלות ב-lock, לא מבאג ב-scheduler.",
+        "שגוי: זה מתאר heuristics של schedulers הוגנים שמעדיפים threads אינטראקטיביים, לא priority inversion. אין כאן lock משותף ואין thread בעדיפות גבוהה שנחסם."
       ]
     },
     {
@@ -224,7 +230,13 @@
       ],
       "answer": 0,
       "explanation": "ל-SCHED_FIFO אין time slice: הוא רץ עד שנחסם, מוותר, או מוחלף ע״י עדיפות RT גבוהה יותר. threads של SCHED_OTHER אף פעם לא מחליפים אותו, יהיה ה-nice אשר יהיה (חוץ מ-RT throttling, שמשאיר להם בברירת מחדל כ-5% מכל שנייה).",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "נכון: ל-SCHED_FIFO אין time slice. הוא מפנה את ה-CPU רק כשהוא נחסם, קורא ל-sched_yield, או כש-thread RT בעדיפות גבוהה יותר נהיה מוכן (ובנוסף RT throttling כרשת ביטחון).",
+        "שגוי: time slice קיים ב-SCHED_RR (ובאופן אחר ב-CFS/EEVDF), לא ב-FIFO. מי שמכיר רק time-sharing מניח שלכל thread יש quantum.",
+        "שגוי: nice משפיע רק בתוך SCHED_OTHER. כל thread RT קודם לכל thread ב-SCHED_OTHER, יהיה ה-nice אשר יהיה.",
+        "שגוי: הוא מפסיק גם כשהוא נחסם (I/O, mutex, sleep), מוותר, או נדחק ע״י עדיפות RT גבוהה יותר. \"רק כשמסתיים\" מתעלם מכל מצבי החסימה וה-preemption."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q03",
@@ -253,7 +265,13 @@
       ],
       "answer": 2,
       "explanation": "גם ב-RR עדיפות גבוהה יותר תמיד מנצחת. ההבדל רק בין threads באותה רמת עדיפות: ב-FIFO הראשון רץ עד שהוא נחסם, וב-RR הם מתחלפים כל quantum (ברירת מחדל 100ms, ב-/proc/sys/kernel/sched_rr_timeslice_ms).",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: גם SCHED_RR וגם SCHED_FIFO הן מדיניויות real-time ב-Linux, עם אותו טווח עדיפויות 1–99 ואותה קדימות על SCHED_OTHER.",
+        "שגוי: FIFO הוא FIFO רק בתוך אותה רמת עדיפות. עדיפות גבוהה יותר תמיד דוחקת, ללא קשר לסדר ההגעה.",
+        "נכון: ההבדל היחיד הוא בין threads באותה עדיפות. ב-RR הם מתחלפים כל quantum (ברירת מחדל 100ms), ב-FIFO הראשון רץ עד שנחסם או מוותר. מול עדיפויות שונות שתיהן preemptive זהה.",
+        "שגוי: RR לא מחלק זמן בין עדיפויות שונות. thread בעדיפות נמוכה לא ירוץ כל עוד thread RT גבוה ממנו מוכן, גם ב-RR."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q05",
@@ -268,7 +286,13 @@
       ],
       "answer": 3,
       "explanation": "VxWorks תמך ב-priority inheritance, אבל הוא היה כבוי ב-mutex הזה. JPL שיחזרו את הבעיה על עותק בכדור הארץ והפעילו את הדגל מרחוק. זו דוגמת הלימוד הקלאסית ל-priority inversion.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: spinlock לא פותר priority inversion, ועל מעבד יחיד thread שמסתובב על lock שמחזיק thread מושהה רק מבזבז CPU. הבעיה היא ש-L לא מקבל CPU, לא סוג ה-lock.",
+        "שגוי: הגדלת ה-timeout רק מסתירה את הסימפטום. ה-thread הקריטי עדיין מפספס את ה-deadline שלו בגלל ה-thread הבינוני.",
+        "שגוי: הורדת העדיפות של ה-thread הקריטי פוגעת בתזמון של המשימה החשובה ביותר ולא מטפלת בשורש: L שמחזיק את ה-mutex נדחק ע״י M.",
+        "נכון: עם priority inheritance, L עולה זמנית לעדיפות של ה-bus thread בזמן שהוא מחזיק את ה-mutex, M כבר לא יכול לדחוק אותו, וה-mutex משתחרר מהר. JPL הדליקו את הדגל ב-VxWorks מרחוק."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q06",
@@ -283,7 +307,13 @@
       ],
       "answer": 3,
       "explanation": "שתי הסקאלות נפרדות: כל thread ב-RT קודם לכל thread ב-SCHED_OTHER. ב-nice ההיגיון הפוך: נמוך יותר מקבל משקל גבוה יותר. ב-ps ו-top הסקאלות מוצגות בדרכים שונות, וזה מקור נפוץ לבלבול.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: הסקאלות נפרדות לגמרי. גם nice -20 נשאר ב-SCHED_OTHER, וכל thread RT, אפילו FIFO 1, קודם לו.",
+        "שגוי: ב-API של sched_setscheduler מספר גבוה הוא עדיפות גבוהה (99 העליונה). הבלבול נובע מ-top/ps שמציגים עדיפויות RT כמספרים שליליים או הפוכים, ומ-nice שבו נמוך זה טוב.",
+        "שגוי: nice לא משפיע על threads ב-SCHED_FIFO. העדיפות נקבעת ב-sched_priority בלבד.",
+        "נכון: FIFO/RR משתמשים ב-sched_priority 1–99 (גבוה = עדיף), ו-SCHED_OTHER משתמש ב-nice בין -20 ל-19 שבו ערך נמוך מקבל משקל CPU גבוה יותר. כל RT קודם לכל SCHED_OTHER."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q07",
@@ -301,6 +331,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: על core אחד ה-FIFO שמסתובב מרעיב את ה-SCHED_OTHER. ברירת המחדל sched_rt_runtime_us=950000 מתוך 1000000 עוצרת את משימות ה-RT אחרי 950ms, ה-thread הרגיל רץ, מדליק את flag, וה-FIFO ממשיך. התקיעה היא בערך שנייה.",
+        "שגוי: זה היה נכון רק אם RT throttling כבוי (sched_rt_runtime_us = -1). בהגדרות ברירת המחדל ה-throttling משאיר כ-5% ל-threads לא-RT.",
+        "שגוי: אין הוגנות בין מחלקת RT ל-SCHED_OTHER. FIFO שלא נחסם רץ לפני כל thread רגיל על אותו core.",
+        "שגוי: הקרנל לא משנה policy אוטומטית ל-thread שמסתובב. ה-throttling רק עוצר זמנית את מחלקת ה-RT, וה-thread נשאר SCHED_FIFO 50."
       ]
     },
     {
@@ -321,7 +357,14 @@
         3
       ],
       "explanation": "PI עולה כסף רק כשיש תחרות, אבל לא מונע deadlock ומאפשר chained blocking. ceiling עולה כסף בכל נעילה (שינוי עדיפות), אבל מונע את שתי הבעיות על מעבד יחיד, ודורש לדעת מראש מי ישתמש ב-lock. std::mutex הוא pthread_mutex רגיל עם PTHREAD_PRIO_NONE, ואי אפשר לשנות את הפרוטוקול אחרי האתחול.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: PI רק מקצר את משך החסימה. אם שני threads נועלים שני mutexes בסדר הפוך עדיין יש מעגל המתנה, ו-PI לא שובר אותו.",
+        "נכון: ב-priority ceiling protocol על מעבד יחיד thread לא יכול לנעול כשהעדיפות שלו לא גבוהה מהתקרה של locks שמוחזקים, ולכן לא נוצר מעגל, ו-thread נחסם לכל היותר על critical section אחד.",
+        "נכון: ב-PTHREAD_PRIO_PROTECT (immediate ceiling) המחזיק עולה לתקרה ברגע הנעילה, בלי לחכות לתחרות. זה המחיר של ceiling: שינוי עדיפות בכל lock/unlock.",
+        "נכון: PI פועל רק בתחרות. כש-thread בעדיפות גבוהה נחסם על ה-lock, המחזיק יורש את העדיפות שלו, ובלי ממתינים אין שום עלות.",
+        "שגוי: std::mutex הוא pthread_mutex עם PTHREAD_PRIO_NONE. כדי לקבל PI צריך pthread_mutexattr_setprotocol(PTHREAD_PRIO_INHERIT) לפני האתחול, ו-std::mutex לא חושף זאת."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q09",
@@ -339,6 +382,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: ln 2 ≈ 0.693 הוא החסם רק בגבול של אינסוף משימות. לשלוש משימות החסם הוא 3(2^(1/3)-1) ≈ 0.780, ו-0.733 מתחתיו.",
+        "שגוי: מבחן Liu-Layland הוא בדיוק כלי אנליטי שעונה בלי סימולציה, כשה-U מתחת לחסם. סימולציה או response time analysis נדרשים רק כשהמבחן לא מכריע.",
+        "נכון: U = 1/5 + 2/6 + 2/10 ≈ 0.733, והחסם ל-n=3 הוא n(2^(1/n)-1) ≈ 0.780. U מתחת לחסם, ולכן RM מבטיח את כל ה-deadlines.",
+        "שגוי: U <= 1 הוא תנאי הכרחי ומספיק ל-EDF, לא ל-RM. ב-RM יש מערכות עם U < 1 שמפספסות deadline, ולכן משתמשים בחסם Liu-Layland או ב-RTA."
       ]
     },
     {
@@ -354,7 +403,13 @@
       ],
       "answer": 1,
       "explanation": "ה-scheduler בודק קודם את ה-runqueue של ה-RT (וה-deadline), ורק אם הם ריקים עובר ל-CFS/EEVDF. nice משפיע רק על החלוקה בין threads של SCHED_OTHER.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: nice -20 הוא המשקל הגבוה ביותר רק בתוך SCHED_OTHER. הוא לא מעביר את ה-thread למחלקת RT.",
+        "נכון: ה-scheduler בודק את המחלקות לפי סדר (stop, deadline, rt, fair, idle). כל עוד יש thread RT מוכן, אפילו בעדיפות 1, CFS/EEVDF לא נבחר.",
+        "שגוי: חלוקה לפי משקל קיימת רק בין threads של SCHED_OTHER. בין RT ל-SCHED_OTHER אין חלוקה, יש קדימות מוחלטת (פרט ל-RT throttling).",
+        "שגוי: סדר ההגעה משנה רק בין threads RT באותה עדיפות. כאן המחלקות שונות, ו-B יעבור לפני A גם אם A הגיע ראשון."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q11",
@@ -393,6 +448,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי, זה כן שינוי של PREEMPT_RT: softirqs רצים בהקשר thread (ksoftirqd או ה-thread שהעלה אותם) ולכן הם preemptible ומתוזמנים לפי עדיפות.",
+        "שגוי, זה כן שינוי של PREEMPT_RT: spinlock_t ממומש כ-rt_mutex (sleeping lock עם PI). רק raw_spinlock_t נשאר spin אמיתי.",
+        "נכון, זה לא שינוי של PREEMPT_RT: ה-policy של אפליקציות ב-user space לא משתנה. thread נשאר SCHED_OTHER עד שמבקשים במפורש sched_setscheduler או chrt.",
+        "שגוי, זה כן שינוי של PREEMPT_RT: interrupt handlers הופכים ל-threads בשם irq/NN-name עם SCHED_FIFO 50 כברירת מחדל, ואפשר לשנות את העדיפות עם chrt."
       ]
     },
     {
@@ -408,7 +469,13 @@
       ],
       "answer": 0,
       "explanation": "PI מבוסס על כך שה-lock יודע מי מחזיק אותו (ב-futex PI, ה-TID של הבעלים נשמר במילה). ב-semaphore, ב-condition variable או בהמתנה לאירוע, כל thread יכול לבצע post, ולכן אין למי להוריש. בתכנון RT מעדיפים mutex עם PI למשאבים משותפים, ונותנים ל-producer של אירוע קריטי עדיפות מתאימה מראש.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "נכון: PI דורש לדעת מי הבעלים של ה-lock (ב-PI futex ה-TID של הבעלים שמור במילה). ל-semaphore אין בעלים, כל thread יכול לבצע sem_post, ולכן לקרנל אין thread להעלות.",
+        "שגוי: PI נועד בדיוק ל-threads של RT (FIFO/RR), שם יש עדיפויות קבועות ש-priority inversion פוגע בהן.",
+        "שגוי: POSIX semaphores נתמכים ב-Linux (sem_wait/sem_post, מבוססים על futex). הבעיה היא חוסר הבעלות, לא חוסר התמיכה.",
+        "שגוי: PI עובד עם כל מספר ממתינים, ואפילו לאורך שרשראות של mutexes. ההגבלה היחידה כאן היא שאין owner."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q14",
@@ -444,6 +511,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: busy-poll על socket עובד גם ב-PREEMPT_RT. הבעיה היא מי עוד צריך לרוץ על core 3 כדי שהחבילות יגיעו ל-socket.",
+        "נכון: ב-PREEMPT_RT ה-IRQ של ה-NIC הוא thread (irq/NN-eth, ברירת מחדל FIFO 50), וגם NAPI/softirq רצים בהקשר thread. ה-RX ב-FIFO 90 שלא נחסם לעולם מרעיב אותם על אותו core, והעיבוד מתקדם רק בחלון של RT throttling.",
+        "שגוי: ה-NIC שולח interrupts כרגיל. ההבדל ב-PREEMPT_RT הוא שעיקר ה-handler נדחה ל-thread שצריך לקבל CPU, ופה הוא לא מקבל.",
+        "שגוי: אין כאן מעגל המתנה. ה-RX thread לא חסום על lock, הוא פשוט מסתובב בעדיפות גבוהה מה-IRQ thread וגורם ל-starvation."
       ]
     },
     {
@@ -459,7 +532,13 @@
       ],
       "answer": 3,
       "explanation": "SCHED_DEADLINE משתמש ב-Constant Bandwidth Server: כל משימה מקבלת לכל היותר runtime בכל period, וזה מה שמאפשר admission control וערבות לשאר המשימות. משימה שחורגת נעצרת ומפספסת את ה-deadline שלה בעצמה. אפשר לבקש signal על חריגה עם SCHED_FLAG_DL_OVERRUN. לכן מגדירים runtime לפי WCET שנמדד, עם מרווח.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: ב-SCHED_DEADLINE ה-runtime נאכף ע״י CBS. זו בדיוק הערבות שמאפשרת admission control, ולכן הוא לא המלצה.",
+        "שגוי: הקרנל לא הורג משימה שחורגת. הוא רק עוצר אותה (throttling) עד ה-period הבא, ואפשר לבקש signal עם SCHED_FLAG_DL_OVERRUN.",
+        "שגוי: אין מעבר אוטומטי ל-SCHED_OTHER. המשימה נשארת SCHED_DEADLINE ופשוט לא רצה עד שה-runtime מתחדש.",
+        "נכון: ה-CBS מוריד את ה-runtime בזמן ריצה, וכשהוא מגיע ל-0 אחרי 2ms המשימה throttled עד תחילת ה-period הבא. היא מפספסת בעצמה, ושאר המשימות מוגנות מהחריגה."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q17",
@@ -477,6 +556,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: EDF היה עובד (U <= 1), אבל הוא לא נדרש. עם periods הרמוניים גם RM מגיע לניצול מלא.",
+        "שגוי: חסם Liu-Layland הוא תנאי מספיק בלבד, לא הכרחי. חריגה ממנו לא אומרת שהמערכת לא schedulable, במיוחד כשה-periods הרמוניים.",
+        "שגוי: ln 2 הוא חסם Liu-Layland לאינסוף משימות תחת RM, לא גבול כללי. EDF מתזמן עד U = 1, ו-RM עם periods הרמוניים גם כן.",
+        "נכון: 5 מחלק את 10 ו-10 מחלק את 20, כלומר periods הרמוניים. במקרה כזה RM schedulable אם ורק אם U <= 1, ו-0.95 עומד בזה."
       ]
     },
     {
@@ -492,7 +577,13 @@
       ],
       "answer": 2,
       "explanation": "ההבחנה היא בתוצאה של פספוס, לא במהירות או בחומרה. בקרת טיסה היא hard, הזרמת וידאו היא soft. יש גם firm: תוצאה מאוחרת חסרת ערך ונזרקת, אבל לא מסוכנת, כמו בלוק דגימות שהגיע אחרי שהחלון שלו עבר.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: ההבחנה לא קשורה לחומרה או למערכת ההפעלה. אפשר לבנות hard RT על Linux עם PREEMPT_RT, ו-soft RT על MCU.",
+        "שגוי: real-time זה צפיות ועמידה ב-deadline במקרה הגרוע, לא מהירות ממוצעת. מערכת hard יכולה להיות איטית יותר בממוצע.",
+        "נכון: ההבחנה היא במחיר של פספוס. ב-hard (בקרת טיסה, ABS) פספוס הוא כישלון, ב-soft (וידאו, אודיו) הוא פגיעה באיכות שהמערכת שורדת.",
+        "שגוי: גם ב-soft real-time יש deadlines, למשל frame כל 16.7ms. ההבדל הוא רק במה שקורה כשמפספסים."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q19",
@@ -507,7 +598,13 @@
       ],
       "answer": 0,
       "explanation": "worst-case execution time. ניתוח זמן-אמת שואל אם המערכת עומדת ב-deadlines במקרה הגרוע, ולכן הממוצע לא מספיק. ב-CPU מודרני עם caches קשה לחשב אותו במדויק, ולכן מודדים בתנאים גרועים ומוסיפים מרווח.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "נכון: WCET (worst-case execution time) הוא זמן הריצה המקסימלי של משימה, וזה ה-C שנכנס לניתוח schedulability כמו Liu-Layland ו-RTA.",
+        "שגוי: הממוצע לא מבטיח כלום ב-deadline של המקרה הגרוע. ניתוח real-time חייב את החסם העליון.",
+        "שגוי: זה מתאר time slice או quantum של ה-scheduler, ולא תכונה של המשימה עצמה.",
+        "שגוי: WCET הוא זמן, לא מספר cores. הבלבול נובע מה-T ב-\"Time\"."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q20",
@@ -533,7 +630,13 @@
       ],
       "answer": 1,
       "explanation": "זו רשת ביטחון נגד באגים, לא מנגנון תזמון. המחיר: thread RT לגיטימי שמסתובב (busy-poll) נחתך ל-50ms בכל שנייה, ולכן במערכות זמן-אמת מקפידים לא לבנות עליו, או מבטלים אותו (ערך -1) כשיש core מבודד ויודעים מה עושים.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: ה-throttling לא קשור לחשמל. הזמן שמשתחרר מנוצל ע״י threads רגילים, לא ל-idle.",
+        "נכון: זו רשת ביטחון. thread RT שנתקע בלולאה היה מקפיא את המערכת, וה-50ms בכל שנייה מאפשרים ל-shell או ל-watchdog לרוץ ולהרוג אותו.",
+        "שגוי: ה-throttling לא עוזר ל-deadlines, הוא אפילו עלול לגרום ל-thread RT לגיטימי שמסתובב לפספס, כי הוא נעצר ל-50ms.",
+        "שגוי: אין מגבלת חומרה כזו. thread יכול לרוץ ללא הגבלה על core, ובערך -1 ה-throttling כבוי לגמרי."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q22",
@@ -584,7 +687,14 @@
         2
       ],
       "explanation": "מחלקת ה-deadline נבדקת לפני מחלקת ה-rt. ה-CBS עוצר משימה שחרגה מה-runtime עד ה-period הבא, וזה מה שמגן על האחרות ומאפשר admission control. אין עדיפויות קבועות: התזמון לפי EDF, כלומר ה-deadline הקרוב ביותר.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "נכון: sched_setattr בודק runtime <= deadline <= period ונכשל ב-EINVAL אחרת. זה הגיוני: אי אפשר להבטיח יותר CPU מהזמן עד ה-deadline.",
+        "נכון: לפני קבלת משימה הקרנל בודק שסך runtime/period של כל משימות ה-deadline לא חורג מהגבול (לפי sched_rt_runtime_us), ואם כן מחזיר EBUSY. זה admission control.",
+        "נכון: מחלקת deadline נבדקת לפני מחלקת rt, ולכן משימת SCHED_DEADLINE מוכנה רצה לפני גם FIFO 99.",
+        "שגוי: ה-runtime נאכף ע״י CBS. משימה שחורגת נעצרת עד ה-period הבא, וזה בדיוק מה שמגן על שאר המשימות.",
+        "שגוי: ב-SCHED_DEADLINE אין sched_priority. התזמון הוא EDF: המשימה עם ה-absolute deadline הקרוב ביותר רצה."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q25",
@@ -599,7 +709,13 @@
       ],
       "answer": 2,
       "explanation": "איטרציה: R = 3, אחר כך 3 + ceil(3/4)·1 + ceil(3/6)·2 = 6, אחר כך 7, 9, 10, ו-10 מתייצב: 3 + ceil(10/4)·1 + ceil(10/6)·2 = 3 + 3 + 4. R = 10 <= 12, ולכן המערכת schedulable למרות שהיא מעל החסם. 6 ו-9 הם שלבי ביניים שעצרו מוקדם מדי. סימולציה מאשרת סיום ב-10.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "notes": [
+        "שגוי: 6 הוא האיטרציה השנייה של RTA (3 + 1 + 2). עצרו לפני ההתכנסות: 6 לא מקיים R = C + Σ ceil(R/Tj)·Cj, כי ceil(6/4) = 2.",
+        "שגוי: 9 הוא שלב ביניים. הצבה נותנת 3 + ceil(9/4)·1 + ceil(9/6)·2 = 3 + 3 + 4 = 10, ולכן עוד לא התכנס.",
+        "נכון: האיטרציה 3 → 6 → 7 → 9 → 10 → 10 מתכנסת ל-10, כי 3 + ceil(10/4)·1 + ceil(10/6)·2 = 3 + 3 + 4 = 10. R = 10 <= 12, כלומר schedulable למרות שהוא מעל חסם Liu-Layland.",
+        "שגוי: 13 מתקבל אם ממשיכים לספור interference אחרי נקודת השבת, או מניחים שחריגה מחסם Liu-Layland אומרת שיש פספוס. ה-RTA מתכנס ב-10, והמשימה עומדת ב-deadline."
+      ]
     },
     {
       "id": "conc.rt-scheduling.q26",
@@ -617,6 +733,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: תקרה בעדיפות הנמוכה ביותר לא מגינה על המחזיק. thread בעדיפות 40 או 70 יכול לדחוק את המחזיק, וזה בדיוק ה-inversion שרצינו למנוע.",
+        "שגוי: 99 בטוח מבחינת ה-lock, אבל מעלה את המחזיק מעל threads לא קשורים בעדיפויות 71–99 ופוגע בזמני התגובה שלהם בלי צורך.",
+        "שגוי: ממוצע לא מבטיח כלום, כי thread 70 שנועל יהיה מעל התקרה. גם אין \"אזהרה\": POSIX מחזיר שגיאה על נעילה מעל התקרה.",
+        "נכון: התקרה צריכה להיות העדיפות הגבוהה ביותר של מי שנועל, 70. pthread_mutex_lock מ-thread בעדיפות 85 מחזיר EINVAL כי היא מעל התקרה, ולכן צריך לעדכן את ה-prioceiling."
       ]
     },
     {
@@ -635,6 +757,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: זה היה נכון אם PI היה מעלה רק את המחזיק הישיר. ב-Linux ה-rt_mutex עובר על כל שרשרת ההמתנה, ולכן גם L עולה.",
+        "נכון: PI ב-Linux טרנזיטיבי. M1 יורש 80, וכיוון ש-M1 חסום על m2, L יורש גם הוא 80. X ב-60 לא יכול לדחוק את L, ו-L משחרר את m2 מהר.",
+        "שגוי: PI עובד גם עם mutexes מקוננים, ה-rt_mutex מטפל בשרשרת. המגבלה הידועה של PI היא chained blocking, לא שהוא מפסיק לעבוד.",
+        "שגוי: EDEADLK מוחזר רק כשיש מעגל בשרשרת ההמתנה. כאן H → M1 → L בלי מעגל, ו-L פנוי לרוץ."
       ]
     },
     {
@@ -653,6 +781,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: sched_yield ב-FIFO מעביר את ה-thread לסוף התור של אותה עדיפות בלבד. כשאין עוד thread ב-FIFO 70 על ה-core, הוא נבחר שוב מיד, וה-SCHED_OTHER רץ רק בחלון של RT throttling.",
+        "שגוי: sched_yield עובד גם ב-PREEMPT_RT ובאותה סמנטיקה. הבעיה היא הסמנטיקה עצמה, שלא מוותרת למחלקה נמוכה יותר.",
+        "שגוי: sched_yield לא ישן לזמן קבוע. הוא רק מחזיר את ה-thread לתור, ואם הוא עדיין הגבוה ביותר הוא ממשיך מיד. לשינה יש nanosleep.",
+        "שגוי: nice משפיע רק בתוך SCHED_OTHER. גם nice -20 לא יעבור thread ב-FIFO 70."
       ]
     },
     {
@@ -671,6 +805,12 @@
       "lesson": "conc.rt-scheduling",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: ההבדל בין המדיניויות הוא בדיוק מה שקובע מי ייפגע בעומס יתר. ב-RM הפגיעה ממוקדת בעדיפויות הנמוכות, וב-EDF היא יכולה להתפשט.",
+        "שגוי: זה הפוך. EDF טהור לא מבודד משימות, ומשימה מאחרת עם deadline מוקדם דוחקת את כולן. בידוד מגיע רק עם CBS, כמו ב-SCHED_DEADLINE.",
+        "נכון: ב-RM העדיפויות קבועות, ולכן רק המשימות שמתחת לחורגת נפגעות, בצורה צפויה. ב-EDF ה-deadline המאחר הופך לדחוף ביותר וגורר domino effect.",
+        "שגוי: RM לא עוצר משימה שחורגת. בלי מנגנון enforcement כמו CBS או budget timer, החורגת ממשיכה לרוץ בעדיפות שלה."
       ]
     },
     {

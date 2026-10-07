@@ -102,7 +102,9 @@ Common fields on every question:
   "prompt": "השאלה",
   "explanation": "למה התשובה נכונה, ולמה המסיחים שגויים. 2–6 משפטים.",
   "lesson": "alg.sliding-window",           // a lesson id from this file
-  "tags": ["nvidia"]                        // optional: "nvidia", "microsoft"
+  "tags": ["nvidia"],                       // optional: "nvidia", "microsoft", "meta"
+  "problem": "LeetCode 42 · Trapping Rain Water", // optional: the well-known problem this is based on
+  "notes": ["...", "...", "...", "..."]      // mcq/multi/output/bug: one line per choice
 }
 ```
 
@@ -118,6 +120,27 @@ Types and their extra fields:
 | `short` | any | `accept` — array of accepted answers (number or 1–3 words; matching is case-insensitive and ignores spaces) |
 | `oral` | any | `modelAnswer` (what a strong senior answer says), `rubric` (3–5 checkpoints). Graded by an AI interviewer or self-graded |
 | `code` | desktop | `lang`, `starter` (optional signature), `modelAnswer` (full solution code), `rubric` (3–5 checkpoints incl. complexity and edge cases) |
+
+### Per-choice notes (`notes`) — required for mcq, multi, output, bug
+
+The learner asked for a separate line for every choice explaining exactly why that
+choice is right or wrong. `notes[i]` belongs to `choices[i]` (same index, same order;
+the app shows each note under its choice after answering, in shuffled display order).
+
+- Correct choice: say why it's correct, precisely (the rule, the computation, the trace).
+- Wrong choice: say exactly what is wrong with it and, when useful, which mistake or
+  misconception leads people to pick it (e.g. "זה היה נכון אם החלון היה סגור משני הצדדים").
+- 1–3 sentences each, Hebrew with English terms. Never refer to other choices by
+  position ("כמו בתשובה הקודמת"); name the idea instead.
+- For `bug` questions the notes explain each candidate reason.
+- `explanation` stays: it's the overall summary shown above the notes.
+
+### Company problems (`problem`, `tags`)
+
+Questions based on well-known interview problems (LeetCode etc.) carry `problem`
+("LeetCode <number> · <English title>") and the company tags. Never copy problem
+statements from websites: describe the problem in your own words, in Hebrew, with
+your own small example. The idea and the name are fine; the original text is not.
 
 Rules:
 

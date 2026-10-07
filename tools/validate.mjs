@@ -69,7 +69,12 @@ for (const domain of taxonomy.domains) {
       const text = `${q.prompt} ${q.explanation}`;
       if (/(השאלה הקודמת|בשאלה הקודמת|מהשאלה הקודמת|השאלה הבאה)/.test(text)) qerr('refers to another question; questions must stand alone');
       if (/(שתי|שלוש|ארבע) (הראשונות|האחרונות)|(האפשרות|התשובה|המסיח) (הראשונה|השנייה|השלישית|הרביעית|האחרונה)|תשובה [אבגד]'/.test(q.explanation)) qerr('explanation refers to a choice by position; choices are shuffled');
-      if (q.tags !== undefined && !(Array.isArray(q.tags) && q.tags.every((t) => ['nvidia', 'microsoft'].includes(t)))) qerr('tags must be nvidia/microsoft');
+      if (q.tags !== undefined && !(Array.isArray(q.tags) && q.tags.every((t) => ['nvidia', 'microsoft', 'meta'].includes(t)))) qerr('tags must be nvidia/microsoft/meta');
+      if (q.problem !== undefined && !isStr(q.problem)) qerr('problem must be a string');
+      if (['mcq', 'multi', 'output', 'bug'].includes(q.type)) {
+        // One note per choice: why that exact choice is right or wrong.
+        if (!Array.isArray(q.notes) || !Array.isArray(q.choices) || q.notes.length !== q.choices.length || !q.notes.every(isStr)) qerr('notes must have one non-empty string per choice');
+      }
       const needLang = () => { if (!['cpp', 'python'].includes(q.lang)) qerr('lang must be cpp or python'); };
       const choiceAnswer = (n) => {
         if (!isStrArr(q.choices, n)) qerr(`choices must have at least ${n} strings`);

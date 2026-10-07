@@ -222,7 +222,13 @@
       ],
       "answer": 3,
       "explanation": "תוכנית ב-user mode לא יכולה לגשת ישירות לחומרה או למבני הקרנל. syscall עוברת דרך הוראה מיוחדת לנקודת כניסה קבועה בקרנל, שבודקת הרשאות ומבצעת את הפעולה. הרבה פונקציות ספרייה (כמו strlen) לא עושות syscall בכלל.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "תקשורת בין processes (IPC) היא שימוש אפשרי ב-syscalls (pipe, socket), לא ההגדרה שלהם. syscall היא תמיד בין process לקרנל, גם כשאין process שני בכלל (getpid).",
+        "פונקציית ספרייה רצה ב-user space, והרבה מהן (strlen, memcpy) לא נכנסות לקרנל בכלל. הבלבול נובע מכך ש-glibc עוטף syscalls בפונקציות שנראות רגילות, כמו read.",
+        "interrupt חומרה הוא אסינכרוני ויוזם אותו התקן, לא התוכנית. syscall היא בקשה סינכרונית שהתוכנית יוזמת בעצמה, אף שבעבר היא מומשה עם software interrupt (int 0x80), וזה מקור הבלבול.",
+        "נכון: התוכנית מבצעת הוראה ייעודית (syscall ב-x86-64) שמעבירה את המעבד ל-ring 0 לנקודת כניסה קבועה. הקרנל בודק הרשאות וארגומנטים, מבצע את הפעולה המוגנת וחוזר ל-user mode."
+      ]
     },
     {
       "id": "sys.syscalls.q02",
@@ -237,7 +243,13 @@
       ],
       "answer": 1,
       "explanation": "פונקציות מותר להן לשנות errno גם כשהן מצליחות, ואף פונקציה לא מאפסת אותו. לכן בודקים קודם את ערך ההחזרה. errno הוא thread-local, כך שלכל thread יש עותק משלו.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "errno לעולם לא מאופס אוטומטית, ו-0 לא אומר שהקריאה האחרונה הצליחה. ערך 0 יכול להיות שארית מאתחול התוכנית, וערך שונה מ-0 יכול להיות שארית מכישלון ישן.",
+        "נכון: errno משמעותי רק אחרי שערך ההחזרה דיווח על כישלון (בדרך כלל -1). קריאה מוצלחת לא מאפסת אותו ואף מותר לה לשנות אותו, ולכן תמיד בודקים קודם את ערך ההחזרה.",
+        "errno הוא thread-local, לא גלובלי: לכל thread יש עותק משלו ומותר להסתמך עליו בכל thread אחרי כישלון. התפיסה ש-errno הוא משתנה גלובלי יחיד מגיעה מ-C הישן לפני threads.",
+        "אחרי קריאה מוצלחת errno יכול להכיל ערך ישן או ערך ששונה בדרך פנימית, ולכן אין לו משמעות. מי שבודק errno בלי ערך ההחזרה מקבל שגיאות מדומות."
+      ]
     },
     {
       "id": "sys.syscalls.q03",
@@ -267,6 +279,12 @@
       "lesson": "sys.syscalls",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: vDSO הוא קוד שהקרנל ממפה לכל process, יחד עם דף vvar שמכיל בסיס זמן וכיול. הקוד קורא את ה-TSC ומחשב את הזמן ב-user space, בלי מעבר ל-kernel mode, ולכן כ-20ns.",
+        "הקריאה רצה על אותו thread ואותו core שקרא לה. העברה ל-core אחר הייתה דווקא יקרה יותר, כי היא דורשת תקשורת בין cores.",
+        "הערך מחושב מחדש בכל קריאה מה-TSC ומעודכן ברזולוציה של ns. דף ה-vvar מחזיק רק את נקודת הייחוס והכיול, לא את התשובה עצמה.",
+        "clock_gettime היא פונקציה אמיתית ב-vDSO, לא macro שמתקפל בזמן קומפילציה. בזמן קומפילציה אי אפשר לדעת את הזמן, ומאחורי הפונקציה יש גם fallback ל-syscall אמיתי."
       ]
     },
     {
@@ -285,7 +303,13 @@
       ],
       "answer": 2,
       "explanation": "ב-sockets, pipes וטרמינלים read מחזיר את מה שזמין כרגע. צריך לולאה שממשיכה עד n בתים, מטפלת ב-EINTR, ומחזירה שגיאה ב-EOF באמצע. read על socket שקול ל-recv עם flags = 0.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "איפוס הבאפר לא נדרש: read כותב לתוכו את הבתים שהתקבלו, והבעיה היא שהקוד לא בודק כמה התקבלו. איפוס רק מסתיר את הבאג מאחורי אפסים במקום זבל.",
+        "read על socket מחובר עובד ושקול ל-recv עם flags = 0. recv נחוץ רק כשרוצים flags כמו MSG_PEEK או MSG_DONTWAIT.",
+        "נכון: הבאג בשורת ה-read. ב-socket הוא מחזיר את מה שזמין כרגע, כך ש-r יכול להיות בין 1 ל-n-1 (short read) או 0 ב-EOF, והפונקציה מחזירה true עם באפר חלקי. צריך לולאה עד n בתים, עם טיפול ב-EINTR ושגיאה על EOF באמצע.",
+        "read מחזיר בכישלון רק -1, ולכן r < 0 ו-r == -1 שקולים לחלוטין. זה עניין סגנוני ולא משנה את ההתנהגות."
+      ]
     },
     {
       "id": "sys.syscalls.q06",
@@ -300,7 +324,13 @@
       ],
       "answer": 1,
       "explanation": "EINTR אומר שהקריאה נקטעה ע״י signal handler. זו לא שגיאה אמיתית. אם חלק מהנתונים כבר הועבר, read מחזיר את מספר הבתים ולא EINTR. הרבה קוד מתעלם מזה ונכשל באקראי כשמשתמשים ב-timers או ב-SIGCHLD.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "fd סגור או לא חוקי מחזיר EBADF, לא EINTR. EINTR לא אומר דבר על מצב ה-fd, והוא נשאר תקין לשימוש חוזר.",
+        "נכון: EINTR אומר ש-signal נתפס ע״י handler בזמן שה-read חסום, לפני שהועבר אפילו בית אחד. זו לא שגיאה אמיתית, ומנסים שוב (או בודקים דגל שה-handler הדליק).",
+        "שגיאת I/O של החומרה מדווחת כ-EIO. הבלבול נובע מכך ש-EINTR נשמע כמו interrupt של חומרה, אבל המשמעות היא interrupted by signal.",
+        "הצלחה חלקית מדווחת כמספר חיובי של בתים (short read), לא כ-1-. אם הועברו נתונים לפני ה-signal, read מחזיר את מספרם ולא EINTR."
+      ]
     },
     {
       "id": "sys.syscalls.q07",
@@ -338,7 +368,14 @@
         4
       ],
       "explanation": "קריאה לפונקציה עולה כמה ns, ו-syscall מאות ns עם mitigations. רוב פונקציות libc (memcpy, strlen, printf לבאפר) רצות לגמרי ב-user space, ו-syscall קורה רק כשצריך את הקרנל.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "נכון: ב-x86-64 מספר ה-syscall נכנס ל-rax, הארגומנטים ל-rdi, rsi, rdx, r10, r8, r9, וההוראה syscall מבצעת את המעבר ל-ring 0.",
+        "נכון: הקרנל מחזיר ב-rax ערך שלילי ‎-errno בכישלון. ה-wrapper של glibc מזהה את זה, שם את הערך החיובי ב-errno ומחזיר -1 לקוד הקורא.",
+        "נכון: read על socket ריק מכניס את ה-thread ל-wait queue של ה-socket במצב interruptible, וה-scheduler מריץ thread אחר עד שמגיעים נתונים.",
+        "לא נכון: רוב פונקציות libc (strlen, memcpy, qsort, printf לבאפר) רצות לגמרי ב-user space. רק wrappers כמו read, write ו-open נכנסים לקרנל, ו-printf רק כשהבאפר מתרוקן.",
+        "נכון: קריאה לפונקציה עולה ns בודדים, ו-syscall כ-50–100ns בלי mitigations ומאות ns איתם (שמירת רגיסטרים, החלפת stack, KPTI)."
+      ]
     },
     {
       "id": "sys.syscalls.q09",
@@ -356,6 +393,12 @@
       "lesson": "sys.syscalls",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "select לפני כל recvfrom מוסיף syscall נוסף לכל חבילה, כך שמספר המעברים לקרנל מוכפל. הוא שימושי להמתנה על הרבה fds, לא להורדת overhead על socket אחד עמוס.",
+        "עדיפות גבוהה יותר משפרת latency מול threads אחרים, אבל לא משנה את העלות של כל syscall. ה-60% ב-kernel נשארים כי מספר הקריאות לא השתנה.",
+        "נכון: העלות הקבועה היא לכל syscall, ו-recvmmsg מחלק אותה על עשרות חבילות בקריאה אחת. SO_RCVBUF גדול מאפשר לחבילות להצטבר בלי drops בין קריאות. זה השינוי הזול הראשון, לפני kernel bypass.",
+        "TCP מוסיף מחסנית כבדה יותר (ACKs, retransmissions, head-of-line blocking) ולא מתאים ל-streaming של דגימות בזמן אמת. גם הוא דורש syscall לכל read, כך שהוא לא פותר את בעיית ה-overhead."
       ]
     },
     {
@@ -371,7 +414,13 @@
       ],
       "answer": 3,
       "explanation": "במצב לא חוסם, אין נתונים זה EAGAIN. 0 מוחזר רק ב-EOF, כלומר כשכל הכותבים סגרו את הצד שלהם. ההבחנה הזו קריטית בלולאות epoll: 0 אומר לסגור את ה-fd, EAGAIN אומר לחכות לאירוע הבא.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "0 שמור ל-EOF, כלומר כשכל הכותבים סגרו את הצד שלהם. כאן יש כותב פתוח, ולכן זה רק מצב של אין נתונים כרגע. בלבול בין השניים גורם לסגירת fd תקין.",
+        "EINTR מגיע רק כשקריאה חוסמת נקטעה ע״י signal. במצב O_NONBLOCK הקריאה לא נחסמת בכלל, ולכן אין מה לקטוע.",
+        "זו ההתנהגות של pipe חוסם. O_NONBLOCK בדיוק מבטל את החסימה: במקום להמתין, הקריאה חוזרת מיד.",
+        "נכון: במצב לא חוסם, read שהיה נחסם מחזיר מיד -1 עם EAGAIN (ב-Linux זהה ל-EWOULDBLOCK). בלולאת epoll זה הסימן לחכות לאירוע הבא."
+      ]
     },
     {
       "id": "sys.syscalls.q11",
@@ -389,6 +438,12 @@
       "lesson": "sys.syscalls",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: KPTI מוציא את רוב הקרנל מטבלאות הדפים של user, ולכן כל כניסה ויציאה מחליפה CR3. בלי PCID זה מרוקן את ה-TLB, ועם PCID המחיר קטן יותר אבל לא אפס. workload עם הרבה syscalls קטנים משלם את זה בכל מעבר.",
+        "KPTI לא מבטל את ה-vDSO: דפי ה-vDSO וה-vvar נשארים ממופים ב-user space ו-clock_gettime ממשיך לעבוד בלי syscall. אם בכלל, workload שנשען על vDSO פחות נפגע מ-KPTI.",
+        "ה-caches נשארים פעילים לגמרי. מה שנפגע הוא ה-TLB (תרגום כתובות), לא ה-data caches, וזה מקור הבלבול בין שני סוגי ה-cache.",
+        "KPTI לא נוגע בבדיקת הארגומנטים, שהקרנל עשה תמיד דרך copy_from_user. המיטיגציה עוסקת במיפוי זיכרון הקרנל, לא בוולידציה."
       ]
     },
     {
@@ -404,7 +459,13 @@
       ],
       "answer": 1,
       "explanation": "SA_RESTART חל על קריאות כמו read, write ו-wait על התקנים איטיים. קריאות עם timeout וקריאות המתנה כמו epoll_wait ו-poll מחזירות EINTR תמיד, כי חידוש אוטומטי היה צריך לחשב מחדש את ה-timeout. בפועל כל לולאת אירועים צריכה לבדוק EINTR.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "ה-1- וה-EINTR אמיתיים: epoll_wait באמת חזר בגלל ה-signal. התעלמות מזה כ'ערך שגוי' מובילה ללולאה שמתייחסת ל-EINTR כשגיאה קטלנית.",
+        "נכון: לפי signal(7), קריאות כמו epoll_wait, poll, select ו-nanosleep לעולם לא מתחדשות אוטומטית, גם עם SA_RESTART, בעיקר כי חידוש היה דורש חישוב מחדש של ה-timeout. לכן כל event loop בודק EINTR וחוזר ללולאה.",
+        "SA_RESTART עובד ב-Linux עבור קריאות כמו read, write ו-wait על התקנים איטיים. מי שרואה EINTR רק ב-epoll_wait מסיק בטעות שהדגל לא עובד בכלל.",
+        "SA_RESTART חל על כל signal שה-handler שלו הותקן עם הדגל, לא רק על real-time signals. ההבחנה בין standard ל-RT signals נוגעת לתור ולסדר, לא לחידוש קריאות."
+      ]
     },
     {
       "id": "sys.syscalls.q13",
@@ -419,7 +480,13 @@
       ],
       "answer": 2,
       "explanation": "ptrace היה מתוכנן לדיבוג, לא למדידה. כלים מבוססי tracepoints ו-eBPF אוספים נתונים בתוך הקרנל לבאפר בלי לעצור את התוכנית. גם הם לא חינמיים, אבל בסדר גודל של מאות ns לאירוע.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "strace לא משנה את קוד התוכנית בזיכרון. הוא רק עוצר את ה-thread בנקודות ה-syscall וקורא רגיסטרים וזיכרון דרך ptrace.",
+        "strace לא נוגע ב-nice או ב-scheduling policy של התוכנית. השינוי בהתנהגות נובע מעצירות, לא מעדיפות.",
+        "נכון: ptrace גורם לקרנל לעצור את ה-thread בכל כניסה ויציאה מ-syscall ולהעיר את strace, כלומר לפחות שני context switches לכל syscall. זה מאט פי עשרות ומשנה תזמון. perf trace ו-bpftrace אוספים בתוך הקרנל לבאפר בלי לעצור את התוכנית.",
+        "strace לא מכבה את ה-vDSO, ולכן הוא בכלל לא רואה את clock_gettime שרץ ב-user space. ההאטה היא דווקא על syscalls אמיתיים."
+      ]
     },
     {
       "id": "sys.syscalls.q14",
@@ -455,6 +522,12 @@
       "lesson": "sys.syscalls",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "בלי SQPOLL צריך io_uring_enter כדי להודיע לקרנל על בקשות חדשות (ולפעמים כדי לחכות לתוצאות). io_uring מקטין את מספר ה-syscalls בעזרת batching, אבל לא מאפס אותו כברירת מחדל.",
+        "O_DIRECT עוקף את ה-page cache ומשפיע על מסלול הנתונים, לא על מספר ה-syscalls. עם או בלי O_DIRECT עדיין צריך להגיש את הבקשות.",
+        "אין vDSO ל-io_uring. הטבעות ממופות לזיכרון המשותף דרך mmap, וזה מה שמאפשר לקרוא completions בלי syscall, אבל ההגשה עדיין צריכה מישהו בצד הקרנל.",
+        "נכון: ב-SQPOLL thread של הקרנל מסתובב על ה-submission ring ולוקח בקשות חדשות, והאפליקציה קוראת completions ישירות מה-ring. syscall נדרש רק כדי להעיר את ה-thread אחרי idle, והמחיר הוא core שרוף."
       ]
     },
     {
@@ -470,7 +543,13 @@
       ],
       "answer": 0,
       "explanation": "vDSO יכול לחשב זמן רק עם clocksource שקריא מ-user space: tsc, או kvm-clock ו-hyperv_clocksource עם דף משותף. hpet ו-acpi_pm דורשים גישה לחומרה מהקרנל, ולכן כל קריאה היא syscall, ובתוך VM גם VM exit. זו בעיה נפוצה כשמודדים latency בתוך VM.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "נכון: vDSO יכול לחשב זמן רק עם clocksource קריא מ-user space (tsc, kvm-clock, hyperv_clocksource). עם hpet או acpi_pm כל קריאה נופלת ל-syscall אמיתי, ובתוך VM גם ל-VM exit, ומכאן 1µs. בודקים ב-current_clocksource.",
+        "VM לא מבטל את ה-vDSO: הוא ממופה בכל process גם ב-guest. עם kvm-clock או tsc יציב clock_gettime ב-VM מהיר כמו על מתכת.",
+        "CLOCK_MONOTONIC הוא בדיוק אחד מהשעונים שה-vDSO מממש, יחד עם CLOCK_REALTIME. שעונים שנופלים ל-syscall הם למשל CLOCK_PROCESS_CPUTIME_ID.",
+        "ווירטואליזציה עם תמיכת חומרה מריצה רוב ההוראות במהירות מלאה. ההאטה היא בנקודות שדורשות VM exit, כמו גישה ל-hpet מדומה, לא בכל ההוראות."
+      ]
     },
     {
       "id": "sys.syscalls.q17",
@@ -485,7 +564,13 @@
       ],
       "answer": 1,
       "explanation": "errno הוא thread-local, אבל ה-handler רץ על אותו thread ולכן חולק את אותו errno. waitpid הוא async-signal-safe ומותר ב-handler, אבל הוא עלול לשנות את errno. הכלל: `int saved = errno; ...; errno = saved;` בכל handler.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "waitpid נמצא ברשימת async-signal-safe ומותר בתוך handler, ושימוש בו ב-handler של SIGCHLD הוא דפוס מקובל. הבעיה היא שהוא משנה errno, לא שהוא אסור.",
+        "נכון: ה-signal יכול להגיע בין החזרת ה-write לבדיקת errno. ה-handler רץ על אותו thread, ו-waitpid שבו (למשל עם ECHILD) דורס את errno, כך שהבדיקה רואה ערך אחר מ-EAGAIN. הכלל: לשמור errno בכניסה ל-handler ולשחזר ביציאה.",
+        "write על fd לא חוסם בהחלט מחזיר -1 עם EAGAIN כשאין מקום (socket או pipe מלאים). זו התנהגות מתועדת ונפוצה.",
+        "errno הוא thread-local, ולכן thread אחר לא יכול לדרוס אותו. מה שכן חולק את אותו errno הוא signal handler שרץ על אותו thread."
+      ]
     },
     {
       "id": "sys.syscalls.q18",
@@ -500,7 +585,13 @@
       ],
       "answer": 2,
       "explanation": "getpid או write מהיר ל-page cache נכנסים לקרנל וחוזרים באותו thread. read על socket ריק כן מרדים את ה-thread, ואז יש context switch. הקרנל ב-Linux אינו process נפרד: הוא רץ בהקשר של ה-thread שקרא לו.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "syscall שלא נחסם (getpid, write מהיר ל-page cache) נכנס לקרנל וחוזר באותו thread. החלפת thread קורית רק בחסימה או בהחלטת scheduler, ולכן 'תמיד' שגוי.",
+        "ב-Linux הקרנל אינו process נפרד: הוא רץ בהקשר של ה-thread שקרא לו, על ה-kernel stack של אותו thread. התפיסה של קרנל כשרת נפרד מתאימה יותר ל-microkernels.",
+        "נכון: syscall הוא mode switch, מעבר הרשאה מ-ring 3 ל-ring 0 בתוך אותו thread. context switch קורה רק אם ה-thread נחסם (read על socket ריק) או שה-scheduler מחליט להחליף.",
+        "syscall רץ על אותו core שביצע את ההוראה. העברה ל-core אחר הייתה דורשת IPI וסנכרון, ויקרה בהרבה מהמעבר עצמו."
+      ]
     },
     {
       "id": "sys.syscalls.q19",
@@ -515,7 +606,13 @@
       ],
       "answer": 0,
       "explanation": "write הוא wrapper דק סביב syscall. strlen, memcpy ו-sort רצים לגמרי ב-user space על זיכרון שכבר שייך ל-process. גם printf בדרך כלל רק כותב לבאפר, וקורא ל-write רק כשהבאפר מתרוקן.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "נכון: write הוא wrapper דק של glibc סביב ה-syscall, ולכן כל קריאה נכנסת לקרנל (בניגוד ל-fwrite או printf שמבפרים ב-user space).",
+        "strlen רק סורק זיכרון של ה-process עד בית אפס, לגמרי ב-user space. אין בו שום פעולה מוגנת שדורשת את הקרנל.",
+        "memcpy מעתיק בין כתובות ששייכות כבר ל-process, ב-user space. page fault יכול להיכנס לקרנל, אבל זה לא syscall ולא קורה בכל קריאה.",
+        "std::sort היא פונקציית template שמשווה ומחליפה איברים בזיכרון של ה-process, בלי שום syscall."
+      ]
     },
     {
       "id": "sys.syscalls.q20",
@@ -542,7 +639,13 @@
       ],
       "answer": 3,
       "explanation": "עם 10,000 fds, select ו-poll מעתיקים וסורקים 10,000 רשומות בכל סבב, גם כשרק 20 מוכנים. epoll משלם על הרישום פעם אחת, וכל epoll_wait עולה בערך לפי מספר האירועים שהוא מחזיר. גם epoll דורש syscalls, אבל הרבה פחות עבודה בכל אחד.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "select תומך ב-sockets, ו-sockets הם בדיוק השימוש העיקרי שלו. הבעיה היא סקיילינג, לא תמיכה.",
+        "גם epoll דורש syscalls: epoll_ctl לרישום ו-epoll_wait להמתנה. היתרון הוא שכל קריאה עושה הרבה פחות עבודה, לא שהן נעלמות.",
+        "עם 10,000 fds ומעט פעילים select איטי יותר, כי הוא מעתיק וסורק את כל הרשימה בכל סבב. epoll דווקא קצת יותר מורכב לכתיבה, ולכן הטענה הפוכה בשני חלקיה.",
+        "נכון: select מעביר את כל ה-bitmask בכל קריאה והקרנל סורק את כולו (O(n)), ומוגבל ל-FD_SETSIZE = 1024. ב-epoll הרישום נשמר בקרנל, ו-epoll_wait עולה לפי מספר המוכנים בלבד."
+      ]
     },
     {
       "id": "sys.syscalls.q22",
@@ -573,7 +676,13 @@
       ],
       "answer": 1,
       "explanation": "בלולאת read ו-write כל בית מועתק מהקרנל ל-user ובחזרה, ויש שני syscalls לכל chunk. sendfile (ו-splice באופן כללי) משאירים את הנתונים בקרנל. readv רק מאחד כמה באפרים לקריאה אחת, ו-fsync קשור לעמידות בדיסק.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "readv מאחד כמה באפרים ב-user space לקריאה אחת (scatter), אבל הנתונים עדיין מועתקים מהקרנל ל-user ובחזרה. הוא חוסך syscalls, לא העתקות.",
+        "נכון: sendfile מעביר את הנתונים מה-page cache של הקובץ ישירות ל-socket בתוך הקרנל, בלי העתקה ל-user space ובחזרה ועם syscall אחד במקום שניים לכל chunk.",
+        "fsync מחכה שנתונים יגיעו לדיסק, כלומר עוסק בעמידות של כתיבה ולא בשליחה. כאן בכלל קוראים מהקובץ, ו-fsync רק היה מוסיף latency.",
+        "O_NONBLOCK משנה את סמנטיקת החסימה של ה-socket, לא את מסלול הנתונים. כל בית עדיין עובר דרך הבאפר ב-user space."
+      ]
     },
     {
       "id": "sys.syscalls.q24",
@@ -591,7 +700,13 @@
       ],
       "answer": 3,
       "explanation": "ב-level-triggered הקוד הזה היה עובד, כי epoll היה מדווח שוב כל עוד יש נתונים. ב-ET האחריות לרוקן היא על הקורא. הגדלת הבאפר רק מקטינה את הסיכוי. הלולאה הנכונה: לקרוא עד ש-read מחזיר -1 עם EAGAIN, לטפל ב-0 כ-EOF וב-EINTR כניסיון חוזר.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "read ו-recv עם flags = 0 שקולים על socket מחובר. החלפה ביניהם לא משנה את מספר האירועים ש-epoll שולח.",
+        "באפר גדול יותר רק מקטין את הסיכוי שיישארו נתונים, אבל אם הגיעו יותר בתים מגודל הבאפר הבעיה חוזרת. התיקון האמיתי הוא לרוקן עד EAGAIN.",
+        "socket לא חוסם שכבר יש בו נתונים לא נחסם, ולכן EINTR כמעט לא רלוונטי כאן. גם טיפול ב-EINTR לא היה מונע את ההיתקעות, כי הנתונים שנשארו עדיין לא יגרמו לאירוע.",
+        "נכון: הבאג בשורת ה-read. ב-EPOLLET האירוע מגיע רק כשנכנסים נתונים חדשים, ו-read יחיד של 4KB משאיר את השאר ב-socket בלי אירוע נוסף. צריך לקרוא בלולאה עד -1 עם EAGAIN (0 הוא EOF)."
+      ]
     },
     {
       "id": "sys.syscalls.q25",
@@ -606,7 +721,13 @@
       ],
       "answer": 0,
       "explanation": "הצלחת write אומרת שהנתונים אצל הקרנל, לא בדיסק. writeback מתבצע בדרך כלל תוך שניות. fsync בכל רשומה יקר (מילי-שניות), ולכן מקובל לקבץ: fsync כל N רשומות או כל T זמן. O_DIRECT עוקף את ה-page cache, אבל לא מבטיח שה-cache של הדיסק עצמו נכתב, ולכן לבדו אינו ערובה לעמידות.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "נכון: write לקובץ רגיל רק מעתיק ל-page cache ומסמן dirty, והצלחה אומרת שהנתונים אצל הקרנל. writeback כותב אותם לדיסק תוך כמה שניות, ומה שלא נכתב אובד בנפילת חשמל. עמידות דורשת fsync, fdatasync או O_DSYNC.",
+        "write לא נכשל בשקט: שגיאה מדווחת כ-1- עם errno, ודיסק איטי גורם לכל היותר לחסימה (dirty throttling). כאן כל הקריאות באמת הצליחו.",
+        "fsck או journal replay משחזרים עקביות של מטא-דאטה, ולא מוחקים רשומות שהגיעו לדיסק. הרשומות האחרונות פשוט מעולם לא הגיעו לדיסק.",
+        "O_DIRECT עוקף את ה-page cache, אבל לא מבטיח שה-write cache של הדיסק עצמו נשטף לאחסון יציב. לכן לבדו אינו ערובה לעמידות, ועדיין צריך fsync או O_DSYNC."
+      ]
     },
     {
       "id": "sys.syscalls.q26",
@@ -621,7 +742,13 @@
       ],
       "answer": 2,
       "explanation": "seccomp מסנן syscalls לפי מספר וארגומנטים, לפני שהקרנל בכלל בודק הרשאות. גם capabilities חסרות יכולות לגרום ל-EPERM, אבל פרופיל ה-seccomp של Docker הוא הסיבה הנפוצה. כל הקונטיינרים משתמשים באותו kernel של המכונה. root בקונטיינר הוא root, אבל עם פחות capabilities ועם סינון.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "קונטיינרים חולקים את אותו kernel של המכונה: הם רק namespaces ו-cgroups. זה ההבדל המהותי בין קונטיינר ל-VM.",
+        "root בקונטיינר הוא UID 0 (אלא אם יש user namespace), אבל עם פחות capabilities ועם סינון seccomp. הוא מוגבל, לא חסר משמעות.",
+        "נכון: Docker מתקין פרופיל seccomp ברירת מחדל שחוסם syscalls מסוכנים, וביניהם perf_event_open, ומחזיר EPERM לפני שהקרנל בודק הרשאות. הפתרון: פרופיל מותאם, ו-perf_event_paranoid או capabilities מתאימות.",
+        "perf_event_open קיים ועובד בתוך namespaces כשמתירים אותו. החסימה מגיעה מהמדיניות של ה-runtime, לא ממגבלה של הקרנל."
+      ]
     },
     {
       "id": "sys.syscalls.q27",
@@ -636,7 +763,13 @@
       ],
       "answer": 1,
       "explanation": "הקרנל חותך כל העברה ל-MAX_RW_COUNT. 2147479552 = 0x7ffff000. ssize_t של 64 ביט יכול להחזיק 3GB בלי בעיה. זו עוד סיבה שגם בקבצים רגילים צריך write_all בלולאה, ולא להניח ש-short write קורה רק ב-sockets.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "notes": [
+        "יש הרבה מקום בדיסק, ו-write לקובץ רגיל בכלל רק מעתיק ל-page cache, כך שמהירות הדיסק לא קובעת את הערך. הערך המדויק 0x7ffff000 מצביע על תקרה של הקרנל.",
+        "נכון: Linux חותך כל read או write בודד ל-MAX_RW_COUNT = 0x7ffff000 = 2147479552 בתים (2GB פחות דף אחד). זה short write חוקי, וקוד נכון ממשיך בלולאה עם השארית.",
+        "ב-x86-64 ssize_t הוא 64 ביט ומחזיק 3GB בקלות. ההנחה נובעת מחשיבה על מערכות 32 ביט, שם ההגבלה הייתה אחרת.",
+        "ה-page cache לא מלא בבת אחת: כשיש יותר מדי dirty pages הקרנל מאט את הכותב (balance_dirty_pages), כלומר חוסם, ולא מחזיר ערך חלקי קבוע כזה."
+      ]
     },
     {
       "id": "sys.syscalls.q28",
@@ -654,6 +787,12 @@
       "lesson": "sys.syscalls",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "על קבצים רגילים O_NONBLOCK לא משפיע: read שמחכה לדיסק פשוט נחסם, ולא מחזיר EAGAIN. בנוסף, epoll בכלל לא מקבל את הרישום.",
+        "epoll לא תומך בקבצים רגילים ולא מדווח עליהם דבר. את ההבחנה בין נתונים ב-page cache ללא נותן preadv2 עם RWF_NOWAIT, לא epoll.",
+        "O_NONBLOCK רק מבטל חסימה באובייקטים שתומכים בזה, ולא הופך קריאה ל-asynchronous עם הודעת סיום. התיאור מזכיר את O_ASYNC או את POSIX AIO, שהם מנגנונים אחרים.",
+        "נכון: קבצים רגילים תמיד נחשבים מוכנים, ולכן epoll_ctl נכשל עליהם עם EPERM. O_NONBLOCK לא משפיע, ו-read נחסם על הדיסק. החלופות: io_uring, thread pool, או preadv2 עם RWF_NOWAIT ונפילה ל-thread כשמתקבל EAGAIN."
       ]
     },
     {
@@ -672,6 +811,12 @@
       "lesson": "sys.syscalls",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "קיצור השינה מתקן רק זמן עבודה קבוע וידוע. זמן העבודה וה-wakeup latency משתנים, ולכן השגיאה ממשיכה להצטבר, רק בקצב אחר (ואפילו יכולה להתהפך).",
+        "SCHED_FIFO מקטין את ה-wakeup latency ואת ה-jitter, אבל השינה עדיין יחסית, ולכן זמן העבודה וה-latency שנותר עדיין מתווספים לכל סיבוב.",
+        "נכון: עם TIMER_ABSTIME ו-next += period, כל סיבוב מתעורר בזמן מוחלט שאינו תלוי בזמן העבודה, כך שהאיחור מופיע כ-jitter של סיבוב אחד ולא מצטבר. CLOCK_MONOTONIC לא קופץ בשינוי שעון, ו-EINTR מטופל בקריאה חוזרת עם אותו next.",
+        "usleep הוא עוד שינה יחסית (וב-glibc ממומש מעל nanosleep), ולכן הוא סובל מאותה הצטברות בדיוק. הוא גם מיושן ב-POSIX."
       ]
     },
     {

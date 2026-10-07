@@ -209,7 +209,13 @@
       ],
       "answer": 3,
       "explanation": "jitter מתאר עד כמה ה-latency לא קבוע. מערכת עם latency ממוצע 50µs ו-jitter נמוך עדיפה לזמן-אמת על פני מערכת עם ממוצע 20µs ו-spikes של 2ms, כי את הראשונה אפשר לתכנן עם buffer קבוע.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: הממוצע מתאר את המרכז של ההתפלגות, לא את הפיזור שלה. מערכת יכולה להיות עם ממוצע נמוך ו-jitter עצום, ולכן מבלבלים בין latency ל-jitter.",
+        "שגוי: throughput הוא כמות עבודה ליחידת זמן, מדד שונה לגמרי. אפשר throughput גבוה עם jitter גבוה (למשל בגלל batching).",
+        "שגוי: packet loss הוא מדד נפרד. ברשתות jitter ו-loss מופיעים יחד בדוחות, ומכאן הבלבול, אבל jitter עוסק בזמנים ולא באובדן.",
+        "נכון: jitter הוא הפיזור (השונות, או ההפרש בין min ל-max) של ה-latency או של מרווחי ההגעה בין מופע למופע. הוא קובע כמה buffer צריך כדי לא לפספס deadline."
+      ]
     },
     {
       "id": "conc.latency-jitter.q02",
@@ -224,7 +230,13 @@
       ],
       "answer": 2,
       "explanation": "1000 בלוקים בשנייה במשך שעה הם 3.6 מיליון מופעים. spike של p99.99 קורה כ-360 פעמים בשעה. ממוצע של 20µs לא אומר כלום אם פעם בדקה יש 3ms.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: בדיוק להפך. במערכות אמיתיות ה-max יכול להיות גדול מהממוצע בסדרי גודל (spike של ms מול ממוצע של µs), וזו כל הסיבה למדוד אותו.",
+        "שגוי: max latency הוא מדד זמן של המקרה הגרוע, לא קצב עבודה. throughput נמדד בבלוקים או בתים לשנייה.",
+        "נכון: deadline שהוחמץ פעם אחת גורם ל-overflow או underrun, כלומר כישלון. הממוצע מתמצע את המקרים הנדירים לתוך מספר קטן, ו-p99.99 ו-max חושפים אותם.",
+        "שגוי: ממוצע הוא החישוב הקל ביותר (סכום חלקי מספר). הסיבה לא טכנית אלא מהותית: הממוצע פשוט לא עונה על השאלה אם עמדנו ב-deadline."
+      ]
     },
     {
       "id": "conc.latency-jitter.q03",
@@ -254,7 +266,13 @@
       ],
       "answer": 0,
       "explanation": "major page fault (קריאה מדיסק) לוקח מילי-שניות. mlockall מבטיח שהזיכרון נשאר ב-RAM. זה לא מבטל לגמרי minor faults בגישה ראשונה לזיכרון שעוד לא נגעו בו, ולכן משלבים עם prefault והקצאה מראש.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "נכון: mlockall נועל את הדפים ב-RAM כך שלא ייצאו ל-swap, וכך אין major page faults בזמן ריצה. MCL_CURRENT חל על המיפויים הקיימים ו-MCL_FUTURE על מיפויים עתידיים (heap, stack, mmap).",
+        "שגוי: mlockall פועל על ה-RAM ועל ה-swap, לא על ה-CPU cache. אין ל-user space שליטה על גודל ה-cache, והמילה lock מטעה כאן.",
+        "שגוי: עדיפות SCHED_FIFO מקבלים דרך sched_setscheduler או pthread_setschedparam. זה חלק מאותו מתכון RT, ולכן מתבלבלים, אבל זו קריאה נפרדת.",
+        "שגוי: ה-lock ב-mlockall הוא נעילת זיכרון ב-RAM, לא נעילת סנכרון. אין לו שום קשר ל-mutexes."
+      ]
     },
     {
       "id": "conc.latency-jitter.q05",
@@ -272,7 +290,13 @@
       ],
       "answer": 1,
       "explanation": "עם deadline מוחלט, איחור במחזור אחד לא מזיז את כל המחזורים הבאים. ב-Linux המקבילה היא `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, nullptr)`, וזה גם מה ש-cyclictest עושה.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: גם sleep_for מדויק לגמרי לא היה מציל את הלולאה, כי המחזור עדיין היה 1ms ועוד זמן העיבוד. חוסר הדיוק מוסיף לשגיאה, אבל הבעיה היא שהשגיאה מצטברת.",
+        "נכון: sleep יחסי מתחיל לספור 1ms רק אחרי process_block, כך שכל מחזור ארוך מ-1ms בזמן העיבוד ועוד ה-wakeup latency, והאיחור נצבר (drift). עם next += 1ms ו-sleep_until(next) כל איחור מתוקן במחזור הבא.",
+        "שגוי: yield רק מוותר על ה-CPU ל-thread אחר באותה עדיפות. הוא לא מתקן את חישוב הזמן ואפילו מוסיף איחור.",
+        "שגוי: העברה ל-thread נפרד לא משנה את העובדה שה-sleep נמדד מסוף העיבוד. ה-drift נובע מסוג ה-sleep (יחסי) ולא ממבנה ה-threads."
+      ]
     },
     {
       "id": "conc.latency-jitter.q06",
@@ -287,7 +311,13 @@
       ],
       "answer": 0,
       "explanation": "הבעיה היא חסימה לזמן לא חסום, לא ה-format. הפתרון: RT thread כותב רשומות בינאריות קטנות ל-SPSC queue, ו-thread logging בעדיפות נמוכה מפרמט וכותב לדיסק.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "נכון: printf לוקח את ה-lock של stdout ובסופו של דבר קורא ל-write. ה-write יכול להיחסם לזמן לא חסום (טרמינל איטי, pipe מלא, דיסק), ואז ה-RT thread תלוי בתהליכים ובהתקנים אחרים.",
+        "שגוי: עיבוד format לוקח מאות ns עד µs ספורים וזמנו כמעט קבוע. spikes גדולים ולא צפויים מגיעים מחסימה, לא מחישוב.",
+        "שגוי: printf לא מבצע cache flush. הוא אמנם נוגע בזיכרון נוסף ומלכלך מעט את ה-cache, אבל זה לא מסביר spikes משמעותיים.",
+        "שגוי: printf לא נוגע ב-scheduling policy או בעדיפות. ה-thread נשאר באותה עדיפות, פשוט נחסם על I/O."
+      ]
     },
     {
       "id": "conc.latency-jitter.q07",
@@ -311,6 +341,13 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "לא מקור: reserve באתחול מקצה את הזיכרון לפני הלולאה, וזו בדיוק הדרך הנכונה להימנע מהקצאות בזמן ריצה. מי שבוחר בזה חושב שכל הקצאה היא בעיה, בלי לשים לב מתי היא קורית.",
+        "מקור: malloc מחזיר זיכרון וירטואלי, והדף הפיזי מוקצה ומאופס רק בגישה הראשונה (minor fault). אם הגישה הראשונה קורית בתוך הלולאה, משלמים עליה שם.",
+        "מקור: עם THP, khugepaged מבצע compaction ואיחוד דפים ברקע, ו-fault על huge page מאפס 2MB בבת אחת. אלה עבודות כבדות בזמנים לא צפויים.",
+        "מקור: SMI מכניס את המעבד ל-System Management Mode, והקושחה רצה בלי שהקרנל יודע. כל ה-cores נעצרים, והבידוד ב-OS לא עוזר.",
+        "מקור: core שמחכה נכנס ל-C-state עמוק, והיציאה ממנו לוקחת עשרות עד מאות µs. זה מוסיף לזמן ההתעוררות בדיוק כשה-thread צריך לרוץ."
       ]
     },
     {
@@ -326,7 +363,13 @@
       ],
       "answer": 1,
       "explanation": "cyclictest מריץ threads ב-SCHED_FIFO שמבצעים clock_nanosleep עם TIMER_ABSTIME ומודדים את האיחור. זה מודד את כל השרשרת: timer interrupt, scheduler ו-context switch, יחד עם כל מקור רעש במערכת. מריצים אותו תחת עומס (למשל stress-ng) ולאורך שעות.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: למדידת context switch בין processes יש כלים אחרים (למשל lmbench, perf bench sched pipe). cyclictest כולל context switch בשרשרת, אבל מודד את ה-wakeup latency כולו.",
+        "נכון: cyclictest מריץ threads ב-SCHED_FIFO שישנים עם clock_nanosleep ו-TIMER_ABSTIME, ומודד בכל מחזור כמה זמן עבר מה-deadline המוחלט עד שה-thread רץ בפועל. הוא מדווח min, avg, max או היסטוגרמה.",
+        "שגוי: cyclictest לא נוגע ברשת. latency של NIC מודדים עם כלים כמו sockperf או חותמות זמן של החומרה.",
+        "שגוי: הוא לא מודד כמות עבודה. הוא כמעט לא עושה עבודה, רק ישן ומודד כמה מאוחר התעורר."
+      ]
     },
     {
       "id": "conc.latency-jitter.q09",
@@ -341,7 +384,13 @@
       ],
       "answer": 3,
       "explanation": "הבודק מתאם את קצב השליחה עם המערכת הנבדקת, וכך מוחק מהסטטיסטיקה בדיוק את התקופות הגרועות. מודדים לפי לוח זמנים קבוע (open-loop), כך שה-latency של כל בקשה נמדד מהזמן שבו היא **הייתה אמורה** להישלח. במערכת SDR האנלוגיה היא: הדגימות מגיעות בקצב קבוע גם כשאתה תקוע.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: p99 לא מתעלם מ-outliers, הוא פשוט מראה נקודה אחת בהתפלגות. הבעיה כאן היא שה-outliers בכלל לא נכנסו למדגם, כי הבודק לא שלח בקשות בזמן התקיעה.",
+        "שגוי: CLOCK_REALTIME אפילו גרוע יותר למדידת intervals כי הוא יכול לקפוץ (NTP). בחירת השעון לא קשורה לבעיה של מה נמדד.",
+        "שגוי: ה-p99 נראה טוב רק כי המדידה פגומה. שתי שניות של תקיעה בבדיקה closed-loop הופכות לשתי מדידות איטיות בודדות במקום מאות אלפים.",
+        "נכון: coordinated omission. בדיקה closed-loop מאטה יחד עם המערכת, ולכן לא שולחת את הבקשות שהיו אמורות לצאת בזמן התקיעה. מודדים open-loop, וכל latency נספר מהזמן שבו הבקשה הייתה אמורה להישלח."
+      ]
     },
     {
       "id": "conc.latency-jitter.q10",
@@ -380,6 +429,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: malloc יכול בהחלט לגרום ל-page faults: זיכרון חדש שהתקבל מהקרנל מוקצה פיזית רק כשנוגעים בו (או מיד, תחת MCL_FUTURE).",
+        "שגוי: mlockall עובד גם על זיכרון של malloc, וזה בדיוק מה ש-MCL_FUTURE עושה. הבעיה היא לא שהנעילה נכשלת, אלא ש-malloc ממפה ומשחרר זיכרון חדש בכל איטרציה.",
+        "נכון: מעל M_MMAP_THRESHOLD (ברירת מחדל 128KB) glibc משרת את ההקצאה ב-mmap נפרד ומשחרר ב-munmap. כל איטרציה היא שני syscalls, ועם MCL_FUTURE הקרנל גם ממלא ומאפס את כל ה-1MB מיד.",
+        "שגוי: mlockall חל על כל ה-address space של ה-process, ולכן על כל ה-threads שלו, כולל threads שנוצרו אחר כך."
       ]
     },
     {
@@ -398,6 +453,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי במעבדים מודרניים: ל-invariant TSC יש קצב קבוע שלא משתנה עם P-states או טורבו. זה היה נכון במעבדים ישנים, ומשם הבלבול.",
+        "שגוי: rdtsc מחזיר מונה (ticks בקצב הנומינלי של ה-TSC), לא ננו-שניות. ההמרה לזמן דורשת לדעת את תדר ה-TSC.",
+        "שגוי: rdtsc עובד בכל core. בידוד הוא עניין של ה-scheduler ולא משפיע על ההוראה.",
+        "נכון: rdtsc אינו serializing, כך שה-out-of-order execution יכול להריץ אותו לפני שההוראות הקודמות הסתיימו או אחרי שהבאות התחילו. lfence לפני, או rdtscp ואחריו lfence, תוחמים את הקטע."
       ]
     },
     {
@@ -416,6 +477,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: 0.66 µs הוא 65536 / 100e9, כלומר טעות של פי 1000 ביחידות (GS/s במקום MS/s).",
+        "שגוי: 65.5 µs הוא 65536 / 1e9, טעות של פי 10 בהמרה של 100 MS/s.",
+        "נכון: זמן מילוי בלוק = N / fs = 65536 / 100e6 ≈ 655 µs. זה הרצפה לפני כל חישוב, העברה מה-USRP או buffering.",
+        "שגוי: 6.55 ms הוא 65536 / 10e6, כאילו קצב הדגימה הוא 10 MS/s. טעות של פי 10."
       ]
     },
     {
@@ -453,6 +520,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: strace מראה syscalls של process, וגם מוסיף overhead עצום. ftrace כבר לא ראה שום פעילות של הקרנל, אז syscall איטי היה נראה שם.",
+        "שגוי: valgrind מריץ את הקוד באמולציה איטית פי עשרות, ולא מתאים למדידת spikes בזמן אמת. cache miss עולה עשרות ns, לא 100µs.",
+        "נכון: hwlat tracer (או osnoise) מסתובב עם interrupts כבויים וקורא את השעון ברצף, ופער בזמן שם יכול לבוא רק מתחת למערכת ההפעלה. החשוד הוא SMI, ומאמתים עם מונה ה-SMI ב-MSR 0x34 (turbostat).",
+        "שגוי: perf top מראה איפה הזמן מבוזבז בממוצע, לא spikes נדירים. ו-ftrace כבר הראה שה-scheduler לא פעל באותו זמן."
       ]
     },
     {
@@ -471,6 +544,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: L1 הוא פרטי לכל core פיזי, ו-thread של ה-GUI שרץ על core אחר לא נוגע בו. החשד הזה מגיע מבלבול עם ה-L3 המשותף.",
+        "נכון: כל ה-threads של process חולקים mm ו-page tables. munmap משנה אותן, והקרנל שולח IPI לכל ה-CPUs שעשויים להחזיק את ה-mm ב-TLB, כולל ה-core המבודד, כדי לבטל תרגומים ישנים (TLB shootdown).",
+        "שגוי: munmap לא משנה scheduling policy או עדיפות של אף thread.",
+        "שגוי: השאלה אומרת שה-RT thread לא עושה syscalls ולא מחכה ל-lock. ה-spike מגיע כ-interrupt שנכפה עליו, לא כהמתנה שהוא יזם."
       ]
     },
     {
@@ -489,6 +568,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: שני ה-hardware threads חולקים execution ports, L1, L2 ו-TLB, ובמעבדי Intel רבים (Skylake-SP ודומיו) עומס AVX-512 מוריד את התדר של כל ה-core. התיקון: להשאיר את ה-sibling ריק או לכבות SMT.",
+        "שגוי: עדיפות ה-scheduler משפיעה רק על מי ירוץ באותו logical CPU. ה-job של AVX-512 רץ על logical CPU אחר, כך שאין כאן החלטת scheduling לשנות.",
+        "שגוי: logical CPUs נפרדים רק מבחינת ה-OS. ברמת החומרה הם אותו core פיזי עם משאבים משותפים, וזו בדיוק הטעות של מי שחושב ש-isolcpus על logical CPU מספיק.",
+        "שגוי: AVX-512 לא גורם ל-page faults, ו-page faults ב-process אחר לא היו משפיעים על ה-RT thread. ההשפעה היא דרך משאבי ה-core והתדר."
       ]
     },
     {
@@ -504,7 +589,13 @@
       ],
       "answer": 1,
       "explanation": "percentile הוא נקודה בהתפלגות. p99 אומר כלום על ה-1% העליון: הוא יכול להגיע למילי-שניות. לכן במערכות RT מדווחים גם p99.99 ו-max.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: p99 הוא percentile של כל המדידות, לא ממוצע של חלון של 99 מדידות. המספר 99 מתאר אחוז, לא כמות.",
+        "נכון: p99 הוא הערך שמתחתיו (או שווה לו) נמצאים 99% מהמדידות. על ה-1% שמעליו הוא לא אומר כלום, והוא יכול להגיע למילי-שניות.",
+        "שגוי: זו ההגדרה של max (p100). ה-1% העליון יכול להיות גבוה בהרבה מ-80 µs.",
+        "שגוי: p99 לא אומר כלום על התפלגות הערכים מתחתיו. רובם יכולים להיות 10 µs, ו-80 µs הוא רק הגבול."
+      ]
     },
     {
       "id": "conc.latency-jitter.q19",
@@ -519,7 +610,13 @@
       ],
       "answer": 3,
       "explanation": "major fault כולל I/O ולכן איטי בסדרי גודל. הקצאה ואיפוס בלי דיסק הם minor fault (מיקרו-שניות). גישה לא חוקית היא segmentation fault. mlockall מונע major faults על ידי נעילת הזיכרון ב-RAM.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: זה segmentation fault. גם הוא מתחיל כ-page fault, אבל הקרנל מגלה שהכתובת לא ממופה ושולח SIGSEGV, ולא קורא שום דבר מדיסק.",
+        "שגוי: היררכיית ה-cache מנוהלת בחומרה ולא מערבת את הקרנל. cache miss הוא לא page fault בכלל.",
+        "שגוי: זה minor fault: הקרנל מקצה דף פיזי ומאפס אותו בלי I/O, במחיר של מיקרו-שניות. הבלבול נובע מכך ששניהם page faults.",
+        "נכון: major fault קורה כשהדף לא נמצא ב-RAM, והקרנל צריך לקרוא אותו מדיסק או מ-swap. בגלל ה-I/O הוא עולה מילי-שניות, ו-mlockall מונע אותו."
+      ]
     },
     {
       "id": "conc.latency-jitter.q20",
@@ -546,7 +643,13 @@
       ],
       "answer": 0,
       "explanation": "ככל שהמצב עמוק יותר, יותר רכיבים כבויים (שעונים, caches, מתחים), והיציאה ארוכה יותר. דרכים להגביל: לכתוב ערך נמוך ל-/dev/cpu_dma_latency ולהשאיר אותו פתוח, או idle=poll. invariant TSC לא משנה קצב עם C-states במעבדים מודרניים.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "נכון: core שממתין נכנס ל-C-state עמוק (C6 ומעלה) שבו שעונים, caches ומתחים כבויים, והיציאה לוקחת עשרות µs. כיבוי המצבים העמוקים מוריד את ה-max במחיר צריכת חשמל.",
+        "שגוי: C-states הם מצבי חומרה של ה-core, לא מושג של ה-scheduler. הם לא נוגעים בעדיפות של ה-thread.",
+        "שגוי: במעבדים מודרניים ה-TSC הוא invariant וממשיך לספור בקצב קבוע גם ב-C-states עמוקים. המדידה נכונה, וההשהיה אמיתית.",
+        "שגוי: C-states לא משפיעים על טבלאות הדפים או על RAM. הם משפיעים על זמן ההתעוררות של ה-core."
+      ]
     },
     {
       "id": "conc.latency-jitter.q22",
@@ -561,7 +664,13 @@
       ],
       "answer": 3,
       "explanation": "vDSO חוסך את המעבר ל-kernel mode, ולכן אפשר למדוד זמן בתוך לולאת RT בלי לשלם על syscall. הערך מחושב מה-TSC ברזולוציה של ננו-שניות, לא מ-tick. בסביבות וירטואליות מסוימות, כשמקור הזמן לא מתאים ל-vDSO, הקריאה נופלת ל-syscall אמיתי.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: ערך שמור מה-tick היה ברזולוציה של מילי-שניות. clock_gettime מחשב זמן ברזולוציה של ננו-שניות מה-TSC ונתוני כיול. (CLOCK_MONOTONIC_COARSE עושה משהו כזה, אבל זה שעון אחר.)",
+        "שגוי: הכניסה ל-kernel mode היא בדיוק מה שעולה מאות ns ב-syscall. הקריאה מהירה כי היא לא נכנסת לקרנל בכלל.",
+        "שגוי: שני השעונים מחושבים מאותו מקור זמן באותו דיוק. ההבדל ביניהם הוא שאחד יכול לקפוץ (REALTIME) והשני מונוטוני.",
+        "נכון: clock_gettime ממומש ב-vDSO, קוד של הקרנל שממופה ל-user space וקורא את ה-TSC ונתוני כיול מעמוד משותף, בלי מעבר ל-kernel mode. לכן הוא עולה כ-20 ns."
+      ]
     },
     {
       "id": "conc.latency-jitter.q23",
@@ -576,7 +685,13 @@
       ],
       "answer": 1,
       "explanation": "דף stack שעוד לא נגעו בו גורם ל-minor fault בגישה הראשונה. prefault מזיז את המחיר לשלב האתחול. זה חלק מהמתכון הסטנדרטי של PREEMPT_RT: mlockall, prefault של ה-stack והבאפרים, ובלי הקצאות בלולאה.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "שגוי: כתיבה לזבל על ה-stack לא מכינה את ה-cache לשום דבר שימושי, וממילא עבודת הלולאה תדחוק את הנתונים האלה. המטרה היא הדפים, לא ה-cache.",
+        "נכון: כתיבה לכל דף של ה-stack גורמת ל-minor fault ולמיפוי שלו כבר באתחול (ועם mlockall הוא גם ננעל). כך קריאה לפונקציה עמוקה בלולאה לא תיתקל ב-fault בגישה ראשונה.",
+        "שגוי: כתיבה למערך לא בודקת overflow. אם ה-stack קטן מדי, ה-prefault פשוט יקרוס כבר באתחול, אבל זו לא המטרה.",
+        "שגוי: גישה לזיכרון לא משנה עדיפות של thread. עדיפות קובעים עם sched_setscheduler."
+      ]
     },
     {
       "id": "conc.latency-jitter.q24",
@@ -594,6 +709,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: זה היה נכון אם ה-DSP היה מהיר מקצב ה-RX. כשהקצבים שווים, אין שום עודף קיבולת שירוקן את התור.",
+        "שגוי: 16ms נשמע כמו זמן ריקון של 16 בלוקים, אבל ריקון דורש שהצרכן יוציא יותר ממה שנכנס. עם קצבים שווים התור לא מתרוקן אף פעם.",
+        "נכון: בזמן התקיעה נכנסו 20 בלוקים לתור של 16, כך ש-4 אבדו והתור נשאר מלא. אחרי זה בלוק יוצא בדיוק כשבלוק נכנס, ולכן כל בלוק חדש מחכה כ-16ms לצמיתות (standing queue).",
+        "שגוי: ה-RX דוגם בקצב קבוע שנקבע ע״י החומרה, והוא לא מאט כשה-DSP מפגר. אין back-pressure על אנטנה."
       ]
     },
     {
@@ -615,7 +736,15 @@
         4
       ],
       "explanation": "מה שמותר: פעולות בזמן חסום, בלי syscalls חוסמים ובלי הקצאות. SPSC wait-free, clock_gettime דרך vDSO, ו-atomic relaxed על מונה פרטי. cout ו-ofstream הם I/O עם locks ו-syscalls. push_back יכול להקצות, להעתיק את כל הווקטור, ואולי לבצע mmap.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "notes": [
+        "מתאים: push לתור SPSC שהוקצה מראש הוא wait-free, בלי הקצאות ובלי syscalls, ולכן בזמן חסום.",
+        "לא מתאים: std::cout לוקח lock ומבצע write syscall שיכול להיחסם על טרמינל או pipe, כלומר זמן לא חסום.",
+        "מתאים: clock_gettime(CLOCK_MONOTONIC) רץ דרך vDSO בלי להיכנס לקרנל, בכ-20 ns ובזמן חסום.",
+        "לא מתאים: push_back שחורג מה-capacity מקצה באפר חדש, מעתיק את כל האיברים, ואולי מבצע mmap. גם זמן לא חסום וגם הקצאה בלולאה.",
+        "מתאים: fetch_add עם relaxed על מונה פרטי של ה-thread הוא הוראה אטומית אחת בלי contention, בזמן קבוע.",
+        "לא מתאים: פתיחת ofstream היא open syscall שעובר על filesystem, מקצה buffer, ויכול להיחסם על דיסק."
+      ]
     },
     {
       "id": "conc.latency-jitter.q26",
@@ -633,6 +762,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: THP לא מבטל את mlockall, והזיכרון נשאר נעול ב-RAM. הבעיה היא עבודה נוספת של הקרנל על דפים נעולים, לא שחרור שלהם.",
+        "נכון: עם THP=always, khugepaged מבצע compaction ומאחד דפים ל-2MB ברקע, ו-fault על huge page מאפס 2MB בבת אחת. ההמלצה: THP ב-madvise או never, ו-huge pages מוקצים מראש (hugetlbfs) לבאפרים שצריכים אותם.",
+        "שגוי: huge pages מורידים TLB misses, וזה יתרון אמיתי לבאפרים גדולים. הבעיה היא המנגנון האוטומטי של THP, לא huge pages עצמם.",
+        "שגוי: SMI מגיע מהקושחה ולא קשור לניהול זיכרון של הקרנל. וגם, SMI לא היה מופיע כ-page faults ב-perf."
       ]
     },
     {
@@ -651,6 +786,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "שגוי: nohz_full הוא אפשרות של הקרנל שעובדת גם בלי PREEMPT_RT. היא דורשת CONFIG_NO_HZ_FULL, לא קרנל RT.",
+        "שגוי: invariant TSC קשור למדידת זמן, לא להחלטה אם לעצור את ה-tick. הוא לא מסביר interrupts נוספים.",
+        "שגוי: nohz_full עובד גם עם threads ב-SCHED_FIFO, וזה בדיוק מקרה השימוש הנפוץ שלו. ה-policy של ה-thread לא מה שמחזיר את ה-tick.",
+        "נכון: nohz_full עוצר את ה-tick רק כשיש על ה-core task אחד שמוכן לרוץ. thread נוסף שהוצמד לשם, או kworker, מחזיר את ה-tick כי צריך אותו לחלוקת זמן."
       ]
     },
     {
@@ -669,6 +810,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "microsoft"
+      ],
+      "notes": [
+        "שגוי: (59·50 + 5000) / 60 ≈ 132 µs הוא חשבון נכון של דבר חסר משמעות. percentiles לא ניתנים למיצוע, והממוצע כאן נמוך פי 38 מהתשובה האמיתית.",
+        "שגוי: החציון של ה-p99 מתעלם לגמרי מהדקה הגרועה. זו טעות של מי שחושב שאפשר לגזור percentile של המכלול מ-percentiles של החלקים.",
+        "נכון: לדקה הגרועה יש 1/60 ≈ 1.67% מכל המדידות, כולן 5ms. זה יותר מ-1%, ולכן כל ה-1% העליון של השעה נופל בתוכה ו-p99 השעתי הוא 5ms.",
+        "שגוי: כאן כן אפשר לדעת בדיוק, כי כל המדידות בדקה הגרועה היו 5ms והן מעל 1% מהשעה. הטווח 50 עד 132 מבוסס על ההנחה השגויה שהממוצע הוא חסם עליון."
       ]
     },
     {
@@ -687,6 +834,12 @@
       "lesson": "conc.latency-jitter",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון: interrupt coalescing. עם rx-usecs: 50 הכרטיס מחכה עד 50 µs (או עד מספר חבילות) לפני interrupt כדי לחסוך interrupts ו-CPU. הורדה ל-0 או לערך קטן, או busy polling, מורידים latency במחיר יותר interrupts או core שלם.",
+        "שגוי: השהיית התפשטות בכבל היא כ-5 ns למטר, כלומר זניחה. ו-ethtool מראה פרמטר שאפשר לשנות.",
+        "שגוי: rx-usecs הוא פרמטר של הכרטיס (coalescing), לא של ה-socket. timeout של socket מוגדר ב-SO_RCVTIMEO ולא מוסיף latency לחבילה שהגיעה.",
+        "שגוי: DMA על PCIe לוקח בסדר גודל של מיקרו-שנייה אחת, לא 50. וההתאמה המדויקת ל-rx-usecs: 50 מראה שזה פרמטר מוגדר ולא קבוע פיזיקלי."
       ]
     },
     {

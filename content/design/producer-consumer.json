@@ -192,6 +192,12 @@
       ],
       "answer": 2,
       "explanation": "התור מאפשר לכל צד לרוץ בקצב שלו ובולע הפרשים זמניים. הוא לא מאיץ את ה-consumer: אם הקצב הממוצע של ה-consumer נמוך מזה של ה-producer, התור יתמלא בכל מקרה. exactly-once אחרי קריסה דורש persistence, ותור משותף בזיכרון עדיין דורש סנכרון.",
+      "notes": [
+        "תור לא מאיץ את ה-consumer; אם הקצב הממוצע שלו נמוך מזה של ה-producer, התור פשוט יתמלא.",
+        "exactly-once אחרי קריסה דורש persistence ו-acks; תור בזיכרון נעלם עם התהליך.",
+        "נכון: התור מנתק בין הקצבים: כל צד רץ בקצב שלו, והתור סופג הפרשים זמניים ו-bursts.",
+        "תור משותף בזיכרון דורש סנכרון (mutex או atomics); הוא מרכז את הסנכרון, לא מבטל אותו."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -207,6 +213,12 @@
       ],
       "answer": 2,
       "explanation": "במדיניות blocking ה-producer ממתין (בדרך כלל על condition variable not_full) עד שיש מקום. דריסת הישן ביותר והחזרת false הן מדיניות אחרות (drop oldest / try_push). הגדלה אוטומטית סותרת את ההגדרה של bounded.",
+      "notes": [
+        "דריסת הפריט הישן היא מדיניות drop oldest, לא blocking.",
+        "תור שמגדיל את עצמו הוא unbounded, בסתירה להגדרה של bounded.",
+        "נכון: במדיניות blocking ה-producer ממתין (בדרך כלל על condition variable not_full) עד שה-consumer מפנה מקום.",
+        "החזרת false היא התנהגות של try_push, מדיניות non-blocking."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -227,6 +239,13 @@
         4
       ],
       "explanation": "RX→FFT, thread pool ו-async logger הם כולם רכיב מייצר, תור ורכיב צורך. רקורסיה ולולאת סכימה הן חישוב סדרתי בתוך אותו הקשר, בלי תור שמנתק בין שני צדדים.",
+      "notes": [
+        "נכון: threads של האפליקציה מייצרים הודעות, תור מנתק, ו-thread רקע צורך וכותב לדיסק.",
+        "נכון: מי שמגיש משימות הוא producer, תור העבודה מנתק, וה-workers הם consumers.",
+        "רקורסיה היא חישוב סדרתי בתוך אותו הקשר, בלי תור ובלי שני צדדים שרצים בקצב שונה.",
+        "לולאת סכימה היא חישוב סדרתי פשוט, בלי מייצר וצורך נפרדים.",
+        "נכון: thread ה-RX מייצר בלוקים ו-thread ה-FFT צורך אותם, זה ה-producer-consumer הקלאסי ב-SDR."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -242,6 +261,12 @@
       ],
       "answer": 2,
       "explanation": "condition variable לא מבטיח שהתנאי נכון כשה-wait חוזר. spurious wakeups מותרים בתקן, ובנוסף בין ה-notify ללקיחת ה-mutex מחדש consumer אחר יכול לרוקן את התור. לכן תמיד בודקים מחדש בלולאה (או משתמשים ב-overload עם predicate). notify_one מעיר thread אחד לכל היותר.",
+      "notes": [
+        "`if` עם `cv.wait` מתקמפל בלי בעיה; הבעיה היא נכונות, לא קומפילציה.",
+        "הלולאה לא מקצרת את זמן ההחזקה של ה-mutex; היא רק בודקת את התנאי מחדש.",
+        "נכון: wait יכול לחזור בלי שהתנאי מתקיים, בגלל spurious wakeup או consumer אחר שלקח את הפריט קודם, ולכן חייבים לבדוק מחדש בלולאה.",
+        "`notify_one` מעיר thread אחד לכל היותר; זה `notify_all` שמעיר את כולם."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -283,6 +308,12 @@
       ],
       "answer": 3,
       "explanation": "ה-allocator הסטנדרטי thread-safe, אבל זמן הריצה שלו לא דטרמיניסטי: נעילות פנימיות, בקשת זיכרון מה-OS ו-page faults. ב-thread זמן-אמת מקצים pool של בלוקים מראש ומעבירים מצביעים לבלוקים חופשיים דרך תור חזרה (free list). אין כאן דליפה כל עוד יש delete תואם.",
+      "notes": [
+        "ה-allocator הסטנדרטי thread-safe; הבעיה היא הזמן הלא דטרמיניסטי שלו, לא נכונות.",
+        "כל עוד ה-consumer מבצע delete לכל new, אין דליפה.",
+        "העברת מצביעים בין threads היא הדרך הנפוצה ב-producer-consumer, בתנאי שהבעלות ברורה והתור מסנכרן.",
+        "נכון: new ו-delete יכולים לקחת זמן לא חסום (lock פנימי, בקשה מה-OS, page faults), ויוצרים jitter ו-overflows; מקצים pool מראש ומחזירים בלוקים דרך free list."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -301,6 +332,12 @@
       ],
       "answer": 0,
       "explanation": "כל consumer צריך לקבל אות עצירה משלו. poison pill אחד נצרך על ידי consumer אחד בלבד. דגל closed עובד אם משתמשים ב-notify_all (notify_one יעיר רק אחד והשאר יישנו לנצח) ואם pop ממשיך לרוקן את התור לפני שהוא מחזיר 'סגור'. detach לא עוצר כלום, רק מאבד את השליטה ב-thread.",
+      "notes": [
+        "נכון: כל consumer צריך אות עצירה משלו: 4 poison pills, או דגל closed עם notify_all, כש-pop מחזיר \"סגור\" רק אחרי שהתור ריק.",
+        "poison pill אחד נצרך על ידי consumer אחד בלבד, והשאר ממשיכים לחכות; מנגנון ההודעה ביניהם הוא סיבוך מיותר ושביר.",
+        "detach לא עוצר את ה-threads; הם ממשיכים לחכות, והשליטה בהם אובדת.",
+        "notify_one מעיר consumer אחד בלבד, והשאר יישנו לנצח על ה-cv."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -316,6 +353,12 @@
       ],
       "answer": 3,
       "explanation": "producer וצרכן יחידים, דרישה שה-producer לא ייחסם וקצב גבוה הם בדיוק המקרה של SPSC: שני אינדקסים atomic בלי CAS ובלי syscall. mutex+cv עובד אבל ה-notify על כל בלוק עלול לעלות syscall ו-RX עלול להיחסם על ה-mutex. pipe עולה syscall והעתקה לכל בלוק. MPMC משלם על כלליות שלא צריך.",
+      "notes": [
+        "mutex ו-cv עובדים, אבל notify על כל בלוק עלול לעלות syscall, וה-RX עלול להיחסם על ה-mutex כשה-DSP מחזיק אותו.",
+        "pipe עולה syscall והעתקה לכל בלוק, ויכול לחסום כשה-buffer שלו מלא.",
+        "MPMC עם CAS משלם על כלליות שלא צריך: עם producer ו-consumer יחידים אין תחרות על אותו אינדקס.",
+        "נכון: SPSC ring של מצביעים לבלוקים מוקצים מראש: שני אינדקסים atomic בלי CAS ובלי syscall, ו-try_push לא חוסם את ה-RX וסופר drops כשמלא."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -339,6 +382,13 @@
         4
       ],
       "explanation": "batching הוא trade-off קלאסי של throughput מול latency: פחות נעילות ו-wakeups, ופחות contention מול ה-producer. אבל מי שמחכה לצבור batch מלא מוסיף latency לפריטים הראשונים, ולכן משתמשים בדרך כלל ב'עד 64 או timeout'. batching לא משנה את הצורך להגביל את גודל התור.",
+      "notes": [
+        "batching לא משנה את הצורך להגביל את גודל התור; consumer איטי עדיין יגרום לגדילה.",
+        "נכון: מי שמחכה לצבור batch מלא מוסיף latency לפריטים הראשונים, ולכן משתמשים ב\"עד 64 או timeout\".",
+        "נכון: עלות הנעילה וה-wakeup מתחלקת על עד 64 פריטים, ולכן throughput עולה.",
+        "batching הוא trade-off: throughput עולה, אבל latency של פריט בודד יכול לעלות, במיוחד אם מחכים למילוי.",
+        "נכון: פחות נעילות של ה-consumer מקטינות contention, וה-producer נחסם פחות."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -376,6 +426,12 @@
       ],
       "answer": 0,
       "explanation": "כשיש שני סוגי ממתינים על אותו cv, notify_one בוחר thread שרירותי. אם producer מעיר producer אחר שבודק את התנאי שלו (מלא) וחוזר לישון, ה-consumer שהיה צריך להתעורר לא קיבל אות, ותיתכן תקיעה מלאה. הפתרון: שני cv נפרדים, או notify_all (יקר יותר). התקן לא מבטיח FIFO בין הממתינים, ו-race אין כי הכל תחת ה-mutex.",
+      "notes": [
+        "נכון: כששני סוגי ממתינים חולקים cv, notify_one יכול להעיר producer במקום consumer; הוא בודק שהתור מלא וחוזר לישון, ה-wakeup נבלע, וכל ה-threads יכולים להיתקע. הפתרון: שני cv או notify_all.",
+        "התקן לא מבטיח FIFO בין ממתינים על cv; notify_one מעיר thread שרירותי.",
+        "כל הגישה לתור נעשית תחת ה-mutex, ולכן אין data race; הבעיה היא wakeup שהגיע ל-thread הלא נכון.",
+        "spurious wakeup גורם רק לבדיקה חוזרת של התנאי בלולאה; הוא לא מכפיל פריטים."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -391,6 +447,12 @@
       ],
       "answer": 1,
       "explanation": "מה שמונע lost wakeup הוא שהשינוי במצב המשותף נעשה תחת ה-mutex ושהממתין בודק את התנאי תחת אותו mutex. notify לפני השחרור עלול לגרום ל-'hurry up and wait' (חלק מהמימושים מתמודדים עם זה ב-wait morphing). notify אחרי השחרור יעיל יותר, אבל במקרה שה-waiter יכול להשמיד את האובייקט שמכיל את ה-cv מיד כשהוא רואה את התנאי, notify אחרי unlock הוא use-after-free.",
+      "notes": [
+        "lost wakeup נמנע כששינוי המצב נעשה תחת ה-mutex והממתין בודק תחתיו; מיקום ה-notify ביחס ל-unlock לא משנה את זה.",
+        "נכון: שניהם נכונים כל עוד שינוי המצב תחת ה-mutex. אחרי השחרור חוסך ל-thread שהתעורר להיחסם מיד על ה-mutex, אבל אם ה-waiter עלול להשמיד את ה-cv מיד, notify אחרי unlock הוא use-after-free.",
+        "notify תחת ה-mutex לא יוצר deadlock; במקרה הגרוע ה-thread שהתעורר נחסם לרגע על ה-mutex.",
+        "יש הבדל בביצועים: notify תחת ה-mutex עלול לגרום ל-\"hurry up and wait\", אם המימוש לא עושה wait morphing."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -414,6 +476,13 @@
         3
       ],
       "explanation": "כשמשימות קצרות, כל ה-workers מתחרים על אותו lock או אותו cache line וזה צוואר בקבוק. work stealing (כמו ב-TBB ו-Go) נותן ל-owner לעבוד על קצה אחד ולגנבים על הקצה השני, ושומר locality. הוא לא שומר על סדר גלובלי. כשהמשימות ארוכות, תקורת התור זניחה ותור משותף פשוט מצוין.",
+      "notes": [
+        "work stealing לא שומר סדר גלובלי: ה-owner עובד LIFO והגנבים לוקחים מהקצה השני.",
+        "נכון: משימה שנוצרה על ידי worker נשארת בתור שלו, ולרוב גם הנתונים שלה חמים ב-cache של אותו core.",
+        "נכון: כשהמשימות קצרות ורבות, כל ה-workers מתחרים על אותו lock או cache line, וזה צוואר בקבוק.",
+        "נכון: הגנב עובד על הקצה הנגדי לזה של ה-owner, ולכן התנגשויות נדירות, כמעט רק כשנשאר פריט אחד.",
+        "כשהמשימות ארוכות (מילישניות), תקורת התור זניחה, ותור משותף פשוט מצוין."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -448,6 +517,12 @@
       ],
       "answer": 1,
       "explanation": "release על ה-store מבטיח שהכתיבה ל-slot נראית לכל מי שקורא את ערך ה-tail החדש עם acquire. עם relaxed ה-consumer עלול לראות tail מעודכן ולקרוא slot ישן (במיוחד על ARM). seq_cst נכון אבל לא מינימלי ויקר יותר על חלק מהארכיטקטורות. acquire על store ו-release על load אינם orderings חוקיים לפעולות האלה. באופן סימטרי, head משוחרר עם release על ידי ה-consumer ונקרא עם acquire על ידי ה-producer.",
+      "notes": [
+        "relaxed לא מסדר את הכתיבה ל-slot מול ה-store של tail; ה-consumer עלול לראות tail חדש ולקרוא slot ישן, במיוחד על ARM.",
+        "נכון: release על ה-store של tail מבטיח שהכתיבה ל-slot נראית לכל מי שקורא את ה-tail החדש עם acquire; זה הזוג המינימלי.",
+        "seq_cst נכון אבל לא מינימלי, ועולה fences נוספים בחלק מהארכיטקטורות.",
+        "acquire על store ו-release על load אינם orderings חוקיים לפעולות האלה; זה הזוג ההפוך."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -466,6 +541,12 @@
       ],
       "answer": 3,
       "explanation": "גם בלי false sharing, כל push קורא את head וכל pop קורא את tail, ולכן ה-cache line של כל אינדקס עובר בין ה-cores על כל פעולה. עם עותק מקומי, ה-producer קורא את head האמיתי רק כשנראה לו שהתור מלא, וכך התעבורה בין ה-cores יורדת בסדר גודל (הטכניקה של rigtorp/folly). volatile לא נותן סנכרון ב-C++, הגדלת קיבולת לא משנה את ה-ping-pong, ו-seq_cst רק מוסיף fences.",
+      "notes": [
+        "volatile לא נותן סנכרון או אטומיות ב-C++; זה data race ו-UB, ולא יפתור את ה-cache line ping-pong.",
+        "קיבולת גדולה יותר לא משנה את העובדה שכל פעולה קוראת את האינדקס של הצד השני.",
+        "seq_cst רק מוסיף fences ומאט; הבעיה היא תעבורת cache lines, לא reordering.",
+        "נכון: עם עותק מקומי של האינדקס של הצד השני, כל צד קורא את ה-atomic המשותף רק כשנראה שהתור מלא או ריק, והתעבורה בין ה-cores יורדת בסדר גודל."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -504,6 +585,12 @@
       ],
       "answer": 0,
       "explanation": "unbounded לא מייצר אות לעומס: כשה-consumer איטי בממוצע, התור גדל עד OOM וה-latency של כל פריט גדל איתו. bounded לא בהכרח מהיר יותר ולא מבטיח שלא יאבדו פריטים; הוא מכריח מדיניות מפורשת (block, drop או שגיאה). thread-safety היא עניין של המימוש, לא של הגבול.",
+      "notes": [
+        "נכון: bounded מכריח להחליט מה קורה בעומס (block, drop או שגיאה) ומונע גדילה בלי גבול של זיכרון ו-latency כשה-consumer מפגר.",
+        "bounded לא בהכרח מהיר יותר ב-push; היתרון הוא בהתנהגות בעומס.",
+        "thread-safety היא עניין של המימוש, לא של הגבול; יש תורים unbounded thread-safe.",
+        "bounded לא מבטיח שאין אובדן; עם drop policy הוא דווקא זורק. הוא רק הופך את ההחלטה למפורשת."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -519,6 +606,12 @@
       ],
       "answer": 1,
       "explanation": "התקן מתיר ל-wait לחזור בלי notify. לכן תמיד בודקים את התנאי מחדש בלולאה או עם predicate. notify שנשלח כשאין ממתין הולך לאיבוד, וזה קשור ל-lost wakeup ולא ל-spurious wakeup.",
+      "notes": [
+        "notify שנשלח כשאין ממתין הולך לאיבוד; זה קשור ל-lost wakeup, לא ל-spurious wakeup.",
+        "נכון: spurious wakeup הוא חזרה של wait בלי notify, שהתקן מתיר, ולכן תמיד בודקים את התנאי מחדש.",
+        "sleep_for לא קשור ל-condition variable; הוא אמור לישון לפחות את הזמן שהתבקש.",
+        "deadlock הוא מצב שבו threads מחכים זה לזה לנצח, תופעה אחרת לגמרי."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -534,6 +627,12 @@
       ],
       "answer": 1,
       "explanation": "ב-SPSC (single producer, single consumer) רק ה-producer כותב את tail ורק ה-consumer כותב את head, ולכן מספיקים store ו-load עם acquire/release, בלי CAS ובלי locks. עם כמה producers או consumers צריך CAS או mutex. קיבולת וזיכרון משותף לא קשורים.",
+      "notes": [
+        "עם producer יחיד אין בכלל שאלה של סדר בין כמה producers; SPSC פשוט לא תומך בכמה.",
+        "נכון: ב-SPSC רק ה-producer כותב את tail ורק ה-consumer כותב את head, ולכן מספיקים store ו-load עם acquire/release, בלי CAS ובלי locks.",
+        "SPSC ring הוא בדרך כלל דווקא bounded; קיבולת לא קשורה למספר הצדדים.",
+        "SPSC ring עובד בזיכרון משותף, בין threads או בין תהליכים דרך shared memory; בלי זיכרון משותף צריך IPC אחר."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -565,6 +664,12 @@
       ],
       "answer": 0,
       "explanation": "עם מונים free-running, ההפרש tail − head הוא בדיוק מספר הפריטים, ובחשבון unsigned הוא נכון גם אחרי wraparound. כך אפשר לנצל את כל 1024 המקומות: ריק הוא size == 0 ומלא הוא size == 1024. הפרש בין האינדקסים אחרי המיסוך שגוי כשה-tail עשה wrap וה-head לא. count נפרד היה משתנה שנכתב על ידי שני הצדדים.",
+      "notes": [
+        "נכון: עם מונים free-running, tail − head הוא בדיוק מספר הפריטים, ובחשבון unsigned הוא נכון גם אחרי wraparound; כך מנצלים את כל 1024 המקומות.",
+        "modulo 1023 שגוי לגמרי: הגודל הוא 1024, ו-1024 פריטים (תור מלא) היו נראים כ-1.",
+        "אחרי המיסוך, ההפרש שגוי כשה-tail עשה wrap וה-head לא, ויוצא שלילי או לא נכון.",
+        "מונים free-running בדיוק חוסכים את ה-count הנפרד, שהיה משתנה שנכתב על ידי שני הצדדים."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -588,6 +693,13 @@
         3
       ],
       "explanation": "empty סופר מקומות פנויים (מתחיל ב-N) ו-full סופר פריטים (מתחיל ב-0). ה-semaphores מבטיחים שלא יוכנסו יותר מ-N פריטים, אבל לא מגנים על מבנה הנתונים: שני producers שעברו את empty יחד יכתבו לאותו מקום. לכן עם כמה producers או consumers צריך גם mutex או אינדקסים atomic.",
+      "notes": [
+        "נכון: empty סופר מקומות פנויים ומתחיל ב-N, ו-full סופר פריטים ומתחיל ב-0.",
+        "נכון: push מחכה למקום פנוי (empty), מכניס, ומאותת שיש פריט (full).",
+        "ה-semaphores מגבילים כמות, לא מגנים על מבנה הנתונים; שני producers שעברו את empty יחד יכתבו לאותו מקום. צריך mutex או אינדקסים atomic.",
+        "נכון: pop מחכה לפריט (full), מוציא, ומאותת שהתפנה מקום (empty).",
+        "זה הפוך: בהתחלה התור ריק, ולכן full הוא 0 ו-empty הוא N."
+      ],
       "lesson": "design.producer-consumer"
     },
     {
@@ -617,6 +729,12 @@
       ],
       "answer": 1,
       "explanation": "LIFO אצל ה-owner נותן locality: המשימה שנוצרה עכשיו משתמשת בנתונים שעוד ב-cache. בחלוקה רקורסיבית (divide and conquer) המשימות הישנות הן חתיכות גדולות, ולכן גניבה אחת נותנת לגנב הרבה עבודה וגניבות נדירות. העבודה בקצוות מנוגדים מצמצמת סנכרון לרגע שבו נשאר פריט אחד. אין כאן סדר גלובלי.",
+      "notes": [
+        "work stealing לא שומר סדר גלובלי; ה-owner עובד LIFO.",
+        "נכון: LIFO אצל ה-owner שומר locality של משימות חמות ב-cache; הגנבים לוקחים את הישנות, שבחלוקה רקורסיבית הן הגדולות, ולכן גניבות נדירות; והעבודה בקצוות מנוגדים כמעט לא מתנגשת.",
+        "C++ לא אוסר שום דבר כזה; זו בחירה אלגוריתמית.",
+        "זה הפוך: הגנבים מקבלים את המשימות הישנות, שבדרך כלל הגדולות, כדי שגניבה אחת תספק הרבה עבודה."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -635,6 +753,12 @@
       ],
       "answer": 0,
       "explanation": "חסימה או כתיבה סינכרונית הופכות תקיעה של דיסק ל-latency של 3 שניות לבקשות, כלומר הלוגים מפילים את השירות. הגדלה דינמית היא unbounded עם סיכון OOM. זריקה מבוקרת עם מונה שומרת על ה-SLO ומשאירה עקבות לכך שנזרק משהו. מקום שמור להודעות חשובות הוא עדינות נפוצה.",
+      "notes": [
+        "נכון: try_push עם drop ומונה שומר על ה-SLO של הבקשות ומשאיר עקבות לכך שנזרקו הודעות; מקום שמור ל-ERROR הוא עדינות נפוצה.",
+        "חסימה הופכת תקיעה של דיסק ל-latency של 3 שניות לבקשות: הלוגים מפילים את השירות.",
+        "כתיבה סינכרונית לדיסק תקוע חוסמת בדיוק כמו חסימה על התור.",
+        "הגדלה דינמית היא תור unbounded עם סיכון OOM; הבעיה רק נדחית."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "microsoft"
@@ -653,6 +777,12 @@
       ],
       "answer": 1,
       "explanation": "תפיסת מיקום (CAS על tail) והכתיבה בפועל הן שתי פעולות נפרדות. בין לבין, consumer יכול לראות tail מתקדם ולקרוא slot שעוד לא נכתב, או producer שעבר סיבוב יכול לדרוס slot שעוד לא נקרא. ה-sequence של ה-slot (שנכתב עם release אחרי הכתיבה או הקריאה) אומר לכל צד אם ה-slot מוכן עבורו. ה-CAS עדיין נדרש; ה-sequence משלים אותו ולא מחליף.",
+      "notes": [
+        "CAS (`lock cmpxchg`) אטומי לגמרי על x86; הבעיה היא שתפיסת המיקום והכתיבה הן שתי פעולות נפרדות.",
+        "נכון: ה-CAS רק תופס מיקום; ה-sequence של ה-slot אומר ל-producer שה-consumer סיים לקרוא את הנתון הקודם, ול-consumer שה-producer סיים לכתוב.",
+        "ה-sequence הוא חלק מהותי מהפרוטוקול, לא סטטיסטיקה; בלעדיו יש קריאה של slot לא כתוב או דריסה של slot לא נקרא.",
+        "ה-CAS על tail עדיין נדרש כדי לתאם בין producers; ה-sequence משלים אותו ולא מחליף."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"
@@ -671,6 +801,12 @@
       ],
       "answer": 0,
       "explanation": "זה lost wakeup. ה-predicate נבדק תחת ה-mutex, וה-wait משחרר את ה-mutex ונרדם באופן אטומי ביחס למי שמחזיק את ה-mutex. ה-producer לא מחזיק אותו, ולכן יכול להיכנס בדיוק בין הבדיקה לשינה. atomic מבטיח שה-store נראה, לא שהוא קורה בזמן הנכון. נעילת ה-mutex סביב ה-store (ה-notify יכול להיות אחרי unlock) פותרת. spurious wakeup דווקא היה מציל את המצב, לא גורם לו.",
+      "notes": [
+        "נכון: זה lost wakeup: ה-store וה-notify יכולים ליפול בין בדיקת ה-predicate לשינה, וה-notify הולך לאיבוד. atomic לא סוגר את החלון; רק נעילת ה-mutex סביב ה-store.",
+        "atomic<bool> עובד עם cv ב-predicate; הבעיה היא התזמון של ה-store ביחס ל-mutex.",
+        "notify מחוץ ל-mutex כן מעיר ממתינים; מה שחייב להיות תחת ה-mutex הוא שינוי המצב, לא ה-notify.",
+        "spurious wakeup היה דווקא מציל את המצב, כי ה-consumer היה בודק שוב ורואה ready=true."
+      ],
       "lesson": "design.producer-consumer",
       "tags": [
         "nvidia"

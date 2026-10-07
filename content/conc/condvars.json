@@ -188,7 +188,13 @@
       ],
       "answer": 2,
       "explanation": "התקן מתיר ל-wait לחזור בלי notify, ולכן תמיד בודקים את התנאי בלולאה. notify שהולך לאיבוד הוא lost wakeup, בעיה אחרת. ריבוי התעוררויות מ-notify_all נקרא thundering herd.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "זה thundering herd, לא spurious wakeup: שם יש notify אמיתי והוא פשוט מעיר יותר threads ממה שיכולים להתקדם.",
+        "זה lost wakeup: ל-cv אין זיכרון ולכן notify בלי מחכים נעלם. spurious wakeup הוא ההפך, התעוררות בלי notify בכלל.",
+        "נכון. התקן מתיר ל-wait לחזור בלי שמישהו קרא ל-notify (למשל בגלל מימוש מעל futex או signals), ולכן ה-predicate נבדק תמיד בלולאה אחרי כל חזרה.",
+        "wait לא זורק exception בגלל signal. ב-POSIX signal יכול לגרום לחזרה מוקדמת, אבל זו בדיוק חזרה שקטה (spurious) שהקוד צריך לטפל בה בבדיקת התנאי, לא exception."
+      ]
     },
     {
       "id": "conc.condvars.q02",
@@ -203,7 +209,13 @@
       ],
       "answer": 1,
       "explanation": "השחרור וההירדמות חייבים להיות אטומיים ביחס ל-notify, אחרת notify שקורה בין שניהם הולך לאיבוד. כשה-wait חוזר ה-mutex שוב מוחזק, ולכן אפשר לבדוק את ה-predicate ולגעת בנתונים בבטחה.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "wait כן נועל מחדש בעצמו לפני שהוא חוזר, המתקשר לא צריך לעשות lock. הטעות נובעת מהמחשבה ש-wait הוא רק unlock ואחריו sleep.",
+        "נכון. השחרור וההירדמות אטומיים ביחס ל-notify, כך ש-notify לא יכול ליפול בין השניים, ולפני החזרה ה-mutex ננעל שוב ולכן אפשר לבדוק את ה-predicate בבטחה.",
+        "ה-lock הוא לא רק מזהה: wait משחרר אותו בפועל. אילו לא היה משחרר, אף יצרן לא היה יכול לשנות את המצב המשותף.",
+        "אם ה-mutex היה מוחזק בזמן השינה, היצרן לא היה יכול לנעול אותו כדי לשנות את התנאי, וזה deadlock מובטח."
+      ]
     },
     {
       "id": "conc.condvars.q03",
@@ -235,7 +247,13 @@
       ],
       "answer": 3,
       "explanation": "אחרי ההתעוררות אין הבטחה שהתנאי מתקיים: ייתכן spurious wakeup, וייתכן שצרכן אחר נכנס ראשון ולקח את הפריט. התיקון: `cv.wait(lk, [&]{ return !q.empty(); });`.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "pop הוא הצרכן, ואין לו את מי להעיר. הבאג הוא בצד ההמתנה: אחרי ההתעוררות לא בודקים שוב שהתור לא ריק.",
+        "ההפך: חובה לבדוק את q.empty() כשה-mutex נעול, אחרת זה data race על התור.",
+        "std::condition_variable::wait מקבל דווקא unique_lock, כי הוא צריך לשחרר ולנעול מחדש. lock_guard לא תומך בזה ולא יתקמפל.",
+        "נכון. if בודק פעם אחת בלבד; אחרי spurious wakeup או כשצרכן אחר הקדים ולקח את הפריט, התור ריק ו-front() על תור ריק הוא UB. צריך while או את הגרסה עם predicate."
+      ]
     },
     {
       "id": "conc.condvars.q05",
@@ -252,7 +270,13 @@
       ],
       "answer": 0,
       "explanation": "הגרסה עם predicate בודקת קודם את התנאי ורק אם הוא שקר נכנסת ל-wait. כאן ready כבר true, ולכן אין המתנה בכלל. זו גם הסיבה שהגרסה עם predicate מונעת את הבעיה של notify שקרה לפני שהמחכה הגיע.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "נכון. wait עם predicate שקול ל-while (!pred()) wait(lk); ready כבר true, ולכן הלולאה לא נכנסת ל-wait כלל ו-go מודפס מיד.",
+        "זה היה נכון רק אילו ה-wait היה נכנס להמתנה. הגרסה עם predicate בודקת את התנאי לפני ההמתנה הראשונה, ולכן אין צורך בשום התעוררות.",
+        "זה היה קורה עם wait(lk) בלי predicate. עם predicate שכבר true לא נרדמים, ולכן לא צריך notify.",
+        "אין שום דרישה שיהיה thread נוסף. נעילת mutex וקריאה ל-wait מ-thread יחיד חוקיות לגמרי."
+      ]
     },
     {
       "id": "conc.condvars.q06",
@@ -267,7 +291,13 @@
       ],
       "answer": 1,
       "explanation": "notify_one מעיר מחכה אחד, וזה מספיק כשכל המחכים שקולים ופריט אחד נוסף. notify_all מעיר את כל השמונה, שבעה מהם ימצאו תור ריק ויחזרו לישון (thundering herd). בלי notify אף אחד לא יתעורר, כי ל-cv אין polling.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "שמונה notify_one שקולים בערך ל-notify_all ומעירים שמונה צרכנים בשביל פריט אחד: שבעה ימצאו תור ריק ויחזרו לישון. זה thundering herd מיותר.",
+        "נכון. נוסף פריט אחד והמחכים שקולים, ולכן מספיק להעיר אחד. כל שאר המחכים ממילא לא יכלו להתקדם.",
+        "cv לא עושה polling: מחכה ישן עד notify (או spurious wakeup אקראי). בלי notify הצרכנים עלולים לישון לנצח למרות שיש פריט.",
+        "notify_one מעיר מחכה אחד אם יש כזה; זה מובטח. החשש שאף אחד לא יתעורר לא מצדיק להעיר את כל השמונה."
+      ]
     },
     {
       "id": "conc.condvars.q07",
@@ -287,7 +317,14 @@
         2
       ],
       "explanation": "ל-cv אין זיכרון, ובכך הוא שונה מ-semaphore: notify בלי מחכים הולך לאיבוד, ולכן המצב נשמר ב-predicate. התקן לא מגדיר איזה מחכה יתעורר. notify מחוץ ל-lock תקין ולפעמים חוסך התעוררות שמיד נחסמת על ה-mutex. system_clock יכול לזוז בגלל NTP או שינוי ידני, steady_clock מונוטוני.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "נכון. system_clock יכול לקפוץ (NTP, שינוי ידני), ואז deadline מוחלט עליו מתקרב או מתרחק. steady_clock מונוטוני ולכן מתאים ל-timeouts.",
+        "נכון. זו ההגדרה בתקן של הגרסה עם predicate: לולאת while שבודקת את התנאי לפני כל wait, וזה מה שמטפל ב-spurious wakeups.",
+        "נכון. notify לא דורש את ה-mutex. מה שחייב להיות תחת ה-mutex הוא שינוי ה-predicate, ו-notify אחרי unlock אפילו חוסך למתעורר להיחסם מיד.",
+        "התקן לא מגדיר סדר FIFO: notify_one מעיר מחכה כלשהו. מי שמניח הוגנות מבלבל עם תור המתנה הוגן או עם מימוש מסוים.",
+        "זו התנהגות של semaphore, לא של cv. ל-cv אין זיכרון: notify בלי מחכים נעלם, ולכן את המצב שומרים ב-predicate."
+      ]
     },
     {
       "id": "conc.condvars.q08",
@@ -302,7 +339,13 @@
       ],
       "answer": 3,
       "explanation": "מה שחייב להיות תחת ה-mutex הוא **שינוי ה-predicate**, לא ה-notify. אם ה-notify קורה כשה-lock מוחזק, המתעורר עלול לרוץ ומיד להיחסם על ה-mutex (hurry up and wait). יש מקרה קצה אחד שבו notify תחת lock עדיף: כשהמחכה עלול להרוס את ה-cv מיד אחרי שהוא רואה את התנאי.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "אין דרישה כזו בתקן. מה שחייב להיות תחת ה-mutex הוא שינוי התנאי, כדי שהשינוי לא ייפול בין הבדיקה של הממתין להירדמות שלו.",
+        "אין קשר בין notify_one ל-notify_all לשאלה הזו. שתיהן חוקיות גם אחרי שחרור ה-lock.",
+        "ה-predicate לא צריך להיות atomic כשהוא משתנה תחת ה-mutex; ה-mutex כבר מספק את הסנכרון. atomic לבד, בלי mutex, דווקא מאפשר lost wakeup.",
+        "נכון. השינוי נעשה תחת ה-lock ולכן אין lost wakeup, ו-notify אחרי unlock חוסך את מצב ה-hurry up and wait שבו המתעורר נחסם מיד על mutex שעדיין מוחזק."
+      ]
     },
     {
       "id": "conc.condvars.q09",
@@ -320,7 +363,13 @@
       ],
       "answer": 0,
       "explanation": "ה-predicate צריך להיות `stop || !q.empty()`, ואחריו `if (stop && q.empty()) return;`. ה-notify מחוץ ל-lock תקין כי stop שונה תחת ה-mutex. הרצת job בלי lock היא דווקא נכונה: לא מחזיקים lock בזמן עבודה ארוכה.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "נכון. ה-predicate הוא רק !q.empty(), ולכן אחרי notify_all ה-workers רואים תור ריק וחוזרים לישון. אין גם בדיקת stop ו-return, כך ש-join מחכה לנצח.",
+        "volatile לא נותן סנכרון בין threads ב-C++. stop כבר נכתב תחת ה-mutex ונקרא תחתיו, ולכן הנראות תקינה; הבעיה היא שאף אחד לא קורא אותו.",
+        "notify מחוץ ל-lock תקין כאן, כי stop שונה תחת ה-mutex לפני כן. גם notify בתוך ה-lock לא היה עוזר, כי ה-predicate עדיין מתעלם מ-stop.",
+        "הרצת job בלי lock היא דווקא הפרקטיקה הנכונה: לא מחזיקים mutex בזמן עבודה ארוכה, אחרת כל ה-pool מתבצע בטור."
+      ]
     },
     {
       "id": "conc.condvars.q10",
@@ -363,6 +412,12 @@
       "lesson": "conc.condvars",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "notify_all לא פותר את החלון: אם ה-notify נשלח לפני שהצרכן נרדם, אין אף אחד שיתעורר, לא משנה כמה מעירים.",
+        "זה שיפור ביצועים לגיטימי, אבל לא קשור לתקיעה. הצרכן בכלל לא מגיע ל-process() כשהוא נתקע.",
+        "נכון. ה-mutex מבטיח שבין בדיקת ה-predicate להירדמות אף אחד לא משנה אותו. בלי נעילה ביצרן, store ו-notify יכולים ליפול בחלון הזה והצרכן ישן על תנאי שכבר true. atomic פותר רק את ה-data race.",
+        "ברירת המחדל היא כבר seq_cst, שחזקה מ-release. הבעיה אינה סדר זיכרון אלא האטומיות של בדיקה ושינה מול השינוי, שרק ה-mutex נותן."
       ]
     },
     {
@@ -378,7 +433,13 @@
       ],
       "answer": 1,
       "explanation": "כל wait_for מתחיל מדידה מחדש. אם ה-cv מקבל notify כל 90ms בגלל משהו אחר, אף איטרציה לא תסתיים ב-timeout וה-thread יחכה לנצח. הנכון: `auto dl = std::chrono::steady_clock::now() + 1s; return cv.wait_until(lk, dl, [&]{ return ready; });`. הגרסה עם predicate מחזירה את ערכו בסוף, כך שיודעים אם התנאי התקיים או שפג הזמן.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "רזולוציה עדינה יותר לא פותרת כלום: כל wait_for עדיין מתחיל מדידה מחדש, ו-notify תכופים ימנעו timeout בכל איטרציה.",
+        "נכון. רק איטרציות שהסתיימו ב-timeout נספרות; התעוררות מ-notify או spurious פותחת חלון חדש של 100ms בלי לספור, ולכן אין חסם על הזמן הכולל. deadline יחיד עם wait_until פותר את זה.",
+        "wait_for בלי predicate דווקא מחזיר std::cv_status (no_timeout או timeout). הגרסה עם predicate היא שמחזירה bool.",
+        "החשבון נכון רק אם כל איטרציה מסתיימת ב-timeout. התעוררויות שאינן timeout לא נספרות, ולכן הזמן הכולל יכול להיות ארוך בהרבה משנייה."
+      ]
     },
     {
       "id": "conc.condvars.q13",
@@ -396,6 +457,12 @@
       "lesson": "conc.condvars",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "spurious wakeups הם תכונה של המימוש ואינם תלויים במספר ה-cvs או בסוג ה-notify. הם ממשיכים לקרות בכל מקרה.",
+        "כל הגישה לתור נעשית תחת ה-mutex, ולכן אין data race. הבעיה היא לוגית: איזה thread מתעורר.",
+        "זה היה נכון עם notify_all: היו התעוררויות מיותרות אבל מישהו מהסוג הנכון היה מתעורר. עם notify_one ה-notify עלול להיבלע לגמרי.",
+        "נכון. notify_one מעיר מחכה שרירותי; אם זה יצרן נוסף, הוא רואה שהתור מלא וחוזר לישון בלי להעביר את ה-notify הלאה, והצרכן שהיה צריך להתעורר ממשיך לישון. מכאן התקיעה."
       ]
     },
     {
@@ -429,7 +496,13 @@
       ],
       "answer": 2,
       "explanation": "מהרגע ש-A שחרר את ה-mutex, B יכול להתקדם בלי notify: אם הוא עדיין לא נרדם הוא יראה done ישירות, ואם נרדם הוא יכול להתעורר spuriously. אז delete קורה לפני ה-notify של A. התיקון: notify כשה-mutex עוד מוחזק (B לא יכול לחזור מ-wait לפני שינעל אותו), או בעלות משותפת (shared_ptr) כך ש-A מחזיק את האובייקט בחיים. התקן מתיר להרוס cv כשאין עליו מחכים חסומים, אבל קריאה ל-notify על אובייקט שכבר נהרס היא UB רגיל.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "B לא תלוי ב-notify: אם הוא לא נרדם עדיין הוא בודק את ה-predicate, רואה done == true וחוזר, ואם נרדם הוא יכול להתעורר spuriously. ה-notify לא מסנכרן כלום.",
+        "שחרור ה-mutex לפני notify הוא תבנית חוקית ואינו יוצר deadlock. הבעיה כאן היא אורך החיים של האובייקט.",
+        "נכון. מהרגע ש-A שחרר את ה-mutex, B יכול לראות done == true בלי notify ולמחוק את req, ואז A קורא ל-notify_one על אובייקט הרוס: use-after-free. notify תחת ה-lock או shared_ptr פותרים.",
+        "הגרסה עם predicate לא מפספסת: done שונה תחת ה-mutex, ולכן B או רואה אותו לפני שהוא נרדם או מקבל את ה-notify. הסכנה היא ההפך, ש-B מתקדם מהר מדי."
+      ]
     },
     {
       "id": "conc.condvars.q16",
@@ -447,6 +520,12 @@
       "lesson": "conc.condvars",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון. futex_wait משווה את הערך בכתובת ל-expected בתוך ה-kernel תחת ה-lock של ה-hash bucket, אטומית ביחס ל-futex_wake. אם seq++ כבר קרה, הערכים שונים וה-wait חוזר מיד עם EAGAIN.",
+        "ה-kernel לא שומר wakes: futex_wake מעיר רק מי שכבר בתור ההמתנה, ואם אין כזה ה-wake נעלם. ההגנה היא דווקא בהשוואת הערך.",
+        "ה-mutex שוחרר לפני futex_wait, כפי שמתואר בשאלה. אילו היה מוחזק בזמן השינה, אף מודיע שנועל אותו לא היה יכול להתקדם.",
+        "המודיע לא חייב להחזיק את ה-mutex בזמן notify, ובכל מקרה זה לא היה סוגר את החלון כי המחכה כבר שחרר אותו לפני futex_wait. מה שסוגר את החלון הוא ההשוואה ל-seq."
       ]
     },
     {
@@ -467,7 +546,14 @@
         3
       ],
       "explanation": "precondition של wait הוא שכל המחכים בו-זמנית משתמשים באותו mutex, אחרת UB. notify לא דורש את ה-lock. ה-predicate תמיד נבדק תחת ה-lock, לכן מותר לגשת בו לנתונים המוגנים. ל-cv אין זיכרון. std::condition_variable עובד רק עם `unique_lock<std::mutex>`, ולכל lock אחר צריך condition_variable_any.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "לא נכון. std::condition_variable מקבל רק std::unique_lock<std::mutex>. לכל סוג lock אחר, כולל shared_mutex, צריך condition_variable_any.",
+        "נכון. זה precondition של wait: כל המחכים בו-זמנית על אותו cv משתמשים באותו mutex, אחרת UB.",
+        "נכון. ה-predicate מוערך כשה-lock מוחזק, גם בבדיקה הראשונה וגם אחרי כל התעוררות, ולכן מותר לגשת בו לנתונים המוגנים ישירות.",
+        "נכון. notify לא דורש את ה-mutex; מה שצריך להיות תחת ה-mutex הוא שינוי ה-predicate.",
+        "זו התנהגות של semaphore. ל-cv אין זיכרון ו-notify_all בלי מחכים פשוט נעלם."
+      ]
     },
     {
       "id": "conc.condvars.q18",
@@ -482,7 +568,13 @@
       ],
       "answer": 3,
       "explanation": "ל-cv אין זיכרון, ולכן notify שקורה לפני שהממתין רשום כישן נעלם. המניעה: לשנות את ה-predicate תחת אותו mutex שהממתין מחזיק מהבדיקה ועד ההירדמות. התעוררות בלי notify היא spurious wakeup, והשכמת כולם היא thundering herd.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "זה spurious wakeup, ההפך של lost wakeup: שם יש התעוררות בלי notify, וכאן יש notify בלי התעוררות.",
+        "זה thundering herd: כל ה-notifies מגיעים, פשוט מעירים יותר מדי. ב-lost wakeup אף אחד לא מתעורר.",
+        "thread שמת בזמן המתנה הוא לא מושג מוגדר של cv. ב-lost wakeup ה-thread חי וישן, פשוט אף אחד לא מעיר אותו.",
+        "נכון. notify שנשלח בין הבדיקה להירדמות לא מגיע לאף אחד כי ל-cv אין זיכרון, והממתין נרדם על תנאי שכבר מתקיים. המניעה: לשנות את ה-predicate תחת אותו mutex."
+      ]
     },
     {
       "id": "conc.condvars.q19",
@@ -497,7 +589,13 @@
       ],
       "answer": 0,
       "explanation": "היתרון הוא CPU: busy-wait שורף core שלם. דווקא ה-latency של cv גבוה יותר ופחות צפוי (syscall, scheduler, אולי יציאה מ-C-state), ולכן במערכות RT לפעמים בוחרים busy-poll. cv תמיד משולב עם mutex, ואין לו זיכרון.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "נכון. הממתין נרדם ב-kernel ולא צורך CPU עד notify, בעוד busy-wait שורף core שלם.",
+        "דווקא ההפך: יקיצה דרך cv כוללת syscall ו-scheduler ולכן ה-latency גבוה יותר ופחות צפוי. busy-poll נבחר לפעמים בדיוק בגלל latency נמוך.",
+        "cv תמיד עובד יחד עם mutex: wait מקבל lock, וה-predicate משתנה תחת ה-mutex.",
+        "ל-cv אין זיכרון; notify לפני wait נעלם. זו תכונה של semaphore, ולכן עם cv שומרים את המצב ב-predicate."
+      ]
     },
     {
       "id": "conc.condvars.q20",
@@ -546,7 +644,13 @@
       ],
       "answer": 3,
       "explanation": "release מגדיל את המונה ל-1 גם כשאין ממתינים, ו-acquire רואה 1, מוריד ל-0 וחוזר מיד. זה ההבדל המהותי מ-cv: notify_one לפני wait בלי predicate היה נעלם, וה-wait היה ישן. ל-semaphore אין בעלים, ולכן מותר ל-release ול-acquire להיות באותו thread או בשונים.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "זה היה נכון ל-cv, שאין לו זיכרון. semaphore מחזיק מונה: release מגדיל אותו ל-1 גם בלי ממתינים, ו-acquire רואה את זה.",
+        "ל-semaphore אין בעלים, בניגוד ל-mutex, ולכן release ו-acquire מאותו thread חוקיים לגמרי.",
+        "std::binary_semaphore (C++20) עומד בפני עצמו ולא דורש mutex. הקוד מתקמפל.",
+        "נכון. release מעלה את המונה מ-0 ל-1, ו-acquire מוצא 1, מוריד ל-0 וחוזר מיד, ולכן ok מודפס."
+      ]
     },
     {
       "id": "conc.condvars.q23",
@@ -561,7 +665,13 @@
       ],
       "answer": 2,
       "explanation": "כל thread שמתעורר עולה context switch ונעילה של ה-mutex, והוא מוצא את התנאי שקר וחוזר לישון. כשמתווסף פריט אחד והממתינים שקולים, notify_one מספיק. notify_all נכון כשהשינוי רלוונטי לכולם, כמו shutdown.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "זה lost wakeup: notify שנעלם כי אף אחד לא מחכה. thundering herd הוא ההפך, יותר מדי התעוררויות.",
+        "spurious wakeups נדירים ולא יוצרים רצף כזה. thundering herd נגרם מ-notify_all אמיתי שמעיר את כולם.",
+        "נכון. notify_all מעיר את כל הממתינים, כולם נלחמים על ה-mutex, ורק אחד מוצא את התנאי true; השאר חוזרים לישון אחרי context switch מבוזבז.",
+        "הצפת תור על ידי יצרנים היא בעיית backpressure, לא thundering herd. המונח מתאר התעוררות המונית של ממתינים."
+      ]
     },
     {
       "id": "conc.condvars.q24",
@@ -576,7 +686,13 @@
       ],
       "answer": 1,
       "explanation": "deadline על system_clock הוא נקודה בשעון הקיר. כשהשעון קופץ אחורה, הנקודה מתרחקת. steady_clock מונוטוני ולא מושפע מ-NTP, ולכן deadlines של timeout מחשבים עליו. system_clock מתאים רק כשבאמת רוצים 'עד השעה 14:00'.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "wait_until מקבל נקודת זמן מוחלטת על השעון הנתון, לא משך. זה היה נכון ל-wait_for או ל-deadline על steady_clock, לא ל-system_clock.",
+        "נכון. ה-deadline הוא נקודה על שעון הקיר; אחרי שנייה נשארו 4 שניות, והקפיצה של שעה אחורה מרחיקה את הנקודה בעוד שעה, כך שה-wait יחכה כשעה וארבע שניות.",
+        "timeout קורה רק כשהשעון מגיע ל-deadline. קפיצה אחורה מרחיקה אותו; חזרה מיד הייתה רלוונטית לקפיצה קדימה מעבר ל-deadline.",
+        "שינוי של system_clock הוא התנהגות מוגדרת: wait_until פשוט מחכה עד שהשעון יגיע לנקודה. זה מפתיע, אבל לא UB."
+      ]
     },
     {
       "id": "conc.condvars.q25",
@@ -596,7 +712,14 @@
         2
       ],
       "explanation": "latch הוא מונה חד-פעמי, ולכן לא מתאים לתור מתמשך, שם מתאים cv עם predicate (או semaphore שסופר פריטים, עם mutex על התור עצמו). ל-semaphore אין בעלים, ולכן ה-kernel לא יודע את מי להעלות בעדיפות ואין priority inheritance.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "נכון. latch הוא מונה חד-פעמי שיורד ל-0: כל worker עושה count_down ו-main עושה wait. בדיוק המקרה של לחכות פעם אחת ל-N אירועים.",
+        "נכון. counting_semaphore מאותחל ל-4: acquire לפני שימוש ו-release אחריו, כך שלכל היותר 4 threads בפנים.",
+        "נכון. promise/future מעבירים ערך אחד או exception (set_exception) פעם אחת בין threads.",
+        "latch חד-פעמי ולא ניתן לאיפוס, ולכן לא מתאים לתור מתמשך. שם מתאים cv עם predicate, או semaphore שסופר פריטים יחד עם mutex על התור.",
+        "ל-semaphore אין בעלים, ולכן ה-kernel לא יודע את מי להעלות בעדיפות ואין priority inheritance. ל-RT צריך mutex עם PTHREAD_PRIO_INHERIT."
+      ]
     },
     {
       "id": "conc.condvars.q26",
@@ -614,7 +737,13 @@
       ],
       "answer": 0,
       "explanation": "wait מעריך את ה-predicate תמיד תחת ה-lock: גם בכניסה וגם אחרי כל התעוררות. לכן בתוך ה-predicate כבר מחזיקים את m, ומותר לגשת לנתונים המוגנים ישירות. קריאה לפונקציה ציבורית שנועלת בעצמה היא נעילה חוזרת של std::mutex. התיקון המקובל: פונקציה פרטית שמניחה שה-lock מוחזק.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "נכון. wait מעריך את ה-predicate כש-m מוחזק, ו-size() מנסה לנעול את m שוב מאותו thread. נעילה חוזרת של std::mutex היא UB ובפועל deadlock עצמי. ה-predicate צריך לגשת ל-q ישירות.",
+        "lambda שתופסת this (דרך [&]) היא predicate חוקי לגמרי. הבעיה היא מה שה-lambda קוראת, לא איך היא תופסת.",
+        "pop הוא הצרכן ואין לו את מי להעיר. וחוץ מזה, הוא נתקע כבר בבדיקה הראשונה של ה-predicate, לפני כל המתנה.",
+        "סוג ההחזרה size_t תקין לגמרי ואין לו קשר לתקיעה; הוא לא משנה את ההשוואה ל-0."
+      ]
     },
     {
       "id": "conc.condvars.q27",
@@ -629,7 +758,13 @@
       ],
       "answer": 3,
       "explanation": "בקשת העצירה מגיעה מ-thread אחר דרך stop_source, ולא נועלת את ה-mutex של המשתמש. כדי שהיא לא תיפול לחלון שבין בדיקת stop_requested להירדמות, צריך נעילה שה-cv עצמו שולט בה. ל-condition_variable_any כבר יש mutex פנימי, ולכן ההרחבה טבעית שם. wait עם stop_token מחזיר את ערך ה-predicate, כך שיודעים אם יצאו בגלל התנאי או בגלל עצירה.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "notes": [
+        "condition_variable תומך ב-predicate מאז C++11, כך שזו לא הסיבה.",
+        "stop_token לא קשור לסוג ה-mutex; הוא מנגנון בקשת עצירה כללי של jthread.",
+        "jthread לא קשור לשאלה מי קורא ל-notify. ה-stop_callback רץ ב-thread שביקש את העצירה, והוא שצריך להעיר את ההמתנה.",
+        "נכון. בקשת העצירה מגיעה מ-thread אחר שלא נועל את ה-mutex של המשתמש, ולכן כדי למנוע lost wakeup ה-cv צריך נעילה משלו. ל-condition_variable_any כבר יש mutex פנימי, ול-condition_variable אין."
+      ]
     },
     {
       "id": "conc.condvars.q28",
@@ -647,6 +782,12 @@
       "lesson": "conc.condvars",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "notify לא יוצר happens-before. בנוסף, הצרכן לא חייב לישון: אם הוא נועל אחרי ה-unlock, הוא רואה ready = true וקורא data מיד, אולי לפני הכתיבה.",
+        "נכון. הסנכרון היחיד הוא זוג unlock/lock על m, והכתיבה ל-data קורית אחרי ה-unlock, ולכן היא לא happens-before הקריאה. כתיבה וקריאה לא מסונכרנות של int הן data race, כלומר UB.",
+        "notify תחת lock לא עוזר: הכתיבה ל-data עדיין מחוץ ל-critical section שבה ready שונה, והצרכן יכול לקרוא אותה בין ה-unlock לכתיבה.",
+        "notify מחוץ ל-lock חוקי ואינו גורם ל-deadlock. הבעיה כאן היא סדר הכתיבה ל-data ביחס ל-unlock."
       ]
     },
     {
@@ -670,6 +811,13 @@
       "lesson": "conc.condvars",
       "tags": [
         "nvidia"
+      ],
+      "notes": [
+        "נכון. ב-Linux ל-threads רגילים יש timer_slack_ns של 50 מיקרו-שניות כברירת מחדל, וה-kernel רשאי לאחר יקיצה עד הסף הזה כדי לאחד timers. איחור קבוע של כ-50us הוא החתימה שלו.",
+        "נכון. prctl(PR_SET_TIMERSLACK, ns) קובע את ה-slack של ה-thread הנוכחי, ואפשר להוריד אותו עד ננו-שנייה אחת.",
+        "נכון. ה-kernel לא מחיל timer slack על משימות זמן-אמת (SCHED_FIFO/SCHED_RR), ולכן threads קריטיים לזמן מריצים ב-RT.",
+        "steady_clock ב-Linux ממומש מעל CLOCK_MONOTONIC עם רזולוציה של ננו-שניות (hrtimers). האיחור נובע ממנגנון היקיצה, לא מהשעון.",
+        "החלפת שעון לא משנה את מנגנון היקיצה ב-kernel; ה-slack חל על כל timer. בנוסף system_clock חשוף לקפיצות שעון, ולכן הוא גרוע יותר ל-timeouts."
       ]
     },
     {
