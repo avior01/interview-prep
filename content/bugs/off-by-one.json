@@ -149,6 +149,22 @@
         {
           "term": "rfft bins",
           "def": "FFT של N דגימות ממשיות מחזיר N/2+1 בינים ייחודיים (DC עד Nyquist כולל), לא N/2. השאר צמודים-מרוכבים ומיותרים."
+        },
+        {
+          "term": "טווח חצי-פתוח [begin, end)",
+          "def": "טווח שכולל את begin ולא כולל את end. האיבר האחרון הוא end-1. בחישוב \"באיזה דף נמצא הבית האחרון\" משתמשים ב-(offset+size-1)/PAGE."
+        },
+        {
+          "term": "read-modify-write של דף",
+          "def": "כתיבה חלקית להתקן בלוקים: קוראים את הדף, משנים חלק, וכותבים את כולו. בהתקן שדורש מחיקה לפני כתיבה זה חלון לאובדן נתונים."
+        },
+        {
+          "term": "out-of-place update",
+          "def": "כתיבה של גרסה חדשה למקום חדש, ואז החלפה אטומית של המצביע. כך עובדים FTL של flash ו-copy-on-write במערכות קבצים."
+        },
+        {
+          "term": "wrap ב-ring buffer",
+          "def": "כשכתיבה או קריאה חוצה את סוף המערך היא מתחלקת לשני קטעים: [head, cap) ו-[0, rest). צריך להזיז נכון גם את המקור וגם את היעד."
         }
       ]
     }
@@ -804,6 +820,145 @@
         "שגוי: prefix[r+1] − prefix[l+1] נותן a[l+1..r] ומפספס את a[l]."
       ],
       "explanation": "לפי המוסכמה `prefix[i] = a[0]+...+a[i-1]`, הסכום `a[l]+...+a[r]` (כולל r) הוא `prefix[r+1] - prefix[l]`. הכתיבה `prefix[r] - prefix[l]` נותנת את `a[l..r-1]` ומפספסת את a[r] — off-by-one שנובע מכך שאינדקס ה-prefix מוסט ב-1 מאינדקס המערך. `prefix[r]-prefix[l-1]` היה חורג/שגוי ב-l=0, ו-`prefix[r+1]-prefix[l+1]` מפספס את a[l].",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "כתיבה להתקן בלוקים. ה-API: `page_read`, `page_flush` (חובה לפני כתיבה לדף) ו-`page_write`, כולם על דף שלם בגודל `PAGE_SIZE`. הפונקציה כותבת `size` בתים מ-`offset` ושומרת על התוכן הקיים בחלקים של דף שלא נכתבו. כשהכתיבה מסתיימת בדיוק בסוף דף, היא קוראת, מוחקת וכותבת דף נוסף שלא היה צריך לגעת בו, ובסוף ההתקן אפילו ניגשת לדף שלא קיים. איזו שורה אחראית?",
+      "code": "void block_write(const char* buf, int offset, int size) {\n  char page[PAGE_SIZE];\n  int first = offset / PAGE_SIZE;\n  int last  = (offset + size) / PAGE_SIZE;\n  for (int p = first; p <= last; ++p) {\n    int pstart = p * PAGE_SIZE;\n    int from = std::max(offset, pstart);\n    int to   = std::min(offset + size, pstart + PAGE_SIZE);\n    page_read(p, page);\n    std::memcpy(page + (from - pstart), buf + (from - offset), to - from);\n    page_flush(p);\n    page_write(p, page, PAGE_SIZE);\n  }\n}",
+      "bugLine": 4,
+      "choices": [
+        "`first` צריך להיות `(offset + PAGE_SIZE - 1) / PAGE_SIZE` (עיגול למעלה)",
+        "ה-`memcpy` צריך להעתיק `to - from + 1` בתים",
+        "`offset + size` הוא הבית שאחרי הסוף (exclusive). הדף האחרון הוא זה שמכיל את הבית `offset + size - 1`, ולכן צריך `(offset + size - 1) / PAGE_SIZE`",
+        "הלולאה צריכה `p < last` ולא `p <= last`, בלי לשנות את החישוב של `last`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: עיגול למעלה ידלג על הדף הראשון כשה-offset באמצע דף. הדף הראשון הוא תמיד `offset / PAGE_SIZE`.",
+        "שגוי: `to` הוא exclusive, ולכן `to - from` הוא בדיוק מספר הבתים. הוספת 1 תעתיק בית שלא שייך לכתיבה.",
+        "נכון: עם offset=0 ו-size=8192 (ודפים של 4096), החישוב נותן last=2 במקום 1. הדף השלישי נקרא, נמחק ונכתב עם 0 בתים חדשים: I/O מיותר, סיכון לאיבוד נתונים בקריסה, וגישה מחוץ להתקן אם זה הדף האחרון.",
+        "שגוי: עם `<` הכתיבה תפספס את הדף האחרון בכל פעם שהיא לא מסתיימת בגבול דף (למשל offset=0, size=100 לא יכתוב כלום)."
+      ],
+      "explanation": "עם טווח חצי-פתוח [offset, offset+size), האינדקס האחרון הוא `offset + size - 1`. זה ה-off-by-one הקלאסי בחישוב דפים, sectors ו-cache lines. צריך לטפל גם ב-size=0 בנפרד, כי אז הנוסחה נותנת דף לפני הראשון.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1690828/google-online-block-driver-by-anonymous_-nd19/"
+      ],
+      "problem": "Google L5/L6 onsite: block device writer with partial-page writes",
+      "id": "bugs.off-by-one.q31",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "דפים בגודל 4096 בתים, ממוספרים מ-0. כותבים 5000 בתים החל מ-offset 1000. בכמה דפים שונים נוגעת הכתיבה?",
+      "accept": [
+        "2",
+        "שניים",
+        "two"
+      ],
+      "explanation": "הבתים הם 1000 עד 5999 (כולל). 1000/4096 = 0, ו-5999/4096 = 1, אז נוגעים בדפים 0 ו-1. דף 0 נכתב חלקית מבית 1000, ודף 1 חלקית עד בית 1903 שבו. שני הדפים דורשים read-modify-write.",
+      "id": "bugs.off-by-one.q32",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "בהתקן שבו חובה למחוק (flush/erase) דף לפני כתיבה, כתיבה חלקית לדף נעשית כך: קריאת הדף ל-RAM, שינוי, מחיקה, כתיבה. מה הסיכון העיקרי בתכנון הזה, ומה הפתרון המקובל?",
+      "choices": [
+        "קריסה או אובדן חשמל בין המחיקה לכתיבה משאירים דף מחוק. הולכים לאיבוד גם הבתים שבכלל לא היו אמורים להשתנות. פתרון: לכתוב את הדף המעודכן לדף פנוי ורק אז לעדכן מיפוי (copy-on-write, כמו ב-FTL), או journaling",
+        "הבתים בסוף הדף נכתבים פעמיים",
+        "דפים סמוכים נמחקים יחד איתו",
+        "ביצועים בלבד: כל כתיבה קטנה עולה דף שלם. פתרון: write caching"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: read-modify-write במקום אינו אטומי. החלון בין erase ל-write הוא בדיוק המקום שבו קריסה מוחקת נתונים ישנים שהמשתמש לא נגע בהם. FTL ומערכות קבצים ל-flash כותבים תמיד למקום חדש, ומחליפים מצביע באופן אטומי.",
+        "שגוי: כל בית נכתב פעם אחת בכל מחזור. אין כפילות.",
+        "שגוי: זה תלוי בחומרה (לפעמים erase block גדול מדף), אבל זה לא חלק מהתכנון שתואר כאן.",
+        "שגוי: write amplification הוא מחיר אמיתי, אבל הוא לא הסיכון העיקרי. cache בזיכרון אפילו מגדיל את חלון האובדן."
+      ],
+      "explanation": "כל פעולה של \"מחק ואז כתוב\" על אותו מקום היא חלון לאובדן נתונים. הפתרון הכללי הוא out-of-place update: כותבים עותק חדש, ורק אחרי שהוא שלם מחליפים מצביע בצעד אטומי.",
+      "id": "bugs.off-by-one.q33",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "circular buffer של בתים עם קיבולת `cap`. `head` הוא המקום הבא לכתיבה ו-`count` מספר הבתים השמורים. `write` כותבת עד n בתים ומחזירה כמה נכתבו. כשהכתיבה עוברת את סוף המערך, הבתים שאחרי ה-wrap הם העתק של תחילת הקלט במקום ההמשך שלו. איפה הבאג?",
+      "code": "size_t Ring::write(const char* src, size_t n) {\n  size_t space = cap - count;\n  if (n > space) n = space;\n  size_t first = std::min(n, cap - head);\n  std::memcpy(buf + head, src, first);\n  std::memcpy(buf, src, n - first);\n  head = (head + n) % cap;\n  count += n;\n  return n;\n}",
+      "bugLine": 6,
+      "choices": [
+        "`first` צריך להיות `std::min(n, cap - head - 1)`",
+        "`head` צריך להתעדכן לפני ה-memcpy",
+        "צריך `memmove` במקום `memcpy`, כי האזורים חופפים",
+        "החלק השני צריך להתחיל מ-`src + first`. כרגע הוא מעתיק שוב את תחילת הקלט"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: עם `count` נפרד אין צורך להשאיר תא ריק, ו-`cap - head` הוא בדיוק כמה מקום יש עד סוף המערך.",
+        "שגוי: ה-memcpy משתמש ב-`head` הישן, וזה נכון. עדכון מוקדם רק ישבור את הכתובת.",
+        "שגוי: `src` הוא קלט חיצוני ו-`buf` הוא המאגר הפנימי, כך שהם לא חופפים. ההחלפה לא תתקן את הכתובת.",
+        "נכון: החלק הראשון לקח `first` בתים מהקלט, אז ההמשך מתחיל ב-`src + first`. כרגע ה-wrap כותב שוב את `src[0..]`."
+      ],
+      "explanation": "כתיבה של n פריטים ל-ring עם wrap היא שתי העתקות: [head, cap) ו-[0, n-first). בכל אחת צריך להזיז נכון גם את המקור וגם את היעד. מקרי קצה לבדיקה: wrap בדיוק בסוף (first == n), n == 0, ובקשה גדולה מהמקום הפנוי.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://www.glassdoor.com.au/Interview/Meta-Interview-E40772-RVW92315228.htm",
+        "https://leetcode.com/discuss/post/354889/facebook-onsite-buffer-by-sithis-z83b/"
+      ],
+      "problem": "Meta screen / onsite: circular buffer with N-item reads and writes, corner cases",
+      "id": "bugs.off-by-one.q34",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "buffer מעגלי בקיבולת 6 בתים, שמשתמש במונה `count` (כל 6 התאים שמישים). `write` כותבת כמה שנכנס ומחזירה כמה נכתב, ו-`read(n)` מוציאה עד n בתים מהישן לחדש. מבצעים: `write(\"abcd\")`, `read(3)`, `write(\"WXYZ\")`, `read(10)`. מה מחזיר ה-write השני, ומה מחזיר ה-read האחרון?",
+      "choices": [
+        "3, ואז \"dWXY\"",
+        "2, ואז \"dWX\"",
+        "4, ואז \"dWXYZ\"",
+        "4, ואז \"WXYZ\""
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: 3 מתאים למימוש שמשאיר תמיד תא אחד ריק (5 שמישים מתוך 6), ואז היה מקום ל-4 בדיוק. עם מונה count כל 6 התאים שמישים.",
+        "שגוי: 2 יוצא אם מחשבים מקום פנוי כ-`cap - head` (6-4), כלומר רק עד סוף המערך. ב-ring המקום הפנוי הוא `cap - count`, כולל ה-wrap.",
+        "נכון: אחרי write ראשון count=4. אחרי read(3), שהחזיר \"abc\", count=1 (נשאר d). המקום הפנוי 5, אז כל ארבעת הבתים נכנסים (עם wrap). read(10) מחזיר את כל 5 הבתים: d ואחריו WXYZ.",
+        "שגוי: ה-d לא נקרא ב-read(3), ולכן הוא עדיין הבית הישן ביותר."
+      ],
+      "explanation": "מעקב אחרי ring דורש לעקוב אחרי שלושה דברים: head, tail (או count) והקיבולת השמישה. רוב הטעויות מגיעות מבלבול בין \"מקום עד סוף המערך\" לבין \"מקום פנוי בסך הכל\".",
+      "id": "bugs.off-by-one.q35",
+      "lesson": "bugs.off-by-one"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-ring buffer בקיבולת 8 (אינדקסים 0 עד 7), ה-head מתקדם כך: `head += n; if (head > cap) head -= cap;`. מצב: head=6, כותבים 2 פריטים. מה יקרה בכתיבה הבאה?",
+      "choices": [
+        "כלום מיוחד: head הופך ל-0",
+        "head הופך ל-8 ולא עובר wrap, כי 8 > 8 שקרי. הכתיבה הבאה ניגשת ל-`buf[8]`, מחוץ למערך: off-by-one שכותב על הזיכרון שאחרי המאגר",
+        "head הופך ל-7",
+        "הכתיבה נכשלת כי הבאפר מלא"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה היה קורה עם `>=`. עם `>` המקרה `head == cap` לא מטופל.",
+        "נכון: התנאי צריך להיות `head >= cap` (או `head %= cap`). המקרה הנשכח הוא בדיוק הכתיבה שמסתיימת בתא האחרון, ובדיקות עם גדלים \"עגולים\" מפספסות אותו.",
+        "שגוי: 6+2=8, לא 7. אין כאן הפחתה של 1.",
+        "שגוי: לא נאמר שהמאגר מלא. ה-head מתקדם לפי מה שנכתב בפועל."
+      ],
+      "explanation": "אינדקס חוקי הוא 0 עד cap-1, ולכן הערך cap עצמו הוא כבר מחוץ לטווח, ו-wrap צריך לקרות כש-head >= cap. מקרי הקצה שכדאי לבדוק בכל ring: כתיבה שמסתיימת בדיוק בסוף המערך, n=0, ומלא לגמרי מול ריק לגמרי.",
+      "id": "bugs.off-by-one.q36",
       "lesson": "bugs.off-by-one"
     }
   ]

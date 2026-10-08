@@ -202,6 +202,34 @@
         {
           "term": "process isolation",
           "def": "הרצת קוד לא אמין בתהליך נפרד. thread תקוע אי אפשר להרוג בבטחה, אבל process אפשר להרוג ולהפעיל מחדש בלי לפגוע בשאר המערכת."
+        },
+        {
+          "term": "min-heap של זמני התפנות",
+          "def": "heap שבו כל משאב (סוכן, worker) מופיע עם הרגע שבו יתפנה. pop נותן את הבא שמתפנה; מאפשר לסמלץ שיבוץ ולהעריך זמני המתנה ב-O(log A) לצעד."
+        },
+        {
+          "term": "heartbeat",
+          "def": "הודעה תקופתית מ-worker שאומרת 'אני חי ועדיין עובד'. מאריכה lease; כשהיא חסרה מניחים שה-worker נפל."
+        },
+        {
+          "term": "idempotent job",
+          "def": "עבודה שאפשר להריץ שוב בלי נזק, כי התוצאה זהה (למשל כתיבה לפי submission_id). נדרשת בכל תור at-least-once."
+        },
+        {
+          "term": "async request-reply (202 Accepted)",
+          "def": "השרת מקבל בקשה ארוכה, מחזיר מיד מזהה, ומעבד ברקע; ה-client בודק סטטוס ב-polling או מקבל עדכון ב-WebSocket."
+        },
+        {
+          "term": "sandbox",
+          "def": "סביבת הרצה מבודדת לקוד לא אמין: container או micro-VM, בלי רשת, עם cgroups, seccomp, משתמש לא מורשה ו-filesystem לקריאה בלבד."
+        },
+        {
+          "term": "cgroups",
+          "def": "מנגנון בלינוקס להגבלת משאבים (CPU, זיכרון, I/O) של קבוצת תהליכים."
+        },
+        {
+          "term": "seccomp",
+          "def": "מנגנון בלינוקס שמגביל אילו system calls תהליך רשאי לבצע."
         }
       ]
     }
@@ -1115,6 +1143,134 @@
         "שגוי: בין הכתיבה לקריאה החוזרת thread אחר יכול לכתוב, ושניהם יראו את הביט דלוק. זו לא הוכחת בעלות."
       ],
       "id": "design.producer-consumer.q45",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a customer agent system: לקוחות מגיעים לתור, יש A סוכנים שכל אחד מטפל בלקוח בקצב אחר. המערכת משבצת את הלקוח הבא לסוכן פנוי, ואם כולם עסוקים אומרת ללקוח כמה זמן יחכה. Follow-ups: סוכן יוצא להפסקה, וסוכן שנקטע באמצע טיפול (כמו שרת שנפל באמצע בקשה).",
+      "modelAnswer": "**מבנים:** תור FIFO של לקוחות ממתינים; קבוצת סוכנים פנויים; min-heap של סוכנים עסוקים לפי `free_at` (הרגע שבו יתפנו).\n\n**הגעה:** אם יש סוכן פנוי, משבצים מיד. אחרת הלקוח נכנס לתור, וההערכה ללקוח ה-k בתור: מעתיקים את ה-heap ומבצעים k פעמים pop; כל pop נותן סוכן שמתפנה, והוא נדחף חזרה עם `free_at + service_time(agent)`. ה-pop ה-k הוא זמן ההתחלה המשוער. O(k log A).\n\n**סיום טיפול:** הסוכן לוקח את הראשון בתור, או חוזר לקבוצת הפנויים.\n\n**Concurrency:** כל סוכן הוא consumer, הלקוחות producers. תור מוגן ב-mutex + condition variable, או event loop יחיד שמנהל את כל המצב (פשוט יותר לנכונות).\n\n**הפסקה:** הסוכן מסומן 'לא זמין': מסיים את הלקוח הנוכחי ולא מקבל חדש. הערכות זמן ההמתנה מתעדכנות כי ה-heap קטן.\n\n**נקטע באמצע:** הלקוח לא נמחק מהמערכת ברגע השיבוץ, אלא מוחזק עם lease. heartbeat מהסוכן מאריך את ה-lease; אם הוא פג, הלקוח חוזר **לראש** התור. הפעולה `f` חייבת להיות idempotent או עם checkpoint, כי היא עלולה לרוץ שוב.\n\n**הרחבות:** עדיפויות (heap במקום FIFO), זמני שירות לא ידועים (הערכה לפי ממוצע נע), הוגנות.",
+      "rubric": [
+        "מבני נתונים: תור FIFO + min-heap של זמני התפנות",
+        "הערכת זמן המתנה בסימולציה על ה-heap, עם סיבוכיות",
+        "מודל producer / consumer בטוח ל-threads",
+        "הפסקה: ריקון רך בלי לאבד את הלקוח הנוכחי",
+        "קטיעה: lease / heartbeat, החזרה לראש התור, ו-idempotency של f (ה-follow-up שדווח ב-Google)"
+      ],
+      "explanation": "דווח מ-Google כסבב coding-system-design. ה-follow-up על סוכן שנקטע הוא בדיוק visibility timeout בתורי עבודה.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/1930341/google-sde-l4l5-virtual-onsite-passed"
+      ],
+      "problem": "Google L4/L5 coding-system-design: customer agent system (schedule next customer, agents with different speeds, report wait time; agent break / interrupted mid-request)",
+      "id": "design.producer-consumer.q46",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במערכת שיבוץ, סוכן (או worker) נופל באמצע טיפול בלקוח. איך מבטיחים שהלקוח לא יאבד?",
+      "choices": [
+        "מוציאים את הלקוח מהמערכת ברגע השיבוץ, וכך אין כפילויות",
+        "הלקוח מוחזק עם lease שהסוכן מאריך ב-heartbeat; אם ה-lease פג, הוא חוזר לראש התור, והטיפול צריך להיות idempotent",
+        "מנסים מיד שוב על אותו סוכן",
+        "מודיעים ללקוח להצטרף מחדש לסוף התור"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. אם הסוכן נופל אחרי השיבוץ, אין עוד שום רשומה של הלקוח, והוא אבוד.",
+        "נכון. זה visibility timeout: ההודעה לא נמחקת עד ack. lease שפג מחזיר אותה, ו-idempotency מונעת נזק אם הטיפול רץ פעמיים.",
+        "שגוי. הסוכן נפל; ניסיון חוזר עליו ייכשל או ייתקע.",
+        "שגוי. זה מעניש את הלקוח על כשל של המערכת, וגם מאבד את מקומו בתור."
+      ],
+      "explanation": "בתורי עבודה מוחקים פריט רק אחרי ack. עד אז הוא בבעלות זמנית (lease) של ה-worker.",
+      "id": "design.producer-consumer.q47",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "הערכת זמן ההמתנה ללקוח ה-k בתור, עם A סוכנים, בסימולציה על min-heap של זמני ההתפנות (pop ואז push חזרה של אותו סוכן). מה הסיבוכיות?",
+      "choices": [
+        "O(k log A)",
+        "O(k · A)",
+        "O(A log k)",
+        "O(1)"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. k איטרציות, וכל אחת pop ו-push על heap בגודל A, כלומר O(log A).",
+        "שגוי. זה המחיר של חיפוש לינארי של המינימום בכל צעד, בלי heap.",
+        "שגוי. ה-heap בגודל A ולא k, ומספר הצעדים הוא k.",
+        "שגוי. אפשר O(1) רק עם נוסחה סגורה, למשל כשכל הסוכנים באותו קצב; עם קצבים שונים צריך סימולציה."
+      ],
+      "explanation": "min-heap של 'מתי מתפנה כל משאב' הוא הכלי הסטנדרטי לסימולציית שיבוץ.",
+      "id": "design.producer-consumer.q48",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design LeetCode: דפי בעיות, הגשת קוד, הרצה מול test cases והחזרת תוצאה, ותחרויות עם leaderboard. התמקד ב-API ובזרימת ההגשה.",
+      "modelAnswer": "**API:** `GET /problems/{id}`, `POST /submissions` → 202 עם `submission_id`, `GET /submissions/{id}` (polling) או WebSocket לעדכון, `GET /contests/{id}/leaderboard`.\n\n**נתונים:** problems, test cases (ב-blob storage, לא ב-DB), submissions (`id`, `user`, `problem`, `lang`, הפניה לקוד, status, verdict, זמן ריצה, זיכרון).\n\n**זרימת הגשה:** ה-API שומר את ההגשה ב-status PENDING ומכניס job לתור → judge workers מושכים, מריצים את הקוד ב-sandbox מול כל test case, משווים פלט, וכותבים verdict. התור הוא at-least-once, ולכן העבודה idempotent לפי `submission_id`.\n\n**Sandbox:** קוד זר הוא הסיכון המרכזי: container או micro-VM, בלי רשת, מגבלות CPU וזיכרון (cgroups), מגבלת זמן (CPU ו-wall clock), סינון system calls (seccomp), משתמש לא מורשה ו-filesystem לקריאה בלבד.\n\n**עומס:** בסוף תחרות יש גל הגשות. התור סופג, workers מתרחבים אוטומטית, והגשות תחרות מקבלות עדיפות על פני תרגול.\n\n**Leaderboard:** sorted set (למשל Redis) לפי ניקוד ו-penalty, מתעדכן עם כל verdict.\n\n**Cache:** דפי בעיות ב-CDN; הם כמעט לא משתנים.",
+      "rubric": [
+        "API עם 202 + submission_id ו-polling או WebSocket",
+        "הפרדת API מה-judges דרך תור, ו-idempotency לפי submission_id",
+        "sandbox מפורט: רשת, cgroups, זמן, seccomp, הרשאות",
+        "גל הגשות בסוף תחרות: תור, autoscaling, עדיפויות",
+        "leaderboard ב-sorted set ו-CDN לדפים (מועמדים שדיווחו מ-Meta ציינו שהמראיין התמקד ב-API requests ו-responses)"
+      ],
+      "explanation": "דווח שלוש פעמים מ-Meta (Design a LeetCode, online coding platform, coding contest platform). זה תרחיש producer / consumer קלאסי עם עבודה לא בטוחה.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/5132163/",
+        "https://leetcode.com/discuss/post/6603264/meta-e5-full-loop-interview-experience-b-p25o/",
+        "https://leetcode.com/discuss/interview-experience/5279925/"
+      ],
+      "problem": "Meta onsite (product design): design LeetCode / an online coding (contest) platform",
+      "id": "design.producer-consumer.q49",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "בסוף תחרות מגיעות 30,000 הגשות בתוך 5 דקות. כל הגשה תופסת judge worker ל-4 שניות. כמה workers צריך כדי לסיים לשפוט את כולן תוך 10 דקות מתחילת הגל?",
+      "accept": [
+        "200"
+      ],
+      "explanation": "סך העבודה 30,000 × 4 = 120,000 worker-seconds, בחלון של 600 שניות: 200 workers. בדיקה: 200 workers שופטים 50 בשנייה, ההגעה היא 100 בשנייה, אז אחרי 5 דקות נשארות 15,000 בתור, ועוד 300 שניות מסיימות אותן בדיוק ב-10 דקות.",
+      "id": "design.producer-consumer.q50",
+      "lesson": "design.producer-consumer"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו דרישות חיוניות ל-sandbox שמריץ קוד של משתמשים בפלטפורמת שיפוט?",
+      "choices": [
+        "בלי גישה לרשת",
+        "מגבלות CPU וזיכרון (cgroups) ו-timeout של wall clock",
+        "סינון system calls (seccomp) והרצה כמשתמש לא מורשה על filesystem לקריאה בלבד",
+        "הרצה בתוך התהליך של ה-judge עם try/catch סביב הקוד",
+        "הסתמכות על ה-timeout הפנימי של השפה"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "notes": [
+        "נכון. בלי רשת הקוד לא יכול להוציא test cases או לתקוף מערכות אחרות.",
+        "נכון. לולאה אינסופית או הקצאת זיכרון ענקית לא יפילו את המכונה. wall clock תופס גם sleep, ש-CPU time לא סופר.",
+        "נכון. מצמצם מה הקוד יכול לבקש מהקרנל ומה הוא יכול לשנות.",
+        "שגוי. קוד זר באותו תהליך יכול לקרוס, לשנות זיכרון של ה-judge או לברוח ממנו; try/catch לא מגן מזה.",
+        "שגוי. הקוד של המשתמש יכול לעקוף או לבטל מנגנונים בתוך השפה; הגבלה חייבת להיות מבחוץ."
+      ],
+      "explanation": "קוד לא אמין רץ בבידוד מלא שנאכף מבחוץ: רשת, משאבים, syscalls והרשאות.",
+      "id": "design.producer-consumer.q51",
       "lesson": "design.producer-consumer"
     }
   ]

@@ -211,6 +211,22 @@
         {
           "term": "definitely lost (valgrind)",
           "def": "בלוק שאין אליו אף pointer בסוף הריצה: דליפה ודאית. 'still reachable' הוא בלוק שעדיין יש אליו pointer, ובדרך כלל לא נחשב באג."
+        },
+        {
+          "term": "demand paging",
+          "def": "הקרנל מקצה דף פיזי רק בגישה הראשונה אליו, דרך page fault. malloc גדול מחזיר מהר, וה-RSS גדל רק כשנוגעים בזיכרון."
+        },
+        {
+          "term": "brk / mmap ב-malloc",
+          "def": "הקצאות קטנות באות מה-heap, שגדל עם brk. הקצאות גדולות (ב-glibc מעל כ-128KB) מקבלות mmap נפרד, שמוחזר למערכת ב-free."
+        },
+        {
+          "term": "קטגוריות של valgrind",
+          "def": "definitely lost (אין מצביע), indirectly lost (נגיש רק מבלוקים אבודים), possibly lost (רק מצביע לאמצע), still reachable (יש מצביע ביציאה)."
+        },
+        {
+          "term": "heap fragmentation",
+          "def": "זיכרון פנוי שמפוזר בין אובייקטים חיים, כך שאי אפשר להחזיר דפים שלמים למערכת. נראה כמו leak ב-RSS, אבל לא גדל ללא הגבלה."
         }
       ]
     }
@@ -1172,6 +1188,71 @@
         "נכון: פונקציה שנכשלת צריכה להשאיר את העולם כמו שקיבלה אותו. ב-C, נקודת ניקוי אחת עם goto שמשחררת בסדר הפוך היא הדפוס המקובל (גם בקרנל של Linux)."
       ],
       "explanation": "מסלולי שגיאה הם המקום הכי נפוץ לדליפות, כי הם כמעט לא נבדקים. בודקים אותם עם fault injection (malloc שנכשל בקריאה ה-k), וכותבים אותם עם ניקוי מרוכז או RAII.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "שאלת שיחה: הסבר מה קורה מהרגע ש-C++ מבצע `new int[1000]` ועד שיש RAM פיזי מאחורי הזיכרון. אחר כך: מה זה memory leak בכל שכבה, ומה קורה לזיכרון שדלף כשה-process מסתיים?",
+      "modelAnswer": "new קורא ל-operator new, שקורא ל-malloc. ה-allocator (למשל ptmalloc ב-glibc) מחפש chunk פנוי ב-free lists של ה-arena. אם אין, הוא מגדיל את ה-heap עם brk/sbrk, או, להקצאות גדולות (מעל כ-128KB כברירת מחדל), מבקש mapping נפרד עם mmap. הקרנל רק מוסיף אזור למרחב הכתובות הווירטואלי (VMA). אין עדיין דפים פיזיים. בגישה הראשונה לכל דף יש page fault, והקרנל מקצה frame פיזי (מאופס), מעדכן את page table, והגישה חוזרת (demand paging). leak ברמת התוכנית: אין יותר מצביע לבלוק, אז אי אפשר לקרוא ל-delete, וה-allocator חושב שהוא בשימוש. ה-RSS וה-virtual size גדלים כל עוד הקוד הדולף רץ. בקרנל אין leak: הוא רואה רק דפים ממופים. כשה-process יוצא, הקרנל משחרר את כל מרחב הכתובות, כולל הזיכרון שדלף. לכן leak חמור בעיקר ב-processes ארוכי חיים (שרתים, daemons, firmware), ובמשאבים שלא משתחררים אוטומטית, כמו shared memory, קבצים זמניים, או זיכרון ב-driver. כלים: valgrind/ASan (LeakSanitizer), heaptrack, מעקב אחרי RSS לאורך זמן.",
+      "rubric": [
+        "מבחין בין שכבת ה-allocator (free lists, brk, mmap להקצאות גדולות) לבין שכבת הקרנל (VMA, page tables)",
+        "מסביר demand paging: הדף הפיזי מוקצה רק בגישה הראשונה, דרך page fault",
+        "מגדיר leak כזיכרון שאין אליו מצביע ולכן לא ישוחרר, ומסביר שהקרנל לא \"יודע\" עליו",
+        "מציין שביציאת ה-process הקרנל משחרר הכל, ולכן הנזק הוא בתהליכים ארוכי חיים ובמשאבים שלא קשורים ל-process",
+        "מזכיר כלים לאיתור (ASan/LeakSanitizer, valgrind, heap profiler) ומדד מעשי (RSS שגדל ללא הגבלה)"
+      ],
+      "explanation": "השאלה בודקת עומק: מהשפה, דרך ה-allocator, ועד מנגנוני הקרנל. מראיינים ממשיכים לשאול \"ואז מה?\" עד שרואים איפה הידע נגמר.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/124994/google-memory-leak-memory-allocation-and-6moo/"
+      ],
+      "problem": "Google phone interview: memory leaks, memory allocation and how processes manage memory",
+      "id": "bugs.leaks.q43",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "תוכנית מחזיקה מצביע גלובלי `static Cache* g = new Cache;` ואף פעם לא מוחקת אותו. ביציאה, valgrind מסווג את הבלוק הזה. איך?",
+      "choices": [
+        "invalid free",
+        "definitely lost",
+        "still reachable: ביציאה עדיין יש מצביע (גלובלי) לבלוק, כך שהתוכנית יכלה לשחרר אותו. זה לא leak שגדל עם הזמן",
+        "possibly lost"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: invalid free הוא שחרור של כתובת לא חוקית או שחרור כפול. כאן אין שחרור בכלל.",
+        "שגוי: definitely lost פירושו שלא נשאר שום מצביע לבלוק. זה ה-leak האמיתי, שבו הזיכרון אבוד לתוכנית.",
+        "נכון: valgrind סורק את הזיכרון ביציאה ומוצא מצביע מגלובלי. allocations חד-פעמיים כאלה (singletons, caches) הם בדרך כלל לא בעיה, אבל הם מסתירים leaks אמיתיים בדוחות.",
+        "שגוי: possibly lost פירושו שיש רק מצביע לאמצע הבלוק (interior pointer), ולא לתחילתו."
+      ],
+      "explanation": "הקטגוריות של valgrind: definitely lost (אין מצביע), indirectly lost (נגיש רק דרך בלוקים אבודים), possibly lost (רק interior pointers), still reachable (יש מצביע ביציאה). מתקנים קודם את definitely lost.",
+      "id": "bugs.leaks.q44",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שירות מקצה 2 מיליון אובייקטים קטנים (כ-100 בתים), ואז משחרר את כולם חוץ מאחד מכל אלף. ה-RSS כמעט לא יורד. ASan לא מדווח על leak. מה ההסבר הסביר?",
+      "choices": [
+        "זה leak שה-ASan לא מצליח לזהות",
+        "ה-allocator שומר את הזיכרון ששוחרר ב-free lists לשימוש חוזר, ולא מחזיר אותו למערכת. בנוסף, האובייקטים ששרדו מפוזרים כמעט בכל דף, ולכן אי אפשר להחזיר את הדפים האלה בכלל (fragmentation). זה לא leak: מה שחשוב הוא אם ה-RSS ממשיך לגדול במחזורים חוזרים",
+        "הקרנל לא משחרר דפים עד שה-process יוצא",
+        "ה-destructor של האובייקטים לא נקרא"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: ASan/LeakSanitizer מזהים בלוקים שאין אליהם מצביע. כאן כל מה שלא שוחרר עדיין נגיש.",
+        "נכון: עם brk אפשר להחזיר רק את קצה ה-heap, ודף שיש עליו אפילו אובייקט חי אחד לא יכול לחזור. `malloc_trim` יכול לעשות madvise לדפים ריקים לגמרי, אבל לא לדפים מעורבים. הסימן ל-leak הוא צמיחה בלתי מוגבלת, לא RSS שנשאר גבוה.",
+        "שגוי: הקרנל משחרר דפים ברגע שה-allocator עושה munmap או madvise(DONTNEED). הבעיה היא שה-allocator לא מבקש את זה.",
+        "שגוי: free לא קשור ל-destructor, ו-destructor שלא נקרא לא היה משאיר את ה-RSS גבוה בצורה הזו."
+      ],
+      "explanation": "RSS הוא מדד גס: הוא כולל זיכרון שה-allocator מחזיק לשימוש חוזר. כדי להבחין בין leak ל-fragmentation מריצים את אותו workload כמה פעמים: leak גדל כל פעם, ו-fragmentation מתייצב. פתרונות ל-fragmentation: pools לפי גודל, arenas לפי אורך חיים, jemalloc/tcmalloc.",
+      "id": "bugs.leaks.q45",
       "lesson": "bugs.leaks"
     }
   ]

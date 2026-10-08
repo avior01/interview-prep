@@ -224,6 +224,42 @@
         {
           "term": "brk / mmap ו-M_MMAP_THRESHOLD",
           "def": "glibc מגדילה את ה-heap עם brk בחתיכות גדולות ומחלקת אותן בעצמה. בלוקים מעל הסף (128KB בברירת מחדל, דינמי) מוקצים עם mmap נפרד ומשוחררים מיד עם munmap."
+        },
+        {
+          "term": "globbing",
+          "def": "הרחבה של תבניות כמו `*` ו-`?` לרשימת שמות קבצים. ה-shell עושה אותה לפני שהתוכנית מורצת, והתוכנית מקבלת רשימה מוכנה ב-argv."
+        },
+        {
+          "term": "nullglob / dotglob / failglob",
+          "def": "אפשרויות של bash: תבנית בלי התאמה נעלמת (nullglob), `*` תופס גם קבצים נסתרים (dotglob), או תבנית בלי התאמה היא שגיאה (failglob)."
+        },
+        {
+          "term": "E2BIG / ARG_MAX",
+          "def": "שגיאה של `execve` כשה-argv וה-environment גדולים מהמגבלה של הקרנל. \"Argument list too long\". עוקפים עם xargs או `find -exec +`."
+        },
+        {
+          "term": "inode",
+          "def": "מבנה במערכת הקבצים ששומר את ה-metadata של קובץ: בעלים, הרשאות, גודל, timestamps, link count ומצביעים לבלוקים. השם לא שם, אלא ב-directory entry."
+        },
+        {
+          "term": "directory entry (dentry)",
+          "def": "רשומה בתיקייה שמקשרת שם למספר inode. כמה entries יכולים להצביע לאותו inode (hard links)."
+        },
+        {
+          "term": "hard link / symlink",
+          "def": "hard link הוא directory entry נוסף לאותו inode, ומעלה את link count. symlink הוא קובץ נפרד שתוכנו נתיב, ונשבר אם הנתיב נמחק."
+        },
+        {
+          "term": "unlink",
+          "def": "ה-syscall שמאחורי `rm`: מוחק directory entry ומוריד את link count. הנתונים משתחררים רק כשהמונה 0 ואין fd פתוח."
+        },
+        {
+          "term": "rename אטומי",
+          "def": "`rename` בתוך אותה מערכת קבצים מחליף directory entry בפעולה אחת. משמש לעדכון אטומי של קבצים: כתיבה לקובץ זמני, fsync, ואז rename."
+        },
+        {
+          "term": "user-space buffering",
+          "def": "שכבה (כמו stdio) שקוראת או כותבת בלוקים גדולים עם syscall אחד, ומגישה למשתמש חלקים קטנים מהזיכרון. חוסכת מעברים ל-kernel."
         }
       ]
     }
@@ -972,6 +1008,274 @@
         "שגוי: malloc היא פונקציית ספרייה, אבל היא חייבת לקבל זיכרון מהקרנל מתישהו, דרך brk או mmap."
       ],
       "explanation": "malloc היא library call שמבצעת syscall רק כשנגמר לה המקום. סף ה-mmap של glibc הוא דינמי: אחרי free של בלוק גדול, הסף עולה, ובלוקים בגודל הזה יוקצו מה-heap מעכשיו.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 3,
+      "type": "order",
+      "prompt": "מקלידים ב-bash את `ls -l *` ולוחצים Enter. סדר את השלבים לפי הסדר שבו הם קורים.",
+      "items": [
+        "bash קורא את השורה ומפרק אותה למילים (tokens)",
+        "bash מרחיב את `*` לרשימה ממוינת של שמות הקבצים בתיקייה הנוכחית (globbing)",
+        "bash מחפש מה זה `ls`: פונקציה, builtin, ואז ב-PATH (למשל `/usr/bin/ls`)",
+        "bash קורא ל-`fork` (בפועל `clone`) ונוצר process ילד",
+        "הילד קורא ל-`execve` עם argv שכבר מכיל את שמות הקבצים המורחבים",
+        "ls קורא ל-`lstat` על כל שם ומדפיס עם `write` ל-stdout (fd 1, הטרמינל)",
+        "האב, שחיכה ב-`waitpid`, מקבל את סטטוס היציאה ומדפיס prompt חדש"
+      ],
+      "explanation": "הנקודה שמראיינים מחפשים: ה-shell מרחיב את `*`, לא ls. ls מקבל רשימת שמות מוכנה ב-argv. אחר כך זה מחזור fork-exec-wait רגיל: ה-shell מוצא את הקובץ, יוצר ילד, הילד מחליף את עצמו בתוכנית, והאב מחכה.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1789766/facebookmeta-production-engg-intern-londondublin-jan-feb-2022"
+      ],
+      "problem": "Meta Production Engineering systems round: what happens when you type ls -l * in bash",
+      "id": "sys.syscalls.q37",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בתיקייה יש רק קבצים נסתרים (`.env`, `.git`). מריצים ב-bash עם הגדרות ברירת מחדל `ls -l *`. מה קורה?",
+      "choices": [
+        "ls בלי ארגומנטים, ולכן מדפיס את התיקייה הנוכחית (ריקה)",
+        "bash מדפיס שגיאת syntax ולא מריץ כלום",
+        "ls מדפיס את `.env` ו-`.git`, כי `*` תופס הכל",
+        "ls מקבל את המחרוזת `*` כמו שהיא (אין התאמה, ו-bash משאיר את המילה ללא שינוי), ומדפיס שגיאה שאין קובץ בשם `*`"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: זו ההתנהגות עם `shopt -s nullglob`, שבה תבנית בלי התאמה נעלמת. היא לא ברירת המחדל.",
+        "שגוי: זו לא שגיאת syntax. bash לא מתייחס לתבנית בלי התאמות כשגיאה (אלא אם `failglob` דלוק).",
+        "שגוי: כברירת מחדל `*` לא תופס שמות שמתחילים בנקודה (אלא אם `dotglob` דלוק).",
+        "נכון: כשאין התאמה, bash משאיר את התבנית כמו שהיא. ls מנסה לגשת לקובץ בשם `*` ונכשל עם \"No such file or directory\"."
+      ],
+      "explanation": "ההרחבה נעשית ב-shell. לכן ההתנהגות כשאין התאמה תלויה באפשרויות של bash (`nullglob`, `failglob`, `dotglob`), לא ב-ls. בסקריפטים זה מקור באגים נפוץ, למשל לולאת `for f in *.log` שרצה פעם אחת על המחרוזת `*.log`.",
+      "id": "sys.syscalls.q38",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בתיקייה עם 2 מיליון קבצים, `ls -l *` נכשל עם \"Argument list too long\", אבל `ls -l` לבד עובד. מה נכשל ואיך עוקפים?",
+      "choices": [
+        "ls לא יכול למיין יותר ממיליון שמות. צריך `ls -U`",
+        "ה-glob ב-bash נכשל כי אין לו מספיק זיכרון",
+        "הקרנל מגביל את גודל ה-argv וה-environment ב-`execve` (ARG_MAX). ה-glob הצליח בתוך bash, אבל `execve` מחזיר E2BIG. עוקפים עם `ls -l` על התיקייה (ls קורא אותה בעצמו עם getdents) או עם `find . -maxdepth 1 -exec ls -ld {} +`, שמחלק לכמה הרצות",
+        "מערכת הקבצים לא תומכת ביותר מ-65,536 קבצים בתיקייה"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: ls ממיין מיליוני שמות בלי בעיה, ו-`ls -l` לבד עובד על אותה תיקייה.",
+        "שגוי: ה-glob רץ בתוך bash ומצליח. ההודעה היא מחרוזת השגיאה של E2BIG שחזר מ-execve.",
+        "נכון: E2BIG מגיע מהקרנל בזמן execve. ב-Linux המגבלה קשורה לרבע מ-stack rlimit, ויש גם מגבלה לכל ארגומנט בודד. כלים כמו `find -exec +` ו-xargs מחלקים את הרשימה לקבוצות שעומדות במגבלה.",
+        "שגוי: ext4 ו-XFS תומכים במיליוני קבצים בתיקייה, והתיקייה כבר קיימת. `ls -l` על אותה תיקייה עובד."
+      ],
+      "explanation": "ההבדל בין שתי הפקודות מראה מי עושה מה: עם `*` ה-shell מעביר את כל השמות דרך execve. בלי `*` ls קורא את התיקייה בעצמו, ואין מגבלה על argv.",
+      "id": "sys.syscalls.q39",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "איזה מהנתונים הבאים **לא** נשמר ב-inode של קובץ ב-Linux?",
+      "choices": [
+        "גודל הקובץ",
+        "שם הקובץ",
+        "מספר ה-hard links לקובץ",
+        "ה-UID של הבעלים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: הגודל, וגם timestamps ומצביעים לבלוקים, נשמרים ב-inode.",
+        "נכון: השם נשמר ב-directory entry, שמקשר שם למספר inode. לכן לאותו inode יכולים להיות כמה שמות (hard links), ושינוי שם לא נוגע ב-inode.",
+        "שגוי: link count נשמר ב-inode. כשהוא מגיע ל-0 ואין fd פתוח, הקובץ נמחק באמת.",
+        "שגוי: הבעלים (UID ו-GID) וההרשאות הם חלק מה-inode. `stat` קורא אותם משם."
+      ],
+      "explanation": "inode מתאר \"מה\" הקובץ (metadata ומיקום הנתונים), ותיקייה היא טבלה של \"שם ← מספר inode\". ההפרדה הזו מסבירה hard links, rename אטומי ומחיקה של קובץ פתוח.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://www.glassdoor.com.au/Interview/Meta-Interview-E40772-RVW17335216.htm"
+      ],
+      "problem": "Meta Production Engineer quiz: what information is not in the inode",
+      "id": "sys.syscalls.q40",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מריצים: `echo hi > a`, אחר כך `ln a b`, אחר כך `rm a`, ולבסוף `cat b`. מה קורה, ולמה?",
+      "choices": [
+        "מודפס hi: `ln` יצר שם שני לאותו inode, ו-`rm` רק מחק את השם `a` והוריד את link count מ-2 ל-1. הנתונים נמחקים רק כשהמונה מגיע ל-0 ואין fd פתוח",
+        "שגיאה: `b` מצביע לשם `a`, שכבר לא קיים",
+        "מודפס hi, כי `ln` העתיק את תוכן הקובץ ל-`b`",
+        "מודפס קובץ ריק: ה-inode נשאר אבל הבלוקים שוחררו"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: hard link הוא directory entry נוסף שמצביע לאותו inode. `rm` קורא ל-`unlink`, שמוחק entry ומוריד את המונה. `b` עדיין מצביע ל-inode עם הנתונים.",
+        "שגוי: זו ההתנהגות של symlink (`ln -s`), ששומר נתיב. hard link מצביע ישר ל-inode.",
+        "שגוי: אין שום העתקה. שני השמות מצביעים לאותם בלוקים, ושינוי דרך שם אחד נראה דרך השני.",
+        "שגוי: הבלוקים משתחררים רק יחד עם ה-inode, כשאין יותר שמות ואין fd פתוח."
+      ],
+      "explanation": "ב-inode יש link count. `ln` מעלה אותו, `unlink` מוריד. הקרנל משחרר את ה-inode והבלוקים רק כשהמונה 0 וגם אין process שמחזיק את הקובץ פתוח.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/6006265/google-sre-se-bangalore-l3-rejected-by-a-pad5/"
+      ],
+      "problem": "Google SRE-SE Linux internals round: inode and its components",
+      "id": "sys.syscalls.q41",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "דיסק בשרת מלא: `df` מראה 100%. מחקו קובץ לוג של 40GB עם `rm`, אבל `df` עדיין מראה 100%, ו-`du` מראה הרבה פחות. מה הסיבה ומה עושים?",
+      "choices": [
+        "`du` לא סופר קבצים גדולים, ולכן המספרים שונים",
+        "ה-journal של ext4 עדיין מחזיק עותק של הקובץ",
+        "הקרנל משחרר בלוקים רק בלילה, ב-fsck",
+        "process (למשל השירות שכותב את הלוג) עדיין מחזיק את הקובץ פתוח. השם נמחק, אבל ה-inode והבלוקים נשארים עד שה-fd האחרון נסגר. מוצאים אותו עם `lsof +L1`, ואז עושים restart לשירות או truncate דרך `/proc/<pid>/fd/<n>`"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: `du` סופר כל קובץ בעץ, בלי קשר לגודל. ההבדל הוא שהקובץ כבר לא בעץ.",
+        "שגוי: ה-journal שומר metadata (וב-data mode גם נתונים) לפרק זמן קצר בלבד, לא עותק של קובץ שלם עד אין-סוף.",
+        "שגוי: שחרור הבלוקים קורה מיד כשהתנאים מתקיימים (link count 0 ואין fd פתוח). fsck לא קשור לזה.",
+        "נכון: `du` סופר קבצים שיש להם שם בעץ התיקיות, ו-`df` סופר בלוקים תפוסים. קובץ בלי שם אבל עם fd פתוח תופס בלוקים שרק `df` רואה. `lsof +L1` מציג קבצים פתוחים עם link count קטן מ-1."
+      ],
+      "explanation": "זו תקלה קלאסית ב-log rotation. לכן logrotate עובד עם `copytruncate`, או שולח לשירות signal כדי שיסגור ויפתח מחדש את הקובץ.",
+      "id": "sys.syscalls.q42",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "מעבירים קובץ של 10GB עם `mv` לתיקייה אחרת **באותה מערכת קבצים**. כמה בתים של נתוני הקובץ מועתקים בדיסק?",
+      "accept": [
+        "0",
+        "אפס",
+        "zero"
+      ],
+      "explanation": "בתוך אותה מערכת קבצים `mv` קורא ל-`rename`: מוסיפים directory entry בתיקיית היעד ומוחקים את הישן. ה-inode ומספרו נשארים אותו דבר, והבלוקים לא זזים. רק בין מערכות קבצים שונות `mv` מעתיק ומוחק.",
+      "id": "sys.syscalls.q43",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "שירות קורא קובץ config בזמן ריצה, ותהליך אחר מעדכן אותו. רוצים שהקורא יראה תמיד את הגרסה הישנה במלואה או את החדשה במלואה, גם אם יש קריסה באמצע. מה הדרך הנכונה לעדכן?",
+      "choices": [
+        "לנעול את הקובץ עם `flock` ולכתוב במקום",
+        "לכתוב לקובץ זמני באותה תיקייה, לקרוא ל-`fsync` עליו, ואז `rename` מעל השם הישן (ולבסוף `fsync` על התיקייה). `rename` מחליף את ה-directory entry באופן אטומי, וקורא שכבר פתח את הקובץ ממשיך לקרוא את ה-inode הישן",
+        "למחוק את הקובץ הישן עם `unlink` ואז ליצור חדש באותו שם",
+        "לפתוח את הקובץ עם `O_TRUNC` ולכתוב את התוכן החדש בקריאה אחת ל-`write`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: `flock` הוא advisory, ועוזר רק אם כל הקוראים משתמשים בו. גם אז קריסה באמצע הכתיבה משאירה קובץ חצי כתוב.",
+        "נכון: `rename` בתוך אותה מערכת קבצים הוא אטומי: כל `open` רואה את הקובץ הישן או את החדש. ה-fsync לפני ה-rename מבטיח שהתוכן החדש בדיסק לפני שהשם מצביע אליו, וה-fsync על התיקייה מבטיח שה-rename עצמו שורד קריסה.",
+        "שגוי: בין ה-unlink ליצירה יש רגע שבו הקובץ לא קיים, ו-open באותו רגע ייכשל עם ENOENT.",
+        "שגוי: יש חלון שבו הקובץ ריק או חלקי. קורא שנכנס בדיוק אז יראה זבל, וקריסה אחרי ה-truncate משאירה קובץ ריק."
+      ],
+      "explanation": "עדכון אטומי של קובץ מבוסס על ההפרדה בין שם ל-inode: בונים inode חדש בצד, ומחליפים את המצביע בפעולה אחת. זה הדפוס של עורכים, package managers וכלי config.",
+      "id": "sys.syscalls.q44",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "יצרו `ln -s /data/a.txt link1` וגם `ln /data/a.txt link2`, ואז מחקו את `/data/a.txt`. מה המצב?",
+      "choices": [
+        "`link1` (symlink) שבור, כי הוא שומר נתיב שכבר לא קיים. `link2` (hard link) עובד, כי הוא מצביע ישר ל-inode",
+        "`link2` שבור ו-`link1` עובד",
+        "שני הקישורים עובדים",
+        "שני הקישורים שבורים"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: ל-symlink יש inode משלו, והתוכן שלו הוא מחרוזת נתיב. hard link הוא directory entry נוסף לאותו inode, ולכן הנתונים שורדים.",
+        "שגוי: זה בדיוק ההפך. hard link לא תלוי בשם המקורי, ו-symlink כן.",
+        "שגוי: symlink הוא קובץ קטן שמכיל נתיב. כשהנתיב נמחק, אין לאן להגיע.",
+        "שגוי: hard link הוא שם שווה-ערך לשם המקורי, והוא שומר את ה-inode בחיים."
+      ],
+      "explanation": "symlink יכול להצביע לתיקיות ולמערכות קבצים אחרות, אבל נשבר כשהיעד זז. hard link שורד מחיקה ו-rename של השם המקורי, אבל מוגבל לאותה מערכת קבצים ולא נוצר על תיקיות.",
+      "id": "sys.syscalls.q45",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "יש driver עם API אחד: `size_t drv_read(uint8_t* buf)`. כל קריאה מחזירה בלוק של 512 בתים בדיוק (או פחות, ו-0 בסוף הנתונים). ממש `size_t read_bytes(Reader& r, uint8_t* out, size_t count)` שמחזירה בדיוק `count` בתים (או פחות רק בסוף הנתונים). קריאות רצופות צריכות להמשיך מאיפה שהקודמת עצרה, בלי לאבד בתים שכבר נקראו מה-driver. הגדר את `Reader` בעצמך.",
+      "starter": "size_t drv_read(uint8_t* buf);   // up to 512 bytes, 0 at end\n\nstruct Reader { /* your state */ };\n\nsize_t read_bytes(Reader& r, uint8_t* out, size_t count);",
+      "modelAnswer": "struct Reader {\n  uint8_t cache[512];\n  size_t pos = 0;   // next unread byte in cache\n  size_t len = 0;   // valid bytes in cache\n};\n\nsize_t read_bytes(Reader& r, uint8_t* out, size_t count) {\n  size_t done = 0;\n  while (done < count) {\n    if (r.pos == r.len) {            // cache empty: refill\n      r.len = drv_read(r.cache);\n      r.pos = 0;\n      if (r.len == 0) break;         // end of data\n    }\n    size_t n = std::min(count - done, r.len - r.pos);\n    std::memcpy(out + done, r.cache + r.pos, n);\n    r.pos += n;\n    done += n;\n  }\n  return done;\n}",
+      "rubric": [
+        "שומר את הבתים שנשארו מהבלוק האחרון במצב של `Reader` (מאגר, מיקום ואורך), ולא זורק אותם",
+        "מעתיק מ-`cache + pos` ולא מתחילת המאגר, ומעדכן גם את `pos` וגם את `done`",
+        "מטפל בסוף הנתונים (drv_read מחזיר 0 או פחות מ-512) ומחזיר את מה שנקרא בפועל",
+        "עובד ל-count=0, ל-count קטן מ-512 ולקריאה שחוצה כמה בלוקים. O(count) זמן, O(512) זיכרון",
+        "מזכיר אופטימיזציה: כשנשארו לפחות 512 בתים לקריאה והמאגר ריק, לקרוא ישר ל-`out` בלי העתקה"
+      ],
+      "explanation": "זה בדיוק מה ש-stdio (fread) עושה מעל `read`: שכבת buffering שמתאימה את גודל הבקשה של המשתמש לגודל הבלוק של ההתקן. הקושי הוא המצב שנשמר בין קריאות.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/336276/google-embedded-software-engineer-bangal-1w4s/"
+      ],
+      "problem": "Google embedded phone screen: read_bytes wrapper over a 512-byte driver read",
+      "id": "sys.syscalls.q46",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "שכבת buffering מעל driver שקורא 512 בתים בכל פעם. קריאה ראשונה של 100 בתים תקינה, אבל הקריאה הבאה של 100 מחזירה שוב את אותם 100 בתים ראשונים. איפה הבאג?",
+      "code": "size_t read_bytes(Reader& r, uint8_t* out, size_t count) {\n  size_t done = 0;\n  while (done < count) {\n    if (r.pos == r.len) {\n      r.len = drv_read(r.cache);\n      r.pos = 0;\n      if (r.len == 0) break;\n    }\n    size_t n = std::min(count - done, r.len - r.pos);\n    std::memcpy(out + done, r.cache, n);\n    r.pos += n;\n    done += n;\n  }\n  return done;\n}",
+      "bugLine": 10,
+      "choices": [
+        "חסר `r.pos = 0` בסוף הלולאה",
+        "`std::min` מחזיר את הערך הגדול מהשניים, ולכן מועתקים יותר מדי בתים",
+        "ההעתקה מתחילה מתחילת המאגר ולא מ-`r.cache + r.pos`, ולכן כל קריאה שלא מתחילה בבלוק חדש מחזירה את הבתים הראשונים של הבלוק",
+        "התנאי `r.pos == r.len` צריך להיות `r.pos >= 512`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: איפוס `pos` בכל איטרציה יגרום לאותה בעיה בדיוק. `pos` צריך להתאפס רק כשממלאים את המאגר מחדש.",
+        "שגוי: `std::min` מחזיר את הקטן מבין השניים, וזה בדיוק מה שצריך: כמה שנשאר לבקשה או כמה שנשאר במאגר.",
+        "נכון: `pos` מתעדכן נכון, אבל לא משתמשים בו במקור ההעתקה. אחרי הקריאה הראשונה pos=100, אבל ה-memcpy שוב קורא מ-cache[0].",
+        "שגוי: הבלוק האחרון יכול להיות קצר מ-512. `pos == len` הוא התנאי הנכון ל\"המאגר נגמר\"."
+      ],
+      "explanation": "בשכבת buffering יש שני אינדקסים: כמה כבר העתקנו ליעד (`done`) ואיפה אנחנו במאגר (`pos`). באג נפוץ הוא לעדכן אינדקס בלי להשתמש בו בכתובת המקור.",
+      "id": "sys.syscalls.q47",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "קוראים קובץ של 100MB בית אחד בכל פעם. גרסה A משתמשת ב-`read(fd, &c, 1)` וגרסה B ב-`fgetc(fp)`. B מהירה פי עשרות. למה?",
+      "choices": [
+        "`fgetc` משתמש ב-DMA ו-`read` לא",
+        "גרסה A עושה syscall (מעבר ל-kernel) על כל בית, כלומר 100 מיליון syscalls. `fgetc` קורא מ-buffer ב-user space, ש-stdio ממלא עם `read` אחד על כל כמה KB",
+        "`read` מעתיק כל בית פעמיים",
+        "הקרנל מאט קריאות קטנות בכוונה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: שתיהן מגיעות בסוף לאותו `read` ולאותו page cache. DMA קשור לדיסק, לא לממשק הזה.",
+        "נכון: syscall עולה עשרות עד מאות ננו-שניות, יותר מזה עם mitigations. stdio מוריד את מספרם בערך פי 4,096, וקריאה מה-buffer היא כמה ננו-שניות.",
+        "שגוי: כל `read` מעתיק פעם אחת מה-page cache ל-buffer של המשתמש. הבעיה היא מספר הקריאות, לא כמה העתקות יש בכל אחת.",
+        "שגוי: אין האטה מכוונת. העלות היא המעבר ל-kernel וחזרה בכל קריאה."
+      ],
+      "explanation": "syscalls יקרים יחסית לעבודה קטנה. לכן מקבצים: buffering ב-user space, `readv`/`writev`, או io_uring. אותו עיקרון בדיוק כמו שכבה שקוראת בלוקים קבועים מ-driver.",
+      "id": "sys.syscalls.q48",
       "lesson": "sys.syscalls"
     }
   ]

@@ -236,6 +236,30 @@
         {
           "term": "CPU affinity ו-RT priority",
           "def": "הצמדת thread לליבה קבועה ומתן עדיפות real-time (SCHED_FIFO), כדי לצמצם stalls ו-cache misses."
+        },
+        {
+          "term": "Running-sum moving average",
+          "def": "moving average שמחושב ב-O(1) לדגימה: מוסיפים את הדגימה החדשה ומחסירים את זו שיוצאת מה-ring buffer. שקול ל-boxcar FIR עם מקדמים 1/k."
+        },
+        {
+          "term": "Accumulator drift",
+          "def": "סטייה מצטברת בסכום רץ בנקודה צפה, כי שגיאת העיגול בהוספה לא מתבטלת בהחסרה. פותרים עם accumulator שלם, חישוב מחדש תקופתי, או Kahan summation."
+        },
+        {
+          "term": "Time-based window",
+          "def": "חלון שמוגדר לפי זמן ולא לפי מספר דגימות. ב-K קבוע: deque עם eviction בלולאה. ב-K משתנה לכל שאילתה: prefix sums ו-binary search על ה-timestamps."
+        },
+        {
+          "term": "bisect_left vs bisect_right",
+          "def": "שתיהן מחזירות נקודת הכנסה במערך ממוין. left נותנת את המיקום לפני ערכים שווים, right אחריהם. כך בוחרים אם גבול חלון סגור או פתוח."
+        },
+        {
+          "term": "Rebuffering",
+          "def": "התאמה בין גודל הבלוק של המפיק לגודל ה-frame של הצרכן (למשל 480 ← 512) דרך buffer ביניים ששומר שאריות בין קריאות."
+        },
+        {
+          "term": "gcd occupancy bound",
+          "def": "ב-rebuffering בין בלוקים בגודל a ל-frames בגודל b, השארית תמיד כפולה של gcd(a, b), והתפוסה המקסימלית היא a + b − gcd(a, b)."
         }
       ]
     }
@@ -1028,6 +1052,220 @@
       "explanation": "כשהקידום הוא תמיד 1 (או קטן מ-N), השוואה אחת מחליפה את המודולו. כשאפשר לבחור גודל, עדיף להקצות חזקה של 2 ולהשתמש ב-mask.",
       "lesson": "dsp.ring-buffers",
       "id": "dsp.ring-buffers.q38"
+    },
+    {
+      "level": 2,
+      "type": "bug",
+      "lang": "python",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/6257150/metas-variant-for-lc346-moving-average-f-am8j/",
+        "https://prachub.com/coding-questions/compute-sliding-window-averages"
+      ],
+      "problem": "LeetCode 346 · Moving Average from Data Stream (Meta phone screen)",
+      "prompt": "moving average על זרם עם circular buffer וסכום רץ. לכל קלט היא מחזירה 0.0. איפה הבאג?",
+      "code": "class MovingAverage:\n    def __init__(self, size):\n        self.buf = [0.0] * size\n        self.n = 0\n        self.i = 0\n        self.total = 0.0\n    def next(self, x):\n        self.buf[self.i] = x\n        self.total += x - self.buf[self.i]\n        self.i = (self.i + 1) % len(self.buf)\n        self.n += 1\n        return self.total / min(self.n, len(self.buf))",
+      "bugLine": 8,
+      "choices": [
+        "הדגימה החדשה נכתבת לפני שקוראים את הדגימה הישנה, ולכן מחסירים את x מעצמו והסכום לא משתנה",
+        "`min(self.n, len(self.buf))` מחלק במספר שגוי לפני שהחלון מתמלא",
+        "`self.i` צריך להתקדם לפני הכתיבה ולא אחריה",
+        "צריך להתחיל את `buf` עם `None` ולא עם 0.0"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: אחרי השורה הזו `self.buf[self.i]` הוא כבר x, ולכן `x - self.buf[self.i]` הוא 0. צריך לשמור קודם את הישן: `old = self.buf[self.i]`, ואז `total += x - old` ולכתוב.",
+        "שגוי: לפני שהחלון מלא מחלקים במספר הדגימות שנראו, וזו בדיוק ההגדרה של LeetCode 346.",
+        "שגוי: הסדר הזה תקין: כותבים במקום הבא והאינדקס מתקדם אחר כך. מה שחשוב הוא לקרוא את הערך הישן לפני הכתיבה.",
+        "שגוי: אפסים התחלתיים הם בדיוק מה שצריך להחסיר לפני שהחלון מתמלא (מחסירים 0), כך שהם לא הבעיה."
+      ],
+      "explanation": "ב-ring buffer עם סכום רץ, הסדר הוא: לקרוא את הדגימה שיוצאת, לעדכן את הסכום, ורק אז לדרוס. זה O(1) לדגימה ו-O(k) זיכרון, וזה בדיוק boxcar FIR עם מקדמים 1/k שממומש רקורסיבית.",
+      "id": "dsp.ring-buffers.q39",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "גרסה שמקבלת את כל הדגימות מראש. מה מודפס?",
+      "code": "from collections import deque\ndef moving(nums, k):\n    q, s, out = deque(), 0, []\n    for x in nums:\n        q.append(x); s += x\n        if len(q) > k:\n            s -= q.popleft()\n        out.append(s / len(q))\n    return out\n\nprint(moving([4, 8, 6, -2, 10], 3))",
+      "choices": [
+        "`[6.0, 4.0, 4.666666666666667]`",
+        "`[4.0, 6.0, 6.0, 4.0, 4.666666666666667]`",
+        "`[1.3333333333333333, 4.0, 6.0, 4.0, 4.666666666666667]`",
+        "`[4.0, 6.0, 6.0, 6.0, 4.666666666666667]`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה הפלט של גרסת 'רק חלונות מלאים' (כמו `np.convolve(..., 'valid')`). כאן יש פלט לכל דגימה.",
+        "נכון: 4/1, 12/2, 18/3, ואז 6 יוצא: (8+6−2)/3 = 4, ואז 8 יוצא: (6−2+10)/3 = 14/3.",
+        "שגוי: זה מה שקורה כשמחלקים תמיד ב-k (כאילו החלון מתחיל באפסים), כמו ב-FIR עם zero initial state. הקוד מחלק ב-`len(q)`.",
+        "שגוי: בדגימה הרביעית החלון הוא [8, 6, −2], שסכומו 12 ולא 18."
+      ],
+      "explanation": "זה ה-variant ש-Meta שואלת כשכל המספרים נתונים מראש: מעבר אחד עם סכום רץ, O(n) זמן. בהשוואה ל-FIR רגיל, ההבדל הוא רק בטיפול בהתחלה: חלוקה במספר הדגימות הקיים לעומת אפסים התחלתיים.",
+      "id": "dsp.ring-buffers.q40",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "moving average עם סכום רץ ב-float32 רץ שעות על זרם של חיישן שה-DC שלו ~1000. אחרי זמן רב התוצאה סוטה מהממוצע האמיתי של החלון. מה הסיבה ומה הפתרון המקובל?",
+      "choices": [
+        "ה-ring buffer מתמלא ודורס דגימות. צריך buffer גדול יותר",
+        "שגיאות עיגול בכל `+x` ו-`−old` מצטברות כ-random walk ולא מתבטלות. פתרון: accumulator שלם (fixed-point) שבו החיבור והחיסור מדויקים, או חישוב מחדש של הסכום מדי פעם",
+        "float32 לא יכול לייצג 1000 בדיוק, ולכן הממוצע מוטה מהדגימה הראשונה",
+        "החלוקה ב-k בכל דגימה מצטברת. צריך לחלק רק בסוף"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: דריסה של הדגימה הישנה היא בדיוק ההתנהגות הרצויה ב-ring buffer.",
+        "נכון: כל פעולה מעגלת לפי ה-ulp של הסכום (גדול בגלל ה-DC), והשגיאה של `+x` לא שווה לזו של `−x` מאוחר יותר. במספרים שלמים (או fixed-point עם wraparound, כמו ב-CIC) הסכום נשאר מדויק לנצח.",
+        "שגוי: 1000, וכל מספר שלם עד 2^24, מיוצג ב-float32 בדיוק.",
+        "שגוי: החלוקה לא נכנסת לסכום הרץ; היא מחושבת מחדש בכל פלט ולא מצטברת."
+      ],
+      "explanation": "ברקורסיה של moving average המצב (הסכום) לא מתאפס לעולם, ולכן גם שגיאה קטנה לכל דגימה מצטברת. בסימולציה של 200,000 דגימות float32 סביב 1000 עם חלון 64 הסטייה הייתה ~0.13. במערכות real-time נהוג accumulator שלם, או חישוב מחדש כל N דגימות, או Kahan summation.",
+      "id": "dsp.ring-buffers.q41",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/435747/facebook-phone-average-value-in-past-k-m-l13e/"
+      ],
+      "problem": "Facebook phone screen: average weight of events in the past K minutes, K given per query",
+      "prompt": "זרם של אירועים `(timestamp, weight)` עם timestamps עולים. צריך לממש `avg(now, K)` שמחזירה את ממוצע המשקלים של האירועים ב-K הדקות האחרונות, כש-K לא ידוע מראש ומשתנה בין שאילתות. מה הגישה המתאימה?",
+      "choices": [
+        "deque שמוציא מהראש כל אירוע ישן מ-K, ו-O(1) לשאילתה",
+        "מעבר על כל האירועים בכל שאילתה",
+        "רשימת timestamps + מערך prefix sums של המשקלים; בכל שאילתה binary search על `now - K` ותשובה ב-O(log n)",
+        "heap של אירועים לפי משקל"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: deque עובד רק כש-K קבוע. אם מוציאים אירועים בשביל K קטן, הם חסרים כששאילתה הבאה מבקשת K גדול.",
+        "שגוי: זה נכון, אבל O(n) לשאילתה, בלי להשתמש בכך שה-timestamps ממוינים.",
+        "נכון: מכיוון שה-timestamps ממוינים, `bisect` מוצא את האירוע הראשון בחלון, וההפרש בין שני prefix sums נותן את הסכום. הכנסה היא O(1) amortized (append).",
+        "שגוי: הסדר הרלוונטי הוא לפי זמן, לא לפי משקל."
+      ],
+      "explanation": "ההבחנה החשובה: חלון קבוע (deque, O(1)) לעומת חלון שנקבע בזמן השאילתה (prefix sums + binary search). בזיכרון חסום אפשר לשמור רק את ה-K המקסימלי האפשרי ולזרוק אירועים ישנים ממנו.",
+      "id": "dsp.ring-buffers.q42",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "שלושה אירועים: (t=1, w=7), (t=3, w=4), (t=5, w=2). החלון הוא 'K הדקות האחרונות', כלומר הטווח `(now − K, now]`. מה מודפס?",
+      "code": "import bisect\nts = [1, 3, 5]\npre = [0, 7, 11, 13]          # prefix sums of weights\ndef avg(now, K):\n    i = bisect.bisect_right(ts, now - K)\n    return (pre[-1] - pre[i]) / (len(ts) - i)\n\nprint(avg(5, 3), avg(5, 4))",
+      "choices": [
+        "`3.0 3.0`",
+        "`3.0 4.333333333333333`",
+        "`4.333333333333333 4.333333333333333`",
+        "`2.0 3.0`"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: K=3: now−K = 2, bisect_right מחזיר 1, ולכן האירועים t=3,5: (4+2)/2 = 3. K=4: now−K = 1, ו-bisect_right מדלג על t=1 כי הגבול פתוח משמאל, אז שוב 3.",
+        "שגוי: זה מה ש-`bisect_left` היה נותן ב-K=4: הוא כולל את t=1 שנמצא בדיוק על הגבול (13/3).",
+        "שגוי: ב-K=3 האירוע t=1 בבירור מחוץ לחלון.",
+        "שגוי: 2.0 הוא רק האירוע האחרון; ב-K=3 גם t=3 בתוך החלון."
+      ],
+      "explanation": "הבחירה בין `bisect_left` ל-`bisect_right` היא בדיוק ההחלטה אם הגבול השמאלי סגור או פתוח. כדאי לשאול את המראיין אם אירוע מלפני בדיוק K דקות נכלל.",
+      "id": "dsp.ring-buffers.q43",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 2,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "ממוצע על חלון זמן קבוע של K שניות. אחרי פער ארוך בזרם הממוצע שגוי. איפה הבאג?",
+      "code": "from collections import deque\nclass WindowAvg:\n    def __init__(self, K):\n        self.K, self.q, self.s = K, deque(), 0\n    def add(self, t, w):\n        self.q.append((t, w)); self.s += w\n        if self.q[0][0] <= t - self.K:\n            self.s -= self.q.popleft()[1]\n    def avg(self):\n        return self.s / len(self.q)",
+      "bugLine": 7,
+      "choices": [
+        "צריך `<` במקום `<=`",
+        "`if` מוציא לכל היותר אירוע אחד לכל הכנסה; אחרי פער ארוך כמה אירועים פגי תוקף נשארים. צריך `while`",
+        "`deque.popleft` הוא O(n)",
+        "צריך להוסיף את האירוע החדש רק אחרי ההוצאה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זו שאלה של הגדרת הגבול (פתוח או סגור), לא הבאג שגורם לאירועים ישנים להישאר.",
+        "נכון: למשל אחרי (0,10), (1,20), (2,30) ואז (20,4) עם K=5, רק (0,10) יוצא, והממוצע יוצא 18 במקום 4.",
+        "שגוי: ב-deque, popleft הוא O(1); דווקא `list.pop(0)` הוא O(n).",
+        "שגוי: הסדר לא משנה כאן. האירוע החדש תמיד בתוך החלון ולכן לא יוצא בטעות."
+      ],
+      "explanation": "eviction בחלון זמן חייב להיות לולאה: מספר האירועים שפג תוקפם בכל עדכון לא חסום. העלות עדיין O(1) amortized, כי כל אירוע נכנס ויוצא פעם אחת.",
+      "id": "dsp.ring-buffers.q44",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/336276/google-embedded-software-engineer-bangal-1w4s/"
+      ],
+      "problem": "Google embedded SWE phone screen: read(count) wrapper over a driver that returns fixed 512-byte blocks",
+      "prompt": "driver מחזיר בכל קריאה בלוק של עד 512 בתים (`b\"\"` בסוף). העטיפה `read_bytes(count)` צריכה להחזיר בדיוק count בתים, ושאר הבלוק צריך להישאר לקריאה הבאה. שתי קריאות של 100 מחזירות את הבתים 0..99 ואז את 512..611. איפה הבאג?",
+      "code": "class Reader:\n    def __init__(self, read_block):\n        self.read_block = read_block\n        self.buf = b\"\"\n    def read_bytes(self, count):\n        out = b\"\"\n        while len(out) < count:\n            if not self.buf:\n                self.buf = self.read_block()\n                if not self.buf:\n                    break\n            take = count - len(out)\n            out += self.buf[:take]\n            self.buf = b\"\"\n        return out",
+      "bugLine": 14,
+      "choices": [
+        "`take` צריך להיות `min(count, 512)`",
+        "השארית של הבלוק נזרקת; צריך `self.buf = self.buf[take:]`",
+        "ה-`break` ב-EOF מחזיר פחות מ-count בתים, וזה באג",
+        "`out += ...` על bytes הוא O(n²), ולכן הנתונים משתבשים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: ה-slice `[:take]` כבר מוגבל לאורך ה-buffer, ו-take מבטא כמה עוד חסר. הבעיה היא מה עושים עם מה שנשאר.",
+        "נכון: אחרי שלוקחים 100 בתים מבלוק של 512, צריך לשמור את 412 הנותרים. כאן הם נמחקים, והקריאה הבאה קוראת בלוק חדש.",
+        "שגוי: החזרה של פחות בתים ב-EOF היא ההתנהגות הסטנדרטית (כמו `read()` ב-POSIX).",
+        "שגוי: שרשור bytes חוזר הוא אכן לא יעיל (`bytearray` עדיף), אבל הוא לא משבש את התוכן."
+      ],
+      "explanation": "זו שאלת rebuffering: מתאמים בין גודל הבלוק של המקור לגודל שהצרכן מבקש. השארית חייבת להישמר בין קריאות, בדיוק כמו ב-LeetCode 158 (Read N Characters Given read4 II). ב-C הפתרון הוא buffer קבוע של 512 עם אינדקס קריאה, כדי לא להעתיק.",
+      "id": "dsp.ring-buffers.q45",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 2,
+      "type": "short",
+      "prompt": "כרטיס קול מספק בלוקים של 480 דגימות (10 ms ב-48 kHz). ה-FFT צורך frames של 512 דגימות מ-buffer ביניים. אחרי 3 בלוקים, וכל frame שלם נצרך מיד, כמה דגימות נשארות ב-buffer?",
+      "accept": [
+        "416"
+      ],
+      "explanation": "3 × 480 = 1440 דגימות. נצרכים 2 frames שלמים (1024), ונשארות 1440 − 1024 = 416 דגימות שמחכות לבלוק הבא.",
+      "id": "dsp.ring-buffers.q46",
+      "lesson": "dsp.ring-buffers"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "באותו מצב (בלוקים של 480 נכנסים, frames של 512 נצרכים מיד כשהם שלמים), מה התפוסה המקסימלית של ה-buffer הביניים, מיד אחרי הכנסת בלוק ולפני הצריכה?",
+      "choices": [
+        "991 דגימות",
+        "1024 דגימות",
+        "960 דגימות",
+        "992 דגימות"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: 511 + 480 = 991 מניח שהשארית יכולה להיות כל ערך עד 511, אבל השארית תמיד כפולה של gcd(480, 512) = 32.",
+        "שגוי: אי אפשר להגיע לשני frames שלמים שמחכים, כי לפני כל הכנסה נשארו פחות מ-512 דגימות.",
+        "נכון: השארית אחרי צריכה קטנה מ-512 והיא כפולה של 32, ולכן לכל היותר 480. אחרי הכנסת בלוק: 480 + 480 = 960. סימולציה של 100,000 בלוקים מגיעה בדיוק ל-960.",
+        "שגוי: 992 = 512 + 480 אינו אפשרי, כי השארית אף פעם לא מגיעה ל-512 לפני הכנסה."
+      ],
+      "explanation": "החסם הכללי לתפוסה הוא in + out − gcd(in, out). כשהגדלים זרים זה in + out − 1, אבל כאן יש מכנה משותף של 32. בפועל מקצים buffer בגודל חזקה של 2 (1024) כדי להשתמש במסכה במקום modulo.",
+      "id": "dsp.ring-buffers.q47",
+      "lesson": "dsp.ring-buffers"
     }
   ]
 }

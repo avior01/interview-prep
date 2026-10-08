@@ -210,6 +210,38 @@
         {
           "term": "node-based מול open addressing",
           "def": "node-based (כמו std::unordered_map): כל איבר ב-node נפרד ב-heap, ולכן הקצאה בכל insert. open addressing (flat map): כל האיברים במערך אחד, ואפשר להקצות אותו מראש עם קיבולת קבועה, מתאים ל-RT."
+        },
+        {
+          "term": "5.1 / 2.1",
+          "def": "תצורות רמקולים: 5.1 = L, R, C, Ls, Rs + LFE (שישה ערוצים); 2.1 = L, R + LFE. ה-.1 מציין ערוץ תדרים נמוכים בפס צר."
+        },
+        {
+          "term": "LFE",
+          "def": "Low-Frequency Effects: ערוץ נפרד לתדרים נמוכים (subwoofer), מוגבל ברוחב הפס. בדרך כלל לא נכנס ל-downmix לסטריאו."
+        },
+        {
+          "term": "downmix",
+          "def": "המרה של אודיו רב-ערוצי לפחות ערוצים (למשל 5.1 לסטריאו) בסכום משוקלל, למשל C ו-surrounds במקדם 0.707 (−3 dB), עם הגנה מ-clipping."
+        },
+        {
+          "term": "channel layout / channel order",
+          "def": "המיפוי בין מיקום הערוץ ב-stream לרמקול. פורמטים שונים משתמשים בסדרים שונים, ולכן ה-layout חייב לעבור כ-metadata."
+        },
+        {
+          "term": "Opus (multichannel)",
+          "def": "codec אודיו פתוח, נפוץ בשיחות ובשידור. תומך במסגרות של 2.5 עד 60 ms, ו-channel mapping לאודיו רב-ערוצי עד 8 ערוצים."
+        },
+        {
+          "term": "AEC / NS / AGC",
+          "def": "Acoustic Echo Cancellation, Noise Suppression, Automatic Gain Control: שלבי העיבוד הקלאסיים של אודיו בשיחה."
+        },
+        {
+          "term": "ITU-T G.114",
+          "def": "המלצה שלפיה latency בכיוון אחד של עד כ-150 ms מקובל לרוב השיחות; מעבר לזה איכות השיחה נפגעת."
+        },
+        {
+          "term": "audio callback thread",
+          "def": "thread שמערכת ההפעלה קוראת לו כל פרק זמן קבוע כדי לקבל דגימות. חייב לסיים בזמן: בלי הקצאות, בלי נעילות ובלי I/O."
         }
       ]
     }
@@ -952,6 +984,62 @@
         "שגוי: reserve כן מבטיח שלא יהיה rehash עד מספר האיברים שהוזמן. הבעיה היא ההקצאה לכל node, לא ה-rehash."
       ],
       "id": "design.rt-design.q36",
+      "lesson": "design.rt-design"
+    },
+    {
+      "level": 5,
+      "type": "oral",
+      "prompt": "Design an audio channel system that moves the product from 2.1 to 5.1: זיהוי תתי-המערכות, תמיכה בכמה מערכות הפעלה, ושימוש ב-WhatsApp (שיחות אודיו ווידאו), Facebook Live ו-Reels, כולל שידור חי.",
+      "modelAnswer": "**תתי-מערכות:** capture (מיקרופונים ומערכי מיקרופונים) → עיבוד (AEC, NS, AGC) → encoder → transport → jitter buffer → decoder → renderer (downmix / upmix לפי ההתקן) → playback. ובנוסף: שכבת הפשטה לכל מערכת הפעלה ו-negotiation של יכולות.\n\n**Negotiation:** השולח מפרסם layouts נתמכים (mono, stereo, 2.1, 5.1) ו-codecs; המקבל מפרסם את יכולות ההתקן. בוחרים layout משותף. ה-layout וסדר הערוצים עוברים כ-metadata מפורש: אותם 6 ערוצים בסדר שונה (למשל L R C LFE Ls Rs מול L C R Ls Rs LFE) מגיעים לרמקולים הלא נכונים.\n\n**Codec:** codec שתומך ב-multichannel (למשל Opus, שמגדיר channel mapping לעד 8 ערוצים), עם bitrate אדפטיבי וירידה ל-stereo ברשת חלשה.\n\n**Downmix:** כשלמקבל פחות רמקולים: למשל Lo = L + 0.707·C + 0.707·Ls, Ro = R + 0.707·C + 0.707·Rs (ה-LFE בדרך כלל לא נכנס), עם הגנה מ-clipping.\n\n**שכבת OS:** ממשק אחד מעל CoreAudio (iOS / macOS), AAudio / Oboe (Android) ו-WASAPI (Windows). ה-audio callback הוא thread של זמן אמת: בלי הקצאות ובלי נעילות, עם ring buffer בינו לבין ה-decoder.\n\n**Latency לפי שימוש:** שיחה דורשת latency נמוך (ITU-T G.114 ממליץ על עד כ-150 ms בכיוון אחד) ולכן jitter buffer קטן ומסגרות קצרות; Live ו-Reels סובלים buffers גדולים יותר לטובת איכות.\n\n**הרחבה:** ה-layout הוא שדה בפרוטוקול, כך ש-7.1 או אודיו מרחבי לא דורשים שינוי מבני.",
+      "rubric": [
+        "פירוק לתתי-מערכות מה-capture ועד ה-playback",
+        "negotiation של layout ו-codec, ו-metadata מפורש של סדר הערוצים",
+        "downmix נכון כשההתקן תומך בפחות ערוצים",
+        "שכבת הפשטה למערכות הפעלה ו-audio thread בזמן אמת (בלי הקצאות ונעילות)",
+        "תקציבי latency שונים לשיחה מול Live ו-Reels (המועמד שדיווח נכשל דווקא בממשקי client, codecs ו-OS)"
+      ],
+      "explanation": "דווח מ-Meta E5 כסבב product architecture. מהנדס RF/DSP צריך להיות חזק כאן: ערוצים, downmix, codecs וזמן אמת.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/6588510/meta-full-loop-e5-bangalore-interview-ex-ztbb/"
+      ],
+      "problem": "Meta E5 product architecture: audio channel system from 2.1 to 5.1, across OSes, for WhatsApp calls, Facebook Live and Reels",
+      "id": "design.rt-design.q37",
+      "lesson": "design.rt-design"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "אודיו 5.1 לא דחוס (PCM), 48 kHz, 24 bit לדגימה. מה קצב הסיביות ב-Mbit/s? (עשרוני אחד)",
+      "accept": [
+        "6.9",
+        "6.912"
+      ],
+      "explanation": "48,000 × 24 × 6 = 6,912,000 bits בשנייה ≈ 6.9 Mbit/s. לכן ברשת משתמשים ב-codec: Opus מעביר 5.1 במאות kbit/s.",
+      "id": "design.rt-design.q38",
+      "lesson": "design.rt-design"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "השולח מעביר 5.1 בסדר ערוצים L, R, C, LFE, Ls, Rs, אבל המקבל מפרש את ששת הערוצים בסדר L, C, R, Ls, Rs, LFE. מה ישמע המאזין?",
+      "choices": [
+        "הכול תקין, כי לכל ערוץ יש header משלו בתוך ה-PCM",
+        "הדיאלוג (C) ייצא מהרמקול הימני, תוכן הערוץ הימני ייצא מה-center, וה-bass של ה-LFE ייצא מה-surround השמאלי",
+        "רק ה-LFE יוחלף, כי שאר הערוצים באותו סדר",
+        "לא יישמע כלום, כי המקבל יזהה סדר לא חוקי"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. PCM מסודר (interleaved) לפי מיקום בלבד; אין בו מידע על איזה ערוץ זה. לכן ה-layout חייב לעבור כ-metadata.",
+        "נכון. מיקום 1 (R אצל השולח) מתפרש כ-C, מיקום 2 (C) כ-R, ומיקום 3 (LFE) כ-Ls. בנוסף Ls הולך ל-Rs ו-Rs ל-LFE.",
+        "שגוי. ההבדל בסדר משפיע כמעט על כל המיקומים, לא רק על ה-LFE.",
+        "שגוי. אין בדיקה כזו בנתונים עצמם; המקבל פשוט ממפה לפי הסדר שהוא מניח."
+      ],
+      "explanation": "באודיו רב-ערוצי הסדר הוא חלק מהפורמט. מעבירים layout מפורש ובודקים אותו ב-integration tests עם tone לכל ערוץ.",
+      "id": "design.rt-design.q39",
       "lesson": "design.rt-design"
     }
   ]

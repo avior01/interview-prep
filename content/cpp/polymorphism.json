@@ -247,6 +247,14 @@
         {
           "term": "slicing בהעברה by value",
           "def": "העברה או החזרה של אובייקט נגזר כ-Base by value בונה Base חדש עם ה-copy constructor של Base. חלק ה-Derived נחתך, וה-vptr של העותק מצביע ל-vtable של Base. גם std::vector<Base> חותך את האיברים."
+        },
+        {
+          "term": "סדר הריסה",
+          "def": "destructor של הנגזר רץ ראשון, אחריו נהרסים ה-members שלו, ואז ה-destructor של הבסיס. הסדר הפוך לסדר הבנייה."
+        },
+        {
+          "term": "קריאה וירטואלית מ-constructor/destructor",
+          "def": "בזמן בנייה או הריסה של B, הטיפוס הדינמי הוא B, ולכן קריאה וירטואלית מגיעה ל-B ולא ל-override של מחלקה נגזרת."
         }
       ]
     }
@@ -1504,6 +1512,73 @@
         "נכון: כל יכולת של class קיימת גם ב-struct. רק ברירת המחדל של access (members וירושה) שונה."
       ],
       "id": "cpp.polymorphism.q54",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס?",
+      "code": "#include <cstdio>\n#include <string>\n\nstruct Base {\n  virtual ~Base() { std::puts(\"~Base\"); }\n};\nstruct Derived : Base {\n  std::string name = \"x\";\n  ~Derived() override { std::puts(\"~Derived\"); }\n};\n\nint main() {\n  Base* p = new Derived;\n  delete p;\n}",
+      "choices": [
+        "~Derived ואז ~Base",
+        "~Base ואז ~Derived",
+        "undefined behavior, אין פלט מובטח",
+        "~Base"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: delete דרך מצביע ל-Base קורא, בזכות ה-vtable, ל-`~Derived`. אחרי הגוף שלו נהרסים ה-members (ה-string), ואז נקרא `~Base` אוטומטית. הסדר הפוך לסדר הבנייה.",
+        "שגוי: destructors רצים מהנגזר לבסיס, כי החלק הנגזר תלוי בבסיס ולא להפך.",
+        "שגוי: זה UB רק בלי virtual destructor. כאן הקוד מוגדר היטב.",
+        "שגוי: זה מה שקורה (בפועל, כי זה UB) כשה-destructor של Base לא virtual. כאן הוא virtual, אז ה-delete מגיע ל-destructor של Derived."
+      ],
+      "explanation": "virtual destructor מבטיח ש-delete דרך מצביע לבסיס יהרוס את האובייקט המלא, כולל members של הנגזר (כמו ה-string, שאחרת היה דולף). בלעדיו זה UB.",
+      "id": "cpp.polymorphism.q55",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס?",
+      "code": "#include <cstdio>\n\nstruct B {\n  virtual ~B() { hello(); }\n  virtual void hello() { std::puts(\"B::hello\"); }\n};\nstruct D : B {\n  void hello() override { std::puts(\"D::hello\"); }\n};\n\nint main() {\n  D d;\n}",
+      "choices": [
+        "שום דבר",
+        "undefined behavior, כי קוראים לפונקציה וירטואלית מ-destructor",
+        "D::hello",
+        "B::hello"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: d נהרס בסוף main, וה-destructor של B קורא ל-hello ומדפיס.",
+        "שגוי: הקריאה מוגדרת היטב, ופשוט מגיעה לגרסה של המחלקה שה-destructor שלה רץ. UB היה רק אם `hello` הייתה pure virtual בלי מימוש.",
+        "שגוי: כשה-destructor של B רץ, החלק של D כבר נהרס. לכן הקריאה לא מגיעה ל-override של D, שהיה יכול לגעת ב-members שכבר לא קיימים.",
+        "נכון: בזמן ה-destructor (וגם ה-constructor) של B, הטיפוס הדינמי של האובייקט הוא B. ה-vptr מצביע ל-vtable של B, ולכן נקרא `B::hello`."
+      ],
+      "explanation": "במהלך בנייה והריסה, קריאה וירטואלית מגיעה לגרסה של המחלקה שה-constructor או ה-destructor שלה רץ כרגע. זה מונע גישה לחלק נגזר שעוד לא נבנה או שכבר נהרס.",
+      "id": "cpp.polymorphism.q56",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "על מערכת 64 ביט טיפוסית (x86-64, Itanium ABI), מה `sizeof(V)`?\n\n```cpp\nstruct V {\n  int x;\n  virtual ~V() {}\n};\n```",
+      "choices": [
+        "8",
+        "12",
+        "16",
+        "4"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: 8 הוא רק ה-vptr. ה-int מתווסף אחריו.",
+        "שגוי: 8 ועוד 4 הם 12, אבל ה-alignment של המבנה הוא 8 (בגלל המצביע), ולכן הגודל מעוגל לכפולה של 8.",
+        "נכון: vptr של 8 בתים בתחילת האובייקט, int של 4, ועוד 4 בתי padding כדי שמערך של V ישמור על alignment של 8.",
+        "שגוי: 4 הוא רק ה-int. מחלקה עם פונקציה וירטואלית מקבלת גם vptr נסתר."
+      ],
+      "explanation": "virtual destructor לא חינם: כל אובייקט מקבל vptr (8 בתים ב-64 ביט, ועוד padding אפשרי), והמחלקה מפסיקה להיות trivially destructible. לכן מחלקות קטנות שלא נועדו לפולימורפיזם (כמו value types) לא מקבלות destructor וירטואלי.",
+      "id": "cpp.polymorphism.q57",
       "lesson": "cpp.polymorphism"
     }
   ]

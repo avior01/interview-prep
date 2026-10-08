@@ -236,6 +236,18 @@
         {
           "term": "α(n) (Inverse Ackermann)",
           "def": "החסם האמורטייזד של Union-Find עם path compression ו-union by rank. גדל לאט כל כך שהוא קטן מ-5 לכל קלט מעשי."
+        },
+        {
+          "term": "DP על DAG בסדר טופולוגי",
+          "def": "בגרף חסר מעגלים מעבדים צמתים בסדר טופולוגי (למשל Kahn), וכל צומת מעביר לשכניו ערך סופי. כך פותרים ב-O(n + m) מסלול ארוך ביותר, ספירת מסלולים ו-DP עם מונים לכל צומת. Kahn גם מזהה מעגל: נשארים צמתים שלא נכנסו לתור."
+        },
+        {
+          "term": "מסלול ארוך ביותר (longest path)",
+          "def": "ב-DAG: DP בסדר טופולוגי עם max, O(n + m), גם עם משקלים שליליים. בגרף כללי, מסלול פשוט ארוך ביותר הוא NP-hard, ו-Dijkstra עם max לא עובד."
+        },
+        {
+          "term": "Top-k שכנים לכל צומת",
+          "def": "כשבחירה בשכן יכולה להיפסל רק על ידי מספר קטן r של צמתים אחרים, מספיק לשמור את r + 1 השכנים הטובים ביותר. במסלול של 4 צמתים זה 3 שכנים, והבדיקה יורדת ל-O(m)."
         }
       ]
     },
@@ -2557,6 +2569,267 @@
         "Dijkstra נכון לבעיה בלי מגבלה; המגבלה מוסיפה ממד למצב."
       ],
       "id": "alg.graphs.q94",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "גרף מכוון שבו לכל צומת יש אות A–Z. הערך של מסלול הוא מספר המופעים של האות השכיחה ביותר בו. צריך להחזיר את הערך המקסימלי על כל המסלולים, או −1 אם יש בגרף מעגל. מה האלגוריתם?",
+      "choices": [
+        "DFS מכל צומת שסופר אותיות לאורך המסלול: O(n · (n + m))",
+        "Kahn (topological sort) עם cnt[v][c] = המספר הגדול ביותר של מופעי c במסלול שנגמר ב-v; לאורך כל קשת u→v מעבירים max רכיב-רכיב. אם לא כל הצמתים יצאו מהתור יש מעגל. O(26 · (n + m))",
+        "Dijkstra שבו קשת שווה 1 אם האות של היעד היא השכיחה עד כה",
+        "BFS מכל מקור לכל אות בנפרד, ו-−1 אם BFS מבקר פעמיים באותו צומת"
+      ],
+      "answer": 1,
+      "explanation": "הטריק: לא יודעים מראש איזו אות תנצח, אז מריצים DP לכל 26 האותיות במקביל. ה-DP חוקי רק על DAG, ו-Kahn נותן גם את הסדר וגם את זיהוי המעגל.",
+      "notes": [
+        "מספר המסלולים יכול להיות אקספוננציאלי, ו-DFS בלי memo לא מזהה מעגלים. החסם O(n · (n + m)) לא נכון.",
+        "נכון: הסדר הטופולוגי מבטיח ש-cnt[u] סופי לפני שמעבירים אותו הלאה. 26 מונים לכל צומת, ו-Kahn מזהה מעגל כשנשארים צמתים עם indegree חיובי.",
+        "\"השכיחה עד כה\" תלויה במסלול כולו, ולא אפשר לבטא אותה כמשקל קבוע לקשת. וזו בעיית מקסימום, לא קצר ביותר.",
+        "ביקור כפול ב-BFS קורה גם בגרף בלי מעגל, כשיש שני מסלולים לאותו צומת. זה לא זיהוי מעגל."
+      ],
+      "problem": "LeetCode 1857 · Largest Color Value in a Directed Graph",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/277534/"
+      ],
+      "id": "alg.graphs.q95",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "נתונה מחרוזת colors באורך n (אותיות גדולות A–Z, האות של צומת i היא colors[i]) ורשימת קשתות מכוונות. הערך של מסלול הוא מספר המופעים של האות השכיחה ביותר בו. החזר את הערך המקסימלי על כל המסלולים, או −1 אם יש בגרף מעגל (כולל קשת מצומת לעצמו).\n\nדוגמאות: colors = \"BABCB\", קשתות 0→1, 1→2, 1→3, 2→4, 3→4 -> 3 (המסלול 0, 1, 2, 4: B, A, B, B). colors = \"AB\", קשתות 0→1, 1→1 -> −1.",
+      "starter": "int largestColorValue(const string& colors, const vector<pair<int,int>>& edges);",
+      "modelAnswer": "int largestColorValue(const string& colors, const vector<pair<int, int>>& edges) {\n    int n = colors.size();\n    vector<vector<int>> g(n);\n    vector<int> indeg(n, 0);\n    for (auto [a, b] : edges) { g[a].push_back(b); ++indeg[b]; }\n    vector<array<int, 26>> cnt(n);\n    queue<int> q;\n    for (int i = 0; i < n; ++i) if (indeg[i] == 0) q.push(i);\n    int seen = 0, best = 0;\n    while (!q.empty()) {\n        int u = q.front(); q.pop(); ++seen;\n        best = max(best, ++cnt[u][colors[u] - 'A']);\n        for (int v : g[u]) {\n            for (int c = 0; c < 26; ++c) cnt[v][c] = max(cnt[v][c], cnt[u][c]);\n            if (--indeg[v] == 0) q.push(v);\n        }\n    }\n    return seen == n ? best : -1;\n}",
+      "rubric": [
+        "Kahn: indegree, תור של צמתים עם indegree 0",
+        "cnt[v][26] מאותחל לאפסים; כשמוציאים את u מגדילים את cnt[u][colors[u]]",
+        "לכל קשת u→v: cnt[v][c] = max(cnt[v][c], cnt[u][c]) לכל c",
+        "זיהוי מעגל: מספר הצמתים שיצאו מהתור < n מחזיר −1",
+        "זמן O(26 · (n + m)), זיכרון O(26 · n)"
+      ],
+      "explanation": "צומת יוצא מהתור רק אחרי שכל הקודמים לו יצאו, ולכן cnt[u] כבר מכיל את המקסימום על כל המסלולים שנגמרים לפניו. ההגדלה של האות של u עצמו קורית ברגע היציאה, לפני ההעברה לשכנים.",
+      "problem": "LeetCode 1857 · Largest Color Value in a Directed Graph",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/277534/"
+      ],
+      "id": "alg.graphs.q96",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "גרף מכוון עם האותיות colors = \"CABCC\" (צומת i מקבל colors[i]) והקשתות 0→1, 1→2, 2→4, 0→3, 3→4. מה הערך המקסימלי של מסלול (מספר המופעים של האות השכיחה בו)?",
+      "accept": [
+        "3"
+      ],
+      "explanation": "המסלול 0, 3, 4 הוא C, C, C: הערך 3. המסלול הארוך 0, 1, 2, 4 הוא C, A, B, C: הערך 2 בלבד. מסלול ארוך יותר לא בהכרח טוב יותר, ולכן ה-DP שומר מונה לכל אות בנפרד.",
+      "id": "alg.graphs.q97",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בבעיית ערך הצבע הגדול במסלול, הקלט הוא צומת יחיד עם האות A וקשת אחת 0→0. מה צריך להחזיר אלגוריתם מבוסס Kahn, ולמה?",
+      "choices": [
+        "1, כי יש צומת אחד עם A",
+        "2, כי המסלול 0→0 עובר פעמיים ב-A",
+        "−1: הקשת לעצמו נותנת indegree 1, הצומת אף פעם לא נכנס לתור, ומספר הצמתים שעובדו (0) קטן מ-n",
+        "Kahn ייכנס ללולאה אינסופית"
+      ],
+      "answer": 2,
+      "explanation": "Kahn מזהה מעגלים בחינם: בגרף עם מעגל תמיד נשאר צומת עם indegree חיובי. לולאה עצמית היא מקרה הקצה הכי קטן של זה.",
+      "notes": [
+        "היה נכון בלי הקשת. לולאה עצמית היא מעגל, ואז הערך לא מוגדר.",
+        "עם מעגל אפשר להסתובב בלי סוף ולקבל ערך גדול כרצוננו, ולכן הבעיה מגדירה −1.",
+        "נכון: לולאה עצמית היא מעגל באורך 1, ו-Kahn מזהה אותו בדיוק כמו כל מעגל אחר.",
+        "Kahn תמיד מסתיים: התור מתרוקן, וצמתים במעגל פשוט לא נכנסים אליו."
+      ],
+      "id": "alg.graphs.q98",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "גרף מכוון חסר מעגלים (DAG) עם משקלים, ייתכן שליליים. צריך את המסלול הכבד ביותר מ-s ל-t. מה נכון?",
+      "choices": [
+        "Dijkstra שמחליף min ב-max עובד",
+        "BFS לפי מספר קשתות מוצא אותו",
+        "מיון טופולוגי ואז relax בסדר הזה עם max: O(n + m), עובד גם עם משקלים שליליים. בגרף כללי עם מעגלים, מסלול פשוט כבד ביותר הוא NP-hard",
+        "הופכים את הסימן של כל המשקלים ומריצים Dijkstra"
+      ],
+      "answer": 2,
+      "explanation": "ב-DAG, קצר ביותר וארוך ביותר הם אותה בעיה: DP אחד בסדר טופולוגי. זה אחד היתרונות הגדולים של לזהות שהגרף חסר מעגלים.",
+      "notes": [
+        "ההחלטה החמדנית של Dijkstra (\"הצומת הזה סופי\") לא תקפה כשמחפשים מקסימום: מסלול ארוך יותר יכול להגיע מאוחר יותר ולהיות כבד יותר.",
+        "BFS מתעלם מהמשקלים ומוצא מסלול עם הכי מעט קשתות.",
+        "נכון: בסדר טופולוגי כל צומת מקבל את הערך הסופי לפני שהוא מעביר אותו הלאה. בלי DAG אין סדר כזה, והבעיה קשה (היא מכלילה Hamiltonian path).",
+        "היפוך סימן יוצר משקלים שליליים, ו-Dijkstra לא תקף איתם."
+      ],
+      "problem": "Meta onsite: heaviest path between two nodes in a weighted DAG",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/1302130/"
+      ],
+      "id": "alg.graphs.q99",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "נתון DAG עם n צמתים (0..n−1) וקשתות (מ, אל, משקל), משקלים שלמים שעשויים להיות שליליים. החזר את המשקל הכולל של המסלול הכבד ביותר מ-s ל-t, או nullopt אם t לא נגיש מ-s.\n\nדוגמה: n = 5, קשתות 0→1 (3), 0→2 (2), 1→3 (4), 2→3 (6), 3→4 (1), 1→4 (9), s = 0, t = 4 -> 12 (0→1→4).",
+      "starter": "optional<long long> longestPath(int n, const vector<tuple<int,int,int>>& edges, int s, int t);",
+      "modelAnswer": "optional<long long> longestPath(int n, const vector<tuple<int, int, int>>& edges, int s, int t) {\n    vector<vector<pair<int, int>>> g(n);\n    vector<int> indeg(n, 0);\n    for (auto [a, b, w] : edges) { g[a].push_back({b, w}); ++indeg[b]; }\n    queue<int> q;\n    for (int i = 0; i < n; ++i) if (indeg[i] == 0) q.push(i);\n    const long long NEG = LLONG_MIN;\n    vector<long long> best(n, NEG);\n    best[s] = 0;\n    while (!q.empty()) {\n        int u = q.front(); q.pop();\n        for (auto [v, w] : g[u]) {\n            if (best[u] != NEG) best[v] = max(best[v], best[u] + w);\n            if (--indeg[v] == 0) q.push(v);\n        }\n    }\n    if (best[t] == NEG) return nullopt;\n    return best[t];\n}",
+      "rubric": [
+        "מיון טופולוגי (Kahn) על כל הגרף",
+        "best מאותחל ל\"לא נגיש\" (LLONG_MIN), ו-best[s] = 0",
+        "relax עם max רק מצמתים נגישים, כדי לא לחבר משקל ל-LLONG_MIN",
+        "nullopt כש-t לא נגיש",
+        "זמן O(n + m), זיכרון O(n + m)"
+      ],
+      "explanation": "Kahn חייב לרוץ על כל הגרף ולא רק מ-s, אחרת ה-indegree של צמתים שנגישים גם מצמתים אחרים לא יגיע ל-0. הבדיקה best[u] != NEG מונעת overflow ומונעת ממסלולים שלא מתחילים ב-s להשתתף.",
+      "problem": "Meta onsite: heaviest path between two nodes in a weighted DAG",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/1302130/"
+      ],
+      "id": "alg.graphs.q100",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "DAG עם הקשתות 0→1 (3), 0→2 (2), 1→3 (4), 2→3 (6), 3→4 (1), 1→4 (9). מה משקל המסלול הכבד ביותר מ-0 ל-3?",
+      "accept": [
+        "8"
+      ],
+      "explanation": "שני מסלולים מגיעים ל-3: 0→1→3 במשקל 3 + 4 = 7, ו-0→2→3 במשקל 2 + 6 = 8. הקשת הראשונה הכבדה יותר (3 מול 2) לא מבטיחה את המסלול הכבד יותר, ולכן הבחירה צריכה להיות DP ולא חמדנית.",
+      "id": "alg.graphs.q101",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "code": "long long heaviest(int n, const vector<vector<pair<int,int>>>& g,\n                    const vector<int>& topo, int s, int t) {\n    vector<long long> best(n, 0);\n    best[s] = 0;\n    for (int u : topo)\n        for (auto [v, w] : g[u])\n            best[v] = max(best[v], best[u] + w);\n    return best[t];\n}",
+      "bugLine": 3,
+      "prompt": "topo הוא סדר טופולוגי נכון של ה-DAG, ו-g רשימת השכנים עם משקלים. הפונקציה אמורה להחזיר את המסלול הכבד ביותר מ-s ל-t, אבל טועה. מה הבאג?",
+      "choices": [
+        "צריך לעבור על topo בסדר הפוך",
+        "אתחול ל-0 הופך כל צומת לנקודת התחלה: מסלולים שלא מתחילים ב-s נספרים, ו-t שלא נגיש מ-s מחזיר 0 במקום \"אין מסלול\". צריך לאתחל ל\"לא נגיש\" ולדלג על צמתים כאלה",
+        "long long עלול לגלוש, צריך double",
+        "צריך min במקום max"
+      ],
+      "answer": 1,
+      "explanation": "בכל DP על גרף עם מקור יחיד, האתחול הוא \"לא נגיש\" לכולם חוץ מהמקור. אתחול ל-0 הוא באג קלאסי שעובר בדיקות קטנות שבהן כל הצמתים נגישים מ-s.",
+      "notes": [
+        "בסדר טופולוגי רגיל כל הקודמים לצומת מעובדים לפניו, וזה בדיוק מה שה-relax צריך.",
+        "נכון: למשל קשת 5→t במשקל 100, כש-5 לא נגיש מ-s, תיתן 100. וגם עם משקלים שליליים, 0 כבסיס מסתיר מסלולים אמיתיים.",
+        "סכום של n משקלים שלמים בטווח רגיל נכנס ב-long long, ו-double רק מוסיף שגיאות עיגול.",
+        "מחפשים את המסלול הכבד ביותר, ולכן max נכון."
+      ],
+      "id": "alg.graphs.q102",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "גרף לא מכוון עם ציון לכל צומת. מחפשים מסלול של 4 צמתים שונים a−b−c−d (קשתות a−b, b−c, c−d) עם סכום ציונים מקסימלי. עוברים על כל קשת (b, c) כזוג האמצעי. כמה שכנים מספיק לשמור לכל צומת, ולמה?",
+      "choices": [
+        "שכן אחד, הטוב ביותר",
+        "שניים, כי צריך לפסול רק את הצומת שבצד השני של הקשת",
+        "כל השכנים; אי אפשר לקצץ בלי לפספס פתרונות",
+        "שלושת השכנים עם הציון הגבוה ביותר: עבור a פוסלים לכל היותר את c, ועבור d לכל היותר את a ואת b, ולכן בין שלושת הטובים תמיד נשאר מועמד אופטימלי"
+      ],
+      "answer": 3,
+      "explanation": "\"שמור רק top-k לפי מספר הפסילות האפשריות\" הוא טריק שחוזר בבעיות גרפים: אם לכל היותר r מועמדים יכולים להיפסל, מספיק לשמור r + 1.",
+      "notes": [
+        "השכן הטוב ביותר של b יכול להיות c עצמו, ואז אין מה לבחור.",
+        "d צריך להיות שונה גם מ-b וגם מ-a. אם שני השכנים הטובים של c הם b ו-a, צריך שלישי.",
+        "קיצוץ לשלושה תמיד מספיק, וחוסך O(deg) לכל קשת.",
+        "נכון: לכל היותר שני צמתים נפסלים לכל קצה, ולכן השלישי ברשימה תמיד זמין. 9 צירופים לכל קשת: O(m) אחרי ההכנה."
+      ],
+      "problem": "Google onsite: best chain of 4 cities linked by flights (≈ LeetCode 2242 · Maximum Score of a Node Sequence)",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/1621880/",
+        "https://leetcode.com/discuss/interview-question/1879225/"
+      ],
+      "id": "alg.graphs.q103",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 5,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "גרף לא מכוון עם n צמתים, ציון חיובי sc[i] לכל צומת, וקשתות בלי כפילויות. מצא ארבעה צמתים שונים a, b, c, d עם הקשתות a−b, b−c ו-c−d, כך שסכום הציונים מקסימלי. החזר את הסכום, או −1 אם אין כזה.\n\nדוגמה: sc = [5, 2, 9, 8, 4], קשתות 0−1, 1−2, 2−3, 0−3, 3−4 -> 24 (למשל 1−2−3−0: 2 + 9 + 8 + 5).",
+      "starter": "long long maxScore(const vector<int>& sc, const vector<pair<int,int>>& edges);",
+      "modelAnswer": "long long maxScore(const vector<int>& sc, const vector<pair<int, int>>& edges) {\n    int n = sc.size();\n    vector<vector<int>> top(n);\n    auto offer = [&](int u, int v) {\n        auto& t = top[u];\n        t.push_back(v);\n        sort(t.begin(), t.end(), [&](int a, int b) { return sc[a] > sc[b]; });\n        if (t.size() > 3) t.pop_back();\n    };\n    for (auto [a, b] : edges) { offer(a, b); offer(b, a); }\n    long long best = -1;\n    for (auto [b, c] : edges)\n        for (int a : top[b]) {\n            if (a == c) continue;\n            for (int d : top[c])\n                if (d != a && d != b)\n                    best = max(best, (long long)sc[a] + sc[b] + sc[c] + sc[d]);\n        }\n    return best;\n}",
+      "rubric": [
+        "לכל צומת שומרים את 3 השכנים עם הציון הגבוה ביותר",
+        "כל קשת (b, c) נבדקת כזוג האמצעי",
+        "a מתוך top3(b) ושונה מ-c; d מתוך top3(c) ושונה מ-a ומ-b",
+        "long long לסכום ו-−1 כשאין מסלול (למשל גרף כוכב)",
+        "זמן O(n + m) (עם מיון של עד 4 איברים לכל הכנסה), זיכרון O(n)"
+      ],
+      "explanation": "כל קשת לא מכוונת היא גם (b, c) וגם (c, b) מבחינת הבחירה, אבל הבדיקה עם top3 של שני הצדדים מכסה את שני הכיוונים, כי a ו-d נבחרים משני הצדדים. בדיקה מול brute force על גרפים קטנים מאשרת את זה.",
+      "problem": "Google onsite: best chain of 4 cities linked by flights (≈ LeetCode 2242 · Maximum Score of a Node Sequence)",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/1621880/",
+        "https://leetcode.com/discuss/interview-question/1879225/"
+      ],
+      "id": "alg.graphs.q104",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "גרף כוכב: צומת 0 עם ציון 10 מחובר לצמתים 1, 2, 3, 4 (ציון 1 לכל אחד), ואין קשתות אחרות. מה מחזירה הפונקציה שמחפשת מסלול של 4 צמתים שונים a−b−c−d עם סכום מקסימלי (או −1 אם אין)?",
+      "accept": [
+        "-1",
+        "−1"
+      ],
+      "explanation": "כל מסלול בכוכב עובר במרכז, ולכן מסלול פשוט מכיל לכל היותר 3 צמתים: עלה, 0, עלה. אין שתי קשתות סמוכות שלא דרך 0, ולכן אין a−b−c−d, והתשובה −1.",
+      "id": "alg.graphs.q105",
+      "lesson": "alg.graphs"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה הסיבוכיות של הפתרון \"top-3 שכנים לכל צומת, ואז כל קשת כאמצע\" למסלול 4 הצמתים הכבד ביותר, עם n צמתים ו-m קשתות?",
+      "choices": [
+        "O(n^4), כי בוחרים 4 צמתים",
+        "O(n + m): כל קשת מעדכנת שתי רשימות באורך ≤ 3 ב-O(1), ולכל קשת בודקים ≤ 9 צירופים",
+        "O(m²), כי משווים כל קשת לכל קשת",
+        "O(m · max_deg), כי לכל קשת עוברים על כל השכנים של שני הקצוות"
+      ],
+      "answer": 1,
+      "explanation": "הקיצוץ ל-top-3 הופך פתרון שתלוי בדרגות (O(Σ deg²)) לפתרון לינארי. בראיון כדאי להראות את המעבר מ-brute force לחסם הזה.",
+      "notes": [
+        "זה ה-brute force. כל המטרה של הקיצוץ היא לא לעבור על כל הרביעיות.",
+        "נכון: ההכנה O(m) (מיון של עד 4 איברים הוא קבוע), והמעבר על הקשתות O(9m).",
+        "אין השוואה בין זוגות קשתות. כל קשת מטופלת לבד.",
+        "זו הסיבוכיות בלי הקיצוץ. בגרף כוכב צפוף היא O(m²)."
+      ],
+      "id": "alg.graphs.q106",
       "lesson": "alg.graphs"
     }
   ]

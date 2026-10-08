@@ -247,6 +247,22 @@
         {
           "term": "dynamic dispatch ב-constructor",
           "def": "קריאה ל-`self.method()` מתוך `__init__` של ה-parent מגיעה לגרסה של היורשת, גם כשהיורשת עוד לא סיימה לאתחל את השדות שלה."
+        },
+        {
+          "term": "sorted vs list.sort",
+          "def": "`sorted(iterable)` מחזיר list חדש ולא נוגע במקור; `lst.sort()` ממיין במקום ומחזיר `None`. שימוש ב-`sorted` בלי השמה הוא באג שקט."
+        },
+        {
+          "term": "Sort stability",
+          "def": "מיון יציב שומר את הסדר היחסי של איברים עם מפתח שווה. המיון של Python (`sorted`/`list.sort`) יציב, גם עם `reverse=True`, ולכן אפשר למיין בכמה שלבים או לסמוך על סדר הקלט בתיקו."
+        },
+        {
+          "term": "csv.DictReader",
+          "def": "iterator שקורא קובץ CSV שורה-שורה ומחזיר כל שורה כ-dict ממופה לפי שורת הכותרת. כל הערכים הם str."
+        },
+        {
+          "term": "Hash join",
+          "def": "חיבור שתי טבלאות לפי מפתח: בונים dict מהצד הקטן ועוברים בסטרימינג על הגדול. זמן O(n+m), זיכרון לפי הצד הקטן."
         }
       ]
     }
@@ -1450,6 +1466,88 @@
       ],
       "explanation": "שאלת 'מה זה deque ולמה' מתחברת כמעט תמיד ל-BFS ולתורים. התשובה: deque נותן O(1) בשני הקצוות, ו-list נותן O(n) בהוצאה מההתחלה.",
       "id": "py.data-model.q52",
+      "lesson": "py.data-model"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/7143811/meta-production-engineer-interview-by-jp-jgy2/",
+        "https://reliabilitywhisperer.substack.com/p/2025meta-e4-production-engineer-interview"
+      ],
+      "problem": "Meta Production Engineer coding screen: parse the dinosaur CSV files and print bipedal dinosaurs by speed",
+      "prompt": "שני קובצי CSV: בראשון שם דינוזאור ואורך רגל, בשני שם, אורך צעד ו-stance. צריך להדפיס את שמות הדינוזאורים הדו-רגליים מהמהיר לאיטי, כשהמהירות היא `(stride/leg - 1) * sqrt(leg * g)`. הקוד מדפיס את השמות, אבל בסדר שגוי. איפה הבאג?",
+      "code": "import csv, math\nG = 9.8\nlegs = {}\nwith open(\"d1.csv\") as f:\n    for row in csv.DictReader(f):\n        legs[row[\"NAME\"]] = float(row[\"LEG_LENGTH\"])\nout = []\nwith open(\"d2.csv\") as f:\n    for row in csv.DictReader(f):\n        if row[\"STANCE\"] == \"bipedal\" and row[\"NAME\"] in legs:\n            leg = legs[row[\"NAME\"]]\n            speed = (float(row[\"STRIDE_LENGTH\"]) / leg - 1) * math.sqrt(leg * G)\n            out.append((row[\"NAME\"], speed))\nsorted(out, key=lambda t: t[1], reverse=True)\nfor name, _ in out:\n    print(name)",
+      "bugLine": 14,
+      "choices": [
+        "`sorted` מחזיר רשימה חדשה ולא משנה את `out`; התוצאה נזרקת ו-`out` נשאר בסדר הקריאה מהקובץ",
+        "`reverse=True` הופך גם את הסדר של מהירויות שוות, ולכן המיון לא יציב",
+        "`csv.DictReader` מחזיר מחרוזות, ולכן המיון משווה מחרוזות ולא מספרים",
+        "`row[\"NAME\"] in legs` סורק את כל המילון ב-O(n), ולכן הסדר משתבש"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: `sorted()` היא פונקציה שמחזירה list חדש. צריך `out = sorted(...)` או `out.sort(key=..., reverse=True)`, שממיין in-place ומחזיר `None`.",
+        "שגוי: המיון של Python יציב גם עם `reverse=True`; איברים שווים שומרים על הסדר המקורי. וגם אילו זה היה נכון, זה לא היה מסביר סדר שגוי לגמרי.",
+        "שגוי: נכון ש-DictReader מחזיר str, אבל הקוד ממיר עם `float()` גם את אורך הרגל וגם את אורך הצעד, ולכן המפתח הוא float.",
+        "שגוי: `in` על dict הוא בדיקת hash בממוצע O(1), ובכל מקרה סיבוכיות לא משנה את הסדר של התוצאה."
+      ],
+      "explanation": "הבאג הוא בלבול בין `sorted` (מחזיר רשימה חדשה) לבין `list.sort` (in-place, מחזיר None). השורה רצה, ממיינת עותק וזורקת אותו, ולכן הלולאה מדפיסה לפי סדר הקובץ השני. זו שגיאה נפוצה בשאלות file parsing שבהן החלק האחרון הוא מיון לפי ערך מחושב.",
+      "id": "py.data-model.q53",
+      "lesson": "py.data-model"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה הקוד מדפיס?",
+      "code": "rows = [(\"TRex\", 4.2), (\"Velo\", 7.5), (\"Stego\", 4.2), (\"Hadro\", 1.1)]\nprint([n for n, s in sorted(rows, key=lambda r: r[1], reverse=True)])",
+      "choices": [
+        "`['Velo', 'TRex', 'Stego', 'Hadro']`",
+        "`['Velo', 'Stego', 'TRex', 'Hadro']`",
+        "`['Hadro', 'Stego', 'TRex', 'Velo']`",
+        "`['Velo', 'Stego', 'TRex', 'Hadro']` או `['Velo', 'TRex', 'Stego', 'Hadro']`, תלוי בריצה"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: מיון יורד לפי מהירות, ובתיקו (4.2) הסדר המקורי נשמר כי המיון של Python יציב, גם עם `reverse=True`. TRex הופיע לפני Stego ולכן נשאר לפניו.",
+        "שגוי: זה מה שמקבלים מ-`sorted(rows, key=...)[::-1]`, כלומר מיון עולה ואז היפוך הרשימה, שהופך גם את סדר האיברים השווים.",
+        "שגוי: זה סדר עולה עם היפוך התיקו; `reverse=True` נותן סדר יורד.",
+        "שגוי: המיון ב-Python דטרמיניסטי ויציב לפי הגדרה, אין כאן תלות בריצה."
+      ],
+      "explanation": "`reverse=True` לא שקול למיון רגיל ואז `[::-1]`: הוא שומר על יציבות, כך שאיברים עם אותו מפתח נשארים בסדר שבו הופיעו. זה חשוב כשבעיית file parsing דורשת tie-break דטרמיניסטי; אם רוצים tie-break לפי שם, כותבים מפתח מפורש כמו `key=lambda r: (-r[1], r[0])`.",
+      "id": "py.data-model.q54",
+      "lesson": "py.data-model"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "בונים join בין שני קובצי CSV לפי עמודת שם: קוראים את הקובץ הראשון ל-dict ממופה לפי שם, ואז עוברים שורה-שורה על השני. אילו טענות נכונות?",
+      "choices": [
+        "כל הערכים ש-`csv.DictReader` מחזיר הם מחרוזות, וצריך להמיר מספרים בעצמנו",
+        "בדיקת `name in d` על dict היא בממוצע O(1), ולכן ה-join כולו לינארי בגודל שני הקבצים",
+        "עדיף לטעון ל-dict דווקא את הקובץ הגדול יותר ולעבור בסטרימינג על הקטן",
+        "`d[name]` על שם שלא קיים זורק `KeyError`, ולכן בודקים קודם עם `in` או משתמשים ב-`d.get(name)`",
+        "`csv.DictReader` טוען את כל הקובץ לזיכרון לפני שהוא מחזיר את השורה הראשונה"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "notes": [
+        "נכון: מודול csv לא מנחש טיפוסים. גם `\"2.5\"` מגיע כ-str, וצריך `float()`/`int()`.",
+        "נכון: hash lookup בממוצע O(1), ולכן O(n+m) זמן; הזיכרון הוא O(גודל הקובץ שנטען ל-dict).",
+        "שגוי: ההפך. את הצד שנשמר בזיכרון בוחרים להיות הקטן (כמו build side ב-hash join), ואת הגדול מעבירים בסטרימינג.",
+        "נכון: `d.get(name)` מחזיר `None` (או ערך ברירת מחדל) במקום לזרוק חריגה; שורות בלי התאמה בדרך כלל מדלגים עליהן.",
+        "שגוי: DictReader הוא iterator שקורא שורה בכל פעם מתוך אובייקט הקובץ, ולכן מתאים גם לקבצים גדולים."
+      ],
+      "explanation": "זה hash join קלאסי: dict על הצד הקטן, מעבר סטרימינג על הגדול, המרת טיפוסים מפורשת וטיפול בשמות חסרים. מראיינים אוהבים לשאול בהמשך מה קורה כשגם הצד הקטן לא נכנס לזיכרון (partitioning לפי hash).",
+      "id": "py.data-model.q55",
       "lesson": "py.data-model"
     }
   ]

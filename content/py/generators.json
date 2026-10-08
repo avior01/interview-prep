@@ -239,6 +239,38 @@
         {
           "term": "dedup בזרם ממוין",
           "def": "בזרם ממוין כפילויות תמיד סמוכות, ולכן מספיק להשוות לערך האחרון שהוחזר: O(1) זיכרון במקום set בגודל O(N)."
+        },
+        {
+          "term": "Generator expression evaluation",
+          "def": "ב-generator expression רק ה-iterable החיצוני מוערך מיד; כל השאר (תנאים, iterables פנימיים) מוערך בזמן האיטרציה. לכן החזרה של genexp מתוך `with` משאירה אותו עם משאב סגור."
+        },
+        {
+          "term": "GeneratorExit / gen.close()",
+          "def": "`close()` זורק `GeneratorExit` בנקודת ה-yield שבה ה-generator מושהה, וכך בלוקים של `finally` ו-`with` רצים. CPython קורא לזה אוטומטית כשה-generator נהרס."
+        },
+        {
+          "term": "Sessionization",
+          "def": "חלוקת זרם אירועים לסשנים לפי פער חוסר פעילות. דורש flush של הסשן האחרון ובסטרימינג אמיתי watermark שקובע מתי אפשר לסגור."
+        },
+        {
+          "term": "Watermark",
+          "def": "הערכה של זמן האירוע שעד אליו הזרם כבר שלם (למשל max_event_time פחות האיחור המותר). חלונות וסשנים נסגרים לפי ה-watermark, לא לפי שעון הקיר."
+        },
+        {
+          "term": "Counter.most_common",
+          "def": "מחזיר list של זוגות (מפתח, ספירה) בסדר יורד. בתיקו נשמר סדר ההופעה הראשונה. סיבוכיות O(n log k) עם heap כש-k קטן."
+        },
+        {
+          "term": "Hash partitioning",
+          "def": "חלוקת רשומות ל-k קבוצות לפי hash(key) % k, כך שכל מופעי אותו מפתח נופלים לאותה קבוצה. הבסיס לספירה מדויקת בזיכרון חסום ול-group-by מבוזר."
+        },
+        {
+          "term": "PYTHONHASHSEED",
+          "def": "משתנה הסביבה שקובע את ה-seed של hash למחרוזות. ברירת המחדל אקראית בכל הפעלה, ולכן `hash(str)` לא יציב בין תהליכים."
+        },
+        {
+          "term": "Count-Min Sketch",
+          "def": "מבנה הסתברותי בזיכרון קבוע שמעריך תדירויות. הוא עלול להעריך יותר מדי ואף פעם לא פחות מדי, ולכן מתאים ל-heavy hitters בקירוב, לא לתשובה מדויקת."
         }
       ]
     }
@@ -1582,6 +1614,226 @@
       ],
       "explanation": "generator שמטפל בשגיאות לכל רשומה הוא דפוס טוב ל-ETL על קבצים גדולים: זיכרון קבוע, ושורה פגומה לא מפילה את כל העיבוד. ב-production גם סופרים או מתעדים את השורות שדולגו.",
       "id": "py.generators.q58",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://www.glassdoor.com.au/Interview/Meta-Interview-E40772-RVW35612726.htm"
+      ],
+      "problem": "Meta Production Engineer screen: filter a log file with a Python script",
+      "prompt": "פונקציה שמחזירה את שורות ה-ERROR מקובץ לוג באופן lazy. הקובץ קיים ויש בו שתי שורות ERROR. מה קורה כשמריצים?",
+      "code": "def error_lines(path):\n    with open(path) as f:\n        return (ln for ln in f if \"ERROR\" in ln)\n\nfor ln in error_lines(\"app.log\"):\n    print(ln.strip())",
+      "choices": [
+        "מודפסות שתי שורות ה-ERROR",
+        "`ValueError: I/O operation on closed file`",
+        "לא מודפס כלום, כי ה-generator ריק",
+        "השורות מודפסות, ורק ב-garbage collection מופיע ResourceWarning על קובץ פתוח"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה היה קורה אילו הפונקציה הייתה generator function (עם `yield` בתוך ה-with), ואז הקובץ נשאר פתוח עד סוף האיטרציה.",
+        "נכון: `return` מחזיר generator expression שעוד לא רץ, ואז `with` סוגר את הקובץ. האיטרציה הראשונה קוראת מקובץ סגור ונכשלת.",
+        "שגוי: ה-generator לא ריק; הוא נכשל כבר בקריאה הראשונה, לפני שנבדק תנאי כלשהו.",
+        "שגוי: הקובץ דווקא נסגר מוקדם מדי, לא מאוחר מדי. ResourceWarning מופיע כשקובץ לא נסגר בכלל."
+      ],
+      "explanation": "generator expression מעריך מיד רק את ה-iterable החיצוני (`f`), ואת כל השאר מעריך ב-lazy. בזמן שה-for הראשון מבקש שורה, ה-`with` כבר יצא והקובץ סגור. התיקון: להפוך את הפונקציה ל-generator function עם `yield` (או `yield from`) בתוך ה-with, כך שהקובץ נסגר רק כשה-generator מסתיים או נסגר.",
+      "id": "py.generators.q59",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "יש generator function שפותח קובץ ב-`with` ועושה `yield` לכל שורת ERROR. הצרכן עושה `for ln in error_lines(p): ... break` אחרי השורה הראשונה. ב-CPython, מתי הקובץ נסגר?",
+      "choices": [
+        "אף פעם, עד סוף התוכנית, כי ה-generator נעצר באמצע ה-with",
+        "רק כשה-garbage collector המחזורי ירוץ",
+        "מיד אחרי ה-`break`: ה-generator הזמני מאבד את ה-reference האחרון, `close()` נקרא, `GeneratorExit` נזרק בנקודת ה-yield וה-with סוגר את הקובץ",
+        "ב-`break` עצמו, כי for שולח `StopIteration` ל-generator"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: generator שנהרס כשהוא מושהה נסגר דרך `close()`, וזה מריץ את ה-`__exit__` של ה-with.",
+        "שגוי: אין כאן מחזור הפניות, ולכן ספירת ההפניות לבדה משחררת אותו מיד. ב-PyPy, שאין בו reference counting, זה אכן יכול לקרות מאוחר יותר.",
+        "נכון: ה-generator היה רק ב-iterator של ה-for; אחרי שהלולאה מסתיימת ה-refcount יורד לאפס, `__del__` קורא ל-`close()`, ו-`GeneratorExit` מפעיל את ה-cleanup.",
+        "שגוי: ה-for לא שולח כלום ל-generator; StopIteration הוא מה שה-generator זורק כשהוא נגמר, לא אות עצירה מהצרכן."
+      ],
+      "explanation": "ניקוי של generator תלוי במתי הוא נהרס. ב-CPython זה מיידי כשה-reference האחרון נעלם, אבל זה פרט מימוש. קוד שצריך סגירה דטרמיניסטית עוטף את ה-generator ב-`contextlib.closing(...)` או קורא ל-`gen.close()` במפורש. זה חשוב בכלי log parsing שרצים על אלפי קבצים, כי file descriptors נגמרים.",
+      "id": "py.generators.q60",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "pipeline של generators שסופר הודעות ERROR. מה הקוד מדפיס?",
+      "code": "from collections import Counter\ndef parse(lines):\n    for ln in lines:\n        lvl, _, msg = ln.partition(\" \")\n        yield lvl, msg\nlines = [\"ERROR disk full\", \"INFO ok\", \"ERROR net down\",\n         \"WARN slow\", \"ERROR disk full\"]\nc = Counter(msg for lvl, msg in parse(lines) if lvl == \"ERROR\")\nprint(c.most_common(1), len(c))",
+      "choices": [
+        "`[('disk full', 2)] 2`",
+        "`[('disk full', 2)] 3`",
+        "`[('ERROR', 3)] 1`",
+        "`('disk full', 2) 2`"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: נשארות שלוש הודעות ERROR, `disk full` פעמיים ו-`net down` פעם אחת. יש שני מפתחות שונים, ו-`most_common(1)` מחזיר רשימה עם זוג אחד.",
+        "שגוי: `len(c)` סופר מפתחות שונים, לא את סך ההופעות (3 הוא `sum(c.values())`).",
+        "שגוי: ה-Counter נבנה מ-`msg`, לא מ-`lvl`; partition מפריד בין המילה הראשונה לשאר השורה.",
+        "שגוי: `most_common(n)` מחזיר תמיד list של tuples, גם כש-n=1."
+      ],
+      "explanation": "כל שלב ב-pipeline הוא lazy: `parse` מייצר זוגות אחד-אחד, ה-generator expression מסנן, ו-Counter צורך. לכן הזיכרון תלוי במספר ההודעות השונות ולא באורך הלוג.",
+      "id": "py.generators.q61",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://prachub.com/coding-questions/compute-effective-reads-with-sql-and-python-streaming"
+      ],
+      "problem": "Meta data scientist onsite: sessionize a streaming event log in Python (30-second inactivity gap)",
+      "prompt": "generator שמחלק זרם אירועים `(timestamp, post)` לסשנים: סשן נסגר כשיש פער של 30 שניות או יותר. מה מודפס?",
+      "code": "def sessions(events, gap=30):\n    cur, last = [], None\n    for t, post in events:\n        if last is not None and t - last >= gap:\n            yield cur\n            cur = []\n        cur.append(post)\n        last = t\n\nev = [(0, \"a\"), (10, \"b\"), (45, \"c\"), (50, \"a\")]\nprint(list(sessions(ev)))",
+      "choices": [
+        "`[['a', 'b'], ['c', 'a']]`",
+        "`[['a', 'b']]`",
+        "`[['a', 'b', 'c', 'a']]`",
+        "`[['a'], ['b'], ['c', 'a']]`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זו התוצאה הרצויה, אבל הסשן האחרון נשאר ב-`cur` ואף אחד לא מוציא אותו אחרי הלולאה.",
+        "נכון: הסשן הראשון נסגר כשמגיע 45 (פער 35). הסשן `['c', 'a']` נבנה, אבל ה-generator נגמר בלי `yield` אחרון, אז הוא הולך לאיבוד.",
+        "שגוי: הפער בין 10 ל-45 הוא 35, יותר מ-30, ולכן יש פיצול.",
+        "שגוי: הפער בין 0 ל-10 הוא 10, פחות מ-30, ולכן `a` ו-`b` באותו סשן."
+      ],
+      "explanation": "באג קלאסי של עיבוד זרם: מצב שנצבר בתוך הלולאה צריך flush כשהזרם נגמר (`if cur: yield cur` אחרי ה-for). בגרסה אמיתית בסטרימינג, שהזרם לא נגמר בה, הסגירה נעשית לפי watermark של זמן ולא לפי סוף הקלט.",
+      "id": "py.generators.q62",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "אותו sessionizer, הפעם עם flush בסוף ועם תנאי פער חזק (`>`). מה מודפס?",
+      "code": "def sessions(events, gap=30):\n    cur, last = [], None\n    for t, post in events:\n        if last is not None and t - last > gap:\n            yield cur\n            cur = []\n        cur.append(post)\n        last = t\n    if cur:\n        yield cur\n\nprint(list(sessions([(0, \"a\"), (30, \"b\"), (61, \"c\"), (91, \"d\")])))",
+      "choices": [
+        "`[['a'], ['b'], ['c'], ['d']]`",
+        "`[['a', 'b'], ['c'], ['d']]`",
+        "`[['a', 'b'], ['c', 'd']]`",
+        "`[['a', 'b', 'c', 'd']]`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: זה היה נכון עם `>=`, כשפער של בדיוק 30 כבר סוגר סשן.",
+        "שגוי: הפער בין 61 ל-91 הוא בדיוק 30, ועם `>` הוא לא סוגר סשן.",
+        "נכון: 0→30 (פער 30, לא גדול מ-30, אותו סשן), 30→61 (פער 31, סשן חדש), 61→91 (פער 30, אותו סשן), וה-flush מוציא את האחרון.",
+        "שגוי: הפער 31 בין 30 ל-61 גדול מ-30 ולכן מפצל."
+      ],
+      "explanation": "ההבדל בין `>` ל-`>=` קובע מה קורה בדיוק על הגבול, וזו נקודה שכדאי לברר עם המראיין (\"30 שניות או יותר\" או \"יותר מ-30\"). בנוסף, ה-flush אחרי הלולאה מבטיח שהסשן האחרון לא הולך לאיבוד.",
+      "id": "py.generators.q63",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "צריך לבנות sessionizer שרץ על זרם אינסופי של אירועים ממיליוני משתמשים: סשן של משתמש נסגר אחרי 30 שניות בלי פעילות, והאירועים יכולים להגיע באיחור של עד 5 שניות ולא בסדר. איך תבנה את זה ב-Python, ומה המגבלות על הזיכרון?",
+      "modelAnswer": "מחזיקים dict ממשתמש לסשן הפתוח (רשימת אירועים או רק אגרגטים: זמן ראשון ואחרון, סכומים). כדי לסגור סשנים בלי לסרוק את כל ה-dict, מחזיקים min-heap של (deadline, user) עם lazy deletion: כשמשתמש מתעדכן דוחפים deadline חדש ומתעלמים מרשומות ישנות כשהן יוצאות. בגלל אירועים מאוחרים לא סוגרים לפי זמן האירוע האחרון אלא לפי watermark = max_event_time - 5s: סשן נסגר כש-last + 30 <= watermark. אירוע שמגיע אחרי שהסשן שלו נסגר נחשב late: זורקים, סופרים במדד, או פותחים סשן תיקון. הזיכרון הוא O(משתמשים פעילים) ולא O(אירועים) אם שומרים אגרגטים במקום אירועים. את ה-generator כותבים כך שהוא מקבל iterator של אירועים ומבצע yield לסשנים סגורים, ובסוף הזרם עושה flush לכל הפתוחים. כדי לגדול מעבר לתהליך אחד מחלקים לפי hash יציב של user id (לא `hash()` של Python, שמשתנה בין תהליכים).",
+      "rubric": [
+        "dict של סשנים פתוחים לפי משתמש + מנגנון יעיל לגילוי timeouts (heap עם lazy deletion או סריקה לפי זמן)",
+        "watermark עם allowed lateness, והחלטה מפורשת מה עושים עם אירועים מאוחרים מדי",
+        "זיכרון O(משתמשים פעילים): שמירת אגרגטים ולא כל האירועים",
+        "flush בסוף הזרם ו-generator שמחזיר רק סשנים סגורים",
+        "חלוקה בין workers לפי hash יציב"
+      ],
+      "explanation": "זו ההרחבה הטבעית לשאלת sessionization: מעבר מרשימה ממוינת לזרם אמיתי. המראיין בודק אם אתה מבין watermark, out-of-order וחסימת זיכרון.",
+      "id": "py.generators.q64",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/find-the-most-frequent-ip-addresses-in-a-file-too-large-for-memory"
+      ],
+      "problem": "Google onsite: exact most-frequent IP addresses in a file much larger than RAM",
+      "prompt": "קובץ לוג של מאות GB, שורה לכל בקשה עם כתובת IP. ה-RAM קטן מדי גם עבור מילון של כל הכתובות השונות. צריך את 10 הכתובות השכיחות ביותר, בדיוק (לא קירוב). אילו גישות נותנות תשובה נכונה?",
+      "choices": [
+        "מעבר אחד שכותב כל שורה לאחד מ-k קבצים זמניים לפי hash יציב של ה-IP, ואז ספירה של כל קובץ בנפרד עם Counter ושמירת top-10 גלובלי ב-heap",
+        "external sort של הכתובות לקבצים ממוינים, merge, וספירה של רצפים זהים במעבר אחד",
+        "קריאה בחלקים (chunks), שמירת top-1000 של כל chunk, ואיחוד הרשימות בסוף",
+        "Count-Min Sketch על כל הקובץ ובחירת 10 הכתובות עם ההערכה הגבוהה ביותר",
+        "`Counter` על generator שקורא את הקובץ שורה-שורה, כי generator לא טוען את הקובץ לזיכרון"
+      ],
+      "answer": [
+        0,
+        1
+      ],
+      "notes": [
+        "נכון: כל מופעי אותה כתובת נופלים לאותו קובץ, ולכן הספירה לכל קובץ מדויקת. בוחרים k כך שהכתובות השונות בכל partition נכנסות ל-RAM.",
+        "נכון: אחרי מיון, כל המופעים של כתובת יושבים ברצף, וספירה עם heap בגודל 10 דורשת זיכרון קבוע. המחיר הוא כמה מעברי I/O.",
+        "שגוי: כתובת שמופיעה מעט בכל chunk, אבל בהרבה chunks, יכולה להיות השכיחה ביותר בסך הכול בלי להיכנס ל-top של אף chunk.",
+        "שגוי: Count-Min נותן הערכת יתר הסתברותית. זה טוב ל-heavy hitters בקירוב, אבל השאלה דורשת תשובה מדויקת.",
+        "שגוי: ה-generator חוסך את הקובץ, אבל ה-Counter עצמו גדל לפי מספר הכתובות השונות, וזה בדיוק מה שלא נכנס לזיכרון."
+      ],
+      "explanation": "המפתח הוא להבחין בין זיכרון לקלט (שה-generator פותר) לבין זיכרון למצב (מספר המפתחות השונים). כדי לקבל ספירה מדויקת בזיכרון חסום צריך שכל המופעים של מפתח יגיעו לאותו מקום: partitioning לפי hash או מיון חיצוני.",
+      "id": "py.generators.q65",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה הקוד מדפיס?",
+      "code": "from collections import Counter\nips = [\"10.0.0.2\", \"10.0.0.1\", \"10.0.0.2\", \"10.0.0.3\", \"10.0.0.1\"]\nprint(Counter(ips).most_common(2))",
+      "choices": [
+        "`[('10.0.0.1', 2), ('10.0.0.2', 2)]`",
+        "`[('10.0.0.2', 2), ('10.0.0.1', 2)]`",
+        "`[('10.0.0.2', 2), ('10.0.0.1', 2), ('10.0.0.3', 1)]`",
+        "הסדר בין שתי הכתובות עם 2 מופעים אקראי ומשתנה בין ריצות"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: `most_common` לא שובר תיקו לפי ערך המפתח. זה מה שמקבלים עם מיון מפורש לפי `(-count, ip)`.",
+        "נכון: בתיקו, `most_common` מחזיר איברים לפי הסדר שבו נראו לראשונה (dict שומר סדר הכנסה), ו-`10.0.0.2` הופיע ראשון.",
+        "שגוי: `most_common(2)` מחזיר בדיוק שני איברים.",
+        "שגוי: הסדר דטרמיניסטי ומתועד: סדר ההופעה הראשונה. הוא לא תלוי ב-hash randomization."
+      ],
+      "explanation": "שאלות top-k דורשות לעיתים tie-break דטרמיניסטי מוגדר. ברירת המחדל של Counter היא סדר הופעה, שזה דטרמיניסטי אבל תלוי בסדר הקלט. כשהדרישה היא למשל \"בתיקו, הכתובת הקטנה קודם\", כותבים `sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:k]`.",
+      "id": "py.generators.q66",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "כדי לספור כתובות IP בקובץ ענק במקביל, כמה תהליכי `multiprocessing` כותבים כל אחד את השורות שלו ל-partition מספר `hash(ip) % k`, ואז worker נפרד סופר כל partition. התוצאות יוצאות שגויות: אותה כתובת נספרת בכמה partitions. למה?",
+      "choices": [
+        "`hash` של str ב-Python עובר randomization לכל תהליך (PYTHONHASHSEED), ולכן אותה כתובת ממופה ל-partitions שונים בתהליכים שונים",
+        "`%` על hash שלילי מחזיר מספר שלילי, ולכן חלק מהשורות הולכות ל-partition לא קיים",
+        "ה-GIL גורם לתהליכים לכתוב לאותו קובץ באותו זמן",
+        "hash של מחרוזות ב-Python לא דטרמיניסטי גם בתוך אותו תהליך"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: מאז Python 3.3, hash של str ו-bytes מקבל seed אקראי בכל הפעלה של מפרש. ב-fork ה-seed עובר בירושה, אבל ב-spawn (ברירת המחדל ב-Windows וב-macOS) וב-forkserver (ברירת המחדל בלינוקס מ-Python 3.14) התהליכים לא יורשים את ה-seed של ההורה. הפתרון: hash יציב כמו `zlib.crc32(ip.encode())` או hashlib.",
+        "שגוי: ב-Python, `%` עם מחלק חיובי מחזיר תמיד תוצאה בטווח `[0, k)`, גם כשה-hash שלילי.",
+        "שגוי: לכל תהליך יש GIL משלו, וה-GIL לא קשור לאיזה partition נבחר.",
+        "שגוי: בתוך תהליך אחד ה-hash עקבי לאורך כל הריצה; אחרת dict לא היה עובד."
+      ],
+      "explanation": "hash randomization הוא הגנה מפני hash flooding, אבל הוא הופך את `hash()` ללא מתאים לכל דבר שחוצה גבולות של תהליך: partitioning, sharding, או שמירה לדיסק. בקוד מבוזר משתמשים תמיד בפונקציית hash יציבה ומוגדרת.",
+      "id": "py.generators.q67",
       "lesson": "py.generators"
     }
   ]

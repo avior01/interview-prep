@@ -222,6 +222,18 @@
         {
           "term": "aging",
           "def": "שיפור הדרגתי של העדיפות האפקטיבית של מי שמחכה זמן רב, כדי למנוע starvation במדיניות של עדיפויות קפדניות."
+        },
+        {
+          "term": "reader-preference / writer-preference",
+          "def": "מדיניות של reader-writer lock. reader-preference נותן לקוראים להיכנס כל עוד אין כותב פעיל, ועלול להרעיב כותבים. writer-preference חוסם קוראים חדשים כשכותב מחכה."
+        },
+        {
+          "term": "writer starvation",
+          "def": "מצב שבו כותב לא נכנס לעולם כי תמיד יש קורא פעיל. נפוץ ב-reader-preference תחת עומס קריאה רציף."
+        },
+        {
+          "term": "wait עם predicate",
+          "def": "`cv.wait(lk, pred)` שקול ל-`while (!pred()) cv.wait(lk);`. מגן מפני spurious wakeups ומפני מצב שהשתנה שוב בין ה-notify להתעוררות."
         }
       ]
     }
@@ -1540,6 +1552,76 @@
         "שגוי: תור גדול יותר רק צובר יותר פריטים של rank 3 שמחכים."
       ],
       "id": "conc.condvars.q58",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש מחלקה שמחזיקה רשימת `int` עם שתי פעולות:\n- `read(i)`: מחזירה את האיבר ה-i. קוראים לא חוסמים זה את זה, כלומר כמה `read` יכולים לרוץ במקביל.\n- `write(v)`: מוסיפה איבר לסוף. היא חייבת לחכות כל עוד יש `read` או `write` אחר באמצע, וכל עוד היא רצה אף `read` לא ניגש לנתונים.\nהשתמש ב-`std::mutex` וב-`std::condition_variable` (בלי `shared_mutex`), והחזק את ה-mutex רק לעדכון המונים, לא בזמן הגישה לנתונים.",
+      "starter": "class AppendList {\npublic:\n  int read(size_t i);\n  void write(int v);\n};",
+      "modelAnswer": "class AppendList {\n  std::vector<int> data;\n  std::mutex m;\n  std::condition_variable cv;\n  int readers = 0;\n  bool writing = false;\npublic:\n  int read(size_t i) {\n    std::unique_lock lk(m);\n    cv.wait(lk, [&] { return !writing; });\n    ++readers;\n    lk.unlock();\n    int v = data.at(i);          // many readers here at once\n    lk.lock();\n    if (--readers == 0) cv.notify_all();\n    return v;\n  }\n  void write(int v) {\n    std::unique_lock lk(m);\n    cv.wait(lk, [&] { return !writing && readers == 0; });\n    writing = true;\n    lk.unlock();\n    data.push_back(v);           // exclusive: may reallocate\n    lk.lock();\n    writing = false;\n    cv.notify_all();\n  }\n};",
+      "rubric": [
+        "מונה readers ודגל writing מוגנים על ידי mutex אחד, וה-mutex משתחרר בזמן הגישה עצמה לנתונים",
+        "ה-writer מחכה עם predicate (`!writing && readers == 0`), ו-reader מחכה ל-`!writing`. ה-wait בתוך לולאה או עם predicate, בגלל spurious wakeups",
+        "ה-reader האחרון שיוצא עושה notify, וה-writer עושה notify_all בסיום כדי להעיר את כל הקוראים שחיכו",
+        "מזכיר ש-push_back יכול לעשות reallocation, ולכן קורא אסור לגשת במקביל לכתיבה",
+        "מזכיר את הסיכון ל-writer starvation כשקוראים מגיעים ברצף, ואת התיקון (דגל writer ממתין שחוסם קוראים חדשים)"
+      ],
+      "explanation": "זה reader-writer lock שבנוי ידנית מ-mutex ו-condition variable. ה-mutex מגן רק על מצב הנעילה (מונים ודגלים), לא על הנתונים עצמם, וכך קוראים רצים במקביל. הנקודות הקשות: predicate נכון, למי עושים notify ומתי, ו-starvation.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/2184334/google-interview-concurrency-by-anonymou-6w26/"
+      ],
+      "problem": "Google L4 concurrency: list with non-blocking readers and blocking append",
+      "id": "conc.condvars.q59",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-reader-writer lock שבנוי עם `readers` ו-`writing` (reader נכנס כש-`!writing`, writer נכנס כש-`!writing && readers == 0`), שירות מקבל זרם רציף של קריאות חופפות. כתיבות לא קורות אף פעם. מה הסיבה ומה התיקון המקובל?",
+      "choices": [
+        "lost wakeup: ה-writer פספס את ה-notify. מספיק להחליף את `notify_one` ב-`notify_all`",
+        "spurious wakeup: ה-writer מתעורר בלי סיבה וחוזר לישון. צריך להחליף את ה-wait ב-spin",
+        "deadlock בין הקוראים. צריך לסדר את הנעילות לפי כתובת",
+        "writer starvation: תמיד יש לפחות קורא פעיל, אז `readers` לא מגיע ל-0. מוסיפים מונה writers ממתינים, וקורא חדש מחכה כל עוד יש writer שממתין"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: ה-writer מקבל notify כשהמונה מגיע ל-0, אבל זה פשוט לא קורה. החלפת notify לא משנה את התנאי.",
+        "שגוי: spurious wakeup מטופל על ידי predicate, והוא לא גורם להרעבה קבועה. spin רק ישרוף CPU.",
+        "שגוי: הקוראים לא מחכים זה לזה, אז אין מעגל המתנה. המערכת מתקדמת, רק לא בשביל ה-writer.",
+        "נכון: זו מדיניות reader-preference. כשקוראים חופפים, המונה לא מתאפס אף פעם. writer-preference חוסם קוראים חדשים ברגע שמישהו מחכה לכתוב, והמונה מתרוקן."
+      ],
+      "explanation": "reader-preference מקסם את המקביליות לקריאה אבל מאפשר הרעבה של כותבים. writer-preference (או סדר FIFO הוגן) מונע את זה, במחיר שקוראים מחכים יותר. ב-`std::shared_mutex` המדיניות תלויה במימוש.",
+      "id": "conc.condvars.q60",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "writer ב-reader-writer lock ידני. לפעמים, תחת עומס, הוא כותב בזמן שיש קוראים פעילים. איפה הבאג?",
+      "code": "void write(int v) {\n  std::unique_lock lk(m);\n  if (readers > 0 || writing)\n    cv.wait(lk);\n  writing = true;\n  lk.unlock();\n  data.push_back(v);\n  lk.lock();\n  writing = false;\n  cv.notify_all();\n}",
+      "bugLine": 3,
+      "choices": [
+        "`unique_lock` לא מתאים ל-condition_variable, צריך `lock_guard`",
+        "`notify_all` צריך להיות לפני `writing = false`",
+        "צריך `while` ולא `if`: אחרי שה-thread מתעורר (spurious wakeup, או notify_all שהעיר גם קוראים) התנאי יכול להיות שוב לא מתקיים, וצריך לבדוק אותו מחדש לפני שממשיכים",
+        "הסדר של התנאים לא נכון. צריך לבדוק קודם את `writing` ואחר כך את `readers`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: להפך. `condition_variable::wait` דורש `std::unique_lock<std::mutex>`, ו-`lock_guard` לא מתקמפל איתו.",
+        "שגוי: ה-notify מתבצע כשה-mutex מוחזק, אז אף אחד לא יבדוק את המצב לפני שמשחררים. הסדר בין השורות האלה לא משנה.",
+        "נכון: wait יכול לחזור בלי שהתנאי התקיים, ובין ה-notify לבין הרגע שה-writer חוזר לרוץ קורא אחר יכול להיכנס. `while` (או wait עם predicate) בודק מחדש בכל התעוררות.",
+        "שגוי: `||` של שני תנאים לא תלוי בסדר מבחינת נכונות. הבעיה היא שבודקים רק פעם אחת."
+      ],
+      "explanation": "הכלל: תמיד `while (!cond) cv.wait(lk);` או `cv.wait(lk, pred)`. condition variable הוא רק רמז ש\"משהו השתנה\", לא הבטחה שהתנאי שלך מתקיים.",
+      "id": "conc.condvars.q61",
       "lesson": "conc.condvars"
     }
   ]

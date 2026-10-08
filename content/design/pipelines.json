@@ -206,6 +206,50 @@
         {
           "term": "idempotency key אצל ספק חיצוני",
           "def": "מפתח ייחודי שנשלח עם הבקשה, כך שהספק מבצע אותה פעם אחת גם אם היא נשלחת שוב. הדרך היחידה ל-exactly-once אמיתי מול מערכת חיצונית."
+        },
+        {
+          "term": "reorder buffer",
+          "def": "buffer שמחזיק פריטים שהגיעו לפני תורם ושולח אותם לפי מספר רצף, עם next_expected. פריט חסר עוצר את כל מה שאחריו עד שמגיע או עד שמדלגים עליו."
+        },
+        {
+          "term": "MPSC queue",
+          "def": "תור עם producers רבים ו-consumer אחד. מאפשר לרכז מצב משותף ב-thread יחיד בלי נעילות על המצב עצמו."
+        },
+        {
+          "term": "redirect click tracking",
+          "def": "קליק על מודעה עובר קודם לשירות שרושם את האירוע ואז מפנה ליעד. כך כל קליק נרשם בצד השרת עם מזהה ייחודי."
+        },
+        {
+          "term": "reconciliation (lambda)",
+          "def": "חישוב מחדש ב-batch מכל האירועים הגולמיים, שמתקן את תוצאות ה-streaming. מקור האמת לחיוב."
+        },
+        {
+          "term": "OLAP store",
+          "def": "מסד נתונים שמותאם לשאילתות צבירה מהירות על נפחים גדולים (למשל Druid, Pinot, ClickHouse)."
+        },
+        {
+          "term": "top-K עם min-heap",
+          "def": "שומרים heap בגודל K של הגדולים עד כה; כל פריט חדש מושווה לשורש. O(n log K) זמן, O(K) זיכרון."
+        },
+        {
+          "term": "count-min sketch",
+          "def": "מטריצה של d שורות על w מונים עם hash שונה לכל שורה. ספירה = מינימום על השורות. לא מעריך בחסר; טעות ≤ εN בהסתברות 1 − δ, עם w = ⌈e/ε⌉ ו-d = ⌈ln(1/δ)⌉."
+        },
+        {
+          "term": "heavy hitters",
+          "def": "הפריטים שמופיעים יותר מחלק מסוים מכלל הזרם. מוצאים אותם בזיכרון קטן עם sketch ו-heap של מועמדים."
+        },
+        {
+          "term": "fail closed / fail open",
+          "def": "fail closed: בכשל או באי-ודאות חוסמים (בטוח יותר). fail open: בכשל מאפשרים (זמין יותר). הבחירה תלויה במה גרוע יותר: חסימה מיותרת או מעבר של משהו רע."
+        },
+        {
+          "term": "cloaking",
+          "def": "טכניקה של מפרסמים זדוניים: תוכן תקין לבודק, ותוכן אחר למשתמשים או אחרי האישור."
+        },
+        {
+          "term": "human review queue",
+          "def": "תור לסוקרים אנושיים לפריטים שהמודל לא בטוח בהם, עם תעדוף ו-SLA. הקיבולת מוגבלת ונמדדת בפריטים לשעה לסוקר."
         }
       ]
     }
@@ -993,6 +1037,248 @@
       ],
       "explanation": "וריאציה מזווית delivery semantics. שאלה סניורית: לא להבטיח exactly-once מול מערכת חיצונית שלא תומכת בזה.",
       "id": "design.pipelines.q42",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "שירות מקבל frames של וידאו משירות אחר, לא בהכרח לפי הסדר, וחייב להעביר אותם לשירות הבא תמיד לפי הסדר (timestamp או מספר רצף). תכנן את ה-API ואת מבני הנתונים, והסבר מה קורה עם frame שאבד ועם כמה threads.",
+      "modelAnswer": "**שאלות הבהרה:** יש מספר רצף רציף או רק timestamp? frames יכולים ללכת לאיבוד? מה ה-latency המקסימלי שמותר להוסיף? כמה streams?\n\n**עם מספר רצף רציף:** reorder buffer. `saveFrame(seq, data)` שומר ב-map או ב-ring buffer לפי `seq mod N` (כש-N חוסם את מרחק הסידור מחדש). מחזיקים `next_expected`; אחרי כל שמירה, כל עוד ה-frame עם `next_expected` נמצא, שולחים אותו ומקדמים. כל frame נשלח פעם אחת, O(1) לכל frame.\n\n**רק timestamps (לא רציפים):** אי אפשר לדעת שחסר משהו, אז צריך watermark: min-heap לפי timestamp, ושולחים את הקטן ביותר כשהוא קטן מ-`max_seen − allowed_delay`, או אחרי timeout.\n\n**frame שאבד:** אחרי timeout או כשה-buffer מלא, מוותרים עליו (מדלגים ומעלים מונה). trade-off: המתנה ארוכה = פחות דילוגים, אבל יותר latency וזיכרון. frame שמגיע אחרי שדילגנו עליו נזרק ונספר.\n\n**Concurrency:** כמה threads של רשת קוראים ל-`saveFrame`. הפתרון הנקי: הם דוחפים לתור MPSC, ו-thread יחיד מחזיק את ה-reorder buffer ושולח (אין נעילה על ה-map). חלופה: mutex אחד סביב ה-buffer ו-condition variable לשולח. לא double-checked locking בלי atomics.\n\n**Scale:** buffer נפרד לכל `stream_id`, ו-partition לפי stream בין threads או מכונות, כך שאין תיאום בין streams.",
+      "rubric": [
+        "שואל אם יש מספר רצף רציף, אם frames נאבדים, ומה תקציב ה-latency",
+        "reorder buffer עם next_expected (או heap + watermark כשאין רצף)",
+        "מדיניות ל-frame חסר: timeout או גודל חלון, ומה קורה ל-frame מאוחר",
+        "concurrency בטוח: MPSC + thread יחיד, או mutex + condition variable (ה-follow-up שדווח)",
+        "buffer לכל stream ו-partition לפי stream"
+      ],
+      "explanation": "דווח מ-Google L5: המועמד בנה class עם SaveFrame ו-GetFrame ודן ארוכות ב-concurrency. למהנדס SDR זו בעיה מוכרת: סידור מחדש של חבילות IQ לפי sequence number.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/5885342/Google-L5-Interview-Experience-India-Offer/"
+      ],
+      "problem": "Google L5 onsite: API for a service that receives out-of-order video frames and forwards them in timestamp order",
+      "id": "design.pipelines.q43",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "וידאו ב-30 fps. מדיניות ה-reorder buffer: מחכים ל-frame חסר עד שמגיעים 6 frames מאוחרים ממנו, ואז מדלגים עליו. מה ה-latency הנוסף המקסימלי שהמדיניות מוסיפה, ב-ms (שלם)?",
+      "accept": [
+        "200",
+        "200 ms"
+      ],
+      "explanation": "frame כל 1/30 שנייה ≈ 33.3 ms. 6 frames ≈ 200 ms. חלון גדול יותר = פחות דילוגים, אבל יותר עיכוב.",
+      "id": "design.pipelines.q44",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "כמה threads של רשת קוראים ל-`saveFrame` במקביל, ו-thread אחד שולח frames הלאה לפי הסדר. איזה תכנון נכון ופשוט?",
+      "choices": [
+        "כל thread של רשת בודק אחרי השמירה אם ה-frame שלו הוא next_expected, ואם כן שולח אותו בעצמו",
+        "threads הרשת דוחפים לתור MPSC, ו-thread יחיד מחזיק את ה-reorder buffer ושולח לפי הסדר",
+        "`std::unordered_map` משותף בלי נעילה, כי כל thread כותב למפתח אחר",
+        "double-checked locking על next_expected עם משתנה int רגיל, כדי לא לנעול בכל פעם"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. שני threads יכולים לשלוח במקביל (למשל 2 ו-3) והסדר ביציאה לא מובטח; גם next_expected עצמו הופך ל-race.",
+        "נכון. רק thread אחד נוגע במצב (buffer ו-next_expected), אז אין race בלוגיקה. התור הוא נקודת הסנכרון היחידה.",
+        "שגוי. insert ל-`unordered_map` יכול לגרום ל-rehash שמשנה את כל המבנה; כתיבות במקביל ל-container סטנדרטי הן data race (UB) גם למפתחות שונים.",
+        "שגוי. קריאה וכתיבה של int רגיל משני threads בלי סנכרון היא data race. double-checked locking דורש atomics עם acquire/release."
+      ],
+      "explanation": "לרוב הפתרון הנקי הוא לרכז את המצב ב-thread יחיד ולהזין אותו דרך תור. כך בונים גם pipeline של SDR.",
+      "id": "design.pipelines.q45",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 5,
+      "type": "oral",
+      "prompt": "Design an ad click aggregation system: לספור קליקים לכל מודעה לכל דקה, להציג למפרסמים נתונים כמעט בזמן אמת, ולחייב לפיהם. המערכת צריכה להיות מדויקת (כסף) ולעמוד בעשרות אלפי קליקים בשנייה.",
+      "modelAnswer": "**הערכות:** למשל 10 מיליארד קליקים ביום ≈ 116,000 בשנייה בממוצע, ופי כמה בשיא.\n\n**איסוף:** קליק עובר דרך redirect service שרושם אירוע (`click_id`, `ad_id`, `user`, `event_time`) ומפנה ליעד. `click_id` נוצר בזמן הקליק ומשמש ל-dedup.\n\n**Pipeline:** אירועים ל-Kafka (partition לפי `ad_id`) → stream processor (למשל Flink): dedup לפי `click_id` (state עם TTL), חלון tumbling של דקה לפי event time עם watermark → כתיבה ל-OLAP store לפי (`ad_id`, דקה) כ-upsert idempotent.\n\n**Exactly-once:** checkpoints של ה-processor + sink idempotent או טרנזקציות Kafka, כך ש-replay אחרי נפילה לא סופר פעמיים.\n\n**נתונים מאוחרים:** allowed lateness קצר; מה שמגיע אחר כך הולך ל-side output ומתקן את הצבירה.\n\n**Reconciliation:** כל האירועים הגולמיים נשמרים ב-object storage, ו-batch יומי מחשב מחדש ומתקן לפני חיוב (lambda). זה גם מה שמאפשר לתקן באגים ב-streaming.\n\n**Hot ads:** מודעה פופולרית אחת מעמיסה partition אחד: pre-aggregation מקומי או salting של המפתח ואיחוד אחר כך.\n\n**שאילתות:** rollups לשעה וליום; dashboard קורא מה-OLAP.\n\n**Fraud:** סינון בוטים וקליקים חוזרים לפני חיוב (זה שונה מ-dedup של retry).",
+      "rubric": [
+        "הערכת קצב והבחנה בין ממוצע לשיא",
+        "Kafka + stream processing עם חלונות event time ו-watermark",
+        "dedup לפי click_id ו-exactly-once (checkpoints + sink idempotent)",
+        "late data ו-reconciliation ב-batch לצורך חיוב",
+        "hot keys, rollups, וסינון fraud"
+      ],
+      "explanation": "אחת השאלות ברשימת ה-design מראיונות Meta ב-2023. מה שמבדיל תשובה בכירה: הדיוק (כסף) מוביל ל-dedup, exactly-once ו-reconciliation.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/4428743/"
+      ],
+      "problem": "Meta onsite system design: ad click aggregation system",
+      "id": "design.pipelines.q46",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במערכת צבירת קליקים שמשמשת לחיוב, קליק מגיע באיחור של 3 דקות (הטלפון היה offline). החלון של אותה דקה כבר נסגר, עם allowed lateness של דקה. מה נכון לעשות?",
+      "choices": [
+        "לזרוק אותו בשקט, כי החלון כבר סגור",
+        "להשאיר את כל החלונות פתוחים לתמיד כדי שלא יהיו נתונים מאוחרים",
+        "להעביר אותו ל-side output שמתקן את הצבירה של אותה דקה (upsert), ובנוסף reconciliation ב-batch לפני חיוב",
+        "לשייך אותו לדקה הנוכחית לפי processing time"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי. כל קליק שנזרק הוא כסף שלא נגבה, והמספרים לא יתאימו לנתונים הגולמיים.",
+        "שגוי. state שגדל בלי גבול. חייבים לסגור חלונות בשלב מסוים.",
+        "נכון. החלון החי נסגר בזמן כדי לתת נתונים מהירים, והתיקון מגיע אחר כך. ה-batch מבוסס על כל האירועים הגולמיים ולכן הוא מקור האמת לחיוב.",
+        "שגוי. זה סופר את הקליק בדקה הלא נכונה, כך שגם הדקה המקורית וגם הנוכחית שגויות."
+      ],
+      "explanation": "Streaming נותן מהירות, batch נותן דיוק. במערכת כספית משתמשים בשניהם.",
+      "id": "design.pipelines.q47",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "prompt": "ה-client שולח קליק שוב אחרי timeout, וה-stream processor גם עושה replay אחרי נפילה. אילו מנגנונים מונעים ספירה כפולה?",
+      "choices": [
+        "`click_id` שנוצר ברגע הקליק, ו-dedup state לפיו עם TTL",
+        "כתיבה ל-sink כ-upsert idempotent לפי (`ad_id`, חלון), יחד עם checkpoints של ה-processor",
+        "מעבר ל-at-least-once delivery",
+        "הגדלת מספר ה-partitions ב-Kafka",
+        "התעלמות מכל קליק נוסף של אותו user על אותה מודעה באותה דקה"
+      ],
+      "answer": [
+        0,
+        1
+      ],
+      "notes": [
+        "נכון. retry של ה-client נושא את אותו click_id, ולכן מזוהה ונזרק.",
+        "נכון. replay אחרי נפילה מחשב שוב את אותו חלון, ו-upsert דורס במקום להוסיף.",
+        "שגוי. at-least-once הוא בדיוק המקור לכפילויות; הוא טוב רק יחד עם dedup.",
+        "שגוי. מספר partitions משפיע על מקביליות, לא על כפילויות.",
+        "שגוי כמנגנון dedup. זה זורק קליקים אמיתיים ונפרדים. זה אולי כלל fraud, אבל זו החלטה עסקית אחרת."
+      ],
+      "explanation": "Effectively-once = מזהה ייחודי לאירוע + פעולה idempotent ביעד.",
+      "id": "design.pipelines.q48",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a system that shows the top 10 most played songs (בסגנון Spotify), עם מיליוני השמעות בדקה. מה משתנה בין 'כל הזמנים', 'היום' ו'השעה האחרונה', ובין תשובה מדויקת למקורבת?",
+      "modelAnswer": "**הבהרות:** איזה חלון (כל הזמנים / 24 שעות נגללות / שעה אחרונה)? מדויק או מקורב? כמה טרי (עדכון כל דקה מספיק?)\n\n**מכונה אחת:** hash map של ספירות + min-heap בגודל K: O(n log K).\n\n**Scale:** אירועי השמעה → Kafka עם partition לפי `song_id`. כל worker סופר בדיוק את השירים שלו (כל הספירה של שיר נמצאת אצל worker אחד) ומוציא top-K מקומי. merger לוקח top-K מהאיחוד. זה מדויק **רק** כי ה-partition הוא לפי שיר; ב-partition אקראי מיזוג של top-K מקומיים יכול לפספס שיר שנמצא במקום ה-11 אצל כל worker.\n\n**חלון נגלל:** ספירה ב-buckets של דקה לכל שיר; מחברים את ה-buckets שבחלון ומחסירים את מה שיצא ממנו.\n\n**מקורב:** count-min sketch + heap של מועמדים (heavy hitters): זיכרון O((1/ε)·log(1/δ)) במקום ספירה לכל שיר. לא מעריך בחסר; טעות של לכל היותר εN בהסתברות 1 − δ.\n\n**הגשה:** התוצאה מחושבת כל דקה ונשמרת ב-cache; כל המשתמשים קוראים אותה. batch יומי מדויק לדוחות.\n\n**Hot keys:** שיר ויראלי מעמיס partition אחד; pre-aggregation מקומי לפני Kafka.",
+      "rubric": [
+        "מבהיר חלון, דיוק וטריות לפני שמתכנן",
+        "map + heap בגודל K, וסיבוכיות O(n log K)",
+        "partition לפי song_id ולמה זה הופך מיזוג של top-K מקומיים למדויק",
+        "חלון נגלל עם buckets",
+        "count-min sketch: מתי, ומה ההבטחה שלו"
+      ],
+      "explanation": "Top-K דווח ברשימת שאלות ה-design של Meta. הנקודה שמפילה מועמדים: מיזוג top-K מקומיים נכון רק אם ה-partition הוא לפי המפתח.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/4428743/"
+      ],
+      "problem": "Meta onsite system design: top 10 songs played on Spotify (top-k problem)",
+      "id": "design.pipelines.q49",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "short",
+      "prompt": "Count-min sketch עם ε = 0.001 ו-δ = 0.01. הרוחב הוא w = ⌈e/ε⌉ והעומק d = ⌈ln(1/δ)⌉. מה הרוחב w?",
+      "accept": [
+        "2719"
+      ],
+      "explanation": "e / 0.001 = 2718.28..., ועיגול למעלה נותן 2719. העומק: ln(100) ≈ 4.6, כלומר 5 שורות. בסך הכול כ-13,600 מונים, בלי קשר למספר השירים השונים.",
+      "id": "design.pipelines.q50",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "איזו טענה על count-min sketch (רק הוספות) נכונה?",
+      "choices": [
+        "הוא יכול להעריך בחסר, כי התנגשויות מבטלות זו את זו",
+        "הוא אף פעם לא מעריך בחסר, והטעות כלפי מעלה היא לכל היותר εN בהסתברות 1 − δ",
+        "הזיכרון שלו גדל לינארית עם מספר השירים השונים",
+        "עם מספיק שורות הוא נותן ספירה מדויקת לכל שיר"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. כל מונה הוא הספירה האמיתית ועוד התנגשויות חיוביות, ולכן המינימום על השורות לא קטן מהאמת.",
+        "נכון. לוקחים מינימום על d שורות; כל אחת היא אמת + רעש חיובי. החסם תלוי ב-N, סך כל האירועים.",
+        "שגוי. הגודל נקבע רק לפי ε ו-δ: w × d מונים.",
+        "שגוי. יותר שורות מקטינות את ההסתברות לטעות גדולה, אבל לא מבטלות התנגשויות. ספירה מדויקת לכל מפתח דורשת מונה לכל מפתח."
+      ],
+      "explanation": "Count-min sketch מחליף דיוק בזיכרון קבוע, עם טעות חד-כיוונית (הערכת יתר).",
+      "id": "design.pipelines.q51",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a system that removes bad ad posts from Instagram before they are visible to users. איך מבטיחים שמודעה לא תוצג לפני בדיקה, בלי לתקוע את כל המפרסמים?",
+      "modelAnswer": "**הדרישה המרכזית:** מודעה לא מוצגת לפני שעברה בדיקה. לכן מכונת מצבים: SUBMITTED → IN_REVIEW → APPROVED / REJECTED, ו-ad serving בוחר רק מודעות APPROVED (fail closed).\n\n**Pipeline:** הגשה → תור → בדיקות זולות (חוקים, רשימות חסימה, התאמת perceptual hash לתמונות פסולות ידועות) → מודלי ML לתמונה, טקסט ודף נחיתה → ציון.\n- בטוח שרע → REJECTED עם סיבה.\n- בטוח שתקין → APPROVED.\n- לא בטוח → תור סקירה אנושית, מתועדף לפי תקציב וחשיפה צפויה, עם SLA.\n\n**שינויים:** כל עריכה של המודעה מחזירה אותה ל-IN_REVIEW.\n\n**אחרי אישור:** דיווחי משתמשים, הרצה מחדש עם מודלים חדשים, ובדיקה תקופתית של דף הנחיתה (cloaking: הדף משתנה אחרי האישור). הסרה צריכה לבטל caches ולעצור serving מיד.\n\n**מדדים:** precision ו-recall של המודלים, זמן עד החלטה, עומס על הסוקרים, ערעורים.\n\n**Trade-off:** סף אוטומטי נמוך יותר = פחות עבודה לבני אדם אבל יותר טעויות; כאן עדיף לטעות לכיוון עיכוב מאשר לכיוון הצגה.",
+      "rubric": [
+        "מכונת מצבים ו-serving שרואה רק APPROVED (fail closed)",
+        "מדרג בדיקות: חוקים, hash, ML, ותור אנושי לאזור הלא בטוח",
+        "תעדוף התור, SLA וקיבולת סוקרים",
+        "בדיקה מחדש בעריכה ואחרי אישור (דיווחים, מודלים חדשים, cloaking), והסרה מהירה",
+        "מדדים ו-trade-off של ספים"
+      ],
+      "explanation": "דווח מ-Meta E5 (London, עם הצעה). החשיבה הנכונה: gate לפני ההצגה, ואוטומציה שמורידה את רוב העומס מבני אדם.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/5072251/"
+      ],
+      "problem": "Meta E5 system design: remove bad ad posts from Instagram before they are visible to users",
+      "id": "design.pipelines.q52",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "prompt": "במערכת בדיקת מודעות, אילו אירועים צריכים להחזיר מודעה שכבר אושרה לבדיקה מחדש?",
+      "choices": [
+        "המפרסם שינה את התמונה או את הטקסט",
+        "תוכן דף הנחיתה השתנה מאז האישור",
+        "גרסה חדשה של מודל הסיווג מסמנת אותה, או שדיווחי משתמשים עברו סף",
+        "המודעה קיבלה הרבה חשיפות",
+        "המפרסם הגדיל את התקציב היומי"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "notes": [
+        "נכון. מה שאושר הוא תוכן מסוים; תוכן חדש לא נבדק.",
+        "נכון. cloaking: דף תקין בזמן הבדיקה ודף אחר אחריה. סריקה תקופתית של הדף תופסת את זה.",
+        "נכון. מידע חדש על אותה מודעה הוא סיבה לבדוק שוב.",
+        "שגוי. פופולריות לבדה לא אומרת שמשהו השתנה. היא יכולה להשפיע על תעדוף, לא על הצורך בבדיקה.",
+        "שגוי. התוכן לא השתנה. תקציב גבוה יותר יכול להעלות עדיפות, אבל לא מחייב בדיקה מחדש."
+      ],
+      "explanation": "בדיקה מחדש מופעלת כשהתוכן או המידע עליו משתנים, לא בגלל שינויים בהפצה.",
+      "id": "design.pipelines.q53",
+      "lesson": "design.pipelines"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "מגיעות 10,000 מודעות חדשות בשעה. 5% מהן מקבלות ציון לא חד-משמעי ונשלחות לסקירה אנושית. סוקר בודק 60 מודעות בשעה. כמה סוקרים צריך לכל הפחות כדי שהתור לא יגדל?",
+      "accept": [
+        "9"
+      ],
+      "explanation": "5% × 10,000 = 500 מודעות בשעה. 500 / 60 ≈ 8.33, ומעגלים למעלה ל-9. עם 8 סוקרים התור גדל ב-20 מודעות כל שעה.",
+      "id": "design.pipelines.q54",
       "lesson": "design.pipelines"
     }
   ]

@@ -234,6 +234,66 @@
         {
           "term": "CLOCK / LRU מקורב",
           "def": "חלופה ל-LRU מדויק: get רק מדליק ביט 'נוצל', ו-eviction עובר במעגל ומוציא איבר שהביט שלו כבוי. אין כתיבה לרשימה משותפת בכל get, ולכן הרבה פחות contention."
+        },
+        {
+          "term": "OT (operational transformation)",
+          "def": "שיטה לעריכה משותפת: פעולה שנוצרה על גרסה ישנה 'מותמרת' מול הפעולות שכבר התקבלו (למשל מזיזים מיקום של insert אחרי מחיקה לפניו), כך שכוונת כל משתמש נשמרת. בדרך כלל נשען על שרת שקובע סדר כולל."
+        },
+        {
+          "term": "revision (במסמך משותף)",
+          "def": "מספר רץ שהשרת נותן לכל פעולה שקיבל. client שולח פעולה עם ה-revision שעליו היא מבוססת, וכך השרת יודע מול אילו פעולות לעשות transform."
+        },
+        {
+          "term": "op log + snapshot",
+          "def": "שמירת מסמך כרשימת פעולות append-only ועוד צילום מצב תקופתי. פתיחה = snapshot אחרון + הפעולות שאחריו. נותן גם היסטוריית גרסאות."
+        },
+        {
+          "term": "presigned URL",
+          "def": "קישור חתום וזמני שמאפשר ל-client להעלות או להוריד ישירות מ-object storage, בלי לעבור דרך שרתי האפליקציה ובלי לחשוף credentials."
+        },
+        {
+          "term": "content hash dedup",
+          "def": "זיהוי קובץ כפול לפי hash קריפטוגרפי (למשל SHA-256) של התוכן. מזהה רק כפילות מדויקת; שינוי bit אחד נותן hash אחר לגמרי (avalanche)."
+        },
+        {
+          "term": "perceptual hash",
+          "def": "hash שבנוי כך שתמונות דומות (אחרי resize או דחיסה) מקבלות ערכים קרובים, ומשווים לפי מרחק Hamming. משמש לזיהוי דמיון ול-moderation, לא ל-dedup מדויק."
+        },
+        {
+          "term": "refcount ו-GC של blobs",
+          "def": "כשכמה רשומות מצביעות על אותו blob, סופרים הפניות; ה-blob נמחק רק כשהספירה מגיעה ל-0, לרוב באיסוף מושהה כדי למנוע race עם העלאה חדשה."
+        },
+        {
+          "term": "conditional write (put-if-absent)",
+          "def": "כתיבה שמצליחה רק אם המפתח עוד לא קיים, כפעולה אטומית אחת ב-store. פותרת race של check-then-insert."
+        },
+        {
+          "term": "local-first",
+          "def": "אפליקציה ששומרת את הנתונים מקומית ועובדת offline, ומסנכרנת שינויים עם השרת ברקע."
+        },
+        {
+          "term": "tombstone",
+          "def": "רשומה שמסמנת 'הפריט נמחק' (עם גרסה) במקום מחיקה פיזית, כדי שהמחיקה תסתנכרן ופריטים מחוקים לא יחזרו ממכשירים ישנים."
+        },
+        {
+          "term": "hybrid logical clock (HLC)",
+          "def": "חותמת זמן שמשלבת שעון פיזי עם מונה לוגי: קרובה לזמן אמיתי, אבל שומרת על סדר סיבתי גם כשיש clock skew."
+        },
+        {
+          "term": "fractional indexing",
+          "def": "מיקום פריט ברשימה כמפתח בין שני שכניו (בין 1 ל-2 נותנים 1.5), כך שהזזה משנה רק את הפריט שזז."
+        },
+        {
+          "term": "canSee / privacy check",
+          "def": "פונקציה מרכזית שמחליטה אם viewer רשאי לראות אובייקט (כותב, audience, חברות, חסימות). נקראת בזמן קריאה בכל נתיב, ו-fail closed בכשל."
+        },
+        {
+          "term": "TAO (Meta)",
+          "def": "מאגר הגרף המבוזר של Meta (פורסם ב-2013): אובייקטים וקשתות עם שכבת cache גדולה מעל MySQL, מותאם לקריאות רבות של קשרים כמו חברות."
+        },
+        {
+          "term": "Bloom filter: false positive מול false negative",
+          "def": "Bloom filter עלול לענות 'אולי קיים' על איבר שלא הוכנס (false positive), אבל אף פעם לא עונה 'לא קיים' על איבר שהוכנס. גרסה רגילה לא תומכת בהסרה."
         }
       ]
     }
@@ -1481,6 +1541,304 @@
         "שגוי: false sharing יכול להוסיף עלות, אבל הבעיה המרכזית היא contention אמיתי על אותו mutex ואותה רשימה."
       ],
       "id": "design.scaling.q63",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 5,
+      "type": "oral",
+      "prompt": "Design Google Docs: כמה משתמשים עורכים את אותו מסמך בו-זמנית ורואים את השינויים של האחרים כמעט מיד. תאר ארכיטקטורה, מודל נתונים, ואיך מטפלים בשתי עריכות מקבילות באותו אזור של המסמך.",
+      "modelAnswer": "**דרישות:** עריכה משותפת בזמן אמת (שינוי מופיע אצל האחרים תוך מאות ms), הקלדה מקומית בלי לחכות לשרת, היסטוריית גרסאות, הרשאות (owner / editor / viewer), מסמכים גדולים.\n\n**זרימה מרכזית:**\n- ה-client מחיל כל פעולה (insert / delete במיקום) מיד אצלו (optimistic), ושולח אותה לשרת יחד עם מספר ה-revision שעליו היא מבוססת.\n- לכל מסמך יש בכל רגע שרת אחד שאחראי עליו (sharding לפי `doc_id`, עם lease). השרת קובע **סדר כולל** לפעולות ומקצה להן revision רץ.\n- פעולה שנשלחה על revision ישן עוברת **OT (operational transformation)** מול הפעולות שהשרת קיבל מאז, נשמרת ומשודרת לכל ה-clients דרך WebSocket.\n- כל client עושה transform לפעולות שלו שעוד לא אושרו מול מה שמגיע מהשרת.\n\n**אחסון:** op log מסוג append-only לכל מסמך + snapshot תקופתי. פתיחת מסמך = snapshot אחרון + הפעולות שאחריו. מסמך גדול מחולק ל-chunks כדי לא לטעון ולשלוח הכול. טבלת הרשאות (`doc_id`, `user_id`, `role`) נבדקת בכל חיבור.\n\n**חלופה:** CRDT (לכל תו מזהה ייחודי, והסדר נקבע בלי שרת מרכזי) מתאים ל-offline ול-peer-to-peer, במחיר metadata ו-tombstones לכל תו.\n\n**Scale:** מסמכים רבים מתחלקים בקלות בין שרתים. מסמך בודד מוגבל ע״י השרת שלו, וזה סביר כי מספר העורכים במקביל במסמך אחד קטן. presence וסמנים הם מידע זמני ולא נשמרים ב-DB.\n\n**Trade-off מרכזי:** OT עם שרת מרכזי נותן סדר ברור ופשוט יחסית, אבל דורש בעלים יחיד ו-failover שלו. CRDT לא צריך סדר מרכזי אבל כבד יותר.",
+      "rubric": [
+        "מגדיר דרישות: real-time, local echo, היסטוריה, הרשאות, מסמכים גדולים",
+        "סדר כולל לכל מסמך: שרת בעלים יחיד לכל doc_id ומספרי revision",
+        "מסביר OT (או CRDT) ומה קורה לפעולה שנשלחה על revision ישן",
+        "op log + snapshots, בניית המסמך בפתיחה, chunking למסמכים גדולים",
+        "Follow-ups שדווחו ב-Google: איך יודעים את הסדר של עריכות מקבילות, האם עדכון כמעט מיידי אפשרי, ואיך מעדכנים את ה-DB כשכמה משתמשים כותבים"
+      ],
+      "explanation": "המועמד דיווח שחלק גדול מהראיון הוקדש ל-DB ול-concurrency. הליבה: סדר כולל לכל מסמך + transform לפעולות שנוצרו במקביל.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-question/1930341/google-sde-l4l5-virtual-onsite-passed"
+      ],
+      "problem": "Google system design (L4/L5 onsite): design Google Docs (concurrent edits, chunking, real-time propagation)",
+      "id": "design.scaling.q64",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "עורך משותף מבוסס OT. המסמך `hello`. A מכניס `Y` במיקום 1, ובמקביל B (על אותו revision) מוחק את התו במיקום 3. השרת קיבל קודם את ה-insert של A. באיזה מיקום תתבצע המחיקה של B אחרי transform? (מיקומים מ-0)",
+      "accept": [
+        "4"
+      ],
+      "explanation": "ב-`hello` מיקום 3 הוא ה-`l` השני. ה-insert במיקום 1 נמצא לפניו, אז ב-`hYello` אותו תו נמצא במיקום 4. המחיקה עוברת ל-4 והתוצאה `hYelo`.",
+      "id": "design.scaling.q65",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צוות מתכנן עורך משותף שחייב לעבוד offline במשך ימים ולסנכרן ישירות בין מכשירים, בלי שרת שקובע סדר. מה הבחירה הסבירה, ומה המחיר שלה?",
+      "choices": [
+        "CRDT: לכל איבר מזהה ייחודי והמיזוג מתכנס בלי סדר מרכזי, במחיר metadata לכל תו ו-tombstones שמצטברים",
+        "OT עם שרת מרכזי: הוא נותן סדר כולל, ולכן מתאים גם כשאין שרת",
+        "LWW ברמת המסמך כולו: המכשיר שסנכרן אחרון קובע את המסמך",
+        "נעילה פסימית לכל פסקה: רק מכשיר אחד עורך פסקה בכל רגע"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. CRDT מתוכנן למיזוג בלי תיאום: כל צד מחיל פעולות בכל סדר ומגיע לאותו מצב. המחיר הוא זיכרון ומזהים לכל איבר, ו-tombstones של מחיקות שצריך לנקות.",
+        "שגוי. OT קלאסי נשען על שרת שקובע סדר; הדרישה כאן היא בדיוק שאין כזה.",
+        "שגוי. LWW על המסמך כולו מוחק את כל העבודה של הצד השני אחרי ימים offline.",
+        "שגוי. כדי לקחת מנעול צריך תקשורת; offline במשך ימים זה לא אפשרי, וזה גם חוסם עבודה."
+      ],
+      "explanation": "Offline ממושך ו-peer-to-peer הם המקרה הקלאסי ל-CRDT. כשיש שרת מרכזי, OT פשוט יותר.",
+      "id": "design.scaling.q66",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design an image hosting website (העלאה וצפייה דרך קישור, גם בלי הרשמה). אחרי שסיימת, המראיין מוסיף: עכשיו רוצים להריץ מודלי AI על כל התמונות. מה משתנה?",
+      "modelAnswer": "**דרישות והערכות:** העלאה, צפייה דרך קישור, גודל מקסימלי, קצב העלאות וצפיות (צפיות גבוהות בהרבה), זמינות, עלות. בלי הרשמה: אנונימיות, ולכן הגנה מ-abuse ו-rate limiting לפי IP או token.\n\n**העלאה:** ה-client מבקש מה-API קישור העלאה חתום (presigned URL) ומעלה ישירות ל-object storage, בלי לעבור דרך שרתי האפליקציה. ה-metadata (id, גודל, hash, תאריך, פורמטים, בעלים או token אנונימי) ב-DB נפרד. ה-id קצר ולא ניתן לניחוש.\n\n**עיבוד:** אירוע `image_uploaded` נכנס לתור; workers מייצרים thumbnails ופורמטים ברזולוציות שונות (גם לרשת איטית).\n\n**הגשה:** CDN מול ה-object storage, cache ל-metadata. זמינות: replication או erasure coding בין zones. עלות: tiers חמים וקרים לפי גיל ופופולריות.\n\n**Follow-up של AI:** לא בנתיב ההעלאה. מוסיפים consumer נוסף לאותו אירוע: pool של GPU workers עם batching, והתוצאות (תגיות, embeddings, דגלי moderation) נשמרות כ-metadata או ב-vector index. תמונות קיימות עוברות backfill בעבודה נפרדת עם הגבלת קצב, ושומרים את גרסת המודל ליד כל תוצאה כדי שאפשר יהיה להריץ מחדש.\n\n**דרישות חדשות באמצע:** כשהשירותים מופרדים (upload, processing, serving), דרישה חדשה נכנסת כ-consumer או שלב נוסף בלי לבנות הכול מחדש.",
+      "rubric": [
+        "העלאה ישירה ל-object storage עם presigned URL, ו-metadata ב-DB נפרד",
+        "עיבוד אסינכרוני דרך תור (thumbnails, פורמטים) ו-CDN להגשה",
+        "זמינות ועלות: replication / erasure coding, tiers חמים וקרים",
+        "AI כ-consumer אסינכרוני עם GPU batching, backfill מבוקר וגרסת מודל",
+        "בדיווחים מ-Google המראיין הוסיף דרישות באמצע; התכנון צריך לקלוט אותן בלי לבנות מחדש"
+      ],
+      "explanation": "הדיווחים מ-Google מדגישים שירותים, ניתוב, אחסון, עלויות וזמינות, ואז שינוי דרישות. הפרדת העלאה, עיבוד והגשה היא מה שמאפשר להוסיף AI בקלות.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/5601424/google-l5-interview-experience-by-anonym-l0hq/",
+        "https://leetcode.com/discuss/post/6668243/google-india-sr-software-eng-l5-hired-in-ooe4/"
+      ],
+      "problem": "Google L5 system design: image hosting website; follow-up: run AI models on the images",
+      "id": "design.scaling.q67",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "שירות תמונות מקבל בממוצע 2,000 העלאות בשנייה, ותמונה ממוצעת שוקלת 3 MB. כמה TB של נתונים חדשים נכנסים ביום, לפני replication? (1 MB = 10^6 bytes, 1 TB = 10^12 bytes, עשרוני אחד)",
+      "accept": [
+        "518.4",
+        "518.4 TB"
+      ],
+      "explanation": "2,000 × 3 MB = 6 × 10^9 bytes בשנייה. כפול 86,400 = 5.184 × 10^14 bytes = 518.4 TB ביום. עם 3 עותקים מלאים זה כ-1.56 PB ביום, ולכן erasure coding ו-tiers קרים חשובים.",
+      "id": "design.scaling.q68",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מודל תיוג רץ על GPU: תמונה בודדת לוקחת 10 ms, ו-batch של 32 תמונות לוקח 80 ms. קצב ההגעה 400 תמונות בשנייה. מה נכון?",
+      "choices": [
+        "בלי batching צריך 4 GPUs; עם batch של 32 GPU אחד מגיע בדיוק ל-400 בשנייה (ניצולת 100%, אז בפועל 2), ותמונה יכולה לחכות עד כ-160 ms",
+        "batching לא משנה את מספר ה-GPUs, כי סך העבודה זהה",
+        "עם batching צריך 4 GPUs, כי כל batch לוקח פי 8 יותר זמן",
+        "בלי batching מספיק GPU אחד, כי 10 ms קטן מ-80 ms"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. בלי batch: 100 תמונות בשנייה ל-GPU, אז 400 / 100 = 4. עם batch: 32 ב-80 ms = 400 בשנייה ל-GPU. latency: עד 80 ms למילוי batch בקצב 400 בשנייה, ועוד 80 ms חישוב.",
+        "שגוי. batching מנצל את המקביליות של ה-GPU: העלות לתמונה יורדת מ-10 ms ל-2.5 ms.",
+        "שגוי. ה-batch לוקח פי 8 זמן אבל מעבד פי 32 תמונות, כך שהתפוקה גדלה פי 4.",
+        "שגוי. GPU אחד בלי batch מעבד 100 תמונות בשנייה, רבע מהקצב, והתור יגדל בלי סוף."
+      ],
+      "explanation": "Batching מחליף latency בתפוקה. בחישוב קיבולת משאירים מרווח מתחת ל-100% ניצולת, אחרת התור מתפוצץ בכל עומס רגעי.",
+      "id": "design.scaling.q69",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a system that stores images for Facebook and Instagram, with 1,000 uploads per second, and handles duplicate images. איך מזהים כפילויות, ומה קורה במחיקה?",
+      "modelAnswer": "**הערכות:** 1,000 העלאות בשנייה × 2 MB בממוצע (הנחה) = 2 GB בשנייה, כ-172.8 TB ביום לפני replication. צפיות גבוהות בהרבה, ולכן CDN ו-cache הם חלק מרכזי.\n\n**dedup מדויק:** מחשבים SHA-256 של תוכן הקובץ. טבלה `content_hash → blob_id, refcount`. אם ה-hash קיים, יוצרים רק רשומת metadata חדשה (`photo_id`, `owner`, `blob_id`) ומגדילים את ה-refcount, בלי לשמור את הבייטים שוב.\n\n**Race:** שתי העלאות זהות במקביל: insert מותנה (put-if-absent או unique constraint על ה-hash). המפסיד זורק את העותק שלו ומפנה ל-blob של המנצח.\n\n**מחיקה:** מורידים refcount; blob נמחק רק כשהוא מגיע ל-0, ועדיף באיסוף מושהה (soft delete + GC) כדי לא להתנגש בהעלאה חדשה של אותו תוכן.\n\n**כפילויות דומות:** תמונה אחרי resize או קידוד מחדש מקבלת hash אחר לגמרי. לזה צריך perceptual hash וחיפוש דמיון, וזו בעיה נפרדת (מתאימה יותר ל-moderation מאשר לחיסכון באחסון).\n\n**פרטיות:** אם ה-client שולח hash לפני ההעלאה ומקבל 'כבר קיים', הוא לומד שמישהו אחר העלה את הקובץ. לכן עושים dedup בצד השרת.\n\n**אחסון:** blob store עם replication לנתונים חמים ו-erasure coding לחמימים וקרים; metadata ב-DB מבוזר ב-sharding לפי `photo_id`.",
+      "rubric": [
+        "הערכת throughput ונפח יומי עם מספרים",
+        "dedup לפי hash של התוכן, metadata נפרד מה-blob, ו-refcount",
+        "טיפול ב-race של העלאה כפולה במקביל (insert מותנה)",
+        "מחיקה בטוחה: refcount + GC מושהה",
+        "מבחין בין כפילות מדויקת לדמיון (perceptual hash), ומזכיר את דליפת המידע ב-dedup בצד ה-client"
+      ],
+      "explanation": "השאלה דווחה ברשימת שאלות design מראיונות Meta ב-2023. מה שמבדיל תשובה חזקה: refcount ומחיקה, race, וההבחנה בין hash מדויק לדמיון.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/4428743/"
+      ],
+      "problem": "Meta onsite system design: store images for Facebook and Instagram at 1000 uploads/s and handle duplication",
+      "id": "design.scaling.q70",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שני משתמשים מעלים את אותו קובץ באותו רגע. שני שרתים מחשבים את אותו SHA-256, וכל אחד בודק בטבלת ה-hashes ולא מוצא אותו. מה מונע מצב שבו נשמרים שני blobs ושתי רשומות עם אותו hash?",
+      "choices": [
+        "בדיקה חוזרת של הטבלה רגע לפני הכתיבה",
+        "insert מותנה (put-if-absent או unique constraint על ה-hash): רק אחד מצליח, והשני מפנה ל-blob של המנצח",
+        "Bloom filter של כל ה-hashes הקיימים, שנבדק לפני הכתיבה",
+        "mutex גלובלי אחד שעוטף כל העלאה בכל השרתים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. check-then-act נשאר race: שני השרתים יכולים לבדוק, לא למצוא, ואז לכתוב.",
+        "נכון. הפעולה האטומית היא הכתיבה המותנית עצמה. המפסיד מקבל 'already exists' ומגדיל refcount על ה-blob הקיים.",
+        "שגוי. Bloom filter עונה על 'אולי קיים', אבל לא מסנכרן שני כותבים שרצים באותו רגע.",
+        "שגוי. נעילה גלובלית הופכת 1,000 העלאות בשנייה לצוואר בקבוק טורי ול-single point of failure."
+      ],
+      "explanation": "Race של check-then-insert פותרים בפעולה אטומית אחת ב-store (conditional write), לא בבדיקות נוספות.",
+      "id": "design.scaling.q71",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "prompt": "אילו טענות על dedup לפי SHA-256 של תוכן התמונה נכונות?",
+      "choices": [
+        "שני קבצים עם אותם bytes בדיוק מקבלים אותו hash",
+        "אותה תמונה אחרי resize או קידוד JPEG מחדש מקבלת hash שונה לגמרי",
+        "אפשר לזהות תמונות דומות לפי מרחק Hamming קטן בין ערכי SHA-256 שלהן",
+        "מחיקת תמונה דורשת refcount או GC, כי ה-blob יכול להיות משותף לכמה משתמשים",
+        "אחרי dedup אין צורך ב-replication, כי כל תוכן נשמר פעם אחת",
+        "אם ה-client שואל לפני ההעלאה 'האם ה-hash קיים', הוא יכול ללמוד שמישהו אחר העלה את הקובץ"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        5
+      ],
+      "notes": [
+        "נכון. hash דטרמיניסטי: אותו קלט, אותו פלט.",
+        "נכון. שינוי של bit אחד משנה בערך מחצית מה-bits של SHA-256 (avalanche), אז שינוי קטן בתמונה נותן hash לא קשור.",
+        "שגוי. בגלל ה-avalanche אין קשר בין דמיון תמונות לקרבת hashes קריפטוגרפיים. לזה יש perceptual hash.",
+        "נכון. כמה רשומות metadata מצביעות על אותו blob; מחיקה של אחת לא מוחקת את הבייטים.",
+        "שגוי. dedup חוסך עותקים לוגיים, אבל העותק היחיד עדיין צריך replication או erasure coding כדי לשרוד תקלות.",
+        "נכון. זה side channel מוכר ב-dedup בצד ה-client, ולכן עושים dedup בשרת אחרי ההעלאה."
+      ],
+      "explanation": "Hash קריפטוגרפי מתאים לזיהוי כפילות מדויקת בלבד. דמיון דורש perceptual hash, ומחיקה דורשת ספירת הפניות.",
+      "id": "design.scaling.q72",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a TODO-list app whose items sync across a user's devices (טלפון, tablet, web), כולל עבודה offline. איך פריטים נוצרים ומסונכרנים, ואיך מטפלים בביטול (מחיקה) ובעדכונים מתנגשים?",
+      "modelAnswer": "**Local-first:** כל מכשיר שומר את הרשימה מקומית ועובד גם offline. פעולות נרשמות בתור מקומי של שינויים ממתינים.\n\n**מזהים:** ה-id של פריט נוצר ב-client (UUID), כך שיצירה offline לא מתנגשת ושליחה חוזרת (retry) היא idempotent.\n\n**פרוטוקול סנכרון:** השרת מחזיק לכל משתמש change log עם מספר רצף עולה. מכשיר שולח את השינויים הממתינים שלו ואת ה-cursor האחרון שראה, ומקבל את כל השינויים מאז. push notification רק מעיר את המכשיר לסנכרן.\n\n**קונפליקטים:** ברמת שדה (כותרת, סטטוס, תאריך), לא ברמת פריט שלם. ההכרעה לפי סדר הקבלה בשרת או לפי hybrid logical clock, לא לפי שעון המכשיר (clock skew).\n\n**ביטול ומחיקה:** מחיקה היא tombstone עם גרסה, לא מחיקה פיזית; אחרת מכשיר ישן שעדיין מחזיק את הפריט יחזיר אותו. צריך מדיניות מפורשת ל-delete מול edit מקבילים (בדרך כלל delete מנצח, או שמשחזרים ומודיעים למשתמש). tombstones מנוקים אחרי שכל המכשירים סונכרנו או אחרי זמן ארוך.\n\n**סדר ברשימה:** fractional index (מפתח בין שני שכנים) כדי שהזזה לא תשכתב את כל הרשימה.\n\n**Trade-offs:** CRDT מלא מול LWW לפי שדה; תדירות סנכרון מול סוללה ורשת במובייל.",
+      "rubric": [
+        "local-first עם תור שינויים ומזהים שנוצרים ב-client",
+        "פרוטוקול delta: change log בשרת + cursor לכל מכשיר",
+        "קונפליקטים ברמת שדה, בלי להסתמך על שעון המכשיר",
+        "tombstones ומדיניות מפורשת ל-delete מול edit (ה-follow-up שדווח ב-Google)",
+        "שיקולי מובייל: סוללה, רשת, push שמעיר סנכרון"
+      ],
+      "explanation": "המועמד ל-L6 דיווח שהשאלה התמקדה ביצירה, בסנכרון בין מכשירים, ובטיפול בביטול ובקונפליקט עדכון. tombstones ו-cursor הם הלב.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/5331904/"
+      ],
+      "problem": "Google L6 system design (Android): TODO-list app synced across devices, with cancellation and update conflicts",
+      "id": "design.scaling.q73",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "באפליקציה מסונכרנת עם מצב offline, למה ליצור את ה-id של משימה חדשה ב-client (UUID) במקום לקבל אותו מה-DB (auto-increment)?",
+      "choices": [
+        "כי UUID תופס פחות מקום מ-integer",
+        "כי מכשיר offline יכול ליצור משימות ולהפנות אליהן בלי שרת, ושליחה חוזרת של אותה יצירה לא יוצרת כפילות",
+        "כי auto-increment לא עובד ב-DB מבוזר בכלל",
+        "כי UUID ממיין את המשימות לפי זמן יצירה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. UUID הוא 128 bits, יותר מ-integer של 32 או 64 bits.",
+        "נכון. ה-id קיים מהרגע הראשון, אז אפשר להפנות אליו offline, והשרת מזהה retry של אותו id כאותה משימה (idempotent).",
+        "שגוי. יש פתרונות (ticket server, טווחי IDs), אבל הם עדיין דורשים חיבור לשרת, וזו הבעיה כאן.",
+        "שגוי. UUID v4 אקראי ולא ממוין לפי זמן (יש גרסאות כמו UUIDv7 שכן), וזה לא הנימוק המרכזי."
+      ],
+      "explanation": "מזהה שנוצר ב-client מאפשר עבודה offline ו-retry בטוח. זה בסיס לכל פרוטוקול סנכרון.",
+      "id": "design.scaling.q74",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "short",
+      "prompt": "סנכרון עם last-writer-wins לפי timestamp של שעון המכשיר. B ערך משימה בפועל 30 שניות אחרי ש-A ערך אותה, אבל השעון של A מקדים. מעל כמה שניות של הקדמה בשעון של A העריכה של B (החדשה באמת) תפסיד?",
+      "accept": [
+        "30"
+      ],
+      "explanation": "A חותם t + X, ו-B חותם t + 30. B מפסיד כש-X > 30. הקדמה של חצי דקה בשעון מכשיר אינה נדירה, ולכן מכריעים לפי סדר בשרת או hybrid logical clock.",
+      "id": "design.scaling.q75",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design the Facebook post privacy feature: כל פוסט מוגדר Only Me, Friends או Public. בהינתן משתמש ופוסט, איך מחליטים אם הוא רשאי לראות אותו, בכל מקום שבו פוסטים מוצגים (feed, פרופיל, חיפוש, קישור ישיר)?",
+      "modelAnswer": "**מודל נתונים:** `post(post_id, author_id, audience, ...)` עם audience ∈ {ONLY_ME, FRIENDS, PUBLIC}. קשרי חברות כקשתות בגרף (נשמרות בשני הכיוונים, sharded לפי user). רשימת חסימות נפרדת.\n\n**הכלל:** `canSee(viewer, post)` = viewer הוא הכותב, או: viewer לא חסום, וגם (audience = PUBLIC, או audience = FRIENDS ו-isFriend(viewer, author)). חסימה גוברת על הכול.\n\n**איפה בודקים:** בזמן קריאה, בכל נתיב: feed, פרופיל, חיפוש, התראות, שיתוף, קישור ישיר. נקודת בדיקה אחת (privacy service או ספרייה משותפת) כדי שאף נתיב לא ידלג.\n\n**למה לא רק בזמן כתיבה:** feed שנבנה ב-fan-out מכיל פוסטים שה-audience שלהם השתנה מאז, או שהחברות בוטלה. לכן ה-feed שומר רק IDs, ובזמן קריאה עושים hydrate + סינון פרטיות.\n\n**ביצועים:** feed של 50 פוסטים = עשרות בדיקות isFriend. עושים multiget מגרף עם cache (TAO של Meta היא דוגמה ציבורית למאגר כזה), ומבטלים cache בשינוי חברות או audience.\n\n**כשל:** fail closed: אם אי אפשר לבדוק, לא מציגים.\n\n**הרחבות:** רשימות מותאמות, friends-of-friends (יקר: חיתוך של שתי רשימות חברים). בדיקות אוטומטיות לכל נתיב, כי באג כאן הוא דליפת פרטיות.",
+      "rubric": [
+        "מודל נתונים: audience על הפוסט, גרף חברות, חסימות",
+        "כלל canSee מדויק, כולל הכותב עצמו וחסימה",
+        "בדיקה בזמן קריאה בכל נתיב, כולל feed שנבנה מראש",
+        "ביצועים: batch / multiget, cache ו-invalidation",
+        "fail closed, ולא משתמשים במבנה הסתברותי עם false positives כהכרעה"
+      ],
+      "explanation": "דווח פעמיים מ-Meta (Design Privacy Settings at Facebook בסבב ה-design, ושאלת Only Me / Friends / Public). הנקודה העדינה: הרשאה נבדקת בזמן קריאה, כי היא יכולה להשתנות אחרי שהפוסט הופץ.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/4428743/",
+        "https://leetcode.com/discuss/interview-experience/1623547/facebook-e5-phone-screen-virtual-onsite"
+      ],
+      "problem": "Meta onsite system design: Facebook post privacy (Only Me / Friends / Public), can a given user see a post",
+      "id": "design.scaling.q76",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "פוסט נכתב כ-PUBLIC, ותוך שנייה נכנס ב-fan-out ל-feed המוכן של 1,000 משתמשים. אחרי דקה הכותב משנה אותו ל-ONLY_ME. מה התכנון הנכון כדי שאף אחד אחר לא יראה אותו מעכשיו?",
+      "choices": [
+        "להריץ עבודה שמוחקת את הפוסט מכל 1,000 ה-feeds, ולהסתמך רק עליה",
+        "ה-feed שומר רק IDs, ובכל קריאה עושים hydrate של הפוסט ובודקים את ה-audience העדכני",
+        "לשמור ב-feed עותק מלא של הפוסט כולל ה-audience, כדי שהבדיקה תהיה מקומית",
+        "לא לעשות כלום: מי שכבר קיבל את הפוסט ב-feed רשאי לראות אותו"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי כפתרון יחיד. עבודה כזו לוקחת זמן ויכולה לפספס caches, ובחלון הזה הפוסט עדיין מוצג. היא מתאימה לניקוי, לא כהגנה.",
+        "נכון. מקור האמת הוא הפוסט עצמו, והבדיקה בזמן קריאה רואה את השינוי מיד.",
+        "שגוי. עותק מקומי של ה-audience הוא בדיוק המידע הישן שגורם לדליפה.",
+        "שגוי. ההגדרה צריכה לחול מרגע השינוי; זה מה שהמשתמש מצפה לו."
+      ],
+      "explanation": "הרשאות נבדקות מול מקור אמת בזמן קריאה. נתונים שהופצו מראש (feeds, caches) מחזיקים רק מזהים.",
+      "id": "design.scaling.q77",
+      "lesson": "design.scaling"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "מוסיפים audience מסוג Friends of Friends. לכותב יש 400 חברים, ולכל אחד מהם 400 חברים. כמה רשומות (כולל כפילויות) יש לכל היותר באיחוד של רשימות החברים של כל החברים שלו, אילו חישבו אותו מראש?",
+      "accept": [
+        "160000",
+        "160,000"
+      ],
+      "explanation": "400 × 400 = 160,000 לכל כותב, וזה משתנה בכל שינוי חברות. לכן לא מחשבים מראש; בודקים בזמן קריאה אם יש חיתוך בין רשימת החברים של ה-viewer לזו של הכותב (O(400 + 400) עם hash set).",
+      "id": "design.scaling.q78",
       "lesson": "design.scaling"
     }
   ]

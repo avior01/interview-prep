@@ -273,6 +273,22 @@
         {
           "term": "file-backed / anonymous pages",
           "def": "דף file-backed (קוד, mmap של קובץ, page cache) אפשר לשחרר בלי לכתוב אם הוא נקי, ולקרוא שוב מהקובץ. דף אנונימי (heap, stack) צריך swap כדי לפנות אותו."
+        },
+        {
+          "term": "page cache",
+          "def": "זיכרון שבו הקרנל שומר דפים של קבצים שנקראו או נכתבו. דפים נקיים משתחררים מיד כשתוכנית צריכה זיכרון."
+        },
+        {
+          "term": "available (ב-free)",
+          "def": "הערכה של הקרנל לכמה זיכרון אפשר לתת לתוכניות חדשות בלי swap: free ועוד page cache שאפשר לפנות."
+        },
+        {
+          "term": "si / so (vmstat)",
+          "def": "קצב swap in ו-swap out. ערכים גבוהים לאורך זמן מעידים על thrashing. swap תפוס עם si/so אפסיים בדרך כלל תקין."
+        },
+        {
+          "term": "posix_fadvise / O_DIRECT",
+          "def": "fadvise נותן לקרנל רמז על דפוס הגישה, למשל DONTNEED לזריקת דפים שכבר נקראו. O_DIRECT עוקף את ה-page cache וכותב או קורא ישר מהדיסק."
         }
       ]
     }
@@ -1461,6 +1477,76 @@
         "שגוי: execve לא טוען את הקוד מראש. הוא ממפה אותו, ודפים נטענים לפי דרישה. זה תקין לגמרי."
       ],
       "explanation": "דפי קוד, כמו כל דף file-backed, נטענים בגישה הראשונה. זה מאפשר להריץ תוכניות גדולות מה-RAM ולהתחיל אותן מהר. ב-real-time זה גם מקור ל-latency בלתי צפוי, ולכן mlockall(MCL_CURRENT) נועל גם את דפי הקוד.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על שרת עם 16GB, `free -h` מראה: used 3.1G, free 0.3G, buff/cache 12.6G, available 12.5G. המתכנת מודאג שהזיכרון \"נגמר\". מה נכון?",
+      "choices": [
+        "צריך להריץ `echo 3 > /proc/sys/vm/drop_caches` באופן קבוע כדי לפנות זיכרון",
+        "הזיכרון כמעט נגמר: נשארו רק 300MB, וה-OOM killer עוד מעט יפעל",
+        "אין בעיה: רוב הזיכרון משמש כ-page cache (קבצים שנקראו לאחרונה), והקרנל משחרר אותו מיד כשתוכנית צריכה. המספר הרלוונטי הוא available, כ-12.5GB",
+        "יש memory leak בקרנל, כי buff/cache לא אמור לעלות על 50%"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: drop_caches רק מאט את הקריאות הבאות, כי צריך לטעון הכל מחדש מהדיסק. זה כלי לבדיקות, לא לתחזוקה.",
+        "שגוי: free הוא רק זיכרון שלא משמש לכלום. Linux משתדל להשאיר אותו קטן, כי זיכרון ריק הוא זיכרון מבוזבז.",
+        "נכון: page cache הוא זיכרון \"מושאל\". דפים נקיים נזרקים בלי עלות כשצריך מקום. available מעריך כמה אפשר לתת לתוכניות בלי swap.",
+        "שגוי: אין מגבלה כזו. cache שתופס את כל הזיכרון הפנוי הוא ההתנהגות הרצויה."
+      ],
+      "explanation": "ב-Linux, buffers הם בעיקר metadata של block devices, ו-cache הוא page cache של קבצים. שניהם reclaimable. כדי להבין לחץ זיכרון מסתכלים על available, על פעילות swap ועל PSI, לא על free.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1789766/facebookmeta-production-engg-intern-londondublin-jan-feb-2022"
+      ],
+      "problem": "Meta Production Engineering systems round: swap, virtual memory, buffer and cache",
+      "id": "sys.virtual-memory.q58",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בשרת `free` מראה ש-2GB של swap בשימוש, אבל `vmstat 1` מראה `si` ו-`so` אפסיים לאורך שעה, והביצועים טובים. מה המסקנה?",
+      "choices": [
+        "זה סימן ל-memory leak שמתפתח",
+        "אין בעיה כרגע: מתישהו הקרנל הוציא ל-swap דפים שלא נגעו בהם (למשל קוד init), והם יושבים שם בשקט. בעיה היא swapping פעיל, כלומר si/so גבוהים לאורך זמן",
+        "יש בעיה חמורה: כל שימוש ב-swap אומר שהזיכרון נגמר",
+        "צריך לכבות swap מיד, כי הוא מאט כל גישה לזיכרון"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: leak היה מתבטא בעלייה מתמדת של הזיכרון של process ובסוף ב-so פעיל. שימוש יציב בלי תנועה לא מעיד על leak.",
+        "נכון: si/so הם קצב ההחלפה בפועל (swap in ו-swap out). swap תפוס בלי תנועה משחרר RAM ל-page cache שימושי יותר.",
+        "שגוי: הקרנל מוציא דפים אנונימיים קרים גם כשאין מחסור חריף, לפי vm.swappiness. השאלה היא אם צריך אותם בחזרה.",
+        "שגוי: swap משפיע רק על גישה לדפים שנמצאים בו. גישה לדפים ב-RAM לא מאטה. כיבוי swap יכריח את הקרנל לזרוק page cache במקום."
+      ],
+      "explanation": "thrashing הוא כשה-working set גדול מה-RAM: דפים יוצאים וחוזרים כל הזמן (si/so גבוהים), ו-CPU מבוזבז על page faults. swap תפוס אבל שקט הוא בדרך כלל בריא.",
+      "id": "sys.virtual-memory.q59",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "job לילי של גיבוי קורא קובץ של 200GB פעם אחת. אחריו מסד נתונים על אותו שרת איטי שעה, עד שה-cache שלו \"מתחמם\". מה קרה ומה פתרון סביר?",
+      "choices": [
+        "הקריאה הרציפה מילאה את ה-page cache ודחקה החוצה דפים חמים של מסד הנתונים. פתרונות: בגיבוי `posix_fadvise(..., POSIX_FADV_DONTNEED)` על מה שכבר נקרא, או `O_DIRECT`, או להריץ אותו ב-cgroup עם memory limit",
+        "הגיבוי השתמש ב-swap, ולכן מסד הנתונים איטי",
+        "צריך להגדיל את vm.swappiness ל-100",
+        "הגיבוי גרם ל-memory leak במסד הנתונים"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: מבחינת הקרנל, דפים שנקראו לאחרונה \"חמים\". קריאה חד-פעמית ענקית נראית חמה ומפנה את מה שבאמת חם. fadvise אומר לקרנל שאין צורך לשמור אותם, ו-O_DIRECT עוקף את ה-cache לגמרי.",
+        "שגוי: קריאת קובץ ממלאת page cache, לא swap. הקובץ עצמו הוא ה-backing store של הדפים האלה.",
+        "שגוי: swappiness גבוה יוציא דווקא יותר דפים אנונימיים של מסד הנתונים ל-swap, וזה מחמיר.",
+        "שגוי: הזיכרון של מסד הנתונים לא גדל. הוא איבד את הדפים שלו מה-cache."
+      ],
+      "explanation": "ה-LRU של Linux מחולק לרשימות active ו-inactive כדי להתגונן מסריקות, אבל סריקה גדולה מספיק עדיין מזיקה. מסדי נתונים רציניים מנהלים buffer pool משלהם עם O_DIRECT, בין השאר בגלל זה.",
+      "id": "sys.virtual-memory.q60",
       "lesson": "sys.virtual-memory"
     }
   ]

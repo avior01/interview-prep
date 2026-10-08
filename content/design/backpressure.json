@@ -210,6 +210,34 @@
         {
           "term": "state מול event",
           "def": "state הוא ערך שמחליף את הקודם (מותר לדלג על ערכי ביניים). event הוא שינוי שכל מופע שלו חשוב, ולכן דורש delivery אמין, מספרי רצף ו-replay."
+        },
+        {
+          "term": "URL frontier",
+          "def": "מבנה הנתונים של crawler שמחזיק את ה-URLs שעוד צריך להוריד: front queues לפי עדיפות ו-back queues לפי host (מבנה Mercator)."
+        },
+        {
+          "term": "politeness (crawler)",
+          "def": "הגבלת הקצב לכל אתר: robots.txt, השהיה בין בקשות, מעט חיבורים לכל host, ו-backoff כשהאתר מחזיר 429 או 503."
+        },
+        {
+          "term": "robots.txt",
+          "def": "קובץ באתר שמגדיר ל-crawlers אילו נתיבים מותר לסרוק, ולפעמים קצב רצוי (crawl-delay)."
+        },
+        {
+          "term": "simhash",
+          "def": "טביעת אצבע של מסמך שבה מסמכים כמעט זהים מקבלים ערכים קרובים (מרחק Hamming קטן). משמש לזיהוי דפים כמעט כפולים."
+        },
+        {
+          "term": "crawler trap",
+          "def": "מבנה באתר שמייצר אינסוף URLs (לוח שנה, פרמטרים משתנים). נעצר בהגבלת עומק, מספר דפים לכל host ונרמול URLs."
+        },
+        {
+          "term": "bulkhead",
+          "def": "חלוקת משאבים (תורים, threads, חיבורים) לפי סוג עבודה, כך שעומס או כשל בסוג אחד לא מציף את האחרים."
+        },
+        {
+          "term": "APNs / FCM",
+          "def": "שירותי ה-push של Apple ושל Google. כל הודעה ל-device token נשלחת דרכם, והם מגבילים קצב ומחזירים שגיאות על tokens לא תקפים."
         }
       ]
     }
@@ -1006,6 +1034,127 @@
       ],
       "explanation": "ל-client אחד: 50 × 4 × 100 = 20,000 bytes בשנייה. למיליון clients: 2 × 10^10 bytes בשנייה = 20 GB/s = 160 Gb/s. בלי conflation (200 עדכונים בשנייה למניה) זה היה פי 50: 8 Tb/s. זו הסיבה ש-conflation והגבלת קצב לכל client הם חלק מהתכנון ולא אופטימיזציה.",
       "id": "design.backpressure.q42",
+      "lesson": "design.backpressure"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a web crawler that fetches and parses over a billion web pages. איך מחלקים את העבודה, איך לא מורידים דף פעמיים, ואיך לא מעמיסים על אף אתר?",
+      "modelAnswer": "**הערכות:** מיליארד דפים בחודש ≈ 386 דפים בשנייה בממוצע; ב-100 KB לדף זה כ-100 TB לסבב (לפני דחיסה).\n\n**URL frontier:** הלב של המערכת. שתי שכבות: front queues לפי עדיפות (חשיבות הדף, תדירות שינוי), ו-back queues **לפי host**, כשכל host משויך ל-fetcher אחד שמכבד השהיה בין בקשות. כך המקביליות הכוללת גבוהה, אבל לכל אתר מגיע קצב מוגבל.\n\n**Politeness:** כיבוד robots.txt (עם cache), crawl-delay, הגבלת חיבורים לכל host, ו-backoff כשהאתר מחזיר 429 או 503. זה backpressure מהשרת המרוחק: הקצב שלנו נקבע לפי מה שהאתר מסוגל, לא לפי כמה workers יש לנו.\n\n**חלוקה:** partition של ה-frontier לפי hash של ה-host בין מכונות, כך שכל host מנוהל במקום אחד. URLs שהתגלו נשלחים למכונה שאחראית על ה-host שלהם.\n\n**Dedup:** URL-seen set (ניתן כ-Bloom filter: false positive רק גורם לדלג על דף, טעות זולה), נרמול URLs, ו-dedup של תוכן (hash מדויק, או simhash לדפים כמעט זהים).\n\n**Pipeline:** fetch → parse → חילוץ קישורים → סינון → frontier; תוכן ל-blob storage ו-metadata ל-DB. DNS cache, כי פענוח שמות הוא צוואר בקבוק מוכר.\n\n**כשלים:** lease על URLs שנלקחו, וחזרה לתור אם worker נפל. מלכודות crawler (לוחות שנה אינסופיים) נעצרות בהגבלת עומק ומספר דפים לכל host.\n\n**Re-crawl:** תזמון לפי קצב השינוי של כל דף.",
+      "rubric": [
+        "הערכת קצב ונפח",
+        "frontier עם עדיפויות ו-queues לפי host (politeness)",
+        "partition לפי host בין מכונות וניתוב URLs שהתגלו",
+        "dedup של URLs ושל תוכן, ולמה Bloom filter מקובל כאן",
+        "כשלים, crawler traps, DNS ו-re-crawl"
+      ],
+      "explanation": "דווח מ-Meta (L5 onsite). המפתח: מקביליות גבוהה בסך הכול, אבל קצב מוגבל לכל host, וזה מה שה-frontier לפי host נותן.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/interview-experience/4955695/"
+      ],
+      "problem": "Meta L5 onsite system design: a web crawler that parses over 1B+ web pages",
+      "id": "design.backpressure.q43",
+      "lesson": "design.backpressure"
+    },
+    {
+      "level": 4,
+      "type": "short",
+      "prompt": "URL-seen set של crawler כ-Bloom filter ל-1 מיליארד URLs, עם שיעור false positive של 1%. כמה GB זיכרון בערך? (m/n = −ln(p) / (ln 2)^2, עשרוני אחד)",
+      "accept": [
+        "1.2",
+        "1.2 GB"
+      ],
+      "explanation": "−ln(0.01) / (ln 2)^2 = 4.605 / 0.4805 ≈ 9.585 bits לכל URL. כפול 10^9 ≈ 9.585 × 10^9 bits ≈ 1.2 × 10^9 bytes ≈ 1.2 GB. false positive כאן רק מדלג על דף חדש, ולכן הטעות מקובלת.",
+      "id": "design.backpressure.q44",
+      "lesson": "design.backpressure"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "Crawler עם 10,000 workers שמושכים מתור URL משותף אחד. 30% מה-URLs בתור שייכים לאתר אחד גדול. מה יקרה, ומה התיקון?",
+      "choices": [
+        "שום דבר מיוחד; תור משותף מאזן עומס באופן טבעי",
+        "אלפי בקשות במקביל לאותו אתר: עומס עליו, חסימה של ה-crawler, ו-workers שתקועים ב-timeouts. תיקון: queues לפי host, fetcher אחד לכל host והשהיה בין בקשות",
+        "צריך להוסיף עוד workers כדי שהאתר הגדול לא יאט את השאר",
+        "להוציא את האתר הגדול מה-crawl לגמרי"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. תור משותף מאזן עומס על ה-workers שלנו, לא על האתרים שאנחנו פונים אליהם.",
+        "נכון. politeness דורש לשלוט בקצב לכל host. queues לפי host (כמו ב-Mercator) נותנים מקביליות בין אתרים וקצב מוגבל בתוך אתר.",
+        "שגוי. עוד workers מגדילים את העומס על האתר ומחמירים את הבעיה.",
+        "שגוי. זה פוגע בכיסוי. אפשר לסרוק את האתר, רק בקצב שהוא מסוגל לו."
+      ],
+      "explanation": "ב-crawler ה-backpressure מגיע מהאתרים: הקצב לכל host מוגבל, והמקביליות באה מכמות האתרים.",
+      "id": "design.backpressure.q45",
+      "lesson": "design.backpressure"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "Design a notification system that alerts 1M users when a flash sale starts (push, email). איך מבצעים את ה-fan-out, איך עומדים במגבלות של ספקי ה-push, ומה קורה לאתר המכירה ברגע שכולם לוחצים?",
+      "modelAnswer": "**דרישות:** להודיע ל-1M מנויים בחלון זמן קצר, בלי כפילויות, בלי לעכב התראות קריטיות אחרות (OTP, אבטחה), ובלי להפיל את אתר המכירה.\n\n**Fan-out:** הפעלת קמפיין → fan-out service קורא את רשימת המנויים בעמודים → מכניס batches לתור (partition לפי user) → workers לכל ערוץ שולחים לספקים (APNs, FCM, email).\n\n**מגבלות ספקים:** token bucket לכל ספק ולכל ערוץ; כשהספק מחזיר throttling, backoff עם jitter. tokens לא תקפים מוסרים מהמאגר.\n\n**בלי כפילויות:** idempotency key לכל (campaign, user) ורישום 'נשלח' לפני ack לתור, כך ש-retry לא שולח פעמיים.\n\n**הפרדה:** תורים ו-workers נפרדים להתראות קריטיות (bulkhead), כדי שגל שיווקי לא יעכב קוד OTP.\n\n**האתר:** 1M התראות בבת אחת = גל לחיצות (thundering herd). מפזרים את השליחה בקבוצות לאורך כמה דקות, מחממים caches מראש, ומשתמשים ב-virtual waiting room אם צריך. כלומר הקצב של מערכת ההתראות נקבע גם לפי מה שה-backend של המכירה מסוגל לספוג.\n\n**מדדים:** delivered, opened, latency עד delivery, שגיאות לפי ספק, DLQ.",
+      "rubric": [
+        "fan-out דרך תור עם batches ו-workers לכל ערוץ",
+        "rate limiting לכל ספק, backoff + jitter, ניקוי tokens",
+        "idempotency כנגד כפילויות ב-retry",
+        "בידוד התראות קריטיות מגל שיווקי (bulkhead)",
+        "הגנה על אתר המכירה מגל הלחיצות: פיזור שליחה, חימום cache, waiting room"
+      ],
+      "explanation": "דווח מ-Meta E5 עם Hire, ובהערה 'focus on fan-out service and queue handling'. הנקודה הבכירה: התראה היא גם מקור עומס על מערכת אחרת.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/7587361/l4-meta-interview-experience-by-anonymou-8o1z/"
+      ],
+      "problem": "Meta E5 system design: notification system (alert 1M users for a flash sale), fan-out service and queues",
+      "id": "design.backpressure.q46",
+      "lesson": "design.backpressure"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שלחו התראת מכירה ל-1,000,000 משתמשים בבת אחת, ו-10% מהם לוחצים בתוך 10 השניות הראשונות. מה המשמעות לאתר המכירה, ומה התכנון הנכון?",
+      "choices": [
+        "כ-1,000 בקשות בשנייה; אין צורך בשינוי",
+        "כ-10,000 בקשות בשנייה בגל פתאומי; לפזר את השליחה בקבוצות לאורך כמה דקות, לחמם caches, ולשקול waiting room",
+        "כ-100,000 בקשות בשנייה; צריך לבטל את ההתראות",
+        "כ-10,000 בקשות בשנייה; מספיק להגדיל את ה-timeout של השרתים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. 100,000 לחיצות ב-10 שניות הן 10,000 בשנייה, לא 1,000.",
+        "נכון. 10% × 1M = 100,000 בקשות ב-10 שניות = 10,000 בשנייה. פיזור השליחה מחליק את הגל, ומערכת ההתראות מכבדת את הקיבולת של מערכת היעד.",
+        "שגוי. זה 100,000 בקשות בסך הכול, לא בשנייה. ואין צורך לבטל; צריך לשלוט בקצב.",
+        "שגוי. timeout ארוך יותר רק מחזיק יותר חיבורים פתוחים ומגדיל את העומס; הוא לא מוסיף קיבולת."
+      ],
+      "explanation": "שליחה בבת אחת יוצרת thundering herd אצל מי שמקבל את הלחיצות. פיזור מבוקר הוא backpressure מתוכנן מראש.",
+      "id": "design.backpressure.q47",
+      "lesson": "design.backpressure"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "התראות OTP ותזכורות שיווקיות עוברות באותו תור ובאותם workers. בזמן קמפיין של מיליון התראות, משתמשים מתלוננים שקוד OTP מגיע אחרי 4 דקות. מה התיקון הנכון?",
+      "choices": [
+        "להגדיל את מספר ה-workers של התור המשותף",
+        "תורים ו-workers נפרדים לכל סוג (או עדיפויות עם קיבולת שמורה), כך שההתראות הקריטיות לא עומדות מאחורי הקמפיין",
+        "לשלוח OTP דרך email במקום push",
+        "לקצר את זמן התוקף של קוד ה-OTP"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי. זה עוזר זמנית, אבל כל עוד יש תור אחד, קמפיין גדול מספיק ימלא אותו שוב, וה-OTP ימתין מאחוריו.",
+        "נכון. bulkhead: לכל סוג משאבים משלו, כך שעומס באחד לא פוגע בשני.",
+        "שגוי. הבעיה היא התור המשותף, לא הערוץ. email לרוב איטי יותר.",
+        "שגוי. זה רק גורם לקודים לפוג לפני שהם מגיעים."
+      ],
+      "explanation": "בידוד משאבים לפי עדיפות הוא העיקרון. תור משותף אחד הופך כל גל ל-head-of-line blocking לכולם.",
+      "id": "design.backpressure.q48",
       "lesson": "design.backpressure"
     }
   ]

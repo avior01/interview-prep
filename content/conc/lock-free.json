@@ -191,6 +191,18 @@
         {
           "term": "העברת בעלות ב-exchange (acq_rel)",
           "def": "exchange שגם נותן buffer וגם מקבל אחר צריך release כדי לפרסם את מה שנעשה ב-buffer שנמסר, ו-acquire כדי לראות את מה שהבעלים הקודם עשה ב-buffer שמתקבל, כולל קריאות."
+        },
+        {
+          "term": "cache coherence (ובהיעדרה)",
+          "def": "מנגנון חומרה ששומר שכל ה-cores יראו ערך עדכני של כל cache line. בין cores הטרוגניים על SoC הוא לפעמים לא קיים, ואז התוכנה עושה clean (כתיבה לזיכרון) ו-invalidate (זריקת עותק ישן) בעצמה."
+        },
+        {
+          "term": "clean / invalidate של cache",
+          "def": "clean כותב line מלוכלכת לזיכרון הראשי בלי למחוק אותה. invalidate זורק את העותק המקומי, כך שהקריאה הבאה תגיע מהזיכרון. מנגנונים שמשמשים בין cores לא קוהרנטיים ובין CPU ל-DMA."
+        },
+        {
+          "term": "release/acquire",
+          "def": "store עם release ו-load עם acquire שקורא את אותו ערך יוצרים happens-before: כל מה שנכתב לפני ה-release נראה אחרי ה-acquire. זה המינימום לפרסום נתונים."
         }
       ]
     }
@@ -945,6 +957,76 @@
         "שגוי: release מכסה רק את הכיוון של ה-writer אל ה-reader. הכיוון ההפוך (ה-reader סיים לקרוא) לא מסונכרן."
       ],
       "id": "conc.lock-free.q36",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שני cores שונים על אותו SoC (למשל core של חיישנים ו-core של אפליקציה) חולקים SRAM. core A כותב דגימות ל-FIFO ואז מעדכן `head`. core B רואה את `head` החדש אבל קורא לפעמים דגימות ישנות. ה-cores **לא** cache-coherent ביניהם. מה התיקון הנכון?",
+      "choices": [
+        "להגדיל את ה-FIFO כך שהקורא לעולם לא יגיע לאזור שנכתב לאחרונה",
+        "להגדיר את המאגר ואת `head` כ-`volatile`",
+        "להוסיף mutex רגיל של ה-RTOS סביב הכתיבה והקריאה",
+        "core A: לכתוב את הדגימות, לעשות clean ל-cache lines שלהן, barrier, ורק אז לכתוב את `head` (ולעשות לו clean). core B: invalidate ל-lines של הדגימות אחרי שקרא את `head` ולפני שקורא אותן. לחלופין, למפות את האזור כ-non-cacheable"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: זה לא עניין של מרחק בין הקורא לכותב. גם דגימה ישנה מאוד יכולה לשבת ב-cache של B כעותק שלא עודכן.",
+        "שגוי: volatile מונע מהקומפיילר לשמור ערך ברגיסטר, אבל הוא לא כותב cache ל-RAM ולא מבטל עותקים ישנים ב-cache של core אחר.",
+        "שגוי: mutex של RTOS עובד בתוך מערכת הפעלה אחת על core אחד או על cores קוהרנטיים. הוא לא קיים בין שני cores עם מערכות נפרדות, וגם לא פותר את ה-cache.",
+        "נכון: בלי coherence, החומרה לא תדאג שהעותק ב-cache של B יתעדכן. צריך סדר מפורש: הנתונים מגיעים לזיכרון המשותף לפני האינדקס, והקורא זורק עותקים ישנים לפני שהוא קורא. non-cacheable פשוט יותר אבל איטי יותר."
+      ],
+      "explanation": "FIFO בין cores הוא SPSC: כל אינדקס נכתב רק על ידי צד אחד, ולכן לא צריך נעילה. אבל צריך שני דברים: סדר (barrier או release/acquire, כדי שהנתונים \"יגיעו\" לפני האינדקס) ו-visibility (cache maintenance כשאין coherence בחומרה).",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://www.teamblind.com/post/embedded-software-engineer-firmware-reality-labs-gbdwn5bu"
+      ],
+      "problem": "Meta Reality Labs in-domain design: shared memory FIFO between cores, how to sync access",
+      "id": "conc.lock-free.q37",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-SPSC ring buffer, ה-producer כותב רק ל-`head` וה-consumer רק ל-`tail`. שניהם מוגדרים זה אחר זה במבנה: `std::atomic<size_t> head, tail;`. ב-profiling רואים שהקצב נמוך בהרבה מהצפוי. מה הסיבה הסבירה?",
+      "choices": [
+        "ה-producer וה-consumer צריכים CAS ולא store",
+        "הקיבולת לא חזקה של 2, ולכן חישוב האינדקס איטי",
+        "false sharing: שני המונים יושבים על אותה cache line, ולכן כל כתיבה של צד אחד מבטלת את העותק אצל הצד השני. פתרון: `alignas(64)` לכל אחד",
+        "atomic על size_t לא lock-free, ולכן יש mutex נסתר"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: ב-SPSC כל אינדקס נכתב רק על ידי צד אחד. store עם release מספיק, ו-CAS רק יוסיף עלות.",
+        "שגוי: modulo על מספר שאינו חזקה של 2 עולה כמה עשרות cycles, ולא מסביר ירידה משמעותית בקצב. false sharing עולה מאות cycles בכל גישה.",
+        "נכון: אף אחד לא כותב לשדה של השני, אבל coherence עובד ברמת cache line (בדרך כלל 64 בתים). כל כתיבה ל-`head` מוציאה את ה-line מה-cache של ה-consumer, וההפך. הפרדה ל-lines שונים פותרת את זה.",
+        "שגוי: `std::atomic<size_t>` הוא lock-free בכל ארכיטקטורה של 64 ביט נפוצה."
+      ],
+      "explanation": "False sharing הוא הבעיה הנפוצה ביותר ב-ring buffers מהירים. הפתרון הסטנדרטי: כל אינדקס על cache line משלו, ולעתים גם עותק מקומי (cached) של האינדקס של הצד השני, כדי לקרוא אותו רק כשצריך.",
+      "id": "conc.lock-free.q38",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "SPSC ring buffer בין שני threads. ה-producer כותב `buf[h % N] = x;` ואז `head.store(h + 1, std::memory_order_relaxed);`. ה-consumer קורא `head.load(std::memory_order_acquire)` ואז את `buf`. על x86 הכל עובד בבדיקות. מה נכון?",
+      "choices": [
+        "הקוד נכון על x86 ושגוי רק על ARM, ולכן אפשר להשאיר אותו אם המוצר רץ רק על x86",
+        "הקוד שגוי בכל ארכיטקטורה: בלי release ב-store אין happens-before, ו-data race על `buf` הוא UB. הקומפיילר רשאי להזיז את הכתיבה ל-`buf` אחרי ה-store, גם על x86. צריך `memory_order_release`",
+        "הקוד שגוי. צריך seq_cst בשני הצדדים, כי acquire/release לא מספיקים ל-SPSC",
+        "הקוד נכון: acquire בצד הקורא מספיק לבד"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: החומרה של x86 (TSO) לא מחליפה סדר בין שתי כתיבות, אבל הקומפיילר כן רשאי, כי לפי מודל הזיכרון של C++ אין שום סיבה לשמור על הסדר. \"עובד על x86\" זה מזל של הקומפיילר הנוכחי.",
+        "נכון: release ב-producer ו-acquire ב-consumer יוצרים happens-before: כל מה שנכתב לפני ה-store נראה למי שרואה את הערך החדש. בלי זה זו data race, כלומר UB, בלי קשר לחומרה.",
+        "שגוי: seq_cst נדרש רק כשצריך סדר גלובלי אחד בין כמה משתנים וכמה threads (כמו ב-Dekker). ל-SPSC זוג release/acquire מספיק לגמרי.",
+        "שגוי: acquire מסתנכרן רק עם store שהוא release (או חזק ממנו). acquire מול relaxed לא יוצר שום סדר."
+      ],
+      "explanation": "מודל הזיכרון של C++ מגדיר את הסדר, לא החומרה. relaxed store מאפשר לקומפיילר ולמעבד להזיז כתיבות קודמות אחריו. הזוג release/acquire הוא המינימום הנכון לפרסום נתונים דרך אינדקס.",
+      "id": "conc.lock-free.q39",
       "lesson": "conc.lock-free"
     }
   ]

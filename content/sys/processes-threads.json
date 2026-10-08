@@ -228,6 +228,18 @@
         {
           "term": "counting semaphore",
           "def": "semaphore שהערך שלו הוא מספר המשאבים הפנויים. wait מקטין וחוסם כשהוא 0, post מגדיל ומעיר ממתין."
+        },
+        {
+          "term": "fork-exec-wait",
+          "def": "הדרך הקלאסית להריץ תוכנית ב-Unix: fork יוצר ילד, הילד קורא ל-exec כדי להחליף את עצמו בתוכנית, והאב קורא ל-wait כדי לחכות ולאסוף את סטטוס היציאה."
+        },
+        {
+          "term": "WNOHANG",
+          "def": "דגל ל-`waitpid` שגורם לו לחזור מיד אם אין ילד שסיים, במקום להיחסם. משמש בלולאה בתוך SIGCHLD handler."
+        },
+        {
+          "term": "FD_CLOEXEC",
+          "def": "דגל על file descriptor שגורם לסגירה אוטומטית שלו ב-exec. בלעדיו fds דולפים לתוכנית שמורצת."
         }
       ]
     }
@@ -1141,6 +1153,86 @@
         "שגוי: לא ידוע כמה זמן thread מחזיק באפר (כל העברת DMA). spin על זה ישרוף CPU."
       ],
       "explanation": "counting semaphore: הערך הוא כמות המשאבים הפנויים. wait מקטין (וחוסם ב-0), post מגדיל ומעיר ממתין. זה ההבדל המעשי מ-mutex, שמגן על משאב יחיד.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מודפס (כשה-exec מצליח)?",
+      "code": "#include <cstdio>\n#include <unistd.h>\n#include <sys/wait.h>\n\nint main() {\n  std::printf(\"A\\n\");\n  std::fflush(stdout);\n  pid_t pid = fork();\n  if (pid == 0) {\n    execlp(\"echo\", \"echo\", \"B\", (char*)nullptr);\n    std::printf(\"C\\n\");\n    return 1;\n  }\n  waitpid(pid, nullptr, 0);\n  std::printf(\"D\\n\");\n}",
+      "choices": [
+        "A D B",
+        "A B D, או A D B, תלוי בתזמון",
+        "A B C D",
+        "A B D"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: `waitpid` חוסם את האב עד שהילד יוצא, ולכן D לא יכול לבוא לפני B.",
+        "שגוי: בלי waitpid זה היה נכון. כאן ה-wait הופך את הסדר לדטרמיניסטי.",
+        "שגוי: `exec` שמצליח לא חוזר. התמונה של הילד הוחלפה ב-echo, ולכן השורה שמדפיסה C לא קיימת יותר. היא רצה רק אם exec נכשל.",
+        "נכון: A מודפס לפני ה-fork (וה-fflush מונע הדפסה כפולה). הילד הופך ל-echo ומדפיס B. האב מחכה ב-waitpid עד שהילד מסיים, ורק אז מדפיס D."
+      ],
+      "explanation": "מחזור fork-exec-wait: fork משכפל, exec מחליף את התוכנית בילד (ולא חוזר אם הצליח), wait מסנכרן את האב עם סיום הילד ואוסף את סטטוס היציאה, כדי שלא יישאר zombie.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1789766/facebookmeta-production-engg-intern-londondublin-jan-feb-2022"
+      ],
+      "problem": "Meta Production Engineering systems round: parent/child processes and the fork-wait-exec cycle",
+      "id": "sys.processes-threads.q43",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שרת יוצר ילד לכל בקשה עם fork. כדי לא להשאיר zombies, הוסיפו handler ל-SIGCHLD שקורא פעם אחת ל-`wait(nullptr)`. תחת עומס עדיין מצטברים zombies. למה, ומה התיקון?",
+      "choices": [
+        "צריך לקרוא ל-`kill` על ה-zombie כדי לשחרר אותו",
+        "ה-handler צריך לקרוא ל-`exit` אחרי ה-wait",
+        "signals רגילים לא נספרים: אם כמה ילדים מתים בזמן שה-SIGCHLD ממתין או בזמן שה-handler רץ, מגיע signal אחד. צריך לולאה `while (waitpid(-1, nullptr, WNOHANG) > 0);` בתוך ה-handler",
+        "`wait` לא בטוח לקריאה מתוך signal handler"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: zombie כבר מת. signal לא עושה לו כלום. רק wait של האב (או מות האב ואימוץ על ידי init) משחרר אותו.",
+        "שגוי: exit יהרוג את השרת עצמו.",
+        "נכון: signal סטנדרטי הוא ביט \"ממתין\", לא תור. עשרה ילדים שמתים כמעט יחד יכולים לגרום ל-handler אחד. הלולאה עם WNOHANG אוספת את כולם בלי להיחסם כשאין יותר.",
+        "שגוי: `wait` ו-`waitpid` נמצאים ברשימת הפונקציות שבטוחות לקריאה מ-signal handler (async-signal-safe)."
+      ],
+      "explanation": "zombie הוא רשומה בטבלת התהליכים שמחכה שהאב יאסוף את סטטוס היציאה. הדרכים לטפל: לולאת waitpid עם WNOHANG ב-handler, או להגדיר SIGCHLD ל-SIG_IGN (ב-Linux זה אומר \"אל תיצור zombies\").",
+      "id": "sys.processes-threads.q44",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "process קורא ל-`execve` בהצלחה. מה **נשמר** אחרי הקריאה? (סמן את כל הנכונות)",
+      "choices": [
+        "ה-PID",
+        "file descriptors פתוחים שלא סומנו FD_CLOEXEC",
+        "signal handlers שהותקנו עם sigaction",
+        "התוכן של ה-heap",
+        "תיקיית העבודה הנוכחית (cwd)",
+        "threads נוספים של ה-process"
+      ],
+      "answer": [
+        0,
+        1,
+        4
+      ],
+      "notes": [
+        "נכון: exec לא יוצר process חדש. זה אותו process עם תוכנית אחרת, ולכן אותו PID. בזכות זה ה-shell יודע לחכות לו.",
+        "נכון: fds עוברים כמו שהם. ככה עובדות הפניות (`>` ו-`|`): ה-shell מסדר את fd 0/1/2 בילד ורק אז עושה exec.",
+        "שגוי: הקוד של ה-handler כבר לא קיים בזיכרון, אז signals עם handler חוזרים ל-default. signals שהוגדרו ל-ignore נשארים ignore.",
+        "שגוי: כל מרחב הזיכרון (code, heap, stack, mmaps) מוחלף בתמונה של התוכנית החדשה.",
+        "נכון: cwd, ה-umask וה-UID/GID נשמרים (חוץ מ-setuid binaries).",
+        "שגוי: execve הורג את כל ה-threads האחרים. ה-process ממשיך עם thread אחד."
+      ],
+      "explanation": "exec מחליף את התוכנית אבל שומר את \"הזהות\" של ה-process: PID, fds, cwd, הרשאות ו-signal mask. בגלל זה FD_CLOEXEC (או O_CLOEXEC) חשוב: בלעדיו כל fd פתוח, כמו socket או קובץ סודי, דולף לתוכנית שמורצת.",
+      "id": "sys.processes-threads.q45",
       "lesson": "sys.processes-threads"
     }
   ]

@@ -239,6 +239,22 @@
         {
           "term": "writer preference / reader preference",
           "def": "ב-RW lock עם reader preference זרם קוראים יכול להרעיב כותב. ב-writer preference קורא חדש מחכה לכותב ממתין, ואז קוראים עלולים להיות מורעבים, ו-read lock רקורסיבי באותו thread יכול להיתקע."
+        },
+        {
+          "term": "ownership של lock",
+          "def": "mutex יודע איזה thread מחזיק אותו. זה מאפשר לזהות unlock על ידי זר, נעילה כפולה ו-priority inheritance. ל-semaphore אין ownership: כל thread יכול לעשות post."
+        },
+        {
+          "term": "atomic context",
+          "def": "הקשר שבו אסור לישון: ISR, softirq, timer callback בקרנל, או קוד שמחזיק spinlock. מותר לקחת שם רק נעילות שלא נרדמות, כמו spinlock."
+        },
+        {
+          "term": "test-and-test-and-set",
+          "def": "spinlock שמחכה בקריאה (load) עד שה-lock נראה פנוי, ורק אז מנסה exchange. כך cores שמחכים מחזיקים עותק משותף של ה-cache line ולא מעבירים אותה ביניהם."
+        },
+        {
+          "term": "counting_semaphore / binary_semaphore",
+          "def": "semaphores של C++20 (`<semaphore>`). `acquire` מוריד את המונה או מחכה, `release` מעלה. `binary_semaphore` הוא alias של `counting_semaphore<1>`."
         }
       ]
     }
@@ -1616,6 +1632,158 @@
         "שגוי: notify תחת ה-lock תקין לגמרי מבחינת נכונות. זה לכל היותר עניין קטן של ביצועים, ולא מסביר קוראים שנשארים ישנים."
       ],
       "id": "conc.mutex-locks.q60",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בונים mutex מ-semaphore של POSIX: `sem_init(&s, 0, 1)`, ה-lock הוא `sem_wait(&s)` וה-unlock הוא `sem_post(&s)`. בנתיב שגיאה נדיר, thread שמעולם לא נעל קורא בטעות ל-unlock. מה קורה?",
+      "choices": [
+        "הקריאה נכשלת עם EPERM, כי ה-thread לא מחזיק את ה-lock",
+        "ה-counter עולה ל-2, ומעכשיו שני threads יכולים להיות בתוך ה-critical section בו-זמנית, בלי שום שגיאה",
+        "ה-thread נחסם עד שמישהו אחר ינעל",
+        "ה-counter נשאר 1 כי semaphore בינארי לא עולה מעל 1"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: EPERM הוא מה ש-mutex עם בדיקת שגיאות (PTHREAD_MUTEX_ERRORCHECK) מחזיר. ל-semaphore אין מושג של בעלים, אז אין מה לבדוק.",
+        "נכון: `sem_post` רק מגדיל מונה. אחרי post מיותר המונה הוא 2, ושני `sem_wait` יעברו בלי לחכות: ה-mutual exclusion נשבר בשקט.",
+        "שגוי: `sem_post` אף פעם לא חוסם. הוא מגדיל את המונה ומעיר ממתין אם יש.",
+        "שגוי: ל-`sem_t` של POSIX אין תקרה של 1. \"בינארי\" זה רק ערך התחלתי ואופן שימוש, לא מגבלה שהמימוש אוכף."
+      ],
+      "explanation": "semaphore עם ערך התחלתי 1 נותן mutual exclusion רק כל עוד כל post מתאים ל-wait קודם של אותו thread. אין ownership, אז unlock שגוי לא מתגלה ושובר את ההגנה בשקט. mutex אמיתי יודע מי הבעלים ויכול לזהות שחרור על ידי זר.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://www.glassdoor.sg/Interview/Google-Interview-E9079-RVW5189145.htm"
+      ],
+      "problem": "Google onsite: implement a mutex using a semaphore",
+      "id": "conc.mutex-locks.q61",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "מישהו מימש lock פשוט עם semaphore של C++20. התוכנית נתקעת כבר בקריאה הראשונה ל-`lock()`. איפה הבאג?",
+      "code": "#include <semaphore>\n\nclass SemLock {\n  std::counting_semaphore<1> sem{0};\npublic:\n  void lock()   { sem.acquire(); }\n  void unlock() { sem.release(); }\n};",
+      "bugLine": 4,
+      "choices": [
+        "ה-semaphore מאותחל ל-0, כלומר \"תפוס\". ה-`acquire` הראשון מחכה ל-release שאף אחד לא יעשה. צריך ערך התחלתי 1",
+        "צריך `std::binary_semaphore` ולא `counting_semaphore<1>`, אחרת אין mutual exclusion",
+        "`acquire` של semaphore הוא spin-wait ולכן ה-thread תקוע ב-busy loop",
+        "חסר `std::memory_order_acquire` בקריאה ל-`acquire()`"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: המונה סופר כמה \"אישורי כניסה\" פנויים. 0 אומר שאין אף אחד, אז הנעילה הראשונה נחסמת לנצח. עם `{1}` הכניסה הראשונה עוברת והבאות מחכות.",
+        "שגוי: `std::binary_semaphore` הוא בדיוק alias של `std::counting_semaphore<1>`. ההחלפה לא משנה כלום.",
+        "שגוי: המימוש יכול לחכות בכל דרך (לרוב futex), אבל הבעיה היא לא איך מחכים אלא שאין למה לחכות: אף אחד לא ישחרר.",
+        "שגוי: ל-`acquire()` אין פרמטר memory_order. release ב-semaphore מסונכרן עם acquire שמצליח, כך שהסדר נשמר."
+      ],
+      "explanation": "ערך התחלתי של semaphore הוא מספר הכניסות הזמינות. כ-lock הוא חייב להיות 1. ערך 0 מתאים לשימוש אחר: signaling, כש-thread אחד מחכה שאחר יודיע שמשהו קרה.",
+      "id": "conc.mutex-locks.q62",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "level": 4,
+      "type": "multi",
+      "prompt": "במערכת real-time החליפו `pthread_mutex_t` (עם PTHREAD_PRIO_INHERIT) ב-lock שבנוי מ-semaphore בינארי. אילו תכונות **אבדו**? (סמן את כל הנכונות)",
+      "choices": [
+        "priority inheritance: המערכת לא יודעת איזה thread \"מחזיק\", אז אין למי להעלות עדיפות",
+        "זיהוי unlock על ידי thread שלא נעל",
+        "mutual exclusion בסיסי כשכל ה-threads משתמשים בו נכון",
+        "אפשרות לזהות נעילה חוזרת של אותו thread (recursive או error-check)",
+        "היכולת לחכות בלי busy-wait"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "notes": [
+        "נכון: priority inheritance דורש לדעת מי הבעלים כדי להעלות את העדיפות שלו כש-thread חשוב יותר מחכה. ל-semaphore אין בעלים, ולכן priority inversion חוזר להיות אפשרי.",
+        "נכון: בלי ownership, `sem_post` מכל thread מתקבל, ושחרור שגוי עובר בשקט.",
+        "שגוי: כל עוד כל wait מלווה ב-post של אותו thread, semaphore עם ערך 1 מבטיח שרק אחד בפנים.",
+        "נכון: mutex יכול להיות recursive או להחזיר EDEADLK על נעילה כפולה. semaphore פשוט ייחסם על עצמו (deadlock) כי הוא לא יודע שזה אותו thread.",
+        "שגוי: `sem_wait` מרדים את ה-thread בקרנל בדיוק כמו mutex. אין כאן הבדל."
+      ],
+      "explanation": "ההבדל המהותי הוא ownership. כל מה שתלוי בשאלה \"מי מחזיק\" (priority inheritance, בדיקת unlock, recursion) נעלם. mutual exclusion והמתנה בלי busy-wait נשארים.",
+      "id": "conc.mutex-locks.q63",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בקוד embedded על SoC מרובה cores, פונקציה מעדכנת שני שדות במבנה משותף (כ-30 cycles). היא נקראת גם מ-timer callback שרץ ב-atomic context (אסור לישון בו) וגם מ-threads רגילים. איזה מנגנון נעילה מתאים?",
+      "choices": [
+        "בלי נעילה: 30 cycles זה מהיר מספיק כך שה-race כמעט לא יקרה",
+        "mutex רגיל: הוא תמיד בטוח יותר מ-spinlock",
+        "spinlock (עם ביטול preemption, וביטול interrupts אם גם ISR נוגע בנתונים): ה-critical section קצר מאוד ואחד המשתמשים לא מורשה לישון",
+        "semaphore מונה עם ערך 2, כדי ששני ההקשרים לא יחסמו זה את זה"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: race נדיר הוא עדיין race. עדכון של שני שדות יכול להיקטע באמצע ולהשאיר מבנה לא עקבי.",
+        "שגוי: נעילת mutex עלולה לישון אם הוא תפוס. ב-atomic context זה באג (ב-Linux: \"scheduling while atomic\").",
+        "נכון: spinlock לא ישן, ולכן מותר בכל הקשר. עם critical section של עשרות cycles, ה-spin קצר מהמחיר של context switch. ב-thread רגיל לוקחים אותו עם preemption כבוי, כדי שהמחזיק לא יופסק באמצע.",
+        "שגוי: ערך 2 מאפשר לשניהם להיכנס יחד, וזה בדיוק ה-race שרוצים למנוע. בנוסף, המתנה על semaphore היא שינה."
+      ],
+      "explanation": "כלל אצבע: spinlock כשה-critical section קצר מאוד, כשיש יותר מ-core אחד, וחובה כשאחד המשתמשים לא רשאי לישון. mutex כשה-critical section ארוך או עלול להיחסם.",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://www.teamblind.com/post/interviewing-at-google-india-zftgxe5s"
+      ],
+      "problem": "Google staff embedded coding round: spinlock vs mutex choice",
+      "id": "conc.mutex-locks.q64",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-glibc יש mutex מסוג adaptive (`PTHREAD_MUTEX_ADAPTIVE_NP`): כשהוא תפוס, ה-thread מסתובב (spin) זמן קצר ורק אז נרדם ב-futex. מתי זה משתלם יותר ממחכים שנרדמים מיד?",
+      "choices": [
+        "כשה-critical section ארוך (מילישניות), כדי לא לבזבז context switches",
+        "במכונה מרובת cores כשה-critical sections קצרים: המחזיק רץ על core אחר וכנראה ישחרר תוך פחות זמן משנדרש להירדם ולהתעורר",
+        "רק כשיש priority inheritance, כי spin מונע priority inversion",
+        "במכונה עם core יחיד, כי שם ה-spin הכי זול"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: עם critical section ארוך ה-spin כמעט תמיד ייכשל, וזה רק בזבוז CPU לפני השינה.",
+        "נכון: הירדמות והתעוררות עולות כמה מיקרו-שניות (syscall, scheduler, cache קר). אם המחזיק רץ על core אחר ומשחרר תוך מאות ננו-שניות, spin קצר חוסך את כל זה.",
+        "שגוי: spin לא פותר priority inversion. אם הוא רץ בעדיפות גבוהה על אותו core שהמחזיק צריך, הוא אפילו מחמיר.",
+        "שגוי: עם core יחיד המחזיק לא רץ בזמן שמסתובבים, אז ה-spin רק שורף זמן CPU שהמחזיק היה צריך כדי לסיים ולשחרר."
+      ],
+      "explanation": "adaptive mutex מנסה לקבל את הטוב משני העולמות: spin קצר כשסביר שהשחרור קרוב, ושינה כשלא. זה משתלם רק כשהמחזיק באמת רץ במקביל, כלומר על core אחר.",
+      "id": "conc.mutex-locks.q65",
+      "lesson": "conc.mutex-locks"
+    },
+    {
+      "level": 5,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ה-spinlock הזה נכון מבחינת correctness, אבל תחת contention של 16 cores הוא מאט מאוד גם את ה-thread שמחזיק אותו. איזו שורה אחראית ולמה?",
+      "code": "class SpinLock {\n  std::atomic<bool> locked{false};\npublic:\n  void lock() {\n    while (locked.exchange(true, std::memory_order_acquire)) {\n      // spin\n    }\n  }\n  void unlock() {\n    locked.store(false, std::memory_order_release);\n  }\n};",
+      "bugLine": 5,
+      "choices": [
+        "כל איטרציה היא פעולת read-modify-write, שדורשת את ה-cache line במצב בלעדי. 15 cores שמסתובבים מעבירים את ה-line ביניהם כל הזמן, וגם ה-unlock של המחזיק מחכה לה. פתרון: test-and-test-and-set, כלומר לחכות עם `load(relaxed)` (ועם pause) ורק אז לנסות `exchange`",
+        "memory_order_acquire חלש מדי. בלי seq_cst שני threads יכולים לקבל true בו-זמנית",
+        "ה-exchange לא אטומי על bool, צריך `std::atomic<int>`",
+        "חסר `yield()` בלולאה, ובלעדיו ה-thread שמחזיק את ה-lock לעולם לא יקבל CPU"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: exchange הוא כתיבה. פרוטוקול coherence (MESI) מחייב שה-core הכותב יחזיק את ה-line לבד, אז כל ניסיון גונב אותה מכולם. קריאה (load) משאירה עותק Shared אצל כל אחד, והתעבורה נעצרת עד שה-unlock משנה את הערך.",
+        "שגוי: exchange הוא RMW אטומי. רק אחד יכול לראות false ולהחליף ל-true, בלי קשר ל-memory order. acquire בנעילה ו-release בשחרור הם בדיוק הסדר הנכון.",
+        "שגוי: `std::atomic<bool>` תומך ב-exchange אטומי, ובפועל הוא lock-free בכל פלטפורמה נפוצה.",
+        "שגוי: עם 16 cores המחזיק רץ על core משלו. yield יכול לעזור כשיש יותר threads מ-cores, אבל הוא לא פותר את תעבורת ה-cache שמאטה את כולם."
+      ],
+      "explanation": "test-and-set נאיבי יוצר \"סערת coherence\": כל ניסיון כותב ל-line. test-and-test-and-set מסתובב על קריאה מקומית, וכותב רק כשה-lock נראה פנוי. מוסיפים `_mm_pause` (או yield ב-ARM) וקצת backoff, וזה ה-spinlock הסטנדרטי.",
+      "id": "conc.mutex-locks.q66",
       "lesson": "conc.mutex-locks"
     }
   ]
