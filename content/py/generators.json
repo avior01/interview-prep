@@ -187,6 +187,58 @@
         {
           "term": "GIL",
           "def": "ה-Global Interpreter Lock של CPython: רק thread אחד מריץ bytecode בכל רגע. ללולאות CPU-bound ב-Python עוברים ל-multiprocessing."
+        },
+        {
+          "term": "map object",
+          "def": "ב-Python 3 `map` מחזיר iterator עצל ולא list. אחרי מעבר אחד הוא ריק. עם כמה iterables הוא מתקדם בהם במקביל ועוצר בקצר."
+        },
+        {
+          "term": "התאמות חופפות",
+          "def": "חיפוש שממשיך מ-`i + 1` אחרי כל התאמה מוצא גם התאמות שחופפות זו לזו. `re.finditer` מחזיר התאמות שאינן חופפות; ב-regex מקבלים חפיפה עם lookahead `(?=...)`."
+        },
+        {
+          "term": "str.find",
+          "def": "מחזיר את האינדקס של ההתאמה הראשונה החל מאינדקס התחלה נתון, או -1 אם אין. מחרוזת ריקה נמצאת בכל מיקום עד len(s)."
+        },
+        {
+          "term": "itertools.tee",
+          "def": "מפצל iterator אחד לכמה iterators עצלים ועצמאיים. כל איבר נקרא מהמקור פעם אחת ונשמר ב-buffer עבור העותקים שעוד לא קראו אותו. אחרי tee אסור להשתמש במקור ישירות."
+        },
+        {
+          "term": "eager validation ב-generator",
+          "def": "גוף של generator function לא רץ עד ה-next הראשון, ולכן בדיקות קלט בתוכו נדחות. כדי לזרוק מיד, בודקים בפונקציה רגילה ומחזירים generator פנימי."
+        },
+        {
+          "term": "bool כתת-מחלקה של int",
+          "def": "`isinstance(True, int)` הוא True, ו-True == 1. בסינון לפי טיפוס מוציאים booleans במפורש או משתמשים ב-`type(x) is int`."
+        },
+        {
+          "term": "heapq.merge",
+          "def": "ממזג כמה iterables ממוינים לזרם ממוין אחד, בעצלות: זיכרון O(k) וזמן O(N log k). לא בודק שהקלט ממוין, יציב בתיקו לפי סדר הזרמים, ותומך ב-`key`."
+        },
+        {
+          "term": "itertools.islice",
+          "def": "חיתוך עצל של iterator: מחזיר עד n איברים בלי לצרוך את השאר. הכרחי לעבודה עם זרמים אינסופיים כמו `itertools.count`."
+        },
+        {
+          "term": "itertools.count",
+          "def": "iterator אינסופי של מספרים בקפיצות קבועות. כל פעולה שצורכת הכל (`list`, `sorted`) עליו לא מסתיימת."
+        },
+        {
+          "term": "file object כ-iterator",
+          "def": "`for line in f` קורא שורה אחת בכל פעם, ולכן הזיכרון חסום באורך השורה. `read()` ו-`readlines()` טוענים את כל הקובץ."
+        },
+        {
+          "term": "קריאה בבלוקים (chunked read)",
+          "def": "`f.read(size)` בלולאה, לקבצים בלי שורות או קבצים בינאריים. צריך לשמור את השארית החלקית בגבול הבלוק (carry) ולחבר אותה לבלוק הבא."
+        },
+        {
+          "term": "csv.reader / DictReader",
+          "def": "parser של CSV שמכבד מרכאות ופסיקים בתוך שדות ועובד שורה אחרי שורה. `DictReader` ממפה לפי שורת הכותרת ומדלג על שורות ריקות. פותחים עם `newline=\"\"` ו-encoding מפורש."
+        },
+        {
+          "term": "dedup בזרם ממוין",
+          "def": "בזרם ממוין כפילויות תמיד סמוכות, ולכן מספיק להשוות לערך האחרון שהוחזר: O(1) זיכרון במקום set בגודל O(N)."
         }
       ]
     }
@@ -811,10 +863,7 @@
         "זיכרון O(n) לכל batch; טיפול ב-n<1"
       ],
       "explanation": "הדפוס הקלאסי: iter פעם אחת ואז islice בלולאה עד chunk ריק. מ-Python 3.12 יש itertools.batched שעושה בדיוק את זה. חשוב return (לא raise StopIteration) כדי לא להיתקל ב-PEP 479.",
-      "lesson": "py.generators",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "py.generators"
     },
     {
       "id": "py.generators.q30",
@@ -858,10 +907,682 @@
         "הענפים לא חולקים מיקום; אילו היו חולקים, b היה מקבל רצף ריק. העצמאות שלהם היא בדיוק מה שמחייב buffer.",
         "נכון: tee חייב לשמור כל פריט שהענף המוביל צרך עד שהענף השני יצרוך אותו. ריקון a עד הסוף שומר את כל הרצף, O(n), ואז `list()` פשוט עדיף."
       ],
-      "lesson": "py.generators",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "apple"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/explain-python-lists-dicts-and-concurrency"
+      ],
+      "problem": "Apple technical screen: map() vs list comprehension",
+      "prompt": "מה מודפס?",
+      "code": "nums = [1, 2, 3]\nsq = map(lambda x: x * x, nums)\nprint(sum(sq), sum(sq))",
+      "choices": [
+        "14 28",
+        "TypeError",
+        "14 14",
+        "14 0"
+      ],
+      "answer": 3,
+      "notes": [
+        "iterator לא מתחיל מחדש ולא מצטבר; אחרי שנגמר הוא נשאר ריק.",
+        "`sum` מקבל כל iterable, כולל map object.",
+        "זה היה נכון אם `map` היה מחזיר list (כמו ב-Python 2) או אם היינו כותבים list comprehension.",
+        "נכון. ב-Python 3 `map` מחזיר iterator עצל. ה-`sum` הראשון צורך אותו עד הסוף, והשני מקבל iterator ריק ומחזיר 0."
+      ],
+      "explanation": "ההבדל המהותי בין `map` ל-list comprehension: `map` עצל ומתכלה אחרי מעבר אחד, ו-comprehension בונה רשימה מלאה שאפשר לעבור עליה שוב. אם צריך כמה מעברים, הופכים ל-list או משתמשים ב-comprehension.",
+      "id": "py.generators.q32",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "a = [1, 2, 3]\nb = [10, 20]\nprint(list(map(lambda x, y: x + y, a, b)), [x + y for x in a for y in b][:2])",
+      "choices": [
+        "ValueError",
+        "[11, 22] [11, 21]",
+        "[11, 22, 3] [11, 22]",
+        "[11, 22] [11, 22]"
+      ],
+      "answer": 1,
+      "notes": [
+        "אורכים שונים לא זורקים ב-`map`. (רק `zip(..., strict=True)` זורק במקרה כזה.)",
+        "נכון. `map` עם שני iterables מתקדם בהם במקביל (כמו zip) ועוצר בקצר. ה-comprehension עם שני for הוא מכפלה קרטזית: 1+10, 1+20, ...",
+        "`map` לא משלים איברים חסרים; הוא עוצר כשהקצר נגמר (בשונה מ-`itertools.zip_longest`).",
+        "שני ה-for ב-comprehension הם לולאות מקוננות, לא מעבר מקביל, ולכן האיבר השני הוא 1+20."
+      ],
+      "explanation": "`map(f, a, b)` שקול ל-`(f(x, y) for x, y in zip(a, b))`. comprehension עם שני `for` הוא nested loop. בלבול בין השניים הוא טעות נפוצה בראיונות.",
+      "id": "py.generators.q33",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מתי `map` עדיף באמת על list comprehension ב-Python 3?",
+      "choices": [
+        "תמיד, כי map ממומש ב-C ולכן מהיר יותר בכל מקרה",
+        "כשמפעילים פונקציה קיימת (במיוחד builtin כמו `str` או `int`) וכשרוצים עצלות, למשל `map(int, line.split())` או זרם שלא רוצים לאחסן; עם lambda, comprehension בדרך כלל קריא יותר ולא איטי יותר",
+        "כשצריך לסנן איברים לפי תנאי",
+        "כשצריך לעבור על התוצאה כמה פעמים"
+      ],
+      "answer": 1,
+      "notes": [
+        "עם lambda כל איבר משלם קריאה לפונקציית Python, ולכן comprehension (שמריץ את הביטוי inline) בדרך כלל מהיר באותה מידה או יותר.",
+        "נכון. עם builtin אין עלות של frame ל-lambda, ו-map נותן עצלות בלי לכתוב generator expression. זה הקו שמראיינים מצפים לשמוע.",
+        "לסינון צריך `filter` או comprehension עם `if`; map לבד לא מסנן.",
+        "map הוא iterator חד-פעמי; לכמה מעברים צריך list."
+      ],
+      "explanation": "התשובה הבוגרת לשאלת map מול comprehension: comprehension לקריאות ולסינון, map עם builtin קיים או כשרוצים iterator עצל, ו-generator expression כשרוצים עצלות עם ביטוי מורכב.",
+      "id": "py.generators.q34",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "apple"
+      ],
+      "sources": [
+        "https://prachub.com/coding-questions/write-a-generator-for-substring-pattern-matches",
+        "https://prachub.com/interview-experiences/apple-new-grad-machine-learning-engineer-interview-experience-two-tech-screens-no-feedback-on-the-reject"
+      ],
+      "problem": "Apple ML tech screen: generator yielding every pattern match",
+      "prompt": "מה מודפס?",
+      "code": "import re\n\ndef find_all(s, p):\n    i = s.find(p)\n    while i != -1:\n        yield i\n        i = s.find(p, i + 1)\n\nprint(list(find_all(\"aaaa\", \"aa\")),\n      [m.start() for m in re.finditer(\"aa\", \"aaaa\")])",
+      "choices": [
+        "[0, 1, 2] [0, 1, 2]",
+        "[0, 1, 2] [0, 2]",
+        "[0, 2] [0, 1, 2]",
+        "[0, 2] [0, 2]"
+      ],
+      "answer": 1,
+      "notes": [
+        "`re.finditer` מחזיר התאמות שאינן חופפות: אחרי התאמה ב-0 החיפוש ממשיך מסוף ההתאמה (2).",
+        "נכון. ה-generator מתקדם בתו אחד אחרי כל התאמה ומוצא 0, 1, 2. `re.finditer` מדלג אחרי כל התאמה לסופה ומוצא רק 0 ו-2.",
+        "הפוך: ה-generator הוא שמוצא חפיפות, ו-regex הוא שמדלג.",
+        "זה היה נכון אם ה-generator היה ממשיך מ-`i + len(p)`. הוא ממשיך מ-`i + 1`, ולכן מוצא גם התאמות חופפות."
+      ],
+      "explanation": "כדי למצוא התאמות חופפות מתקדמים באחד אחרי כל התאמה (או ב-regex משתמשים ב-lookahead: `(?=aa)`). generator מתאים כאן כי הוא מחזיר מיקומים אחד אחד בלי לבנות רשימה, ואפשר לעצור באמצע.",
+      "id": "py.generators.q35",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "ה-generator אמור להחזיר את כל מיקומי ההתאמה (כולל חופפים). על `find_all(\"abab\", \"ab\")` הוא לא מסתיים. איפה הבאג?",
+      "code": "def find_all(s, p):\n    i = s.find(p)\n    while i != -1:\n        yield i\n        i = s.find(p, i)",
+      "bugLine": 5,
+      "choices": [
+        "`yield` בתוך `while` הופך את הפונקציה לרקורסיבית",
+        "צריך `return` אחרי הלולאה, אחרת ה-generator לא נגמר",
+        "`s.find(p, i)` מתחיל לחפש מאותו מיקום שבו נמצאה ההתאמה, ולכן מוצא אותה שוב ושוב: לולאה אינסופית. צריך `i + 1`",
+        "`s.find` מחזיר None כשאין התאמה, ולכן התנאי `!= -1` לא עוצר"
+      ],
+      "answer": 2,
+      "notes": [
+        "`yield` משהה את הפונקציה ומחזיר ערך; אין כאן קריאה עצמית.",
+        "generator נגמר אוטומטית כשהגוף מגיע לסוף (זה מעלה StopIteration). `return` מפורש לא נדרש.",
+        "נכון. הפרמטר השני של `find` הוא אינדקס התחלה כולל, וההתאמה ב-i מתחילה בדיוק שם. כל איטרציה מחזירה את אותו i.",
+        "`str.find` מחזיר -1 כשאין התאמה (`str.index` הוא שזורק). התנאי נכון."
+      ],
+      "explanation": "באג קלאסי בלולאות חיפוש: לא מקדמים את נקודת ההתחלה. `i + 1` נותן התאמות חופפות, `i + len(p)` נותן התאמות שאינן חופפות (ובמקרה של p ריק גם הוא נתקע).",
+      "id": "py.generators.q36",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס כשהתבנית היא מחרוזת ריקה?",
+      "code": "def find_all(s, p):\n    i = s.find(p)\n    while i != -1:\n        yield i\n        i = s.find(p, i + 1)\n\nprint(list(find_all(\"abc\", \"\")))",
+      "choices": [
+        "לולאה אינסופית",
+        "[]",
+        "[0, 1, 2]",
+        "[0, 1, 2, 3]"
+      ],
+      "answer": 3,
+      "notes": [
+        "בזכות `i + 1` נקודת ההתחלה מתקדמת, ומעבר לאורך המחרוזת `find` מחזיר -1.",
+        "מחרוזת ריקה נמצאת בכל מיקום, כולל 0, ולכן `find` לא מחזיר -1 בהתחלה.",
+        "זה מפספס את המיקום אחרי התו האחרון: `\"abc\".find(\"\", 3)` מחזיר 3.",
+        "נכון. ריק נמצא בכל אחד מ-4 הגבולות 0..3. `find(\"\", 4)` מחזיר -1, כי 4 מעבר לאורך, והלולאה נעצרת."
+      ],
+      "explanation": "מקרה קצה שמראיינים אוהבים: תבנית ריקה. עם `i + len(p)` הקוד היה נתקע (len הוא 0), ועם `i + 1` הוא מחזיר len(s) + 1 מיקומים. כדאי להחליט במפורש מה החוזה (למשל לזרוק ValueError על p ריק).",
+      "id": "py.generators.q37",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/implement-a-lazy-tee-iterator-in-python"
+      ],
+      "problem": "Google technical screen: implement a lazy itertools.tee",
+      "prompt": "מה מודפס?",
+      "code": "from itertools import tee\n\nsrc = iter([1, 2, 3, 4])\na, b = tee(src)\nnext(a)\nnext(src)\nprint(list(a), list(b))",
+      "choices": [
+        "[2, 3, 4] [1, 2, 3, 4]",
+        "[3, 4] [1, 3, 4]",
+        "[2, 3, 4] [2, 3, 4]",
+        "[3, 4] [3, 4]"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה היה נכון אם `tee` היה מעתיק את המקור מראש. הוא עצל וקורא מהמקור רק כשאחד העותקים צריך איבר, ולכן `next(src)` גונב את 2.",
+        "נכון. `next(a)` קורא 1 מהמקור ושומר אותו ב-buffer בשביל b. `next(src)` צורך את 2 ישירות, מאחורי הגב של tee. אחר כך a מקבל 3, 4, ו-b מקבל את ה-1 מה-buffer ואז 3, 4.",
+        "ה-1 נשמר ב-buffer של b, ולכן b מתחיל ב-1.",
+        "b לא איבד את ה-1; רק את ה-2 שנצרך ישירות מהמקור."
+      ],
+      "explanation": "אחרי `tee` אסור להשתמש באיטרטור המקורי: כל איבר שנצרך ממנו ישירות לא עובר דרך ה-buffers ונעלם מכל העותקים. מימוש tee שומר buffer לכל עותק (או buffer משותף) של איברים שעותק אחר כבר קרא.",
+      "id": "py.generators.q38",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מממשים בעצמך `tee(it, n)` שמחזיר n iterators עצלים ובלתי תלויים, כשכל איבר נקרא מהמקור פעם אחת בלבד. איזה מימוש נכון?",
+      "choices": [
+        "לכל עותק `deque` משלו. עותק שה-deque שלו ריק קורא איבר אחד מהמקור ומוסיף אותו ל-deques של כל העותקים האחרים; אחרת הוא מוציא מה-deque שלו. כשהמקור נגמר, עותק עם deque ריק מסיים",
+        "כל עותק קורא ל-`iter(it)` מחדש ומתחיל מההתחלה",
+        "מריצים thread לכל עותק שקורא מהמקור בעצמו",
+        "`items = list(it)` ואז מחזירים `n` פעמים `iter(items)`"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. הזיכרון שווה לפער בין העותק המהיר לאיטי ביותר, וכל איבר נקרא פעם אחת. זה בדיוק ה-trade-off של `itertools.tee`: אם עותק אחד רץ קדימה הרבה, ה-buffer של האחרים גדל.",
+        "`iter()` על iterator מחזיר את אותו iterator, לא עותק מתחיל מחדש. העותקים היו גונבים איברים זה מזה.",
+        "threads לא פותרים את הבעיה; הם רק מוסיפים race על אותו מקור, וכל איבר יגיע לעותק אחד בלבד.",
+        "זה לא עצל ולא עובד על מקור אינסופי או ענק: `list` צורך הכל מראש."
+      ],
+      "explanation": "האתגר ב-tee הוא שהמקור הוא iterator חד-פעמי. הפתרון: buffer לכל צרכן שנמלא כשצרכן אחר קורא. follow-up נפוץ: מה הזיכרון כשצרכן אחד צורך הכל לפני השני (O(n)), ומתי עדיף פשוט `list`.",
+      "id": "py.generators.q39",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "from itertools import tee\n\ndef gen():\n    for i in range(3):\n        print(\"read\", i)\n        yield i\n\na, b = tee(gen())\nprint(next(a), next(b))",
+      "choices": [
+        "read 0\nread 0\n0 0",
+        "0 0",
+        "read 0\nread 1\nread 2\n0 0",
+        "read 0\n0 0"
+      ],
+      "answer": 3,
+      "notes": [
+        "המקור נקרא פעם אחת לכל איבר; העותק השני מקבל אותו מה-buffer.",
+        "`next(a)` כן מפעיל את גוף ה-generator עד ה-yield הראשון, ולכן read 0 מודפס.",
+        "tee עצל: הוא לא צורך את המקור מראש.",
+        "נכון. `next(a)` מושך מהמקור את 0 (ומדפיס read 0) ושומר אותו בשביל b. `next(b)` מקבל את 0 מה-buffer בלי לקרוא שוב מהמקור. רק אחר כך ה-print החיצוני רץ."
+      ],
+      "explanation": "tee מבטיח שכל איבר מהמקור נקרא פעם אחת, גם כשיש כמה צרכנים. side effects במקור (הדפסה, קריאה מרשת) קורים פעם אחת לכל איבר.",
+      "id": "py.generators.q40",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/implement-a-robust-python-generator"
+      ],
+      "problem": "Google ML engineer onsite: robust memory-light generator over messy input",
+      "prompt": "מה מודפס?",
+      "code": "def clean(xs):\n    if xs is None:\n        raise ValueError(\"no input\")\n    for x in xs:\n        if isinstance(x, int):\n            yield x\n\ng = clean(None)\nprint(\"created\")\ntry:\n    list(g)\nexcept ValueError as e:\n    print(\"error:\", e)",
+      "choices": [
+        "created\n[]",
+        "error: no input",
+        "created\nerror: no input",
+        "created"
+      ],
+      "answer": 2,
+      "notes": [
+        "`list` לא מחזיר רשימה ריקה, כי הגוף זורק לפני ה-yield הראשון.",
+        "זה היה נכון אם הבדיקה הייתה רצה בקריאה ל-`clean`. בפונקציית generator שום שורה לא רצה עד ה-`next` הראשון.",
+        "נכון. `clean(None)` רק יוצר generator object. הגוף, כולל הבדיקה, מתחיל לרוץ רק כש-`list` מבקש את האיבר הראשון, ושם נזרק ה-ValueError.",
+        "ה-exception כן נזרק, ברגע שמתחילים לצרוך את ה-generator."
+      ],
+      "explanation": "בדיקות קלט בתוך generator נדחות עד הצריכה הראשונה, ולכן השגיאה מופיעה רחוק מהמקום שבו הועבר הקלט הגרוע. התיקון המקובל: פונקציה רגילה שבודקת ומחזירה generator פנימי.",
+      "id": "py.generators.q41",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "ה-generator אמור להעביר רק מספרים שלמים ולדלג על כל השאר. מה מודפס?",
+      "code": "def ints(xs):\n    for x in xs:\n        if isinstance(x, int):\n            yield x\n\nprint(list(ints([1, True, \"2\", None, 3.0, 4])))",
+      "choices": [
+        "[1, 4]",
+        "[1, True, 4]",
+        "[1, 2, 3, 4]",
+        "[1, True, 3.0, 4]"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה מה שרצו, אבל `bool` הוא תת-מחלקה של `int`, ולכן True עובר את הבדיקה.",
+        "נכון. `isinstance(True, int)` הוא True. \"2\" הוא str, None מדולג, ו-3.0 הוא float ולא int.",
+        "`isinstance` לא ממיר טיפוסים; \"2\" ו-3.0 מדולגים.",
+        "3.0 הוא float, ו-`isinstance(3.0, int)` הוא False."
+      ],
+      "explanation": "מלכודת נפוצה בסינון לפי טיפוס: bool יורש מ-int. כדי להוציא booleans כותבים `isinstance(x, int) and not isinstance(x, bool)` או `type(x) is int`.",
+      "id": "py.generators.q42",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "רוצים ש-`clean(None)` יזרוק מיד בקריאה, ולא רק כשמתחילים לצרוך, ועדיין להחזיר generator עצל. מה הדרך הנכונה?",
+      "choices": [
+        "פונקציה רגילה (בלי yield) שבודקת את הקלט ואז מחזירה generator מפונקציה פנימית או generator expression",
+        "לעטוף את הקריאה ב-`list(...)` כבר ביצירה",
+        "להחליף את `raise` ב-`return`",
+        "להוסיף `yield` ריק בתחילת הפונקציה"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. החלק הרגיל רץ מיד בקריאה וזורק אם צריך, ורק אחר כך מוחזר ה-generator העצל. זה הדפוס של הרבה פונקציות בספרייה הסטנדרטית.",
+        "`list` מבטל את העצלות ואת היתרון בזיכרון, שהם כל הסיבה ל-generator.",
+        "`return` ב-generator רק מסיים אותו בשקט; הקלט הגרוע לא ידווח בכלל.",
+        "כל פונקציה שמכילה yield היא generator function, והגוף שלה לא רץ עד ה-next הראשון. yield נוסף רק משנה את הפלט."
+      ],
+      "explanation": "הפרדה בין validation (eager) לבין iteration (lazy) נותנת גם שגיאות מוקדמות וגם זיכרון קבוע. זה follow-up טבעי לכל שאלת 'כתוב generator רובסטי'.",
+      "id": "py.generators.q43",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://prachub.com/coding-questions/implement-iterator-merging-lists-with-filtering"
+      ],
+      "problem": "Google technical screen: iterator merging lists, filtering blocked IDs, no duplicates",
+      "prompt": "מה מודפס?",
+      "code": "import heapq\n\ndef merged(lists, blocked):\n    seen = set()\n    for x in heapq.merge(*lists):\n        if x in blocked or x in seen:\n            continue\n        seen.add(x)\n        yield x\n\nprint(list(merged([[1, 4, 7], [2, 4, 9], [1, 3]], {3, 9})))",
+      "choices": [
+        "[1, 4, 7, 2, 9, 3]",
+        "[1, 2, 3, 4, 7, 9]",
+        "[1, 2, 4, 7]",
+        "[1, 1, 2, 4, 4, 7]"
+      ],
+      "answer": 2,
+      "notes": [
+        "`heapq.merge` לא משרשר את הרשימות; הוא ממזג אותן לפי סדר.",
+        "3 ו-9 נמצאים ב-`blocked` ולכן לא מוחזרים.",
+        "נכון. `heapq.merge` מחזיר את כל האיברים בסדר ממוין: 1, 1, 2, 3, 4, 4, 7, 9. 3 ו-9 חסומים, והכפילויות של 1 ו-4 מדולגות בזכות `seen`.",
+        "`seen` מונע כפילויות: כל ערך עובר פעם אחת."
+      ],
+      "explanation": "שילוב של שלושה רעיונות: מיזוג עצל של רשימות ממוינות (`heapq.merge`), סינון ב-set ב-O(1), ו-dedup. כשהקלט ממוין, follow-up טבעי הוא להחליף את `seen` במשתנה `last` ולחסוך זיכרון.",
+      "id": "py.generators.q44",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ה-iterator ממזג k רשימות ממוינות (סה\"כ N איברים) ומחזיר כל ערך פעם אחת. כמה זיכרון דרוש ל-dedup, ואיך מקטינים אותו?",
+      "choices": [
+        "צריך למיין מחדש את הפלט כדי לזהות כפילויות",
+        "O(1) כבר עכשיו, כי set של Python דחוס",
+        "עם `seen = set()` זה O(N) במקרה הגרוע. מכיוון שהפלט של המיזוג ממוין, כפילויות תמיד סמוכות, ומספיק לזכור את הערך האחרון שהוחזר: O(1) ל-dedup ו-O(k) ל-heap",
+        "אי אפשר לעשות dedup בלי לזכור את כל הערכים"
+      ],
+      "answer": 2,
+      "notes": [
+        "הפלט כבר ממוין; מיון נוסף מבזבז O(N log N) וגם מבטל את העצלות.",
+        "set שומר כל ערך שנראה, ולכן הוא גדל עם מספר הערכים הייחודיים.",
+        "נכון. בזרם ממוין, ערך שחוזר מופיע מיד אחרי עצמו, ולכן השוואה ל-`last` מספיקה. ה-heap של `heapq.merge` מחזיק איבר אחד מכל רשימה, כלומר O(k).",
+        "בזרם לא ממוין זה נכון, אבל כאן הסדר מבטיח שכפילויות סמוכות."
+      ],
+      "explanation": "הנחת המיון היא משאב: היא מאפשרת dedup ב-O(1) זיכרון. בראיון, לשאול 'האם הקלט ממוין?' ולנצל את התשובה זה בדיוק מה שמצפים מסניור.",
+      "id": "py.generators.q45",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "ה-generator אמור להחזיר כל ערך שאינו חסום פעם אחת בלבד, אבל הפלט מכיל כפילויות. באיזו שורה הבאג?",
+      "code": "import heapq\n\ndef merged(lists, blocked):\n    for x in heapq.merge(*lists):\n        seen = set()\n        if x in blocked or x in seen:\n            continue\n        seen.add(x)\n        yield x",
+      "bugLine": 5,
+      "choices": [
+        "`seen` נוצר מחדש בכל איטרציה, ולכן הוא תמיד ריק בבדיקה וכל כפילות עוברת. צריך ליצור אותו פעם אחת לפני הלולאה",
+        "`heapq.merge` לא ממיין, ולכן כפילויות לא סמוכות",
+        "`continue` בתוך generator מסיים אותו",
+        "`x in blocked` הוא O(n) ולכן מחזיר תוצאה שגויה"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. השמה `seen = set()` בתוך הלולאה מאפסת את ה-state בכל איבר. state שצריך לשרוד לאורך כל הזרם שייך לפני הלולאה.",
+        "`heapq.merge` כן מחזיר פלט ממוין כשכל רשימה ממוינת; הבעיה היא באיפוס ה-set.",
+        "`continue` עובר לאיבר הבא; רק `return` מסיים generator.",
+        "סיבוכיות לא משנה נכונות; ואם `blocked` הוא set הבדיקה היא O(1)."
+      ],
+      "explanation": "באג scope קלאסי: state שמאותחל בתוך הלולאה במקום מחוץ לה. ב-generator זה קל לפספס, כי הקוד נראה תקין בבדיקה עם קלט בלי כפילויות.",
+      "id": "py.generators.q46",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/implement-robust-word-counts-and-min-max"
+      ],
+      "problem": "Amazon onsite: count words in a 50 GB file without loading it into memory",
+      "prompt": "צריך לספור מילים בקובץ טקסט של 50 GB על מכונה עם 8 GB RAM. איזו גישה נותנת זיכרון חסום (בהנחה שהשורות באורך סביר)?",
+      "choices": [
+        "`for line in open(path, encoding=\"utf-8\"):` ולכל שורה `for w in line.split(): counts[w] = counts.get(w, 0) + 1`",
+        "`lines = open(path).readlines()` ואז לולאה על השורות",
+        "`collections.Counter(open(path).read().split())`",
+        "`words = open(path).read().split()` ואז ספירה ב-dict"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. file object הוא iterator עצל על שורות, ולכן בכל רגע יש בזיכרון שורה אחת ועוד ה-dict של הספירות (שגודלו כמספר המילים הייחודיות, לא כגודל הקובץ).",
+        "`readlines()` בונה רשימה של כל השורות, כלומר את כל הקובץ בזיכרון.",
+        "Counter הוא בחירה טובה לספירה, אבל `read().split()` עדיין טוען הכל קודם.",
+        "`read()` טוען את כל 50 ה-GB לזיכרון, ו-`split` יוצר רשימה של כל המילים בנוסף."
+      ],
+      "explanation": "המפתח הוא לצרוך את הקובץ כזרם. follow-ups שכדאי לצפות: מה אם אין שורות בכלל (קובץ של שורה אחת ענקית) — קוראים בבלוקים עם `f.read(size)` ומטפלים במילה שנחתכה בגבול; ומה אם גם ה-dict לא נכנס לזיכרון — hashing לקבצים זמניים או count-min sketch.",
+      "id": "py.generators.q47",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "הקובץ הוא שורה אחת ענקית, ולכן קוראים אותו בבלוקים. ה-generator אמור להחזיר את כל המילים, אבל על חלק מהמילים הספירה שגויה. איפה הבאג?",
+      "code": "def words(f, size=1 << 20):\n    while True:\n        chunk = f.read(size)\n        if not chunk:\n            break\n        yield from chunk.split()",
+      "bugLine": 6,
+      "choices": [
+        "`yield from` טוען את כל הקובץ לזיכרון",
+        "`if not chunk` לא מזהה סוף קובץ",
+        "מילה שנחתכת בגבול בין שני בלוקים מוחזרת כשתי מילים. צריך לשמור את החלק האחרון של כל בלוק (אם הבלוק לא נגמר ברווח) ולחבר אותו לתחילת הבלוק הבא, ולהחזיר את השארית בסוף",
+        "`f.read(size)` קורא size שורות ולא size תווים"
+      ],
+      "answer": 2,
+      "notes": [
+        "`yield from` מעביר את איברי הרשימה של הבלוק הנוכחי אחד אחד; הזיכרון חסום בגודל בלוק.",
+        "`read` מחזיר מחרוזת ריקה בסוף הקובץ, ו-`not \"\"` הוא True. התנאי נכון.",
+        "נכון. למשל עם בלוקים של 4 תווים, \"hello world\" נקרא כ-\"hell\", \"o wo\", \"rld\" ויוצא hell, o, wo, rld. צריך carry: `parts = (carry + chunk).split()`, ואם הבלוק לא נגמר ב-whitespace, האחרון נשמר ל-carry.",
+        "`read(n)` במצב טקסט קורא עד n תווים, לא שורות."
+      ],
+      "explanation": "קריאה בבלוקים פותרת את בעיית הזיכרון אבל יוצרת בעיית גבולות. אותו עיקרון חל על parsing של packets מזרם TCP: תמיד לשמור את השארית החלקית לבלוק הבא.",
+      "id": "py.generators.q48",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "ספירת מילים בלי Counter, בלי תלות ב-case. מה מודפס?",
+      "code": "text = \"The cat the CAT a\"\nd = {}\nfor w in text.lower().split():\n    d[w] = d.get(w, 0) + 1\nprint(sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:2])",
+      "choices": [
+        "[('The', 1), ('cat', 1)]",
+        "[('cat', 2), ('the', 2)]",
+        "[('the', 2), ('cat', 2)]",
+        "[('a', 1), ('cat', 2)]"
+      ],
+      "answer": 1,
+      "notes": [
+        "`lower()` מאחד את כל הגרסאות לפני הספירה.",
+        "נכון. אחרי `lower` הספירות הן the:2, cat:2, a:1. המיון לפי ספירה יורדת ואז לפי המילה עצמה שם את cat לפני the.",
+        "זה סדר ההכנסה ל-dict, אבל ה-key ממיין לפי (ספירה יורדת, מילה) ו-'cat' < 'the'.",
+        "המינוס על הספירה הופך את המיון לסדר יורד, ולכן הספירות הגבוהות ראשונות."
+      ],
+      "explanation": "`d.get(w, 0) + 1` הוא האידיום לספירה עם dict בלבד. מיון לפי tuple עם ערך שלילי נותן סדר יורד בספירה ועולה בשובר השוויון, מה שהופך את התוצאה לדטרמיניסטית.",
+      "id": "py.generators.q49",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://prachub.com/coding-questions/merge-sorted-event-streams-through-an-iterator"
+      ],
+      "problem": "Amazon onsite: iterator that merges timestamp-sorted event streams",
+      "prompt": "`heapq.merge` מקבל רשימה שאינה ממוינת. מה מודפס?",
+      "code": "import heapq\nprint(list(heapq.merge([1, 5, 3], [2, 4])))",
+      "choices": [
+        "[1, 2, 3, 4, 5]",
+        "[1, 2, 4, 5, 3]",
+        "ValueError",
+        "[1, 5, 3, 2, 4]"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה היה נכון אם `merge` היה ממיין. הוא רק ממזג ומניח שכל קלט כבר ממוין.",
+        "נכון. ה-heap מחזיק את הראש של כל זרם: 1 ו-2 → 1; אחר כך 5 ו-2 → 2; 5 ו-4 → 4; הזרם השני נגמר, והשאר יוצא בסדר המקורי: 5, 3.",
+        "`heapq.merge` לא בודק שהקלט ממוין ולא זורק.",
+        "זה שרשור; `merge` כן משווה בין ראשי הזרמים."
+      ],
+      "explanation": "`heapq.merge` הוא O(N log k) ועצל, אבל רק בתנאי שכל זרם ממוין. בזרמי events עם timestamps לא מסודרים (out-of-order) צריך buffer עם watermark לפני המיזוג.",
+      "id": "py.generators.q50",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 4,
+      "type": "output",
+      "lang": "python",
+      "prompt": "שני זרמי events ממוינים לפי timestamp, עם timestamps זהים. מה מודפס?",
+      "code": "import heapq\n\na = [(1, \"a1\"), (3, \"a3\")]\nb = [(1, \"b1\"), (2, \"b2\")]\nprint([t for _, t in heapq.merge(a, b, key=lambda p: p[0])])",
+      "choices": [
+        "['b1', 'a1', 'b2', 'a3']",
+        "סדר a1/b1 לא מוגדר",
+        "TypeError",
+        "['a1', 'b1', 'b2', 'a3']"
+      ],
+      "answer": 3,
+      "notes": [
+        "זה היה נכון אם בתיקו היה עדיפות לזרם האחרון.",
+        "התיעוד מבטיח יציבות, ולכן הסדר מוגדר.",
+        "עם `key` משווים רק את ה-timestamp, ולכן לא מגיעים להשוואת המחרוזות; וגם השוואת tuples של (int, str) חוקית.",
+        "נכון. `heapq.merge` יציב: בתיקו ב-key, איבר מהזרם שהועבר ראשון יוצא קודם."
+      ],
+      "explanation": "ב-merge של events, יציבות בתיקו חשובה לדטרמיניזם (למשל replay של לוגים). `heapq.merge` שובר תיקו לפי סדר הזרמים. במימוש ידני עם heapq שמים tuple של (timestamp, stream_index, seq) כדי לקבל אותה התנהגות ולא להשוות payloads.",
+      "id": "py.generators.q51",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ממזגים לוגים מ-k שרתים, כל לוג ממוין לפי timestamp, וצורכים את הפלט כזרם. למה לא `sorted(itertools.chain(*logs))`?",
+      "choices": [
+        "כי `sorted` לא יציב",
+        "כי `sorted` לא יודע למיין tuples",
+        "כי `chain` לא עובד על iterators",
+        "כי `sorted` צורך את כל הקלט לפני שהוא מחזיר איבר ראשון: זיכרון O(N), זמן O(N log N), ואין פלט עד הסוף. `heapq.merge` מחזיר את האיבר הראשון מיד, עם זיכרון O(k) וזמן O(N log k)"
+      ],
+      "answer": 3,
+      "notes": [
+        "`sorted` ב-Python יציב (Timsort).",
+        "`sorted` ממיין tuples לקסיקוגרפית בלי בעיה.",
+        "`chain` מקבל כל iterables, כולל iterators.",
+        "נכון. זה ההבדל בין פתרון batch לפתרון streaming. מנצלים את זה שכל לוג כבר ממוין."
+      ],
+      "explanation": "כשהקלט כבר ממוין חלקית, מיזוג עם heap בגודל k עדיף על מיון מלא: פלט מיידי, זיכרון קטן, וזמן O(N log k).",
+      "id": "py.generators.q52",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://prachub.com/coding-questions/implement-streaming-k-way-merge-with-constraints"
+      ],
+      "problem": "Amazon onsite: streaming k-way merge over possibly infinite sorted iterators",
+      "prompt": "`merge_k` אמורה להחזיר את N האיברים הקטנים ביותר מ-k iterators ממוינים, שחלקם אינסופיים. הקריאה לא חוזרת לעולם. איפה הבאג?",
+      "code": "import itertools\n\ndef merge_k(iterators, n):\n    allv = itertools.chain(*iterators)\n    return sorted(allv)[:n]\n\nevens = itertools.count(0, 2)\nodds = itertools.count(1, 2)\nprint(merge_k([evens, odds], 5))",
+      "bugLine": 5,
+      "choices": [
+        "החיתוך `[:n]` לא עובד על list",
+        "`sorted` מנסה לצרוך את כל הקלט, ועל iterator אינסופי זה לא נגמר. צריך מיזוג עצל, למשל `list(itertools.islice(heapq.merge(*iterators), n))`",
+        "`itertools.chain` לא מקבל iterators אינסופיים",
+        "`itertools.count(0, 2)` מחזיר רשימה ולא iterator"
+      ],
+      "answer": 1,
+      "notes": [
+        "חיתוך list תקין; פשוט לא מגיעים אליו.",
+        "נכון. כל פעולה שצורכת הכל (`sorted`, `list`, `len`) לא מסתיימת על זרם אינסופי. `heapq.merge` מושך איבר אחד מכל זרם לפי הצורך, ו-`islice` עוצר אחרי n.",
+        "`chain` עצל ועובד על כל iterable; הוא פשוט לעולם לא יגיע לזרם השני אם הראשון אינסופי.",
+        "`count` מחזיר iterator אינסופי ועצל."
+      ],
+      "explanation": "עם זרמים אינסופיים כל שלב ב-pipeline חייב להיות עצל. `heapq.merge` + `islice` נותנים O(n log k) זמן ו-O(k) זיכרון.",
+      "id": "py.generators.q53",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import heapq, itertools\n\nevens = itertools.count(0, 2)\nodds = itertools.count(1, 2)\nprint(list(itertools.islice(heapq.merge(evens, odds), 5)))",
+      "choices": [
+        "[0, 1, 2, 3, 4]",
+        "[0, 2, 4, 6, 8]",
+        "התוכנית לא מסתיימת",
+        "[0, 1, 2, 3, 4, 5]"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. `heapq.merge` מושך ראש מכל זרם ומחזיר את הקטן, ו-`islice` עוצר אחרי חמישה איברים. אף זרם לא נצרך עד הסוף.",
+        "זה היה הפלט של `chain` (או של מיזוג שמרוקן זרם אחד לפני השני).",
+        "`merge` ו-`islice` שניהם עצלים, ולכן לא מנסים להגיע לסוף.",
+        "`islice(..., 5)` מחזיר בדיוק חמישה איברים: אינדקסים 0 עד 4."
+      ],
+      "explanation": "השילוב של `heapq.merge` עם `islice` הוא הפתרון האידיומטי ל-'top N מתוך k זרמים ממוינים'.",
+      "id": "py.generators.q54",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "prompt": "אחד הזרמים ריק. מה מודפס?",
+      "code": "import heapq\n\nits = [iter([5, 9]), iter([]), iter([1, 2, 10])]\ng = heapq.merge(*its)\nprint(next(g), next(g), next(g))",
+      "choices": [
+        "5 9 1",
+        "StopIteration",
+        "1 5 9",
+        "1 2 5"
+      ],
+      "answer": 3,
+      "notes": [
+        "זה שרשור לפי סדר הזרמים, לא מיזוג.",
+        "StopIteration היה נזרק רק אם כל הזרמים היו נגמרים; יש עוד חמישה איברים.",
+        "אחרי 1 הראש של הזרם השלישי הוא 2, שקטן מ-5.",
+        "נכון. זרם ריק פשוט לא נכנס ל-heap. המיזוג מחזיר 1, 2 מהזרם השלישי ואז 5 מהראשון."
+      ],
+      "explanation": "מימוש נכון של k-way merge חייב לטפל בזרמים ריקים ובזרמים שנגמרים באמצע. `heapq.merge` עושה זאת; במימוש ידני בודקים StopIteration לפני דחיפה ל-heap.",
+      "id": "py.generators.q55",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/analyze-and-debug-python-utilities"
+      ],
+      "problem": "NVIDIA onsite: process a large CSV safely as a stream",
+      "prompt": "מה מודפס?",
+      "code": "import csv, io\n\ndata = 'id,name\\n1,\"Smith, J\"\\n2,Lee\\n'\nf = io.StringIO(data)\nrows = [line.strip().split(\",\") for line in f]\nf.seek(0)\nparsed = list(csv.reader(f))\nprint(len(rows[1]), len(parsed[1]))",
+      "choices": [
+        "3 3",
+        "2 3",
+        "2 2",
+        "3 2"
+      ],
+      "answer": 3,
+      "notes": [
+        "`csv.reader` מכבד מרכאות, ולכן השם נשאר שדה אחד.",
+        "הפוך: ה-split הידני הוא שמחזיר יותר שדות.",
+        "`split(\",\")` לא מכיר quoting, ולכן הפסיק שבתוך המרכאות מפצל את השדה.",
+        "נכון. split ידני מחזיר `['1', '\"Smith', ' J\"']` (שלושה שדות). `csv.reader` מבין שהפסיק בתוך מרכאות הוא חלק מהשדה ומחזיר `['1', 'Smith, J']`."
+      ],
+      "explanation": "CSV אמיתי כולל מרכאות, פסיקים בתוך שדות, ולפעמים שורות חדשות בתוך שדה. `csv.reader` עובד שורה אחרי שורה על כל iterable של שורות, ולכן הוא גם עמיד וגם streaming.",
+      "id": "py.generators.q56",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה התיעוד של מודול csv ממליץ לפתוח את הקובץ עם `open(path, newline=\"\", encoding=\"utf-8\")`?",
+      "choices": [
+        "כדי ש-csv ידלג על שורת הכותרת",
+        "כדי שהקובץ ייקרא מהר יותר",
+        "כדי ש-csv יקבל את תווי סוף השורה כמו שהם ויטפל בעצמו בשדות במרכאות שמכילים שורה חדשה; בלי זה, תרגום newlines של מצב טקסט יכול לשבור שדות כאלה (ובכתיבה ב-Windows לייצר שורות ריקות). ה-encoding המפורש מונע תלות ב-locale של המכונה",
+        "כי בלי `newline=\"\"` הקובץ נפתח במצב בינארי"
+      ],
+      "answer": 2,
+      "notes": [
+        "דילוג על כותרת נעשה עם `next(reader)` או עם `DictReader`.",
+        "הפרמטר לא קשור לביצועים.",
+        "נכון. זה follow-up נפוץ בשאלות 'קרא CSV גדול בבטחה': שדה במרכאות יכול להכיל `\\n`, וקידוד ברירת המחדל משתנה בין מכונות (למשל cp1252 ב-Windows).",
+        "`newline` שולט רק בתרגום סופי שורה; הקובץ עדיין במצב טקסט."
+      ],
+      "explanation": "קריאת CSV עמידה: `newline=\"\"`, encoding מפורש (ולפעמים `errors=\"replace\"` או טיפול ב-UnicodeDecodeError), ו-iteration שורה אחרי שורה כדי שהזיכרון יישאר קבוע.",
+      "id": "py.generators.q57",
+      "lesson": "py.generators"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "pipeline שסוכם עמודה ומדלג על ערכים פגומים. מה מודפס?",
+      "code": "import csv, io\n\nf = io.StringIO(\"v\\n1\\nx\\n\\n3\\n\")\n\ndef vals(rows):\n    for r in rows:\n        try:\n            yield float(r[\"v\"])\n        except (ValueError, TypeError):\n            continue\n\nprint(sum(vals(csv.DictReader(f))))",
+      "choices": [
+        "4.0",
+        "4",
+        "ValueError",
+        "nan"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. `DictReader` מדלג על שורות ריקות לגמרי, ולכן השורות הן 1, x, 3. x נכשל ב-`float` ומדולג, והסכום הוא 1.0 + 3.0 = 4.0.",
+        "`float` מחזיר float, ולכן הסכום הוא float.",
+        "ה-ValueError של x נתפס בתוך ה-generator ולא יוצא החוצה.",
+        "אין כאן NaN; הערך הפגום מדולג."
+      ],
+      "explanation": "generator שמטפל בשגיאות לכל רשומה הוא דפוס טוב ל-ETL על קבצים גדולים: זיכרון קבוע, ושורה פגומה לא מפילה את כל העיבוד. ב-production גם סופרים או מתעדים את השורות שדולגו.",
+      "id": "py.generators.q58",
+      "lesson": "py.generators"
     }
   ]
 }

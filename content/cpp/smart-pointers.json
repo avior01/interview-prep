@@ -172,6 +172,22 @@
         {
           "term": "SFINAE / enable_if ב-converting constructor",
           "def": "template constructor כמו UniquePtr(UniquePtr<U>&&) מוגבל עם enable_if_t<is_convertible_v<U*, T*>> (או requires ב-C++20), כך שהוא קיים רק כש-U* ממיר ל-T*, למשל Derived ל-Base."
+        },
+        {
+          "term": "memory ordering של reference count",
+          "def": "increment יכול להיות relaxed (העותק נוצר מבעלים קיים). decrement צריך release, ומי שמגיע ל-0 צריך acquire לפני ה-delete (fetch_sub עם acq_rel, או release ואז acquire fence). ההחלטה למחוק מתבססת על הערך שה-fetch_sub החזיר, לא על load נפרד."
+        },
+        {
+          "term": "self-assignment",
+          "def": "השמה של אובייקט לעצמו (`a = a`, או בעקיפין `v[i] = v[j]` עם i == j). מימוש שמשחרר את המשאב לפני שהוא לוקח את החדש נשבר. פתרונות: בדיקת `this != &o`, לקחת קודם ולשחרר אחר כך, או copy-and-swap."
+        },
+        {
+          "term": "shallow copy של owning pointer",
+          "def": "copy constructor שהקומפיילר מייצר מעתיק pointers כמו שהם. אם המחלקה מוחקת ב-destructor, שני עותקים מוחקים את אותו אובייקט (double delete). מחלקה עם בעלות יחידה מוחקת את ה-copy ומגדירה move."
+        },
+        {
+          "term": "new[] מול delete",
+          "def": "זיכרון שהוקצה עם new[] חייב להשתחרר עם delete[]. ערבוב הוא UB. std::unique_ptr<T[]> ו-std::vector מטפלים בזה נכון."
         }
       ]
     }
@@ -438,9 +454,6 @@
       ],
       "explanation": "רק ה-control block מסונכרן. מופע אחד של shared_ptr הוא שני pointers, וכתיבה אליו במקביל לקריאה היא data race. לכן קיים std::atomic<std::shared_ptr> (לפני כן הפונקציות std::atomic_load/atomic_store). האובייקט T לא מוגן בכלל. בזמן-אמת חשוב לזכור שה-destructor (ו-free) עלולים לרוץ על ה-thread הקריטי.",
       "lesson": "cpp.smart-pointers",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. כל thread עובד על מופע משלו של shared_ptr, וה-refcount ב-control block מתעדכן אטומית, ולכן זה בטוח.",
         "שגוי. ה-refcount אטומי, אבל מופע shared_ptr עצמו הוא שני pointers. כתיבה `p = q` במקביל לקריאה של אותו p היא data race.",
@@ -463,9 +476,6 @@
       "answer": 0,
       "explanation": "deleter מסוג function pointer הוא member עם state (הכתובת), ולכן הוא תופס 8 בתים. lambda בלי captures היא טיפוס ריק, וה-empty base optimization מעלים אותה. בנוסף הקריאה דרכה נעשית inline, ולא דרך pointer. אפשר להשתמש גם ב-struct deleter, או בתבנית std::integral_constant<decltype(&fclose), &fclose>.",
       "lesson": "cpp.smart-pointers",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ב-A ה-deleter הוא function pointer עם state (כתובת), ולכן unique_ptr מחזיק pointer ועוד 8 בתים: 16. ב-B ה-lambda בלי captures היא טיפוס ריק, וה-EBO מעלים אותה: 8.",
         "שגוי. lambda בלי captures לא תופסת מקום: libstdc++ שומר את ה-deleter ב-tuple עם empty base optimization, ולכן B הוא 8.",
@@ -512,10 +522,7 @@
         "constructor מפורש (explicit) מ-T* כדי למנוע המרה מרומזת שלוקחת בעלות"
       ],
       "explanation": "מראיינים אוהבים את השאלה כי היא בודקת move semantics, noexcept, סדר פעולות ב-reset ו-SFINAE. כדאי לציין שבגרסה הזאת T עם destructor לא וירטואלי ו-U נגזר יגרום ל-UB, כמו ב-std::unique_ptr.",
-      "lesson": "cpp.smart-pointers",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.smart-pointers"
     },
     {
       "id": "cpp.smart-pointers.q16",
@@ -552,9 +559,6 @@
       "answer": 1,
       "explanation": "unique_ptr מאפשר T לא שלם בהצהרה, אבל ה-destructor שלו דורש T שלם בנקודה שבה הוא עובר instantiation. ה-destructor המרומז של Widget מוגדר בכל TU שמשתמש בו, ולכן Impl לא שלם שם. כשמגדירים את ה-destructor ב-cpp, ה-instantiation קורה במקום שבו Impl כבר שלם. shared_ptr לא סובל מזה, כי ה-deleter שלו נקבע בבנייה (type erasure), אבל זה פתרון יקר ולא נכון סמנטית.",
       "lesson": "cpp.smart-pointers",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. unique_ptr מותר עם incomplete type בהצהרה; T חייב להיות שלם רק במקום שבו ה-destructor (default_delete) עובר instantiation.",
         "נכון. ה-destructor המרומז של Widget הוא inline ונוצר בכל TU שהורס Widget, ושם Impl לא שלם, ו-default_delete נכשל ב-static_assert. הגדרת ~Widget() ב-cpp מעבירה את ה-instantiation למקום שבו Impl שלם.",
@@ -600,10 +604,7 @@
         "מדבר על מדידה של tail latency ולא רק ממוצע"
       ],
       "explanation": "שאלה בסגנון NVIDIA ו-systems: לא מספיק לדעת מה shared_ptr עושה, צריך להבין מה הוא עולה ב-hot path ומה עושים במקומו.",
-      "lesson": "cpp.smart-pointers",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.smart-pointers"
     },
     {
       "id": "cpp.smart-pointers.q20",
@@ -769,9 +770,6 @@
         "`std::make_shared<float[]>(n)` קיים מ-C++11"
       ],
       "answer": 1,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "shared_ptr<float> עם new[] קורא ל-delete ולא delete[], וזה UB (לפני C++17 היה צריך deleter מפורש). C++17 הוסיף תמיכה ב-T[] ב-shared_ptr, ו-C++20 הוסיף make_shared למערכים, עם הקצאה אחת לנתונים ול-control block. shared_ptr<vector<float>> עובד, אבל מוסיף indirection והקצאה נוספת.",
       "lesson": "cpp.smart-pointers",
       "notes": [
@@ -793,9 +791,6 @@
         "אפס, כי הקומפיילר מבטל את ההעתקה"
       ],
       "answer": 0,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "העתקה מ-lvalue מגדילה את המונה. move constructor של shared_ptr מעביר את שני ה-pointers ומאפס את המקור, בלי לגעת במונה, והריסה של shared_ptr ריק לא עושה כלום. אם הקורא לא צריך את sp יותר, add(std::move(sp)) עולה אפס. הקומפיילר לא רשאי לבטל העתקה מ-lvalue בעל שם.",
       "lesson": "cpp.smart-pointers",
       "notes": [
@@ -817,9 +812,6 @@
         "UB, כי unique_ptr<Node> מוצהר בתוך Node כשהטיפוס עדיין לא שלם"
       ],
       "answer": 2,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "ההריסה המרומזת היא רקורסיה: כל destructor קורא ל-destructor של ה-member next לפני שהוא חוזר. עם מיליוני צמתים זה חורג מ-stack של כמה MB. tail-call optimization לא מובטח כאן. תיקון: ב-~List או ~Node, לולאה שמעבירה את next למשתנה מקומי (auto p = std::move(head->next)) ומשחררת צומת אחד בכל סיבוב. ההצהרה תקינה, כי ה-destructor של unique_ptr עובר instantiation רק אחרי ש-Node שלם.",
       "lesson": "cpp.smart-pointers",
       "notes": [
@@ -855,6 +847,222 @@
         "נכון. aliasing shared_ptr חולק את ה-control block של ה-Session, ולכן לפי owner_less הוא שקול ל-weak_ptr של ה-Session עצמו.",
         "שגוי. owner_less עובד ישירות על weak_ptr בלי lock(). lock() גם היה מחזיר ריק לאובייקטים שמתו ושובר את הסדר ב-set."
       ]
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש `SharedPtr<T>` מינימלי עם shared ownership (לאובייקט יחיד שהוקצה ב-new): constructor מ-`T*`, copy, move, copy/move assignment, destructor, `get`, `operator*`, `operator->`, `use_count`, `reset`. ה-count צריך להיות בטוח כשעותקים שונים נוצרים ונהרסים ב-threads שונים.",
+      "starter": "template <class T>\nclass SharedPtr {\npublic:\n  SharedPtr() noexcept = default;\n  explicit SharedPtr(T* p);\n  // copy, move, assignment, destructor, get, *, ->, use_count, reset\n};",
+      "modelAnswer": "#include <atomic>\n#include <cstddef>\n#include <utility>\n\ntemplate <class T>\nclass SharedPtr {\n  struct Ctrl { std::atomic<std::size_t> refs{1}; };\n  T* p_ = nullptr;\n  Ctrl* c_ = nullptr;\n\n  void release() noexcept {\n    if (c_ && c_->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {\n      delete p_;\n      delete c_;\n    }\n  }\npublic:\n  SharedPtr() noexcept = default;\n  explicit SharedPtr(T* p) : p_(p) {\n    if (p_) {\n      try { c_ = new Ctrl; }\n      catch (...) { delete p_; throw; }   // don't leak p if the control block fails\n    }\n  }\n  SharedPtr(const SharedPtr& o) noexcept : p_(o.p_), c_(o.c_) {\n    if (c_) c_->refs.fetch_add(1, std::memory_order_relaxed);\n  }\n  SharedPtr(SharedPtr&& o) noexcept\n      : p_(std::exchange(o.p_, nullptr)), c_(std::exchange(o.c_, nullptr)) {}\n  SharedPtr& operator=(SharedPtr o) noexcept {   // copy-and-swap: copy and move, self-safe\n    std::swap(p_, o.p_);\n    std::swap(c_, o.c_);\n    return *this;                                 // o releases the old object\n  }\n  ~SharedPtr() { release(); }\n\n  void reset(T* p = nullptr) { SharedPtr(p).swap(*this); }\n  void swap(SharedPtr& o) noexcept { std::swap(p_, o.p_); std::swap(c_, o.c_); }\n\n  T* get() const noexcept { return p_; }\n  T& operator*() const { return *p_; }\n  T* operator->() const noexcept { return p_; }\n  explicit operator bool() const noexcept { return p_ != nullptr; }\n  std::size_t use_count() const noexcept {\n    return c_ ? c_->refs.load(std::memory_order_relaxed) : 0;\n  }\n};",
+      "rubric": [
+        "control block משותף על ה-heap (לא count בתוך כל עותק), ומחיקה של האובייקט ושל ה-block בדיוק פעם אחת",
+        "count אטומי: increment עם relaxed, decrement עם acq_rel (או release ואחריו acquire fence)",
+        "assignment נכון גם ב-self-assignment (copy-and-swap או בדיקה), ו-move שמרוקן את המקור בלי לגעת ב-count",
+        "exception safety: אם הקצאת ה-control block נכשלת, האובייקט נמחק ולא דולף",
+        "דיון: מעגלים דורשים weak_ptr, make_shared חוסך הקצאה, ו-use_count לא אמין בין threads"
+      ],
+      "explanation": "הנקודות המרכזיות: control block על ה-heap שמשותף לכל העותקים, הגדלה וההקטנה אטומיות, מחיקה בדיוק פעם אחת כשה-count יורד לאפס, assignment שבטוח גם ב-self-assignment (copy-and-swap), ו-move שלא נוגע ב-count. use_count על אובייקט ריק הוא 0.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/implement-a-thread-safe-reference-counted-smart-pointer-in-cplusplus",
+        "https://static.glassdoor.at/Interview/NVIDIA-Interview-E7633-RVW100852741.htm"
+      ],
+      "problem": "NVIDIA interview: implement a thread-safe reference-counted smart pointer",
+      "id": "cpp.smart-pointers.q31",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מימוש נאיבי של copy assignment ב-SharedPtr:\n```cpp\nSharedPtr& operator=(const SharedPtr& o) {\n  release();          // --count, delete if it hits 0\n  p_ = o.p_;\n  c_ = o.c_;\n  if (c_) ++c_->refs;\n  return *this;\n}\n```\nמה קורה ב-`a = a;` כש-a הוא הבעלים היחיד (count = 1)?",
+      "choices": [
+        "כלום, a נשאר תקין עם count = 1",
+        "האובייקט וה-control block נמחקים ב-release, ואז יש כתיבה לזיכרון משוחרר (use-after-free) ואחר כך double delete",
+        "count עולה ל-2 ונוצרת דליפה",
+        "שגיאת קומפילציה: אסור להשים אובייקט לעצמו"
+      ],
+      "answer": 1,
+      "explanation": "release() מוריד את ה-count ל-0 ומוחק גם את האובייקט וגם את ה-control block. מכיוון ש-o הוא *this, אחר כך p_ ו-c_ מועתקים מעצמם (pointers שכבר שוחררו), ו-`++c_->refs` כותב לזיכרון משוחרר: use-after-free, ובהמשך double delete. התיקון: לבדוק `this != &o`, או להגדיל קודם את ה-count של o ורק אחר כך לשחרר, או copy-and-swap.",
+      "notes": [
+        "שגוי: release רץ לפני ההעתקה ומשחרר את מה ש-o (שהוא a) מחזיק.",
+        "נכון: self-assignment הורס את המשאב לפני שמשתמשים בו. לכן מגדילים קודם ומקטינים אחר כך, או משתמשים ב-copy-and-swap.",
+        "שגוי: ה-count יורד ל-0 עוד לפני ההגדלה, וההגדלה כותבת ל-block שכבר שוחרר.",
+        "שגוי: self-assignment הוא קוד חוקי (ויכול לקרות בעקיפין, כמו `v[i] = v[j]` עם i == j). כל assignment חייב לטפל בו."
+      ],
+      "id": "cpp.smart-pointers.q32",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "auto a = std::make_shared<int>(1);\nauto b = a;\nauto c = std::move(a);\nb.reset();\nstd::cout << c.use_count() << ' ' << (a ? 1 : 0);",
+      "choices": [
+        "2 1",
+        "1 0",
+        "2 0",
+        "3 0"
+      ],
+      "answer": 1,
+      "explanation": "a נוצר עם count 1. b = a מעלה ל-2. c = std::move(a) מעביר את הבעלות מ-a ל-c בלי לשנות את ה-count, ו-a ריק. b.reset() מוריד ל-1. נשאר רק c, ולכן use_count = 1, ו-a ריק (false).",
+      "notes": [
+        "שגוי: move לא יוצר בעלים נוסף ומרוקן את a. אחרי ה-reset של b נשאר בעלים אחד.",
+        "נכון: move מעביר בלי להגדיל את ה-count, ו-reset מקטין. בסוף c הוא הבעלים היחיד, ו-a ריק.",
+        "שגוי: b.reset() מוריד את ה-count מ-2 ל-1.",
+        "שגוי: move לא מוסיף בעלים. יש לכל היותר 2 בעלים בו-זמנית."
+      ],
+      "id": "cpp.smart-pointers.q33",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "ב-SharedPtr עם count אטומי, מה הבחירה הנכונה והמינימלית של memory orders (כמו ב-libstdc++ וב-Boost)?",
+      "choices": [
+        "הכל relaxed, כי הפעולות האטומיות עצמן כבר מונעות race",
+        "increment: relaxed. decrement: `fetch_sub(1, acq_rel)` (או release ואחריו acquire fence כשהגענו ל-0), ומחיקה רק אם הערך הקודם היה 1",
+        "decrement relaxed, ואז בדיקה נפרדת `if (refs.load() == 0) delete p;`",
+        "חובה seq_cst בכל הפעולות, אחרת המימוש שגוי"
+      ],
+      "answer": 1,
+      "explanation": "increment יכול להיות relaxed, כי עותק חדש נוצר רק מבעלים קיים, שכבר מחזיק את ה-count מעל 0, ושום נתון לא מתפרסם דרכו. decrement חייב release, כדי שכל הכתיבות לאובייקט ב-thread שמשחרר יקרו לפני ההקטנה. ה-thread שמוריד ל-0 צריך acquire, כדי לראות את כל הכתיבות האלה לפני שהוא מריץ את ה-destructor. לכן fetch_sub(acq_rel), או fetch_sub(release) ואחריו `atomic_thread_fence(acquire)` רק כשהתוצאה היא 1.",
+      "notes": [
+        "שגוי: אטומיות מונעת עדכון אבוד של ה-count, אבל לא נותנת סדר. ה-destructor ב-thread אחד עלול לא לראות כתיבות שנעשו לאובייקט ב-thread אחר לפני שהוא שחרר, וזה data race.",
+        "נכון: release על כל decrement מפרסם את הכתיבות, ו-acquire אצל מי שמגיע ל-0 מסנכרן איתן לפני ה-delete. ה-increment לא מפרסם כלום, ולכן relaxed מספיק.",
+        "שגוי: TOCTOU. שני threads יכולים להקטין (2→1→0) ושניהם לראות 0 בטעינה הנפרדת, ואז יש double delete. ההחלטה צריכה להתבסס על הערך שה-fetch_sub מחזיר.",
+        "שגוי: seq_cst נכון אבל לא נדרש, ועולה יותר (fence מלא ב-ARM, ו-ordering נוסף שהמימוש לא צריך)."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/implement-a-thread-safe-reference-counted-smart-pointer-in-cplusplus"
+      ],
+      "problem": "NVIDIA onsite: thread-safe reference count memory ordering",
+      "id": "cpp.smart-pointers.q34",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "למה מותר להגדיל את ה-count של shared pointer עם `memory_order_relaxed`?",
+      "choices": [
+        "כי increment על x86 תמיד אטומי גם בלי std::atomic",
+        "כי עותק נוצר רק מבעלים קיים שמחזיק את ה-count מעל 0, וההגדלה לא מפרסמת נתונים שמישהו אחר צריך לראות",
+        "כי relaxed מהיר יותר, והסיכון לטעות זניח",
+        "כי ה-increment קורה רק ב-thread שיצר את האובייקט"
+      ],
+      "answer": 1,
+      "explanation": "עותק חדש נוצר רק מתוך shared pointer קיים שהוא בעלים, ולכן בזמן ההגדלה ה-count כבר לפחות 1, והאובייקט לא יכול להימחק בו-זמנית דרך העותק הזה. ההגדלה לא מפרסמת שום נתון ל-thread אחר. ה-thread שקיבל את העותק סונכרן כבר בדרך שבה הועבר אליו ה-shared pointer (mutex, queue וכו'). לכן מספיק שהפעולה אטומית.",
+      "notes": [
+        "שגוי: גם ב-x86 `++x` על int רגיל אינו אטומי (read-modify-write בלי lock), וזה data race לפי התקן.",
+        "נכון: האובייקט חי כל עוד יש בעלים. ההגדלה צריכה רק אטומיות, לא סדר ביחס לכתיבות אחרות.",
+        "שגוי: זה לא \"סיכון זניח\" אלא הוכחה של נכונות. בלי הנימוק, relaxed היה באג.",
+        "שגוי: כל thread שמחזיק עותק יכול ליצור עותקים נוספים, ולכן increment קורה מכל thread."
+      ],
+      "id": "cpp.smart-pointers.q35",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "כדי לחסוך העתקה, כתבו: `if (sp.use_count() == 1) mutate_in_place(*sp); else { auto copy = std::make_shared<Data>(*sp); mutate_in_place(*copy); sp = copy; }`. כמה threads מחזיקים עותקים של sp, כל אחד עם shared_ptr משלו. מה הבעיה?",
+      "choices": [
+        "אין בעיה, כי use_count אטומי",
+        "use_count() יכול להשתנות מיד אחרי הבדיקה (TOCTOU): thread אחר יכול לקבל עותק ולקרוא בזמן שאנחנו כותבים",
+        "use_count() תמיד מחזיר 0 כשיש יותר מ-thread אחד",
+        "make_shared לא בטוח לשימוש ב-threads"
+      ],
+      "answer": 1,
+      "explanation": "use_count() הוא snapshot שיכול להשתנות מיד אחרי הקריאה: thread אחר יכול ליצור עותק (למשל מתוך cache משותף או weak_ptr::lock) אחרי הבדיקה ולפני השינוי, ואז שני threads ניגשים לאותו Data, אחד כותב: data race. בגלל זה `unique()` הוסר ב-C++20. copy-on-write בטוח דורש סנכרון חיצוני (mutex) או תכנון שבו אין עותקים נסתרים.",
+      "notes": [
+        "שגוי: הקריאה של ה-count אטומית, אבל ההחלטה על סמך הערך שלה היא check-then-act שלא מוגנת.",
+        "נכון: לכן התקן מגדיר את use_count כמשוער בסביבה מרובת threads, ו-unique() נמחק ב-C++20.",
+        "שגוי: use_count מחזיר את מספר הבעלים באותו רגע. הבעיה היא שהערך לא נשאר נכון.",
+        "שגוי: make_shared בטוח. הבעיה היא בלוגיקה של check-then-act."
+      ],
+      "id": "cpp.smart-pointers.q36",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "המטרה: לשחרר זיכרון אוטומטית ביציאה מה-scope. התוכנית קורסת ביציאה מ-use(). למה?",
+      "code": "template <class T>\nclass Scoped {\n  T* p_;\npublic:\n  explicit Scoped(T* p) : p_(p) {}\n  ~Scoped() { delete p_; }\n  T& operator*() const { return *p_; }\n  T* operator->() const { return p_; }\n};\n\nvoid use() {\n  Scoped<int> a(new int(4));\n  Scoped<int> b = a;\n}",
+      "bugLine": 13,
+      "choices": [
+        "ה-copy constructor שנוצר אוטומטית מעתיק את ה-pointer, ולכן a ו-b מוחקים את אותו int פעמיים",
+        "operator* צריך להחזיר T לפי ערך",
+        "חסר `delete[]` ב-destructor",
+        "explicit מונע את השורה `Scoped<int> b = a;`"
+      ],
+      "answer": 0,
+      "explanation": "ל-Scoped אין copy constructor מוגדר, ולכן הקומפיילר מייצר אחד שמעתיק את ה-pointer (shallow copy). a ו-b מצביעים לאותו int, ושני ה-destructors מוחקים אותו: double delete. smart pointer עם בעלות יחידה חייב למחוק את ה-copy ולהגדיר move, כמו std::unique_ptr.",
+      "notes": [
+        "נכון: shallow copy של pointer שיש לו בעלות מוביל ל-double delete. התיקון: `Scoped(const Scoped&) = delete;` (ו-assignment), ו-move שמאפס את המקור.",
+        "שגוי: החזרה של T& היא הנכונה, כמו ב-unique_ptr. החזרה by value הייתה מעתיקה ולא מאפשרת לשנות את האובייקט.",
+        "שגוי: האובייקט הוקצה עם new (לא new[]), ולכן delete נכון.",
+        "שגוי: explicit חל על ה-constructor מ-T*, לא על ה-copy constructor. `b = a` משתמש ב-copy constructor ומתקמפל."
+      ],
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.naukri.com/code360/interview-experiences/microsoft/microsoft-interview-experience-by-gaurav-kaushik-feb-2019-exp-0-2-years"
+      ],
+      "problem": "Microsoft interview: write a smart pointer class that frees memory at scope exit",
+      "id": "cpp.smart-pointers.q37",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "`Scoped<T>` הוא smart pointer עם בעלות יחידה: copy מחוק, move תקין, וה-destructor שלו עושה `delete p_`. משתמשים בו כך. מה הבאג?",
+      "code": "void process() {\n  Scoped<int> buf(new int[256]);\n  fill(&*buf, 256);\n  consume(&*buf, 256);\n}   // ~Scoped: delete p_;",
+      "bugLine": 2,
+      "choices": [
+        "הזיכרון הוקצה עם new[] ומשתחרר עם delete, וזה UB",
+        "`&*buf` לא חוקי ל-pointer של מערך",
+        "חסר try/catch, ולכן אם fill זורק יש דליפה",
+        "Scoped<int> לא יכול להחזיק יותר מ-int אחד, ולכן הקומפילציה נכשלת"
+      ],
+      "answer": 0,
+      "explanation": "Scoped משחרר עם `delete p_`, אבל הזיכרון הוקצה עם `new int[256]`. ערבוב של new[] עם delete (בלי []) הוא UB: הוא עלול לקרוס, להשחית את ה-heap או לא להריץ destructors של האיברים. ב-std::unique_ptr יש specialization `unique_ptr<T[]>` שקורא ל-delete[], ול-std::vector אין את הבעיה בכלל.",
+      "notes": [
+        "נכון: new[] חייב להשתחרר עם delete[]. התיקון: Scoped<T[]> עם delete[], std::unique_ptr<int[]>, או std::vector<int>.",
+        "שגוי: `*buf` מחזיר reference לאיבר הראשון, ו-& נותן את הכתובת שלו. זה תקין.",
+        "שגוי: זה בדיוק מה ש-RAII פותר. אם fill זורק, ~Scoped רץ בזמן ה-unwinding. הבעיה היא סוג ה-delete.",
+        "שגוי: הקומפיילר רואה רק int*, ולכן הקוד מתקמפל. הבאג מתגלה רק בזמן ריצה."
+      ],
+      "id": "cpp.smart-pointers.q38",
+      "lesson": "cpp.smart-pointers"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "```cpp\nvoid step() {\n  Scoped<Widget> w(new Widget);   // Scoped deletes in its destructor\n  w->configure();                 // throws std::runtime_error\n  w->run();\n}\n```\nמה קורה ל-Widget כש-configure זורק, וה-exception נתפס ב-main?",
+      "choices": [
+        "ה-Widget דולף, כי run() וה-delete לא הגיעו",
+        "~Scoped רץ במהלך ה-stack unwinding ומוחק את ה-Widget",
+        "std::terminate נקרא, כי exception עובר דרך destructor",
+        "ה-Widget יימחק רק בסוף התוכנית"
+      ],
+      "answer": 1,
+      "explanation": "בזמן stack unwinding, ה-destructors של כל האובייקטים המקומיים שכבר נבנו רצים, ולכן ~Scoped מוחק את ה-Widget. זה כל היתרון על פני `Widget* w = new Widget; ... delete w;`, שבו ה-delete פשוט היה מדולג.",
+      "notes": [
+        "שגוי: זה היה קורה עם raw pointer. עם RAII השחרור קשור ל-destructor ולא לשורה שאולי לא תתבצע.",
+        "נכון: unwinding הורס את w (שנבנה במלואו), וה-destructor שלו משחרר את ה-Widget.",
+        "שגוי: terminate נקרא רק אם destructor עצמו זורק בזמן unwinding. ~Scoped לא זורק.",
+        "שגוי: אין garbage collector. השחרור קורה ב-destructor, כשה-scope של w מסתיים בגלל ה-exception."
+      ],
+      "id": "cpp.smart-pointers.q39",
+      "lesson": "cpp.smart-pointers"
     }
   ]
 }

@@ -209,6 +209,34 @@
         {
           "term": "AMAT",
           "def": "Average Memory Access Time = hit time + miss rate × miss penalty, באופן רקורסיבי לכל רמה."
+        },
+        {
+          "term": "row-major / column-major",
+          "def": "row-major (C, C++): איברי שורה רצופים בזיכרון, ולכן הלולאה הפנימית צריכה לרוץ על האינדקס האחרון. column-major (Fortran, MATLAB): איברי עמודה רצופים, והלולאה הפנימית רצה על האינדקס הראשון."
+        },
+        {
+          "term": "L1I / L1D / unified L2",
+          "def": "L1 מחולק לקוד (I) ולנתונים (D) כדי ש-fetch ו-load יעבדו במקביל, והוא פרטי לכל core. L2 בדרך כלל מאוחד לקוד ולנתונים, גדול ואיטי יותר."
+        },
+        {
+          "term": "TLB מול data cache",
+          "def": "ה-TLB שומר תרגומים (דף וירטואלי ל-frame והרשאות), ה-cache שומר lines של נתונים. כל גישה נבדקת בשניהם, וכל ארבעת השילובים של hit ו-miss אפשריים."
+        },
+        {
+          "term": "struct padding",
+          "def": "בתים שהקומפיילר מוסיף כדי שכל שדה יהיה מיושר ל-alignment של הטיפוס שלו, ובסוף ה-struct כדי שהגודל יהיה כפולה של ה-alignment המקסימלי. סידור שדות מהגדול לקטן מצמצם אותו."
+        },
+        {
+          "term": "__attribute__((packed))",
+          "def": "מבטל padding, ומשאיר שדות לא מיושרים. גישה דרך ה-struct בטוחה (הקומפיילר מייצר קוד מתאים), אבל pointer רגיל לשדה כזה הוא UB ועלול לגרום ל-fault."
+        },
+        {
+          "term": "cache thrashing",
+          "def": "מצב שבו lines מפנים זה את זה כל הזמן, כי ה-working set (או כמה כתובות שמתמפות לאותו set) גדול מהמקום. ב-direct-mapped מספיקים שני streams שרחוקים בדיוק בגודל ה-cache."
+        },
+        {
+          "term": "direct-mapped cache",
+          "def": "cache שבו לכל set יש line אחד בלבד (1-way). זול ומהיר, אבל רגיש מאוד ל-conflict misses."
         }
       ]
     }
@@ -249,9 +277,6 @@
       "answer": 1,
       "explanation": "אין כאן שיתוף לוגי, אבל החומרה עובדת ברזולוציה של line. כל כתיבה דורשת בעלות בלעדית על ה-line, ולכן ה-core השני מאבד את העותק שלו. התוצאה נכונה אבל איטית מאוד. קריאה בלבד של אותו line לא גורמת לבעיה.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "shared_ptr הוא בעלות משותפת על אובייקט, מושג ברמת התוכנה. השם \"sharing\" מטעה, אבל false sharing הוא תופעת חומרה של cache lines.",
         "נכון: אין שיתוף לוגי, אבל החומרה מנהלת coherence לפי line. כל כתיבה דורשת בעלות בלעדית, ולכן ה-line עובר בין ה-cores בכל עדכון, והקוד נכון אבל איטי.",
@@ -285,9 +310,6 @@
       "answer": 2,
       "explanation": "ב-row-major האיברים של שורה רציפים בזיכרון. מעבר על עמודה משתמש ב-4 בתים מכל line של 64, וגם מקבל TLB miss בכל גישה ו-conflict misses בגלל ה-stride של חזקת 2. החלפת סדר הלולאות הופכת את זה לגישה רציפה שה-prefetcher וה-SIMD אוהבים.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "אורך הלולאה הפנימית זהה בשני הסדרים (4096 איטרציות), ולכן הוא לא מסביר הבדל. ההבדל הוא בדפוס הגישה לזיכרון.",
         "הקומפיילר מבצע את הלולאה בלי בעיה. הוא אולי לא יחליף את סדר הלולאות בעצמו (בגלל סדר סכימה של float), אבל זה לא \"לא יודע לבצע\".",
@@ -330,9 +352,6 @@
       "answer": 0,
       "explanation": "ב-AoS כל line מכיל רק mass אחד או שניים ושאר השדות לא נחוצים, כך שרוב רוחב הפס מתבזבז. ב-SoA ה-mass רציפים, וגם SIMD עובד באופן טבעי. כשקוד ניגש לכל השדות של אותו חלקיק יחד, AoS יכול להיות עדיף.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: ב-SoA כל ה-mass רציפים, כך שכל line של 64 בתים מכיל 16 ערכי float (או 8 double) שימושיים, ה-prefetcher עובד ו-SIMD טבעי.",
         "std::map הוא עץ של nodes מפוזרים בזיכרון: pointer chasing וגישות אקראיות. המיון לפי id לא רלוונטי לסכימת mass.",
@@ -357,9 +376,6 @@
       "answer": 0,
       "explanation": "אין data race, כי כל thread ניגש רק לתא שלו. התיקון: לצבור ב-local ולכתוב פעם אחת בסוף, או `struct alignas(64) Slot { long c; }; Slot counts[8];`. שימו לב שהקומפיילר לא יכול להעביר את ה-counter לרגיסטר אם is_event היא קריאה לא ידועה, ולכן כאן הבעיה תופיע בפועל.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: 8 × 8 = 64 בתים, כלומר כל המונים ב-line אחד. כל ++ דורש את ה-line במצב Modified, ולכן ה-line קופץ בין 8 cores בכל עדכון (false sharing).",
         "atomic לא נדרש, כי כל thread כותב רק לתא שלו ואין race. ו-atomic גם לא יעזור: ה-layout נשאר זהה, וכל עדכון יהיה עוד יקר יותר (lock add).",
@@ -409,10 +425,7 @@
         "קריאה אקראית מ-NVMe SSD"
       ],
       "explanation": "סדרי גודל: רגיסטר פחות ממחזור, L1 כ-1ns, L2 כ-4ns, L3 כ-15ns, DRAM כ-80–100ns, NVMe כ-10–100µs. כל קפיצה היא בערך פי 3 עד פי 1000. מראיינים מצפים לדעת את המספרים האלה בעל פה.",
-      "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.caches"
     },
     {
       "id": "sys.caches.q10",
@@ -429,10 +442,7 @@
         "בונוס: להזכיר conflict misses ב-n של חזקת 2 (padding של השורה), ו-SIMD transpose של 8×8 בתוך הבלוק"
       ],
       "explanation": "בגרסה הנאיבית אחד מהצדדים תמיד בגישה לפי עמודות. עם בלוקים, ה-lines של שני הצדדים נשארים ב-cache עד שכל ה-16 floats שבהם נוצלו.",
-      "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.caches"
     },
     {
       "id": "sys.caches.q11",
@@ -448,9 +458,6 @@
       "answer": 3,
       "explanation": "ה-line הוא 64 בתים, אבל ה-prefetcher של L2 מתייחס לזוג lines צמודים. כשה-thread השכן כותב ל-line הצמוד, ה-prefetch שלך מושך אותו ויוצר תעבורה. בפועל ההשפעה קטנה יותר מ-false sharing אמיתי, אבל ניתנת למדידה, ולכן מבני נתונים קריטיים מרופדים ל-128.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "ה-line ב-Intel הוא 64 בתים, לא 128. ה-128 מגיע מה-prefetcher שעובד בזוגות, ולכן ההמלצה לרפד ל-128 מטעה אנשים לחשוב שזה גודל ה-line.",
         "alignas עובד על משתנים גלובליים, סטטיים ומקומיים. הבעיה הייתה רק אם מקצים דינמית בלי allocator מודע ל-alignment (לפני C++17).",
@@ -472,9 +479,6 @@
       "answer": 2,
       "explanation": "perf c2c (cache-to-cache) מבוסס על דגימה של loads ו-stores עם כתובות (PEBS ב-Intel). הוא מראה אילו lines חמים, מאילו פונקציות ניגשים אליהם, ובאיזה offset, כך שרואים אם threads שונים נוגעים בשדות שונים באותו line. cachegrind מדמה cache של core יחיד ולא רואה coherence.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "strace עוקב אחרי system calls. false sharing לא עובר דרך הקרנל בכלל, אלא קורה בחומרה בין caches.",
         "memcheck מוצא שגיאות זיכרון (גישה לא חוקית, leaks, ערכים לא מאותחלים). הוא לא מדמה caches ולא coherence.",
@@ -496,9 +500,6 @@
       "answer": 1,
       "explanation": "כתיבה רגילה ל-line שלא ב-cache מתחילה ב-Read For Ownership: קוראים 64 בתים מ-DRAM רק כדי לדרוס אותם. NT stores חוסכים את הקריאה הזו (כמעט חצי מהתעבורה בכתיבה טהורה) ולא דוחקים את ה-working set החם. ההחלטה נכונה רק כשהנתונים באמת לא ייקראו בקרוב.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "volatile רק מונע מהקומפיילר להשמיט או לאחד גישות. כל store עדיין עובר RFO ונכנס ל-cache, כך שזה לא חוסך תעבורה ולא זיהום.",
         "נכון: NT stores נאספים ב-write-combining buffers ונשלחים כ-line מלא לזיכרון בלי RFO ובלי להיכנס ל-cache. חוסך את הקריאה המיותרת (כמעט חצי מהתעבורה) ולא דוחק את ה-working set החם.",
@@ -520,10 +521,7 @@
         "מדידה לפני ואחרי עם perf"
       ],
       "explanation": "מראיינים ב-NVIDIA אוהבים את השאלה הזו כי היא מחברת DSP לארכיטקטורת מחשבים. המילה החשובה היא memory-bound.",
-      "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.caches"
     },
     {
       "id": "sys.caches.q15",
@@ -539,9 +537,6 @@
       "answer": 3,
       "explanation": "בלי synchronization הקומפיילר מניח שאף thread אחר לא קורא את המשתנה, ומבצע scalar replacement. כדי למדוד false sharing צריך גישות אמיתיות: std::atomic עם relaxed, volatile (לצורך מדידה בלבד), או גוף לולאה שמונע את האופטימיזציה. זו גם הסיבה שבקוד אמיתי, למשל כשבלולאה יש קריאה לפונקציה לא ידועה, false sharing כן מופיע.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "L3 משותף לא מבטל את הצורך בבעלות בלעדית ב-L1 לכל כתיבה. אילו היו גישות אמיתיות לזיכרון, false sharing היה מופיע גם עם L3 משותף.",
         "ל-x86 יש false sharing, ככל מעבד עם caches פרטיים ו-coherence ברזולוציית line. ההסבר הוא שהקוד כמעט לא ניגש לזיכרון.",
@@ -563,9 +558,6 @@
       "answer": 1,
       "explanation": "inclusion מקל על snooping (מספיק לבדוק את L3), אבל משאיר את ה-caches הפרטיים חשופים ללחץ על ה-L3 המשותף. מעבדי שרת של Intel מ-Skylake-SP ואילך ומעבדי AMD משתמשים ב-L3 לא inclusive. ההגנה: Intel CAT (Cache Allocation Technology) או AMD L3 QoS, שמקצים ways של L3 לכל קבוצת cores.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "ה-TLB פרטי לכל core (וגם היה משותף, הוא לא מכיל נתונים ולא היה גורם ל-L1/L2 data misses).",
         "נכון: inclusion מחייב שכל line ב-L1/L2 יהיה גם ב-L3. כשה-process הרועש דוחק lines מ-L3, ה-L3 שולח back-invalidation ומוציא אותם גם מה-caches הפרטיים שלך.",
@@ -587,9 +579,6 @@
       "answer": 0,
       "explanation": "TSO של x86 חל על stores רגילים. stores מסוג NT (וגם rep movs מהיר) הם חריגים, ויכולים להיראות אחרי stores רגילים מאוחרים יותר. sfence מבטיח שכל ה-stores הקודמים, כולל NT, נראים לפני הבאים. memcpy של glibc משתמש ב-NT stores להעתקות גדולות מאוד ומבצע sfence בסוף בדיוק בגלל זה.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: NT stores עוברים דרך write-combining buffers ואינם כפופים לסדר TSO הרגיל, ולכן יכולים להיראות אחרי ה-store הרגיל של ready. release ב-x86 הוא mov רגיל ולא מסדר אותם. sfence אחרי ה-stream stores פותר.",
         "NT stores כן נכתבים לזיכרון, רק עוקפים את ה-cache. הבעיה היא סדר הנראות ביחס לדגל, לא אובדן.",
@@ -703,9 +692,6 @@
       ],
       "explanation": "הבעיה היא layout: כמה מונים באותו line. padding ל-64 (או 128 ב-Intel בגלל ה-adjacent line prefetcher), צבירה מקומית, או מבנה פרטי מיושר, כולם מפרידים את הכתיבות. atomic לא משנה את ה-layout, ורק מוסיף פעולות lock. volatile מכריח גישה לזיכרון בכל הגדלה, וזה רק מחמיר.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא פותר: atomic לא משנה את ה-layout, כל 16 המונים עדיין יושבים ב-2 lines. כל עדכון הופך ל-lock add וה-line ממשיך לקפוץ. אנשים בוחרים בזה כי מבלבלים false sharing עם race.",
         "פותר: alignas(64) על ה-struct מבטיח שכל Slot תופס line שלם משלו (sizeof הופך ל-64), כך שכתיבות של threads שונים לא נוגעות באותו line. ב-Intel עדיף 128 בגלל ה-adjacent line prefetcher.",
@@ -728,9 +714,6 @@
       "answer": 3,
       "explanation": "מספר sets = 32768 / (64 × 8) = 64. ה-index הוא ביטים 6–11, כלומר כתובות שנבדלות ב-4096 מקבלות אותו index. 16 lines מתחרים על 8 ways, ועם LRU כל גישה בלולאה מחזורית היא miss. התיקון: padding (למשל להוסיף 64 בתים לכל שורה) כדי לפזר אותם על sets שונים.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "החישוב 16 × 64 = 1KB נכון לגבי capacity, אבל מתעלם מ-associativity: line יכול לשבת רק ב-set שה-index שלו בוחר, וכאן כולם באותו set.",
         "ה-cache הוא 8-way, לא direct-mapped. ב-direct-mapped אכן רק line אחד היה שורד, אבל כאן נשארים 8, ועדיין 16 לא נכנסים.",
@@ -755,9 +738,6 @@
       "answer": 2,
       "explanation": "כל thread כותב לאינדקס שלו וקורא את של השני, אבל שניהם באותו line, ולכן כל כתיבה מבטלת אותו אצל הצד השני. מפרידים אותם ל-lines נפרדים, ובמימוש טוב כל צד גם שומר עותק מקומי (cached) של האינדקס של הצד השני ומרענן אותו רק כשהתור נראה מלא או ריק. חזקה של 2 היא אופטימיזציה ל-modulo ולא קשורה ל-HITM.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "seq_cst רק מוסיף מחסומים ועלות (xchg או mfence ב-store). ה-HITM נגרם מכך ש-head ו-tail באותו line, לא מבעיית סדר; הקוד כבר נכון.",
         "חזקה של 2 מאפשרת להחליף modulo ב-AND, וזו אופטימיזציה חישובית. היא לא משפיעה על HITM על ה-line הראשון.",
@@ -790,9 +770,6 @@
       "answer": 1,
       "explanation": "כאן כולם כותבים לאותו משתנה בדיוק, ולכן padding לא עוזר. lock xadd מבוצע על line בבעלות בלעדית, וההעברה בין cores עולה עשרות ns, כך שהקצב הכולל הוא בסדר גודל של עשרות מיליוני פעולות בשנייה, בלי קשר למספר ה-threads. ב-x86 עם seq_cst ו-relaxed זו אותה הוראה. sharding פר-thread הופך כל הגדלה לגישה מקומית ב-L1.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "relaxed הוא החלש והזול ביותר; ב-x86 גם relaxed וגם seq_cst מתורגמים לאותו lock xadd. החלפה לא תשנה דבר.",
         "נכון: זה true sharing: כל fetch_add צריך את אותו line במצב Modified, וההעברה בין cores עולה עשרות ns, כך שהקצב הכולל חסום ולא גדל עם threads. sharding פר-thread מרופד וסכימה בקריאה הופכים כל הגדלה לגישה מקומית.",
@@ -814,9 +791,6 @@
       "answer": 2,
       "explanation": "page walk הוא עד 4 גישות זיכרון נוספות (בטבלאות של 4 רמות), שחלקן גם הן misses. עם 2MB יש רמה אחת פחות בטבלה, והרבה פחות רשומות. ה-cache misses על הנתונים עצמם נשארים כמו שהם, ולכן ה-LLC-load-misses לא משתנה, אבל dTLB-load-misses יורד דרמטית. ה-prefetcher אכן מוגבל לגבולות דף, אבל בגישה אקראית אין לו מה לחזות.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "huge pages משנים את גודל הדף, כלומר את התרגום, לא את גודל ה-L3. ומספר ה-LLC misses כמעט לא השתנה, כך שה-L3 לא \"גדל\".",
         "RFO קשור לכתיבות ול-coherence, לא לגודל הדף. lookup הוא בעיקר קריאה, ו-huge pages לא משנים את ההתנהגות של RFO.",
@@ -838,9 +812,6 @@
       "answer": 3,
       "explanation": "coherence חל על lines שכבר ב-cache. ה-store buffer נמצא לפני ה-cache, ולכן coherence לא רואה אותו. TSO של x86 מבטיח סדר StoreStore, LoadLoad ו-LoadStore, אבל לא StoreLoad. זה הבסיס לכך שאלגוריתם Dekker או Peterson נשבר ב-x86 בלי מחסום, ולכך ש-store עם seq_cst מתורגם ל-xchg (או mov ואחריו mfence). בקוד C++ אמיתי, גם הקומפיילר רשאי לשנות סדר, וזה data race, כך שחייבים atomics.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "MESI חל על lines שכבר נכנסו ל-cache. ה-store ממתין ב-store buffer לפני ה-cache, ולכן coherence לא רואה אותו, וה-load של ה-core השני קורא את הערך הישן.",
         "x86 אינו sequentially consistent אלא TSO: הוא שומר StoreStore, LoadLoad ו-LoadStore, אבל מתיר StoreLoad reordering. זה בדיוק המקרה כאן.",
@@ -862,9 +833,6 @@
       "answer": 0,
       "explanation": "כדי להריץ loads לפני ש-stores קודמים סיימו, המעבד בודק במהירות התאמה חלקית של כתובות. כאן a + 4(i+8) ו-b + 4i נבדלים בכפולה של 4096, ולכן ה-load באיטרציה הבאה מתנגש ב-store של האיטרציה הקודמת ונדחה (Intel מתעד זאת כ-4K aliasing, ויש לכך מונה ב-perf). שני streams לא ממלאים 8 ways, ולכן זה לא conflict. אין threads, כך שאין false sharing. allocators נוטים להחזיר באפרים גדולים מיושרים לדף, ולכן הפרשים קטנים mod 4096 קורים בפועל.",
       "lesson": "sys.caches",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: memory disambiguation משווה רק 12 ביטים נמוכים. a + 4(i+8) = a + 4i + 32 ו-b + 4i נבדלים בכפולה של 4096, ולכן ה-load באיטרציה הבאה נראה תלוי ב-store הקודם ומעוכב. זה 4K aliasing.",
         "a ו-b אולי באותו set, אבל רק 2 streams לא ממלאים 8 ways. conflict misses דורשים יותר lines פעילים מ-ways, כפי שגם נאמר בשאלה.",
@@ -886,10 +854,344 @@
         "NUMA, מונים של 64-bit, ומדידה עם perf c2c"
       ],
       "explanation": "השאלה בודקת אם אפשר לחבר coherence, memory model וארכיטקטורה לתכנון אחד, כמו שעושים ב-DPDK ובמערכות רשת.",
-      "lesson": "sys.caches",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q32",
+      "level": 3,
+      "type": "short",
+      "prompt": "מערך `int a[64][64]` (row-major, 4 בתים לאיבר, מיושר ל-64 בתים). cache של 1KB, fully associative עם LRU, lines של 64 בתים, ריק בהתחלה. כמה cache misses יהיו בסריקה לפי עמודות (`for j` בחוץ, `for i` בפנים, קריאה של `a[i][j]`)?",
+      "accept": [
+        "4096"
+      ],
+      "explanation": "line מכיל 16 ints, כלומר כל שורה של המערך תופסת 4 lines. עמודה אחת נוגעת ב-64 lines שונים (line אחד מכל שורה), אבל ב-cache יש רק 16 lines. כשמגיעים לעמודה הבאה, ה-line של a[0][j+1] (אותו line של a[0][j]) כבר פונה. לכן כל אחת מ-4096 הגישות היא miss. בסריקה לפי שורות יש רק 256 misses (miss אחד לכל line).",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
+      ],
+      "problem": "NVIDIA: which loop order improves cache performance",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q33",
+      "level": 3,
+      "type": "short",
+      "prompt": "מערך `int a[64][64]` (row-major, 4 בתים לאיבר, מיושר ל-64 בתים). ה-cache הוא 8KB, fully associative עם LRU, lines של 64 בתים, ריק בהתחלה. כמה misses יהיו בסריקה לפי עמודות?",
+      "accept": [
+        "256"
+      ],
+      "explanation": "ב-cache יש עכשיו 128 lines. עמודה נוגעת ב-64 lines, וכולם נשארים. 15 העמודות הבאות נמצאות באותם lines (16 ints ל-line), ולכן הן hits. כל קבוצה של 16 עמודות עולה 64 misses: 4 × 64 = 256, בדיוק כמו בסריקה לפי שורות. סדר הלולאות משנה רק כשה-working set של עמודה אחת לא נכנס ל-cache.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q34",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-Fortran וב-MATLAB מערכים דו-ממדיים נשמרים column-major: איברי עמודה רצופים בזיכרון. איזו לולאה מהירה יותר לסכימה של `A(i, j)` על מטריצה גדולה?",
+      "choices": [
+        "תלוי רק בגודל ה-L1, לא בסדר",
+        "אין הבדל, כי ה-prefetcher מזהה כל stride קבוע",
+        "הלולאה הפנימית רצה על i (השורה), כי אז הגישות רצופות בזיכרון",
+        "הלולאה הפנימית רצה על j (העמודה), כמו ב-C"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: הסדר קובע כמה מכל line שהובא לזיכרון באמת מנוצל, וזה העיקר.",
+        "שגוי: ה-prefetcher אכן מזהה strides, אבל stride גדול מנצל byte אחד מכל line ונוגע בהרבה דפים (TLB misses). רציף תמיד עדיף.",
+        "נכון: ב-column-major, A(i, j) ו-A(i+1, j) צמודים, ולכן מעבר על i בלולאה הפנימית נותן גישה רציפה וניצול מלא של כל line.",
+        "שגוי: זה הסדר הנכון ל-C (row-major). כאן הוא נותן קפיצה של עמודה שלמה בין גישות."
+      ],
+      "explanation": "הכלל: הלולאה הפנימית צריכה לרוץ על האינדקס שצמוד בזיכרון. ב-C זה האינדקס האחרון, ב-Fortran ו-MATLAB הראשון. ב-NumPy זה תלוי ב-order של המערך (C או F).",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q35",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל הטיפוסי בין L1 ל-L2 ב-CPU מודרני?",
+      "choices": [
+        "L1 קטן ומהיר יותר (כמה עשרות KB, כ-4 cycles), מחולק ל-L1I ול-L1D ופרטי לכל core. L2 גדול יותר (מאות KB עד כמה MB), איטי יותר (כ-12-15 cycles), ומאוחד לקוד ולנתונים",
+        "L2 מהיר יותר מ-L1, כי הוא קרוב יותר לזיכרון הראשי",
+        "L1 משותף לכל ה-cores, ו-L2 פרטי לכל core",
+        "L1 שומר כתובות ו-L2 שומר נתונים"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: ההיררכיה מאזנת בין גודל למהירות. L1 חייב להיות קטן כדי לענות תוך כמה cycles, ומחולק כדי ש-fetch של פקודות וגישה לנתונים יקרו במקביל.",
+        "שגוי: ככל שהרמה רחוקה יותר מה-core היא גדולה ואיטית יותר. L2 נבדק רק כש-L1 מחטיא.",
+        "שגוי: זה הפוך. L1 תמיד פרטי לכל core. L3 (ה-LLC) הוא בדרך כלל המשותף.",
+        "שגוי: שתי הרמות שומרות cache lines של נתונים או קוד. תרגומי כתובות נשמרים ב-TLB."
+      ],
+      "explanation": "L1: הכי קטן ומהיר, פרטי ומחולק. L2: גדול יותר, איטי יותר, בדרך כלל פרטי ומאוחד. L3: משותף, גדול ואיטי עוד יותר. miss בכל רמה עובר לבאה, והזמן הממוצע מחושב עם AMAT.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.jointaro.com/interviews/companies/nvidia/experiences/software-intern-united-states-august-29-2024-no-offer-positive-c2429706/"
+      ],
+      "problem": "NVIDIA: difference between L1 and L2 cache",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q36",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה לא בונים L1 של כמה MB, כדי שכמעט הכל יהיה hit?",
+      "choices": [
+        "כי זמן הגישה גדל עם הגודל: cache גדול יותר דורש יותר חוטים, יותר ways להשוואה ויותר זמן, ו-L1 חייב לענות תוך כמה cycles בודדים",
+        "כי זיכרון SRAM לא יכול להיות גדול מ-64KB",
+        "כי מערכת ההפעלה לא יודעת לנהל L1 גדול",
+        "כי L1 גדול היה מגדיל את ה-TLB misses"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: L1 נמצא בנתיב הקריטי של כל load. הגדלה שלו מאריכה את ה-latency של כל גישה, גם של ה-hits. לכן מוסיפים רמות במקום להגדיל את L1.",
+        "שגוי: L3 בנוי גם הוא מ-SRAM ומגיע לעשרות MB. המגבלה היא זמן הגישה, לא הטכנולוגיה.",
+        "שגוי: מערכת ההפעלה בכלל לא מנהלת את ה-cache. החומרה מנהלת אותו.",
+        "שגוי: TLB ו-L1 הם מבנים נפרדים. גודל ה-L1 לא משנה את מספר ה-TLB misses (יש אמנם קשר לגודל הדף ב-VIPT, אבל זו לא הסיבה העיקרית)."
+      ],
+      "explanation": "ההיררכיה קיימת כי אין זיכרון שגם גדול וגם מהיר. כל רמה מאזנת אחרת: L1 מהיר וקטן, LLC גדול ואיטי יותר, ו-DRAM עוד יותר.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q37",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "load ניגש לכתובת שה-line שלה נמצא ב-L2 אבל לא ב-L1D. מה קורה בדרך כלל?",
+      "choices": [
+        "נוצר page fault, והקרנל מעתיק את ה-line",
+        "ה-CPU מחכה שה-line יגיע מה-DRAM, כי L1 הוא היחיד שמחובר ל-core",
+        "ה-line מועתק מ-L2 ל-L1D (ואולי מפנה line אחר מ-L1), והנתון מוחזר. גישה הבאה לאותו line תהיה hit ב-L1",
+        "הנתון מוחזר מ-L2 ל-register, וה-line לא נכנס ל-L1 כדי לא לזהם אותו"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: page fault קשור לטבלאות הדפים. החומרה מנהלת את ה-cache בלי מעורבות הקרנל.",
+        "שגוי: אם ה-line ב-L2, אין צורך ב-DRAM. זה בדיוק התפקיד של L2.",
+        "נכון: miss ב-L1 עם hit ב-L2 מביא את כל ה-line ל-L1. זה מה שגורם ל-temporal ול-spatial locality לעבוד.",
+        "שגוי: loads רגילים כן מביאים את ה-line ל-L1. רק פקודות non-temporal או prefetch מיוחד מנסים לעקוף."
+      ],
+      "explanation": "miss ב-L1 עובר ל-L2, ואם יש שם hit ה-line ממלא את L1. ה-latency הוא בערך זמן הגישה ל-L2 (כ-12-15 cycles), לעומת 4-5 ל-hit ב-L1 ומאות ל-DRAM.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q38",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין מה שה-TLB שומר לבין מה ש-L1D cache שומר?",
+      "choices": [
+        "ה-TLB שומר את טבלת הדפים כולה, ו-L1D שומר רק את ה-PTEs שבשימוש",
+        "שניהם שומרים נתונים. ה-TLB פשוט קטן ומהיר יותר",
+        "ה-TLB שומר כתובות פיזיות של lines שנמצאים ב-L1D",
+        "ה-TLB שומר תרגומים של דף וירטואלי ל-frame פיזי (עם ההרשאות), ו-L1D שומר cache lines של נתונים"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: ה-TLB מחזיק כמה מאות עד אלפי תרגומים, לא את כל הטבלה. ה-PTEs עצמם יכולים לשבת ב-caches כנתונים רגילים בזמן page walk.",
+        "שגוי: ה-TLB לא מכיל אף byte של נתוני התוכנית, רק תרגומים.",
+        "שגוי: ה-TLB לא יודע אילו lines נמצאים ב-cache. ה-tags של ה-cache מאפשרים לו לבדוק בעצמו.",
+        "נכון: כל גישה לזיכרון צריכה שני דברים: לתרגם את הכתובת (TLB, ואם יש miss אז page walk), ולמצוא את הנתון (cache, ואם יש miss אז הרמה הבאה)."
+      ],
+      "explanation": "TLB הוא cache של תרגומים, L1D הוא cache של נתונים. הם עובדים במקביל ב-L1 מסוג VIPT: ה-index מגיע מה-offset בדף, והתרגום מה-TLB משמש להשוואת ה-tag.",
+      "tags": [
+        "intel"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=166065"
+      ],
+      "problem": "Intel: cache and TLB",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q39",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו שילובים אפשריים בגישה אחת לזיכרון?",
+      "choices": [
+        "cache hit בלי שום תרגום, כי ה-L1 ב-x86 ממוען לגמרי בכתובות וירטואליות",
+        "TLB miss ו-cache miss",
+        "TLB hit ו-cache miss",
+        "TLB miss ו-cache hit: אחרי page walk מתברר שה-line כבר ב-L1",
+        "TLB hit ו-cache hit"
+      ],
+      "answer": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "notes": [
+        "שגוי: L1 ב-x86 הוא VIPT: ה-index וירטואלי (מה-offset בדף) אבל ה-tag פיזי, ולכן צריך את התרגום כדי לאשר hit.",
+        "נכון: המקרה הגרוע: page walk ואחריו גם הבאת הנתון.",
+        "נכון: התרגום מוכן, אבל ה-line לא נמצא ומובא מהרמה הבאה.",
+        "נכון: ה-TLB וה-cache עצמאיים. תרגום יכול להיפלט מה-TLB בזמן שה-line עדיין ב-cache.",
+        "נכון: המקרה הנפוץ והמהיר."
+      ],
+      "explanation": "TLB ו-cache הם שני מבנים בלתי תלויים, ולכן כל ארבעת השילובים אפשריים. גישה אקראית למבנה גדול סובלת לרוב משניהם, ו-huge pages מטפלים בחלק של ה-TLB.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q40",
+      "level": 2,
+      "type": "short",
+      "prompt": "ל-L1 DTLB יש 64 רשומות, ודפים של 4KB. מה ה-TLB reach שלו (כמה זיכרון אפשר לגשת אליו בלי TLB miss)?",
+      "accept": [
+        "256KB",
+        "256 KB",
+        "256K",
+        "262144"
+      ],
+      "explanation": "64 × 4KB = 256KB. working set גדול יותר יגרום ל-TLB misses גם אם הנתונים ב-L2. עם דפים של 2MB אותן 64 רשומות היו מכסות 128MB, וזו הסיבה העיקרית ל-huge pages.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q41",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס על x86-64 (int הוא 4 בתים)?",
+      "code": "struct A { char c1; int i; char c2; };\nstruct B { int i; char c1; char c2; };\n\nint main() {\n    std::printf(\"%zu %zu\\n\", sizeof(A), sizeof(B));\n}",
+      "lang": "cpp",
+      "choices": [
+        "`6 6`",
+        "`12 8`",
+        "`12 12`",
+        "`8 8`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה סכום הגדלים בלי padding. int חייב להיות מיושר ל-4, ולכן הקומפיילר מוסיף ריפוד.",
+        "נכון: ב-A יש c1 בהיסט 0, שלושה בתים של padding, i בהיסט 4, c2 בהיסט 8, ועוד שלושה בתים בסוף כדי שהגודל יהיה כפולה של 4: 12. ב-B: i בהיסט 0, c1 ב-4, c2 ב-5, ושני בתים בסוף: 8.",
+        "שגוי: ב-B שני ה-char צמודים אחרי ה-int, ולכן מספיקים 2 בתים של padding בסוף.",
+        "שגוי: ב-A ה-int לא יכול להתחיל בהיסט 1, ולכן אי אפשר להגיע ל-8."
+      ],
+      "explanation": "כל שדה מיושר ל-alignment של הטיפוס שלו, והגודל של ה-struct מעוגל לכפולה של ה-alignment המקסימלי, כדי שגם במערך כל איבר יהיה מיושר. מסדרים שדות מהגדול לקטן כדי לצמצם padding, בלי packed.",
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/",
+        "https://www.jointaro.com/interviews/companies/nvidia/experiences/software-intern-united-states-august-29-2024-no-offer-positive-c2429706/",
+        "https://www.geeksforgeeks.org/?p=477855"
+      ],
+      "problem": "NVIDIA / Qualcomm: struct padding and alignment",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q42",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס על x86-64 (double הוא 8 בתים ו-short הוא 2)?",
+      "code": "struct C { char a; double d; short s; };\nstruct D { double d; short s; char a; };\n\nint main() {\n    std::printf(\"%zu %zu\\n\", sizeof(C), sizeof(D));\n}",
+      "lang": "cpp",
+      "choices": [
+        "`24 24`",
+        "`16 16`",
+        "`24 16`",
+        "`11 11`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: ב-D כל השדות הקטנים נכנסים אחרי ה-double בתוך 8 בתים, ולכן 16 מספיקים.",
+        "שגוי: ב-C ה-double חייב להתחיל בהיסט 8, ואחרי s ב-16 הגודל חייב להיות כפולה של 8, ולכן 24.",
+        "נכון: ב-C, a בהיסט 0, שבעה בתים של padding, d ב-8, s ב-16, ואז ריפוד ל-24 (כפולה של 8). ב-D, d ב-0, s ב-8, a ב-10, וריפוד ל-16.",
+        "שגוי: זה סכום הגדלים בלי padding בכלל."
+      ],
+      "explanation": "סידור מחדש מהגדול לקטן חסך כאן שליש מהגודל. במערך של מיליון structs זה 8MB, ויותר איברים בכל cache line.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q43",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "struct מוגדר עם `__attribute__((packed))`, ושדה `uint32_t len` שלו נמצא בהיסט 1. קוד אחר לוקח `uint32_t* p = &s.len;` ומעביר את p לפונקציה שקוראת `*p`. מה הסיכון?",
+      "choices": [
+        "אין סיכון: packed רק חוסך מקום",
+        "packed גורם לכל הגישות לשדות להיות atomic",
+        "הערך ייקרא בסדר bytes הפוך",
+        "p מצביע לכתובת לא מיושרת. הקומפיילר יודע לייצר גישה בטוחה ל-`s.len` דרך ה-struct, אבל לא דרך `uint32_t*` רגיל. על ארכיטקטורות שדורשות alignment (חלק מה-ARM, ובפקודות SIMD או atomic גם ב-x86) זה fault, ובכל מקרה זה UB"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: packed מבטל את ה-padding, אבל משאיר שדות לא מיושרים, וזה עולה בביצועים ובבטיחות.",
+        "שגוי: ההפך: גישה לא מיושרת יכולה לחצות גבול של cache line, ואז היא אפילו לא אטומית ברמת החומרה.",
+        "שגוי: packed לא נוגע ב-endianness. סדר ה-bytes של השדה נשאר זה של המכונה.",
+        "נכון: GCC ו-Clang אפילו מזהירים על זה (-Waddress-of-packed-member). גישה דרך ה-struct נעשית byte אחר byte או עם load לא מיושר, אבל pointer רגיל מניח alignment מלא."
+      ],
+      "explanation": "packed מתאים לתיאור פורמט של חבילה או header, אבל לא לגישה ישירה לשדות דרך pointers. הדרך הבטוחה: לקרוא מה-buffer עם memcpy למשתנה מיושר, או לסדר את השדות כך שלא יהיה צורך ב-packed.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q44",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מראיין שואל על thrashing בהקשר של virtual memory ושל caches. מה המשותף לשני סוגי ה-thrashing?",
+      "choices": [
+        "thrashing קורה רק ב-cache, וב-virtual memory קוראים לזה page fault",
+        "בשניהם הבעיה היא חוסר במקום בדיסק",
+        "בשניהם הפתרון הוא להגדיל את גודל הדף",
+        "בשניהם ה-working set גדול מהמקום הזמין (RAM או ה-cache, או set אחד בתוכו), ולכן פריטים מפונים ונדרשים שוב מיד. רוב הזמן הולך על הבאה מהרמה האיטית"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: page fault בודד הוא אירוע תקין. thrashing הוא מצב שבו הם קורים כל הזמן, והמערכת לא מתקדמת.",
+        "שגוי: thrashing קשור לזיכרון המהיר המוגבל, לא לנפח האחסון.",
+        "שגוי: huge pages משפרים TLB, לא thrashing של RAM. ב-cache, דווקא associativity, padding או blocking עוזרים.",
+        "נכון: אותה תופעה ברמות שונות. ב-VM: דפים בין RAM ל-swap. ב-cache: lines בין L1 ל-L2 או DRAM, לפעמים רק בגלל שכמה כתובות מתמפות לאותו set (conflict misses)."
+      ],
+      "explanation": "thrashing הוא כל מצב שבו ה-cache (מכל סוג) קטן מה-working set, ולכן כמעט כל גישה היא miss שמפנה פריט שעוד יידרש. הפתרונות: להקטין את ה-working set (blocking, פחות processes), להגדיל את המקום, או לשנות את המיפוי (associativity, padding).",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/amazon-interview-experience-for-sde-1-6-months-experienced-off-campus/"
+      ],
+      "problem": "Amazon: thrashing, virtual memory and caching",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q45",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "cache מסוג direct-mapped של 32KB. שני מערכים float `a` ו-`b`, כל אחד 32KB, יושבים בזיכרון אחד אחרי השני (b מתחיל בדיוק 32KB אחרי a). הלולאה `s += a[i] * b[i]` איטית במיוחד. למה?",
+      "choices": [
+        "a[i] ו-b[i] רחוקים בדיוק בגודל ה-cache, ולכן מתמפים לאותו set. ב-direct-mapped יש רק line אחד ב-set, וכל גישה מפנה את ה-line של המערך השני: כמעט כל גישה היא miss",
+        "ה-prefetcher לא עובד על שני מערכים במקביל",
+        "שני המערכים יחד הם 64KB, יותר מה-cache, ולכן זה capacity miss שאי אפשר לשפר",
+        "כפל של floats איטי מדי"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: אלה conflict misses, או cache thrashing. הוספת padding של line אחד בין המערכים, או cache עם 2 ways ומעלה, פותרת את זה, וכל line ינוצל ל-16 גישות.",
+        "שגוי: prefetchers מודרניים עוקבים אחרי כמה streams. גם אם הם מביאים את ה-line, הוא מפונה מיד על ידי ה-stream השני.",
+        "שגוי: בסריקה רציפה לא צריך את כל 64KB בבת אחת. מספיקים שני lines פעילים. הבעיה היא ששני ה-lines האלה נאבקים על אותו set.",
+        "שגוי: כפל floats לוקח כמה cycles, הרבה פחות מ-miss לזיכרון."
+      ],
+      "explanation": "כתובות שההפרש ביניהן הוא כפולה של (גודל ה-cache חלקי מספר ה-ways) נופלות לאותו set. ב-direct-mapped שני streams כאלה מפנים זה את זה כל הזמן. זה מקרה קיצוני של conflict miss, ומטפלים בו עם padding או associativity.",
+      "lesson": "sys.caches"
+    },
+    {
+      "id": "sys.caches.q46",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "אלגוריתם סורק מערך של 64MB פעמיים ברצף: פעם אחת כדי לחשב ממוצע, ופעם שנייה כדי להחסיר אותו מכל איבר. ה-LLC הוא 8MB. מה הבעיה ומה הפתרון?",
+      "choices": [
+        "אין בעיה: אחרי הסריקה הראשונה המערך כולו ב-cache",
+        "המערך גדול מה-LLC, ולכן כשהסריקה השנייה מתחילה, ההתחלה כבר פונתה: כל הסריקה השנייה היא misses. אם אפשר, מאחדים את שני המעברים, או מעבדים בבלוקים שנכנסים ל-cache",
+        "צריך להגדיל את גודל הדף ל-2MB, וזה יפתור את ה-misses",
+        "צריך להפוך את סדר הסריקה השנייה, וכך כל הגישות יהיו hits"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: רק כ-8MB האחרונים יכולים להישאר. כל השאר פונה.",
+        "נכון: אלה capacity misses: ה-working set גדול מה-cache. איחוד מעברים (loop fusion), או חלוקה לבלוקים שנכנסים ל-cache, מנצלים כל line פעמיים בזמן שהוא עדיין שם.",
+        "שגוי: huge pages מקטינים TLB misses, לא את מספר ה-cache misses.",
+        "שגוי: זה טריק אמיתי, אבל הוא חוסך רק את החלק שעדיין ב-cache (בערך 8MB מתוך 64MB). רוב הסריקה עדיין תחטיא."
+      ],
+      "explanation": "כשה-working set של מעבר אחד גדול מה-cache, שימוש חוזר במעבר הבא לא עוזר. הפתרון הוא לבנות מחדש את הסדר: fusion או blocking. כאן, הממוצע של כל המערך צריך מעבר שלם, אבל אפשר לפחות לחשב אותו בזמן הייצור של המערך.",
+      "lesson": "sys.caches"
     }
   ]
 }

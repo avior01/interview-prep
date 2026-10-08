@@ -216,6 +216,26 @@
         {
           "term": "libatomic",
           "def": "ספריית runtime שמממשת atomics שאין להם הוראה בחומרה, באמצעות טבלת locks לפי כתובת בתוך ה-process."
+        },
+        {
+          "term": "named pipe (FIFO)",
+          "def": "pipe עם שם במערכת הקבצים (mkfifo), שדרכו processes לא קשורים מתחברים. open חוסם עד שהצד השני נפתח, אלא אם משתמשים ב-O_NONBLOCK."
+        },
+        {
+          "term": "sem_init pshared",
+          "def": "הארגומנט השני של sem_init: 0 ל-semaphore בין threads של process אחד, 1 ל-semaphore בין processes. במקרה השני הוא חייב גם לשבת בזיכרון משותף."
+        },
+        {
+          "term": "named semaphore (sem_open)",
+          "def": "semaphore שמזוהה בשם (/name) ומנוהל על ידי מערכת ההפעלה, כך ש-processes לא קשורים פותחים אותו בלי להקים זיכרון משותף."
+        },
+        {
+          "term": "semaphore לאיתות מול mutex",
+          "def": "mutex: ערך התחלתי 1, wait ו-post באותו thread. איתות: ערך התחלתי 0, הממתין עושה wait והמאותת עושה post. הערך זוכר post שקרה לפני ה-wait, ולכן אין lost wakeup."
+        },
+        {
+          "term": "מרחב כתובות נפרד",
+          "def": "לכל process טבלת דפים משלו, ולכן אותה כתובת וירטואלית מצביעה למקומות שונים בשני processes. pointers לא עוברים בין processes; בזיכרון משותף שומרים offsets."
         }
       ]
     }
@@ -381,9 +401,6 @@
       ],
       "explanation": "atomics שהם lock-free הם address-free, ולכן עובדים כשאותו זיכרון ממופה בכמה מקומות. ה-mutex צריך את ה-attribute כדי שהקרנל לא יתייחס ל-futex שלו כפרטי. אותו אזור ממופה בכתובות שונות בכל process, ולכן שומרים offsets. std::mutex לא מגדיר התנהגות בין processes, גם אם בפועל ב-glibc הוא עשוי לעבוד.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: התקן של C++ לא מגדיר שום דבר לגבי processes, ולכן std::mutex בזיכרון משותף אינו מובטח. ב-glibc הוא משתמש ב-futex פרטי ולכן עלול לא לעבוד בכלל בין processes.",
         "שגוי: כל process ממפה את האזור בכתובת וירטואלית אחרת, ולכן pointer מוחלט שנכתב ב-process אחד מצביע לזבל ב-process אחר. שומרים offsets מבסיס האזור.",
@@ -406,9 +423,6 @@
       "answer": 1,
       "explanation": "בנפח הזה העתקות דרך הקרנל עולות CPU משמעותי, ו-pipe או TCP גם יחסמו את הכותב כשה-GUI איטי. ב-shm הכותב לא מחכה לקורא. signals לא מתאימים לנתונים ולא לקצב גבוה.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ב-200 MB/s שתי העתקות דרך הקרנל ומחסנית TCP עולות CPU משמעותי, וחשוב מזה, flow control של TCP יחסום את הכותב כשה-GUI איטי. האמינות של TCP לא רלוונטית במכונה מקומית.",
         "נכון: ring בזיכרון משותף נותן אפס העתקות, והכותב מתקדם בלי לחכות לקורא. ה-GUI קורא את האינדקס האטומי, מזהה כשהוא מפגר ומדלג, וזה בדיוק מה שתצוגת spectrum צריכה. התראה דרך eventfd או polling.",
@@ -490,9 +504,6 @@
       "answer": 1,
       "explanation": "ההודעה עצמה קטנה, ולכן העתקה זניחה. רוב הזמן הוא syscalls ו-wakeup latency. ב-shm שני ה-cores מסתובבים על ה-line, וההעברה בין cores עולה כ-50–100ns לכל כיוון. המחיר: שני cores שרופים ב-100%.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ב-ping-pong ההודעה קטנה (כמה bytes), ולכן העתקה עולה ננו-שניות בודדות. הפער של 8µs לא מגיע מהעתקה.",
         "נכון: בכל כיוון יש write ו-read, כלומר syscalls, והקורא ישן ולכן צריך wakeup דרך ה-scheduler, context switch ולפעמים יציאה מ-C-state. עם busy-poll ב-shm העלות היא רק העברת cache line בין cores, כ-50–100ns לכל כיוון.",
@@ -514,10 +525,7 @@
         "מחזור חיים: יצירה, חיבור וניתוק, ניקוי"
       ],
       "explanation": "ההבדל מ-SPSC רגיל: עם כמה צרכנים הכותב לא יכול לחכות לאיטי שבהם, ולכן צריך לזהות דריסה בצד הקורא במקום למנוע אותה.",
-      "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.ipc"
     },
     {
       "id": "sys.ipc.q15",
@@ -533,9 +541,6 @@
       "answer": 3,
       "explanation": "זו הנקודה מהמאמר של Hans Boehm על seqlocks: הקורא צריך שה-loads של הנתונים יהיו מסודרים לפני ה-load השני של seq, כלומר מחסום מסוג LoadLoad שהולך אחורה, ו-acquire על s2 לא נותן אותו. הנתונים עצמם חייבים להיקרא כ-atomics (relaxed), כי הקריאה מתחרה עם הכותב, ואחרת זה data race ו-UB גם אם בסוף זורקים את התוצאה.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ה-fence לא הופך גישות לא-אטומיות לבטוחות. הנתונים חייבים להיקרא כ-atomics (relaxed), כי הם מתחרים עם הכותב, ובלי זה יש data race ו-UB גם אם התוצאה נזרקת.",
         "שגוי: ב-x86 (TSO) loads לא מתחלפים זה עם זה, ולכן ה-fence הוא בעיקר מחסום לקומפיילר. הוא נחוץ לפי מודל הזיכרון של C++ בכל ארכיטקטורה, ובמיוחד ב-ARM וב-POWER. ההפך ממה שהטענה אומרת.",
@@ -578,9 +583,6 @@
       "answer": 0,
       "explanation": "PRIVATE היא אופטימיזציה ל-futexes בתוך process אחד: הקרנל מדלג על חיפוש המיפוי. בין processes ה-key חייב להיות מבוסס על האובייקט המשותף. זה בדיוק מה ש-PTHREAD_PROCESS_SHARED משנה במימוש של pthread_mutex.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: futex פרטי מזוהה לפי (mm, כתובת וירטואלית), ולכן ה-WAIT וה-WAKE בשני processes נופלים על keys שונים ולא נפגשים, גם אם הכתובות היו במקרה שוות. futex משותף (בלי FUTEX_PRIVATE_FLAG) מזוהה לפי הדף או inode ו-offset, ולכן עובד.",
         "שגוי: futex עובד מצוין בזיכרון משותף, זו בדיוק הדרך שבה pthread mutex עם PTHREAD_PROCESS_SHARED עובד. הבעיה היא רק הדגל PRIVATE.",
@@ -823,9 +825,6 @@
       "answer": 3,
       "explanation": "רק atomics שהם lock-free הם address-free, ולכן רק הם עובדים בין processes. כש-cmpxchg16b לא זמין לקומפיילר (או ש-libatomic בוחר לא להשתמש בו), הפעולה מוגנת ב-lock פנימי שאינו משותף. הפתרונות: static_assert על is_always_lock_free, לארוז את הזוג ל-64 ביט, להשתמש ב-seqlock, או ב-pthread mutex עם PTHREAD_PROCESS_SHARED.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: atomics שהם lock-free עובדים בזיכרון משותף, כי הם פועלים על הזיכרון עצמו. הבעיה ספציפית ל-atomic שאינו lock-free.",
         "שגוי: memory order קובע סדר גישות, לא אטומיות של הפעולה עצמה. גם עם seq_cst, הנעילה נעשית ב-lock פרטי של כל process, ולכן הזוג עדיין יכול להתערבב.",
@@ -847,9 +846,6 @@
       "answer": 1,
       "explanation": "בלי הערך הצפוי היה lost wakeup: ה-waiter רואה שהתנאי לא מתקיים, המעיר משנה ומעיר (אין עדיין אף אחד בתור), ואז ה-waiter נרדם לנצח. ההשוואה האטומית בתוך הקרנל היא מה שמאפשר ל-mutex ול-condition variable להשאיר את ה-fast path כולו ב-user space.",
       "lesson": "sys.ipc",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: הקרנל בודק שהכתובת ממופה וקריאה (אחרת EFAULT), אבל זה לא תפקיד הפרמטר expected. הערך משמש להשוואה, לא לבדיקת הרשאות.",
         "נכון: ה-waiter בודק תנאי ב-user space ואז נכנס לקרנל. אם בינתיים המעיר שינה את המילה וקרא ל-WAKE, בלי השוואה ה-waiter היה נרדם לנצח (lost wakeup). הקרנל משווה *addr ל-expected תחת ה-lock של תור ההמתנה, ואם הם שונים WAIT חוזר מיד עם EAGAIN.",
@@ -871,10 +867,226 @@
         "זיהוי מוות (pidfd או EOF) והחזרת בלוקים, generation counters"
       ],
       "explanation": "שאלה ברמת senior: לא מספיק לומר shared memory. צריך להראות מי מחזיק כל בלוק בכל רגע, ומה קורה כשמשהו נכשל.",
-      "lesson": "sys.ipc",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q32",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שני processes שאינם אב וילד (הופעלו בנפרד מה-shell) צריכים ערוץ של זרם bytes חד-כיווני, שאפשר למצוא לפי שם בדיסק. מה מתאים?",
+      "choices": [
+        "named pipe (FIFO) שנוצר עם `mkfifo`: יש לו שם במערכת הקבצים, וכל process עם הרשאות יכול לפתוח אותו לקריאה או לכתיבה",
+        "anonymous pipe שנוצר עם `pipe()`",
+        "signal, כי הוא לא דורש הגדרה מראש",
+        "קובץ רגיל שאחד כותב אליו והשני קורא ממנו"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: FIFO מתנהג כמו pipe (זרם bytes בזיכרון הקרנל, בלי כתיבה לדיסק), אבל יש לו שם שדרכו processes לא קשורים נפגשים.",
+        "שגוי: pipe אנונימי מיוצג רק כ-fds, ולכן אפשר לחלוק אותו רק דרך ירושה ב-fork (או העברת fd דרך Unix socket).",
+        "שגוי: signal מעביר רק מספר, בלי תוכן, ואינו זרם נתונים.",
+        "שגוי: אפשר, אבל אין סנכרון: הקורא לא יודע מתי יש נתונים חדשים, והנתונים עוברים דרך ה-page cache ואולי לדיסק."
+      ],
+      "explanation": "pipe: בין קרובים, דרך ירושה. FIFO: אותו דבר עם שם. message queue: הודעות עם גבולות ועדיפויות. Unix socket: דו-כיווני, עם אפשרות להעביר fds. shared memory: הכי מהיר, אבל צריך סנכרון נפרד.",
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/",
+        "https://www.geeksforgeeks.org/?p=666546"
+      ],
+      "problem": "NVIDIA / Qualcomm: IPC mechanisms (pipes, FIFOs, message queues)",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q33",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "process קורא ל-`open(\"/tmp/myfifo\", O_RDONLY)` על FIFO, בלי O_NONBLOCK, ואף process לא פתח אותו לכתיבה. מה קורה?",
+      "choices": [
+        "open חוסם עד ש-process אחר פותח את ה-FIFO לכתיבה",
+        "open מצליח מיד, ו-read הראשון מחזיר 0 (EOF)",
+        "open נכשל עם ENOENT",
+        "open נכשל עם ENXIO"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: פתיחה של FIFO חוסמת עד שהצד השני נפתח. זה מסנכרן את ההתחלה של שני הצדדים, ומפתיע כשרק צד אחד רץ.",
+        "שגוי: זו התנהגות של open עם O_NONBLOCK לקריאה: הוא מצליח מיד, ו-read בלי כותבים מחזיר 0.",
+        "שגוי: ה-FIFO קיים (נוצר עם mkfifo), ולכן אין ENOENT.",
+        "שגוי: ENXIO מוחזר בפתיחה לכתיבה עם O_NONBLOCK כשאין קורא."
+      ],
+      "explanation": "FIFO מתאם בין הצדדים כבר ב-open: קורא מחכה לכותב וכותב מחכה לקורא (במצב חוסם). עם O_NONBLOCK, פתיחה לקריאה מצליחה מיד, ופתיחה לכתיבה בלי קורא נכשלת עם ENXIO.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q34",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל העיקרי בין POSIX message queue (`mq_send` / `mq_receive`) לבין pipe?",
+      "choices": [
+        "pipe תומך בעדיפויות, ו-message queue לא",
+        "pipe מהיר יותר כי הוא לא עובר דרך הקרנל",
+        "message queue שומרת גבולות של הודעות (כל receive מחזיר הודעה שלמה אחת) ותומכת בעדיפויות. pipe הוא זרם bytes בלי גבולות",
+        "message queue עובדת רק בתוך process אחד"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: ל-pipe אין עדיפויות. הוא FIFO של bytes.",
+        "שגוי: שניהם עוברים דרך הקרנל, עם העתקה פנימה והחוצה.",
+        "נכון: ב-pipe, שתי כתיבות של 10 בתים יכולות להיקרא כ-read אחד של 20, או כ-15 ו-5. ב-message queue כל הודעה נשמרת שלמה, והודעה בעדיפות גבוהה יוצאת קודם.",
+        "שגוי: היא מזוהה בשם (למשל /cmdq), וכל process עם הרשאות יכול לפתוח אותה."
+      ],
+      "explanation": "בחירה בין זרם להודעות: עם pipe או TCP צריך framing ידני (אורך בכל header), ועם message queue, UDP או Unix socket מסוג SOCK_SEQPACKET הגבולות נשמרים.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q35",
+      "level": 3,
+      "type": "bug",
+      "prompt": "שני processes (אב וילד אחרי fork) מגדילים מונה בזיכרון משותף, ומגנים עליו עם semaphore שנמצא באותו זיכרון. על Linux עם glibc, לפעמים אחד ה-processes נתקע לנצח בתוך sem_wait, אף שהשני כבר סיים. איפה הבאג?",
+      "code": "struct Shared { sem_t lock; long counter; };\n\nint fd = shm_open(\"/cnt\", O_CREAT | O_RDWR, 0600);\nftruncate(fd, sizeof(Shared));\nauto* s = static_cast<Shared*>(mmap(nullptr, sizeof(Shared),\n    PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));\nsem_init(&s->lock, 0, 1);\n\npid_t pid = fork();\nfor (int i = 0; i < 1000000; ++i) {\n    sem_wait(&s->lock);\n    s->counter++;\n    sem_post(&s->lock);\n}",
+      "lang": "cpp",
+      "choices": [
+        "הארגומנט השני של sem_init (pshared) הוא 0, ולכן ה-semaphore מוגדר לשימוש בין threads של process אחד בלבד. בין processes ההתנהגות לא מוגדרת. צריך 1",
+        "ערך התחלתי של 1 שגוי. semaphore שמשמש כ-mutex צריך להתחיל ב-0",
+        "חסר `volatile` על counter, ולכן כל process שומר אותו ברגיסטר",
+        "mmap עם MAP_SHARED לא משותף אחרי fork, ולכן כל process מגדיל עותק משלו"
+      ],
+      "answer": 0,
+      "bugLine": 7,
+      "notes": [
+        "נכון: עם pshared = 0, המימוש רשאי להניח שכל המשתמשים באותו מרחב כתובות (למשל להשתמש ב-futex פרטי, FUTEX_PRIVATE), ובפועל ב-glibc ההמתנה וההערה משתמשות ב-futex פרטי, שהמפתח שלו תלוי במרחב הכתובות: post של process אחד לא מעיר את מי שישן ב-process השני. כדי ש-semaphore יעבוד בין processes, הוא חייב להיות בזיכרון משותף וגם להיות מאותחל עם pshared = 1.",
+        "שגוי: ערך 1 נכון למניעה הדדית: הראשון שעושה wait עובר, והבא חוסם עד post. ערך 0 היה חוסם את כולם מההתחלה.",
+        "שגוי: sem_wait ו-sem_post הם memory barriers, ולכן הקומפיילר לא יכול להחזיק את counter ברגיסטר לאורכם. volatile לא נחוץ ולא היה עוזר.",
+        "שגוי: מיפוי MAP_SHARED נשאר משותף אחרי fork: שני ה-processes רואים את אותם דפים פיזיים. רק MAP_PRIVATE הופך ל-COW."
+      ],
+      "explanation": "סנכרון בין processes דורש שני דברים: שהאובייקט יהיה בזיכרון משותף, ושיאותחל במצב process-shared: pshared = 1 ב-sem_init, או PTHREAD_PROCESS_SHARED ל-mutex. חלופה: named semaphore עם sem_open, שהקרנל מנהל בשם.",
+      "tags": [
+        "nvidia",
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-5/",
+        "https://www.geeksforgeeks.org/interview-experiences/microsoft-interview-experience-set-126-campus-internship/"
+      ],
+      "problem": "NVIDIA / Microsoft: share a resource between processes with shared memory and a semaphore",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q36",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "process A מכין נתונים בזיכרון משותף, ו-process B צריך לחכות עד שהם מוכנים. משתמשים ב-semaphore משותף (pshared = 1). מה הערך ההתחלתי הנכון, ומי קורא למה?",
+      "choices": [
+        "ערך 1. B קורא ל-sem_wait, ו-A קורא ל-sem_post אחרי שסיים",
+        "ערך 0. B קורא ל-sem_wait וחוסם, ו-A קורא ל-sem_post אחרי שסיים לכתוב",
+        "ערך 0. A קורא ל-sem_wait לפני הכתיבה, ו-B קורא ל-sem_post",
+        "ערך 1. שניהם קוראים ל-sem_wait"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: עם ערך 1, B יעבור את sem_wait מיד, עוד לפני ש-A כתב.",
+        "נכון: semaphore של איתות מתחיל ב-0 ('האירוע עוד לא קרה'). post מסמן את האירוע ומעיר את הממתין. אם A מסיים לפני ש-B מגיע ל-wait, הערך נשאר 1 ו-B לא חוסם בכלל, כך שהאיתות לא הולך לאיבוד.",
+        "שגוי: זה הפוך: מי שמחכה צריך לקרוא ל-wait, ומי שמאותת ל-post.",
+        "שגוי: זה דפוס של mutex, לא של איתות. B עלול לעבור לפני ש-A כתב משהו."
+      ],
+      "explanation": "אותו semaphore משמש לשני דפוסים: mutex (ערך התחלתי 1, wait ו-post באותו process) ואיתות (ערך התחלתי 0, wait בממתין ו-post במאותת). היתרון על פני דגל פשוט: אין busy-wait, ואין lost wakeup, כי הערך זוכר את ה-post.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q37",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שני processes משתמשים ב-semaphore בזיכרון משותף כ-mutex (ערך התחלתי 1). process A נהרג ב-SIGKILL בדיוק אחרי sem_wait ולפני sem_post. מה קורה ל-B, ומה החלופה העמידה?",
+      "choices": [
+        "sem_wait של B יחזיר EINTR",
+        "B מקבל SIGPIPE",
+        "ה-semaphore נשאר על 0 לתמיד, ו-B ייחסם לעד ב-sem_wait. ל-semaphore אין בעלים, ולכן אף אחד לא יודע לשחרר אותו. החלופה: pthread mutex עם PTHREAD_PROCESS_SHARED ו-PTHREAD_MUTEX_ROBUST, שבו B מקבל EOWNERDEAD ויכול לתקן את המצב",
+        "הקרנל מזהה ש-A מת ומחזיר את ה-semaphore ל-1"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: EINTR מוחזר כש-signal קוטע את ההמתנה. מותו של A לא שולח signal ל-B.",
+        "שגוי: SIGPIPE נשלח בכתיבה ל-pipe או socket שאין להם קוראים. זה לא קשור ל-semaphores.",
+        "נכון: robust mutex שומר את ה-TID של מי שנעל. כשהבעלים מת, הנועל הבא מקבל EOWNERDEAD, יכול לבדוק את הנתונים, לקרוא ל-pthread_mutex_consistent ולהמשיך.",
+        "שגוי: לקרנל אין מושג מי 'מחזיק' semaphore, כי אין לו בעלות. (ל-semaphores של System V יש SEM_UNDO שמבטל פעולות של process שמת, אבל לא ל-POSIX.)"
+      ],
+      "explanation": "semaphore כ-mutex בין processes לא שורד קריסות. כשהנעילה חייבת לשרוד מות של process, משתמשים ב-robust mutex, או בתכנון שלא דורש נעילה משותפת (תורים lock-free, או process אחד שהוא הבעלים של המצב).",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q38",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "process A שולח ל-process B דרך pipe את הכתובת של משתנה גלובלי שלו, למשל `0x55d4c2a01010`. B ממיר אותה ל-`int*` וקורא. מה B מקבל?",
+      "choices": [
+        "שגיאת הרשאות מהקרנל (EPERM)",
+        "את הערך של A, אבל רק אם שניהם הורצו מאותו קובץ הרצה",
+        "את מה שנמצא בכתובת הזו **במרחב הכתובות של B**: זבל, משתנה אחר של B, או SIGSEGV אם הכתובת לא ממופה אצלו. לכל process יש מרחב כתובות וירטואלי נפרד",
+        "את הערך של המשתנה של A, כי זו כתובת אמיתית בזיכרון"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: אין בדיקת הרשאות כאן. B פשוט ניגש לזיכרון שלו.",
+        "שגוי: גם עם אותו קובץ הרצה, כל process מקבל עותק פרטי של .data, ועם ASLR גם הכתובות שונות.",
+        "נכון: אותה כתובת וירטואלית בשני processes ממופה (אם בכלל) ל-frames שונים. כדי לשתף משתנה צריך זיכרון משותף מפורש (shm_open + mmap, או mmap משותף לפני fork).",
+        "שגוי: הכתובת היא וירטואלית. ה-MMU מתרגם אותה לפי טבלת הדפים של ה-process שמבצע את הגישה, כלומר של B."
+      ],
+      "explanation": "בידוד מרחבי הכתובות הוא הסיבה שצריך IPC. כדי ששני processes יקראו את אותו משתנה, ממפים אזור משותף (shared memory), או משתמשים בכלים מיוחדים כמו process_vm_readv או ptrace, שדורשים הרשאה.",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-3-campus/"
+      ],
+      "problem": "NVIDIA: how can two processes read each other's variables",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q39",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שני processes ממפים את אותו אזור shared memory. ב-A הוא ממופה בכתובת 0x7f00...0000, וב-B בכתובת 0x7e80...0000. A בונה בתוכו רשימה מקושרת עם `Node* next`. מה קורה כש-B עובר על הרשימה?",
+      "choices": [
+        "הכל עובד, כי זה אותו זיכרון פיזי",
+        "ה-pointers מכילים כתובות של A. ב-B הן מצביעות מחוץ לאזור, או לאזור אחר לגמרי. בזיכרון משותף שומרים offsets מתחילת האזור (או offset_ptr), לא pointers",
+        "הקרנל מתקן את ה-pointers אוטומטית בזמן ה-mmap",
+        "B יקבל SIGBUS מיד בגישה הראשונה לאזור"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: התוכן זהה, אבל pointer הוא כתובת וירטואלית, ומשמעותו תלויה במרחב הכתובות שבו קוראים אותו.",
+        "נכון: offset (למשל `uint32_t next_off`) הוא חסר מיקום: כל process מוסיף אותו לבסיס של המיפוי שלו. Boost.Interprocess מספקת offset_ptr בדיוק בשביל זה.",
+        "שגוי: הקרנל לא יודע מה יש בתוך הזיכרון ולא נוגע בתוכן.",
+        "שגוי: SIGBUS קורה בגישה מעבר לסוף הקובץ שמגבה את המיפוי. הגישה לאזור עצמו תקינה, והבעיה מתחילה כשמפענחים pointer."
+      ],
+      "explanation": "מבני נתונים בזיכרון משותף חייבים להיות position-independent: offsets במקום pointers, ובלי אובייקטים עם vtable או pointers פנימיים, כמו std::string או std::vector עם allocator רגיל.",
+      "lesson": "sys.ipc"
+    },
+    {
+      "id": "sys.ipc.q40",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס? (מניחים ש-fork מצליח)",
+      "code": "int g = 1;\n\nint main() {\n    pid_t pid = fork();\n    if (pid == 0) {\n        g = 5;\n        return 0;\n    }\n    waitpid(pid, nullptr, 0);\n    std::printf(\"%d\\n\", g);\n}",
+      "lang": "cpp",
+      "choices": [
+        "`1`",
+        "`5`",
+        "`1` או `5`, תלוי מי רץ קודם",
+        "התוכנית לא מתקמפלת, כי אסור לשנות גלובלי אחרי fork"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: אחרי fork לכל process יש עותק משלו של הזיכרון (copy-on-write). השינוי בילד יוצר עותק פרטי של הדף, והאב לא רואה אותו.",
+        "שגוי: זה היה נכון ל-threads, שחולקים זיכרון. processes לא חולקים זיכרון אלא אם מיפו אזור משותף מפורשות.",
+        "שגוי: האב מחכה לילד, וממילא לא משנה מי רץ קודם: השינוי של הילד לא מגיע לאב אף פעם.",
+        "שגוי: זה קוד חוקי לגמרי."
+      ],
+      "explanation": "fork יוצר מרחב כתובות נפרד, ולכן תקשורת בין אב לילד דורשת IPC: pipe, socketpair, mmap עם MAP_SHARED לפני ה-fork, או exit status.",
+      "lesson": "sys.ipc"
     }
   ]
 }

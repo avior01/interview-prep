@@ -9,6 +9,7 @@ const taxonomy = JSON.parse(readFileSync(join(root, 'taxonomy.json'), 'utf8'));
 const only = process.argv[2];
 
 const MIN_PER_LEVEL = 6;
+const COMPANY_TAGS = ['nvidia', 'microsoft', 'meta', 'apple', 'google', 'amazon', 'qualcomm', 'intel'];
 const TYPES =['mcq', 'multi', 'output', 'bug', 'order', 'short', 'oral', 'code'];
 const errors = [];
 const warnings = [];
@@ -69,7 +70,9 @@ for (const domain of taxonomy.domains) {
       const text = `${q.prompt} ${q.explanation}`;
       if (/(השאלה הקודמת|בשאלה הקודמת|מהשאלה הקודמת|השאלה הבאה)/.test(text)) qerr('refers to another question; questions must stand alone');
       if (/(שתי|שלוש|ארבע) (הראשונות|האחרונות)|(האפשרות|התשובה|המסיח) (הראשונה|השנייה|השלישית|הרביעית|האחרונה)|תשובה [אבגד]'/.test(q.explanation)) qerr('explanation refers to a choice by position; choices are shuffled');
-      if (q.tags !== undefined && !(Array.isArray(q.tags) && q.tags.every((t) => ['nvidia', 'microsoft', 'meta'].includes(t)))) qerr('tags must be nvidia/microsoft/meta');
+      if (q.tags !== undefined && !(Array.isArray(q.tags) && q.tags.every((t) => COMPANY_TAGS.includes(t)))) qerr(`tags must be one of ${COMPANY_TAGS.join('/')}`);
+      if (q.sources !== undefined && !(Array.isArray(q.sources) && q.sources.length && q.sources.every((u) => /^https?:\/\//.test(u)))) qerr('sources must be a non-empty array of URLs');
+      if (q.tags?.length && !q.sources?.length) qerr('company tags need sources (a public report that it was asked there)');
       if (q.problem !== undefined && !isStr(q.problem)) qerr('problem must be a string');
       if (['mcq', 'multi', 'output', 'bug'].includes(q.type)) {
         // One note per choice: why that exact choice is right or wrong.

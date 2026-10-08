@@ -220,6 +220,30 @@
         {
           "term": "std::atomic מול volatile",
           "def": "atomic נותן אטומיות וסדר בין threads, אבל לא מבטיח רוחב או מספר גישות ל-MMIO. volatile הפוך."
+        },
+        {
+          "term": "endianness (little / big)",
+          "def": "הסדר שבו bytes של מספר רב-byte נשמרים בזיכרון. ב-little-endian (x86, רוב ה-ARM) ה-byte הפחות משמעותי בכתובת הנמוכה; ב-big-endian (network byte order) המשמעותי ביותר. בודקים דרך unsigned char* או memcpy, לא עם shifts."
+        },
+        {
+          "term": "byte swap (bswap / htonl)",
+          "def": "היפוך סדר ה-bytes של מילה. htonl/ntohl ו-cpu_to_be32 ממירים רק כשה-host שונה מסדר היעד; __builtin_bswap32 ו-std::byteswap (C++23) תמיד הופכים, ומתקמפלים לפקודה אחת."
+        },
+        {
+          "term": "const volatile",
+          "def": "הצהרה לרגיסטר read-only של חומרה: const מונע כתיבה מצד הקוד, volatile מחייב לקרוא מחדש בכל גישה כי החומרה משנה את הערך."
+        },
+        {
+          "term": "hi-lo-hi read",
+          "def": "דרך לקרוא מונה רחב שחשוף כשני רגיסטרים צרים בלי latch: קוראים HI, LO, ושוב HI. אם HI השתנה היה wrap, וקוראים LO מחדש. 3 קריאות במקרה הטוב, 4 במקרה הרע."
+        },
+        {
+          "term": "unsequenced operands",
+          "def": "ב-C++ סדר החישוב של אופרנדים של רוב האופרטורים (כמו | ו-+) לא מוגדר. כשסדר של גישות volatile לחומרה חשוב, כותבים אותן ב-statements נפרדים."
+        },
+        {
+          "term": "torn read (רוחב גישה)",
+          "def": "קריאה של משתנה רחב מרוחב הגישה של המעבד (למשל 32 ביט על AVR של 8 ביט) מתבצעת בכמה פקודות. interrupt באמצע נותן ערך שלא היה קיים. volatile לא מונע את זה; צריך critical section או קריאה כפולה."
         }
       ]
     }
@@ -358,9 +382,6 @@
       "answer": 1,
       "explanation": "ב-W1C כתיבת 0 לא משנה כלום, ולכן כותבים מסכה עם הביט הרצוי בלבד, בלי קריאה. &= ~RX_DONE היה שגוי אחרת: הוא כותב 1 לכל השאר הפעילים ו-0 ל-RX_DONE, כלומר מנקה בדיוק את מה שלא רצינו. זו סיבה נפוצה לאירועים שהולכים לאיבוד ב-drivers.",
       "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: קריאה כפולה רק מגדילה את הסיכון, ובמקרה של read-to-clear גם הייתה מוחקת מידע. הבעיה היא שהקוד קורא בכלל.",
         "נכון: `|=` קורא את STATUS עם כל הדגלים הפעילים, מוסיף RX_DONE וכותב הכול חזרה. ב-W1C כתיבת 1 לכל דגל פעיל מנקה גם את TX_DONE ו-ERR. התיקון: `dev->STATUS = RX_DONE;` בלי קריאה.",
@@ -471,9 +492,6 @@
       "answer": 0,
       "explanation": "כתיבת doorbell חייבת להגיע אחרי שה-descriptors שהיא מצביעה עליהם נראים, ו-writel עושה את זה. ב-x86 שני ה-accessors כמעט זהים בגלל TSO ו-UC, וב-ARM ההבדל הוא wmb (dmb או dsb). relaxed משמש כשכותבים הרבה רגיסטרים רצופים ואין קשר לזיכרון DMA, כדי לחסוך barriers.",
       "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: writel מבטיח שכתיבות קודמות לזיכרון רגיל (descriptors, באפרי DMA) נראות להתקן לפני כתיבת ה-MMIO, וב-ARM זה barrier (wmb) לפני הכתיבה. writel_relaxed שומר רק על סדר מול MMIO אחר לאותו התקן, ומתאים לרצף כתיבות לרגיסטרים בלי קשר ל-DMA.",
         "לא נכון: שניהם ניגשים דרך pointer volatile ומבצעים את הכתיבה. ההבדל הוא ב-barrier מול זיכרון רגיל, לא ב-volatile.",
@@ -495,9 +513,6 @@
       "answer": 3,
       "explanation": "זו הסיבה ש-NICs כותבים את הסטטוס לתוך ה-descriptors ב-RAM: ה-driver סורק זיכרון שנמצא ב-cache (וב-DDIO אפילו ב-LLC), וקריאת line חדש עולה כמו cache miss רגיל. כתיבות MMIO זולות יחסית כי הן posted, ולכן doorbell הוא כתיבה.",
       "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: MAP_PRIVATE הוא copy-on-write על דפים, ולא רלוונטי ל-BAR של התקן. הוא לא משנה את עלות קריאות ה-MMIO.",
         "לא נכון: חסר volatile היה גורם ל-loop שלא קורא את הרגיסטר בכלל, לא ל-CPU ב-100% עם throughput נמוך. הבעיה היא העלות של כל קריאה.",
@@ -518,10 +533,7 @@
         "דוגמה קונקרטית: doorbell אחרי descriptor ב-ARM, או ISR על core יחיד"
       ],
       "explanation": "זו אחת השאלות הנפוצות ביותר בראיונות embedded ו-systems. התשובה החלשה: volatile הופך משתנה ל-thread-safe.",
-      "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.volatile-mmio"
     },
     {
       "id": "sys.volatile-mmio.q15",
@@ -558,9 +570,6 @@
       "answer": 2,
       "explanation": "nGnRE פירושו: אין gathering (איחוד גישות), אין reordering בין גישות Device לאותו אזור, ויש early write acknowledgement (כתיבות posted). הסדר הזה לא חל מול Normal memory, שהוא weakly ordered. זו בדיוק הסיבה ל-wmb המובנה ב-writel של Linux ב-ARM64.",
       "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: Normal memory ב-ARM הוא weakly ordered, והסדר בין Normal ל-Device לא מובטח. אם היה מובטח, ל-writel של Linux לא היה צורך ב-wmb.",
         "לא נכון: Device-nGnRE כולל nR (non-Reordering), ולכן גישות לאותו אזור Device כן מגיעות בסדר התוכנית.",
@@ -767,9 +776,6 @@
       "answer": 0,
       "explanation": "WC מתאים לחלון נתונים שבו רק התוצאה הסופית חשובה. ברגיסטרי בקרה כל כתיבה היא פקודה, וסדר ומספר הכתיבות חשובים. הפתרון המקובל: שני BARs או שני מיפויים (WC לנתונים, UC לבקרה), ו-sfence בין סוף הנתונים ל-doorbell. volatile רק מבטיח שהקומפיילר יפיק את הכתיבות, ו-WC הוא החלטה של החומרה.",
       "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: ב-WC הכתיבות נאספות ב-write-combining buffers ונשלחות כ-bursts. הן יכולות להתאחד (שתי כתיבות לאותו רגיסטר הופכות לאחת) ולהגיע בסדר שונה. רגיסטרי בקרה צריכים מיפוי UC נפרד, ו-sfence אחרי נתוני WC לפני ה-doorbell.",
         "לא נכון: volatile ממשיך לעבוד: הקומפיילר מפיק את כל הכתיבות. WC הוא החלטה של החומרה מה לעשות איתן אחרי שיצאו מה-core.",
@@ -846,9 +852,6 @@
       "answer": 2,
       "explanation": "זו גרסת ה-MCU של posted writes: הכתיבה נחשבת \"בוצעה\" מבחינת ה-core לפני שהגיעה לפריפריה. read-back מאותה פריפריה חייב לחכות לכתיבה הקודמת, ולכן הוא האמין ביותר. dsb עוזר ברוב המקרים, אבל עם early write acknowledgement בבאס הוא לא תמיד מבטיח הגעה. ARM ויצרני MCU מתעדים את התופעה הזו בהערות יישום. ה-TIM2 מוגדר כבר volatile ב-headers של CMSIS.",
       "lesson": "sys.volatile-mmio",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: ה-NVIC לא מכפיל interrupts. הוא נכנס שוב כי דגל הפריפריה עדיין פעיל ברגע ה-exception return. הורדת עדיפות לא משנה זאת.",
         "לא נכון: TIM_SR_UIF מתנקה בכתיבה לפי ה-datasheet, והניקוי כן עובד, רק מאוחר מדי. החלפת הסמנטיקה לא אפשרית ולא נדרשת.",
@@ -872,10 +875,293 @@
         "בלי חסימת interrupts ובלי busy-wait ארוך: ניסיון חוזר נדיר"
       ],
       "explanation": "השאלה בודקת שימוש נכון ב-volatile (שני הקריאות ל-hi חייבות להתבצע) ומחשבה על torn reads בחומרה, לא רק בתוכנה.",
-      "lesson": "sys.volatile-mmio",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q31",
+      "level": 2,
+      "type": "multi",
+      "prompt": "באילו מהמצבים הבאים `volatile` הוא הכלי הנכון, ולבדו מספיק כדי שהקוד יעבוד?",
+      "choices": [
+        "דגל `bool` שה-ISR מדליק, והלולאה הראשית מחכה לו, על microcontroller עם core יחיד",
+        "קריאה חוזרת בלולאה של רגיסטר STATUS ממופה-זיכרון (MMIO) עד שביט READY נדלק",
+        "משתנה מקומי שמשתנה אחרי `setjmp` ונקרא אחרי שחוזרים אליו עם `longjmp`",
+        "מונה שמשותף לשני threads, וכל אחד מהם מבצע עליו `++`",
+        "דגל `stop` שנכתב ב-thread אחד ונקרא ב-thread אחר, על מעבד multi-core"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "notes": [
+        "נכון: בלי volatile הקומפיילר רשאי לקרוא את הדגל פעם אחת ולהפוך את הלולאה לאינסופית. על core יחיד, קריאה של bool היא פעולה אחת ואין בעיית סדר בין cores, ולכן volatile מספיק.",
+        "נכון: זה השימוש הקלאסי. כל קריאה של הרגיסטר היא אירוע אמיתי מול החומרה, ו-volatile מחייב את הקומפיילר לבצע אותה בכל איטרציה.",
+        "נכון: התקן קובע שמשתנה מקומי לא-volatile ששונה בין setjmp ל-longjmp מקבל ערך לא מוגדר אחרי החזרה, כי הוא עשוי לשבת ברגיסטר. volatile מכריח אותו לשבת בזיכרון.",
+        "שגוי: `++` הוא read-modify-write. גם עם volatile שני threads יכולים לקרוא את אותו ערך ולאבד עדכון. צריך `std::atomic` עם `fetch_add` או mutex.",
+        "שגוי: גישה לא-atomic משני threads היא data race, כלומר UB. volatile לא נותן סדר בין cores ולא happens-before. הכלי הנכון הוא `std::atomic<bool>`."
+      ],
+      "explanation": "volatile אומר לקומפיילר שכל גישה היא התנהגות נצפית: אסור לבטל אותה, לאחד אותה עם גישה אחרת או לשמור את הערך ברגיסטר. הוא מתאים לחומרה (MMIO), ל-ISR מול לולאה ראשית על core יחיד, ול-setjmp/longjmp. הוא לא נותן atomicity ולא סנכרון בין threads; לזה יש std::atomic.",
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/",
+        "https://www.jointaro.com/interviews/companies/nvidia/experiences/systems-software-engineer-santa-clara-ca-march-1-2016-no-offer-negative-588e423c/",
+        "https://www.geeksforgeeks.org/?p=477855"
+      ],
+      "problem": "NVIDIA / Qualcomm: volatile variables and their usage",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q32",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על microcontroller של 8 ביט (AVR), ה-ISR של timer מבצע `ticks++` על `volatile uint32_t ticks`. הלולאה הראשית מחכה 100 ticks כך:\n\n```cpp\nuint32_t t0 = ticks;\nwhile (ticks - t0 < 100) { }\n```\n\nמדי פעם ההמתנה נגמרת מוקדם מאוד, או נמשכת הרבה יותר מדי. מה הסיבה?",
+      "choices": [
+        "חסר volatile על t0, ולכן הקומפיילר מחשב את ההפרש פעם אחת",
+        "קריאה של משתנה של 32 ביט על מעבד של 8 ביט היא כמה קריאות של byte. interrupt שמגיע באמצע מייצר ערך קרוע, ו-volatile לא מונע את זה",
+        "החיסור `ticks - t0` עובר wraparound אחרי 2^32 ticks ונותן תוצאה שלילית",
+        "ה-ISR צריך לבצע `ticks = ticks + 1` במקום `ticks++`, כי `++` על volatile הוא UB"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: t0 הוא משתנה מקומי שה-ISR לא נוגע בו. הוא לא משתנה מאחורי הגב של הקוד, ולכן אין סיבה שיהיה volatile.",
+        "נכון: על AVR קריאה של uint32_t היא ארבע פקודות load של byte. אם ה-ISR מגדיל את המונה בין הקריאות (למשל מ-0x00FF ל-0x0100), נקרא ערך שלא היה קיים אף פעם. צריך לבטל interrupts סביב הקריאה, או לקרוא פעמיים עד שמתקבלים שני ערכים זהים.",
+        "שגוי: החיסור הוא unsigned ולכן modular. `ticks - t0` נותן את ההפרש הנכון גם אחרי wrap, וזה בדיוק הדפוס המומלץ.",
+        "שגוי: `++` על volatile הוא חוקי (ב-C++20 הוא deprecated, אבל לא UB). הבעיה היא האטומיות של הקריאה בצד הראשי, לא הכתיבה ב-ISR."
+      ],
+      "explanation": "volatile מבטיח שהגישה תתבצע, אבל לא שהיא תהיה אטומית. כשהמשתנה רחב יותר מרוחב הגישה של המעבד, ה-ISR יכול לקטוע את הקריאה באמצע. הפתרון הוא critical section קצר (cli/sei) סביב העתקת הערך, או קריאה כפולה עד שמתקבלים שני ערכים זהים.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q33",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-header של התקן מופיע: `const volatile uint32_t* const STATUS = (const volatile uint32_t*)0x40001004;`. מה המשמעות של כל qualifier?",
+      "choices": [
+        "ה-const הראשון אומר שהערך ברגיסטר לא משתנה, ולכן volatile מיותר",
+        "השילוב const volatile לא חוקי ב-C++, וחלק מהקומפיילרים רק מתעלמים ממנו",
+        "הקוד לא יכול לכתוב לרגיסטר דרך ה-pointer (const), הערך עשוי להשתנות בכל קריאה בגלל החומרה (volatile), וה-pointer עצמו לא יכול להצביע למקום אחר (ה-const שאחרי הכוכבית)",
+        "ה-pointer הוא volatile, ולכן הקומפיילר יקרא מחדש את הכתובת 0x40001004 מהזיכרון בכל שימוש"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: const כאן הוא הבטחה של התוכנית שהיא לא תכתוב דרך ה-pointer, לא הבטחה שהערך קבוע. רגיסטר read-only של סטטוס משתנה כל הזמן מצד החומרה.",
+        "שגוי: const volatile חוקי לגמרי, וזו בדיוק ההצהרה המקובלת לרגיסטר read-only של התקן.",
+        "נכון: const ו-volatile שמאל לכוכבית חלים על האובייקט המוצבע: אסור לכתוב, וכל קריאה חייבת להתבצע. ה-const שמימין לכוכבית חל על ה-pointer עצמו.",
+        "שגוי: volatile נמצא משמאל לכוכבית, ולכן הוא חל על ה-uint32_t המוצבע ולא על ה-pointer. pointer volatile נכתב `uint32_t* volatile`."
+      ],
+      "explanation": "קוראים הצהרה מימין לשמאל: STATUS הוא pointer קבוע ל-uint32_t שהוא volatile ו-const. const מונע כתיבה מצד הקוד, volatile מונע מהקומפיילר להניח שהערך לא השתנה. השילוב מתאים לרגיסטר סטטוס read-only.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q34",
+      "level": 2,
+      "type": "output",
+      "prompt": "מה מודפס על מחשב x86-64?",
+      "code": "#include <cstdint>\n#include <cstdio>\n\nint main() {\n    uint32_t x = 0x11223344;\n    auto* p = reinterpret_cast<const unsigned char*>(&x);\n    std::printf(\"%02x %02x\\n\", p[0], p[3]);\n}",
+      "lang": "cpp",
+      "choices": [
+        "undefined behavior: ההמרה ל-unsigned char* מפרה את strict aliasing",
+        "`44 11`",
+        "`11 44`",
+        "תלוי ב-alignment של x, ולכן משתנה בין ריצות"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: מותר לקרוא כל אובייקט דרך char, unsigned char או std::byte. זה החריג המפורש בכלל ה-aliasing, ולכן זו הדרך החוקית לבדוק endianness ב-C++.",
+        "נכון: x86 הוא little-endian. ה-byte הפחות משמעותי (0x44) נמצא בכתובת הנמוכה, p[0], וה-byte המשמעותי ביותר (0x11) ב-p[3].",
+        "שגוי: זה הפלט על מכונה big-endian, שבה ה-byte המשמעותי ביותר (0x11) יושב בכתובת הנמוכה.",
+        "שגוי: הסדר של ה-bytes בזיכרון נקבע על ידי הארכיטקטורה, לא על ידי הכתובת שבה המשתנה יושב."
+      ],
+      "explanation": "בדיקת endianness בזמן ריצה: מסתכלים על ה-byte בכתובת הנמוכה של מספר רב-byte. ב-little-endian הוא ה-LSB. ב-C נהוג לעשות את זה גם עם union, אבל ב-C++ קריאה מ-member לא פעיל של union היא UB, ולכן עדיף unsigned char* או memcpy. ב-C++20 יש גם `std::endian::native`.",
+      "tags": [
+        "nvidia",
+        "qualcomm",
+        "apple"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/",
+        "https://www.geeksforgeeks.org/?p=477855",
+        "https://leetcode.com/discuss/post/7874360/apple-kernel-engineer-core-os-interview-lmh7t/"
+      ],
+      "problem": "NVIDIA / Qualcomm / Apple: detect endianness at runtime",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q35",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מועמד צריך לכתוב ב-C++17 פונקציה שמחזירה true אם המכונה little-endian. איזו גרסה נכונה ומוגדרת היטב?",
+      "choices": [
+        "`uint8_t b[4] = {1, 0, 0, 0}; return *reinterpret_cast<uint32_t*>(b) == 1;`",
+        "`uint32_t x = 1; uint8_t b[4]; std::memcpy(b, &x, 4); return b[0] == 1;`",
+        "`union { uint32_t u; uint8_t b[4]; } v{1}; return v.b[0] == 1;`",
+        "`uint32_t x = 1; return (x >> 24) == 0;`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: קריאה של מערך uint8_t דרך uint32_t* מפרה strict aliasing, וגם עלולה להיות לא מיושרת. החריג ב-aliasing עובד רק בכיוון ההפוך (קריאה דרך char).",
+        "נכון: memcpy מעתיק את הייצוג בזיכרון כמו שהוא, ומוגדר היטב. b[0] הוא ה-byte בכתובת הנמוכה, ו-1 שם פירושו little-endian.",
+        "שגוי ב-C++: קריאה מ-member של union שלא נכתב אחרון היא UB (ב-C זה מותר). רוב הקומפיילרים יתנו את התשובה הצפויה, אבל זו לא תשובה של סניור.",
+        "שגוי: shift פועל על הערך, לא על הייצוג בזיכרון. `1 >> 24` הוא 0 בכל מכונה, ולכן הפונקציה תחזיר true גם על big-endian."
+      ],
+      "explanation": "endianness נוגע לייצוג בזיכרון, ולכן חייבים להסתכל על bytes בזיכרון: דרך unsigned char* או memcpy. פעולות אריתמטיות ו-shifts מוגדרות על ערכים, ונותנות אותה תוצאה בכל מכונה. ב-C++20 פשוט בודקים `std::endian::native == std::endian::little`.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q36",
+      "level": 2,
+      "type": "short",
+      "prompt": "המילה של 32 ביט `0x0A0B0C0D` נכתבת לכתובת 0x1000 במכונה big-endian. איזה byte נמצא בכתובת 0x1003? (כתוב בהקסה)",
+      "accept": [
+        "0x0D",
+        "0D",
+        "D",
+        "0xD"
+      ],
+      "explanation": "ב-big-endian ה-byte המשמעותי ביותר בכתובת הנמוכה: 0x1000 = 0A, 0x1001 = 0B, 0x1002 = 0C, 0x1003 = 0D. ב-little-endian הסדר הפוך, ו-0x1003 היה מכיל 0A.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q37",
+      "level": 3,
+      "type": "bug",
+      "prompt": "C++20. הפונקציה ממירה מילה מ-little-endian ל-big-endian בזמן קבוע (בלי לולאה). עבור 0x11223344 היא מחזירה 0x44332211 כמצופה, אבל עבור ערכים מסוימים התוצאה משובשת. איפה הבאג?",
+      "code": "uint32_t to_be32(int32_t x) {\n    return (x << 24) |\n           ((x << 8) & 0x00FF0000) |\n           ((x >> 8) & 0x0000FF00) |\n           (x >> 24);\n}",
+      "lang": "cpp",
+      "choices": [
+        "חסר cast של התוצאה ל-uint32_t, ולכן הערך המוחזר נחתך",
+        "`x << 24` גורם ל-signed overflow, שהוא UB גם ב-C++20",
+        "כש-x שלילי (הביט העליון דולק, למשל 0x80112233), `x >> 24` הוא shift אריתמטי שממלא אחדות, וה-0xFF שנוספו נכנסים ב-OR לשלושת ה-bytes העליונים. צריך לקבל uint32_t או למסך עם `& 0xFF`",
+        "המסכה בשורה של `x >> 8` צריכה להיות 0x00FF0000 ולא 0x0000FF00"
+      ],
+      "answer": 2,
+      "bugLine": 5,
+      "notes": [
+        "שגוי: ההמרה מ-int ל-uint32_t בחזרה מהפונקציה מוגדרת היטב (modulo 2^32) ולא חותכת שום מידע. הבעיה היא ה-bytes העליונים שכבר זוהמו.",
+        "שגוי: מאז C++20 shift שמאלה של signed מוגדר כחשבון modulo 2^32, כך שאין UB. לפני C++20 זה אכן היה UB עבור חלק מהערכים, וגם זו סיבה טובה להשתמש ב-unsigned.",
+        "נכון: עבור 0x80112233 הפונקציה מחזירה 0xFFFFFF80 במקום 0x33221180. shift ימינה של signed שלילי ממלא בביט הסימן (ב-C++20 זה מוגדר כ-arithmetic shift). הפתרון: פרמטר uint32_t, או `__builtin_bswap32` / `std::byteswap` (C++23).",
+        "שגוי: `x >> 8` מזיז את ה-byte השני מלמטה (0x33) למקום הראשון מלמטה, ולכן מסכה 0x0000FF00 בוחרת אותו נכון: הוא מגיע ממקום 0x00FF0000 בקלט."
+      ],
+      "explanation": "בפעולות על ביטים עובדים עם טיפוסים unsigned. shift ימינה של ערך signed שלילי מעתיק את ביט הסימן, וכל מסכה שנשכחה הופכת לבאג שמופיע רק בחצי מהקלטים. ב-production משתמשים ב-intrinsic (bswap) שהקומפיילר הופך לפקודה אחת.",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/"
+      ],
+      "problem": "NVIDIA: convert little-endian to big-endian in constant time",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q38",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מחזיר `htonl(0x11223344)` על מחשב x86, ומה הוא היה מחזיר על מכונה big-endian?",
+      "choices": [
+        "על x86: 0x11223344, כי x86 כבר משתמש ב-network byte order",
+        "על x86: 0x33441122, כי htonl מחליף בין שני חצאי המילה של 16 ביט",
+        "על x86: 0x44332211. על big-endian: 0x11223344, כי network byte order הוא big-endian וההמרה שם לא עושה כלום",
+        "בשתיהן 0x44332211, כי htonl תמיד הופך את סדר ה-bytes"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: x86 הוא little-endian. network byte order הוא big-endian.",
+        "שגוי: זו החלפה של חצאי מילה, לא היפוך bytes. היפוך מלא של 0x11223344 נותן 0x44332211.",
+        "נכון: network byte order הוא big-endian. על host של little-endian צריך להפוך את ה-bytes, ועל host של big-endian הפונקציה היא no-op. לכן קוד שתמיד קורא ל-htonl נייד.",
+        "שגוי: אם htonl הייתה תמיד הופכת, קוד שמריצים על מכונת big-endian היה שולח לרשת סדר שגוי. היא הופכת רק כשה-host שונה מסדר הרשת."
+      ],
+      "explanation": "htonl, ntohl ומקבילותיהן ב-Linux kernel (cpu_to_be32, be32_to_cpu) ממירות בין סדר ה-host לסדר קבוע. על host שכבר בסדר הזה הן לא עושות כלום, ולכן משתמשים בהן תמיד ולא רק על מכונות little-endian.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q39",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס? הקוד רץ פעם על x86 (little-endian) ופעם על מכונה big-endian.",
+      "code": "uint32_t v = 0x11223344;\nuint8_t b[4];\nstd::memcpy(b, &v, 4);\nstd::swap(b[0], b[3]);\nstd::swap(b[1], b[2]);\nstd::memcpy(&v, b, 4);\nstd::printf(\"%08x\\n\", v);",
+      "lang": "cpp",
+      "choices": [
+        "`11223344` על שתי המכונות, כי שני memcpy מבטלים זה את זה",
+        "`44332211` על שתי המכונות",
+        "`44332211` על x86 ו-`11223344` על big-endian",
+        "`11223344` על x86 ו-`44332211` על big-endian"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: בין שני ה-memcpy ה-bytes הוחלפו, ולכן הערך שנטען חזרה שונה מהמקור.",
+        "נכון: היפוך מלא של ה-bytes בזיכרון הופך את סדר ה-bytes של הערך בכל מכונה. ההבדל בין המכונות הוא רק איך b נראה באמצע, לא התוצאה.",
+        "שגוי: זה נכון לפונקציה כמו htonl, שבודקת את סדר ה-host. כאן ההיפוך הוא בלתי מותנה.",
+        "שגוי: הקוד לא בודק endianness בשום מקום, ולכן אין סיבה שהתוצאה תשתנה כך בין המכונות."
+      ],
+      "explanation": "byte swap הוא פעולה שאינה תלויה ב-endianness: הוא תמיד הופך 0x11223344 ל-0x44332211. מה שתלוי במכונה זה האם צריך לבצע אותו, כלומר האם סדר ה-host שונה מסדר היעד.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q40",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "timer חומרה של 64 ביט רץ כל הזמן, וחשוף כשני רגיסטרי MMIO של 32 ביט: `HI` ו-`LO` (שניהם volatile), בלי latch. איזו פונקציית קריאה נכונה, ומשתמשת במספר קריאות רגיסטר מינימלי (3 במקרה הטוב, 4 במקרה הרע)?",
+      "choices": [
+        "`uint32_t l = LO; uint32_t h = HI; return (uint64_t)h << 32 | l;`",
+        "`uint32_t h1 = HI; uint32_t l = LO; uint32_t h2 = HI; if (h1 != h2) l = LO; return (uint64_t)h2 << 32 | l;`",
+        "`uint32_t h1 = HI; uint32_t l = LO; uint32_t h2 = HI; if (h1 != h2) l = 0; return (uint64_t)h1 << 32 | l;`",
+        "לבטל interrupts, לקרוא `LO` ואז `HI`, ולהחזיר את ה-interrupts"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: אם LO עובר wrap מ-0xFFFFFFFF ל-0 בין שתי הקריאות, מתקבל l גדול מה-HI החדש: קפיצה קדימה של כ-2^32 ticks.",
+        "נכון: אם h1 == h2, אין wrap בין הקריאות ו-l שייך ל-h2. אם הם שונים, היה wrap, ו-LO שנקרא אחרי h2 שייך ל-h2 (בהנחה שלא עוד wrap שלם בזמן קריאה אחת). 3 קריאות בדרך כלל, 4 במקרה של wrap.",
+        "שגוי: כש-h1 != h2 הערך הנכון שייך ל-h2, ובזמן הקריאה LO כבר לא 0. h1 עם l=0 נותן זמן מוקדם בכ-2^32 ticks מהאמת.",
+        "שגוי: ביטול interrupts לא עוצר את החומרה. המונה ממשיך לרוץ, ו-wrap בין שתי הקריאות קורע את הערך בדיוק כמו קודם."
+      ],
+      "explanation": "קריאה של מונה רחב דרך שני רגיסטרים צרים דורשת לזהות wrap של החצי הנמוך. הדפוס: HI, LO, HI, ואם HI השתנה, קוראים LO שוב. ההנחה היא שהקריאה מהירה בהרבה מתקופת ה-wrap של LO. אם בחומרה יש latch (קריאת LO מקפיאה את HI), קוראים פשוט LO ואז HI בסדר הזה.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=563889"
+      ],
+      "problem": "Qualcomm: read a 64-bit timer from two 32-bit registers",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q41",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-datasheet כתוב: קריאה של `CNT_LO` מקפיאה (latch) את הערך של `CNT_HI` ברגיסטר צל, כך שקריאה של `CNT_HI` מיד אחריה מחזירה חצי עליון תואם. שני הרגיסטרים מוגדרים volatile. איזה קוד נכון?",
+      "choices": [
+        "`return ((uint64_t)CNT_HI << 32) | CNT_LO;`",
+        "כל שלושת הניסוחים שקולים, כי volatile מבטיח שהגישות יתבצעו לפי סדר הכתיבה בשורה",
+        "`return CNT_LO | ((uint64_t)CNT_HI << 32);`",
+        "`uint32_t lo = CNT_LO; uint32_t hi = CNT_HI; return ((uint64_t)hi << 32) | lo;`"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: סדר החישוב של שני האופרנדים של `|` הוא unsequenced. הקומפיילר רשאי לקרוא את CNT_HI לפני CNT_LO, ואז HI נקרא לפני ה-latch.",
+        "שגוי: volatile מחייב לשמור את הסדר בין גישות ש-sequenced זו ביחס לזו. בתוך ביטוי אחד, האופרנדים של `|` לא sequenced, ולכן אין סדר שצריך לשמור.",
+        "שגוי: גם כאן הסדר בין האופרנדים לא מובטח. כתיבת CNT_LO משמאל לא מחייבת שהוא ייקרא ראשון.",
+        "נכון: שתי הצהרות נפרדות עם נקודת סיום (;) ביניהן מבטיחות שהגישה ל-CNT_LO sequenced-before הגישה ל-CNT_HI. volatile מחייב לשמור על הסדר הזה."
+      ],
+      "explanation": "כשסדר הגישות לחומרה חשוב, כותבים כל גישה ב-statement נפרד. ביטוי אחד שמכיל שתי קריאות volatile לא קובע איזו תתבצע קודם. זה באג שעובד בקומפיילר אחד ונשבר בגרסה הבאה.",
+      "lesson": "sys.volatile-mmio"
+    },
+    {
+      "id": "sys.volatile-mmio.q42",
+      "level": 3,
+      "type": "short",
+      "prompt": "ב-hi-lo-hi מניחים שהחצי הנמוך לא עובר שני wraps בזמן קריאה אחת. מונה של 32 ביט רץ ב-200 MHz. כל כמה שניות, בערך, הוא עובר wrap? (מספר בשניות, דיוק של עשירית)",
+      "accept": [
+        "21.5",
+        "21.47",
+        "21.4",
+        "21.475"
+      ],
+      "explanation": "2^32 / 200e6 = 4,294,967,296 / 200,000,000 ≈ 21.47 שניות. קריאה של שלושה רגיסטרים לוקחת מיקרו-שניות, ולכן ההנחה של wrap אחד לכל היותר בטוחה. היא נשברת רק אם ה-thread נעצר (preemption, debugger) באמצע הקריאה לעשרות שניות.",
+      "lesson": "sys.volatile-mmio"
     }
   ]
 }

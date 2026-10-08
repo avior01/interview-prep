@@ -220,6 +220,22 @@
         {
           "term": "mlockall ו-prefault",
           "def": "נעילת כל הזיכרון של ה-process ב-RAM, ונגיעה מראש בכל דף כדי שלא יהיו page faults בנתיב החם."
+        },
+        {
+          "term": "cycle stealing",
+          "def": "מצב שבו בקר ה-DMA משתמש ב-bus או בזיכרון בזמן שה-CPU ממשיך לעבוד, ולפעמים מאט אותו מעט. ה-CPU עובד בעיקר מה-cache, ולכן ההשפעה בדרך כלל קטנה."
+        },
+        {
+          "term": "IOVA",
+          "def": "כתובת שההתקן משתמש בה ב-DMA כשיש IOMMU. ה-IOMMU מתרגם אותה לכתובת פיזית לפי טבלאות שהקרנל מנהל, כמו MMU עבור התקנים."
+        },
+        {
+          "term": "DMAR fault",
+          "def": "שגיאת IOMMU (ב-Intel VT-d) כשהתקן ניגש לכתובת שלא מופתה לו. הגישה נחסמת והקרנל מדווח עליה ב-dmesg."
+        },
+        {
+          "term": "uncached / write-combining mapping",
+          "def": "מיפוי שבו גישות ה-CPU לא נשמרות ב-cache. dma_alloc_coherent משתמש בו במערכות לא קוהרנטיות, כך שאין צורך ב-cache maintenance, במחיר גישה איטית מה-CPU."
         }
       ]
     }
@@ -366,9 +382,6 @@
       ],
       "explanation": "TX: הנתונים העדכניים נמצאים ב-cache של ה-CPU, ולכן צריך לכתוב אותם ל-RAM (clean). invalidate היה זורק אותם. RX: צריך לזרוק עותקים ישנים כדי לקרוא מ-RAM. dma_alloc_coherent נותן זיכרון שכבר מתואם (לרוב non-cacheable על מערכות כאלה). ב-x86 עם PCIe רגיל לא צריך כלום מזה, אבל ה-API של Linux עדיין נקרא כדי שהקוד יהיה נייד.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ב-TX הנתונים העדכניים יושבים ב-cache (lines מלוכלכים), וההתקן קורא מ-RAM. clean כותב אותם ל-RAM לפני ה-DMA.",
         "נכון. ב-RX ההתקן כתב ל-RAM, ו-lines ישנים ב-cache יסתירו את הנתונים. invalidate זורק אותם כדי שהקריאה תגיע ל-RAM.",
@@ -433,9 +446,6 @@
       "answer": 0,
       "explanation": "sc16 הוא 4 בתים לדגימה מרוכבת. ערוץ אחד ב-200 MS/s הוא 6.4 Gb/s של payload (ועוד כמה אחוזים headers), שנכנס ב-10GbE אחד. שני ערוצים דורשים שני קישורים, כל ערוץ על port משלו. חישוב כזה הוא הצעד הראשון בכל תכנון של RX path, יחד עם רוחב פס הזיכרון וה-PCIe.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. sc16 הוא 4 בתים לדגימה מרוכבת: 200M × 4 = 800 MB/s = 6.4 Gb/s לערוץ. שני ערוצים הם 12.8 Gb/s, יותר מ-10GbE אחד, ולכן צריך שני קישורים.",
         "שגוי. 10GbE מוגבל ל-10 Gb/s, ו-12.8 Gb/s של payload (בלי headers) לא נכנס. הטעות היא לחשב לערוץ אחד (6.4 Gb/s) ולשכוח להכפיל.",
@@ -460,9 +470,6 @@
       "answer": 0,
       "explanation": "ה-descriptor נמצא בזיכרון coherent, אבל coherency לא אומר סדר. writel ב-Linux כולל barrier שמבטיח שכתיבות קודמות לזיכרון נראות לפני כתיבת ה-MMIO, אבל כאן הכרטיס קורא את ה-descriptor בלי לחכות ל-doorbell. dma_wmb הוא ה-barrier הקל שמסדר כתיבות לזיכרון DMA. ב-x86 זה עובד בלי barrier בגלל TSO, וזו בדיוק הסיבה שבאגים כאלה מתגלים רק ב-ARM.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ב-ARM כתיבות לזיכרון רגיל יכולות להיראות בסדר שונה מהתוכנית, וכרטיס שסורק descriptors בעצמו עלול לראות OWN = HW לפני שה-addr נראה, ולכתוב לכתובת 0. dma_wmb() לפני שורת ה-flags מבטיח שהשדות נראים קודם.",
         "שגוי. סוג ההקצאה של באפר הנתונים לא משנה את הסדר שבו ה-descriptor נראה. ה-descriptor כבר ב-coherent memory, ו-coherency לא מבטיח סדר בין כתיבות.",
@@ -505,9 +512,6 @@
       "answer": 1,
       "explanation": "DDIO חוסך קריאה וכתיבה ל-DRAM כשהנתונים נצרכים מהר, אבל רק ב-ways שמוקצים לו. לכן ring גדול מדי יכול להזיק: ה-working set של ה-DMA גדול מהחלק של DDIO ב-LLC. מכאן ההמלצה לבחור ring sizes בתבונה ולעבד בקצב, ולהצמיד את ה-threads ל-socket של ה-NIC.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. ל-IOMMU אין מצב של התמלאות שקשור לקצב העיבוד של האפליקציה. IOTLB misses הם עלות קבועה יחסית, ולא מסבירים קפיצה ברוחב הפס לזיכרון כשהאפליקציה מפגרת.",
         "נכון. עם DDIO ה-NIC כותב ישירות ל-LLC, אבל רק לחלק מוגבל מה-ways. כשהאפליקציה מפגרת, חבילות חדשות מפנות חבילות שלא עובדו ל-DRAM (leaky DMA), והקריאה שלהן היא miss: גם יותר תעבורת זיכרון וגם יותר latency.",
@@ -529,10 +533,7 @@
         "זיהוי ודיווח overflow לפי timestamps"
       ],
       "explanation": "זו שאלת system design שמחוברת ישירות לפרויקט. מראיין יבדוק שהמספרים נכונים ושיש תוכנית למצב כשל.",
-      "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.dma"
     },
     {
       "id": "sys.dma.q15",
@@ -548,9 +549,6 @@
       "answer": 3,
       "explanation": "speculation לא מכבד את הכוונות של התוכנה: כל כתובת cacheable עלולה להיטען. invalidate לפני ה-DMA מונע מ-lines מלוכלכים להידרס ע״י eviction באמצע, ו-invalidate אחרי ה-DMA זורק את מה שנטען ספקולטיבית. לכן ה-API של Linux מגדיר שני צעדים נפרדים: sync_for_device לפני, ו-sync_for_cpu אחרי.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. ב-RX ההתקן כותב וה-CPU קורא, ולכן הפעולה הנדרשת היא invalidate. clean כותב lines מלוכלכים ל-RAM, שייך ל-TX, ולא זורק עותקים ישנים.",
         "שגוי. על מערכת לא קוהרנטית ה-DMA כותב ל-RAM ולא ל-cache. אילו היה כותב ל-cache, ה-CPU היה רואה נתונים עדכניים ולא ישנים.",
@@ -753,9 +751,6 @@
       ],
       "explanation": "coherency פותר את שאלת ה-cache, לא את שאלת הכתובות: ההתקן עדיין צריך bus address ודפים pinned. ב-Linux, dma_wmb ב-x86 מוגדר כ-barrier() בלבד. NT stores הם weakly ordered גם ב-x86, ולכן צריך sfence (ש-wmb ו-writel מספקים) לפני שמודיעים להתקן.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ב-x86, DMA של PCIe לזיכרון write-back הוא snooped: ההתקן רואה נתונים מה-cache, וכתיבות שלו מבטלות עותקים ישנים. לכן אין צורך ב-clean או invalidate ידניים.",
         "נכון. coherency פותר את ה-cache, לא את הכתובות. dma_map_single מחזיר את ה-dma_addr_t שההתקן צריך (IOVA אם יש IOMMU) ומטפל ב-bounce buffers כשצריך.",
@@ -799,9 +794,6 @@
       "answer": 2,
       "explanation": "זה נקרא copybreak. בכל חבילה שעוברת zero-copy, ה-ring מאבד באפר וצריך alloc ו-dma_map חדשים (ועם IOMMU, גם עדכון טבלאות). memcpy של 100 בתים כבר ב-cache (בזכות DDIO) לוקח עשרות ns. הנקודה החשובה ל-senior: zero-copy אינו חינמי, ויש סף שבו העתקה זולה יותר.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. חבילה קטנה דווקא נכנסת בקלות ב-cache line אחד או שניים. גודל ה-line לא מונע zero-copy, הוא רק משפיע על יישור.",
         "שגוי. zero-copy לא דורש IOMMU: ההתקן כותב לבאפר שהוקצה ומופה, עם או בלי תרגום. IOMMU רק מייקר את ה-refill (עדכון טבלאות), מה שמחזק את copybreak.",
@@ -823,9 +815,6 @@
       "answer": 0,
       "explanation": "ביטול IOTLB דורש פקודה ל-IOMMU והמתנה לסיומה. ב-lazy, IOVAs משוחררים נכנסים לתור ומבוטלים בבת אחת, ונפתח חלון שבו התקן תקול או זדוני יכול לגשת לזיכרון שכבר לא שלו. הבידוד עדיין קיים לכל מה שמעולם לא מופה. פתרונות נוספים: mappings קבועים לבאפרים שחוזרים (כמו ב-page pool), או iommu=pt כשמאמינים להתקנים.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. strict מבטל רשומות IOTLB בכל unmap ומחכה לסיום, ב-NIC זה מיליוני פעולות יקרות בשנייה. lazy מאגד ביטולים לתור ומבצע אותם יחד: מהיר יותר, אבל בחלון הקצר ההתקן עדיין יכול לגשת לדף ששוחרר ואולי כבר הוקצה למישהו אחר.",
         "שגוי. DDIO הוא מנגנון של ה-LLC ב-Xeon ואינו תלוי במצב ה-invalidation של ה-IOMMU. ההבדל בין strict ל-lazy הוא רק בתזמון ביטול רשומות ה-IOTLB.",
@@ -850,9 +839,6 @@
       "answer": 1,
       "explanation": "dma_wmb מסדר את שדות ה-descriptor לפני ה-OWN bit, אבל אחרי ה-OWN אין שום barrier עד ה-doorbell. ב-ARM, כתיבה ל-Normal memory וכתיבה ל-Device memory (MMIO) אינן מסודרות זו ביחס לזו בלי barrier. writel ב-Linux מבצע barrier ואז writel_relaxed, ולכן הוא הכלי הנכון לכל doorbell שמפרסם נתוני DMA. writel_relaxed מתאים לכתיבות רגיסטר שלא תלויות בזיכרון. ב-x86 הבאג לא יופיע (TSO, ו-MMIO uncached מסודר), ולכן הוא מתגלה רק על הלוח.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. dma_wmb נמצא במקום הנכון: בין השדות addr ו-len לבין ה-OWN bit, כך שה-OWN נראה רק אחרי השדות. הזזה שלו אחרי ה-flags הייתה שוברת את הסדר הזה, ובכל מקרה dma_wmb מסדר רק כתיבות לזיכרון DMA, לא את כתיבת ה-MMIO.",
         "נכון. writel_relaxed לא מבטיח שכתיבות קודמות לזיכרון נראות לפני כתיבת ה-MMIO, וב-ARM כתיבות ל-Normal ול-Device memory לא מסודרות זו ביחס לזו. ההתקן מקבל doorbell וקורא descriptor ישן. writel מוסיף את ה-barrier הנדרש.",
@@ -874,9 +860,6 @@
       "answer": 2,
       "explanation": "אחרי map הבאפר שייך להתקן, וה-CPU לא אמור לגעת בו. החומרה הקוהרנטית הסתירה את הבאג: ההתקן קרא את הבאפר המקורי, שבו הכתיבה כבר נמצאת. ב-VM מוצפן ההתקן לא יכול לקרוא את הזיכרון הפרטי של ה-guest, ולכן כל ה-DMA עובר דרך bounce buffers משותפים. התיקון: למלא לפני ה-map, או לקרוא ל-dma_sync_single_for_device אחרי הכתיבה. לכן כללי הבעלות של ה-DMA API מחייבים גם כשהחומרה סלחנית.",
       "lesson": "sys.dma",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. swiotlb לא משנה snooping, וה-x86 נשאר קוהרנטי. הבעיה היא שההתקן קורא באפר אחר (ה-bounce buffer), לא שה-cache לא מעודכן.",
         "שגוי. VM של confidential computing על x86 עדיין קוהרנטי מבחינת cache. ההבדל הוא שההתקן לא יכול לקרוא זיכרון פרטי מוצפן של ה-guest, ולכן כל DMA נכפה לעבור דרך bounce buffers משותפים.",
@@ -898,10 +881,144 @@
         "flow control בכיוון החוזר וטיפול ב-overflow"
       ],
       "explanation": "שאלה טיפוסית ל-NVIDIA: היא בודקת הבנה של PCIe, DMA, סדר ו-GPU באותו תכנון, ומודעות לכך שהטופולוגיה הפיזית קובעת אם zero-copy בכלל משתלם.",
-      "lesson": "sys.dma",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q32",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את השלבים של העברת DMA פשוטה מהתקן לזיכרון (ADC שממלא באפר), בעזרת בקר DMA, על מערכת שבה ה-cache לא קוהרנטי עם DMA:",
+      "items": [
+        "ה-driver מקצה באפר שמתאים ל-DMA ומקבל את כתובת ה-bus שלו",
+        "ה-driver מבצע invalidate ל-cache של הבאפר (או מפה אותו לכיוון from-device)",
+        "ה-driver מתכנת בבקר ה-DMA כתובת מקור, כתובת יעד ואורך, ומפעיל את הערוץ",
+        "בקר ה-DMA מעביר את הנתונים מההתקן לזיכרון, בלי מעורבות של ה-CPU",
+        "בקר ה-DMA מעלה interrupt של סיום",
+        "ה-driver מבצע sync לכיוון ה-CPU (שוב invalidate) וה-CPU מעבד את הנתונים"
+      ],
+      "explanation": "DMA משחרר את ה-CPU מהעתקה: ה-CPU רק מגדיר את ההעברה ומטפל בסיום. במערכות לא קוהרנטיות חובה לטפל ב-cache לפני ואחרי, כדי שה-CPU לא יקרא lines ישנים, ושכתיבה של line מלוכלך לא תדרוס את מה שההתקן כתב.",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
+      ],
+      "problem": "NVIDIA: what is DMA and how does it work",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q33",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בזמן שבקר ה-DMA מעביר 1MB מ-ADC לזיכרון, מה ה-CPU יכול לעשות?",
+      "choices": [
+        "רק לטפל ב-interrupts",
+        "רק לגשת לבאפר שה-DMA כותב אליו",
+        "כלום: ה-CPU חייב לחכות עד הסוף",
+        "להמשיך להריץ קוד אחר. הוא עלול להאט קצת כשהוא ניגש לזיכרון, כי הוא מתחרה עם ה-DMA על ה-bus או על ה-memory controller"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: אין שום מגבלה כזו. ה-CPU מריץ קוד רגיל.",
+        "שגוי: דווקא את הבאפר הזה צריך להשאיר בשקט עד הסיום, כי הנתונים בו עוד לא מוכנים.",
+        "שגוי: זה בדיוק היתרון של DMA על פני PIO: ה-CPU לא מעורב בהעברה.",
+        "נכון: ה-CPU והבקר חולקים את הגישה לזיכרון. במערכות פשוטות זה נקרא cycle stealing: הבקר 'גונב' מחזורי bus. ה-CPU עובד בעיקר מה-cache, ולכן ההשפעה בדרך כלל קטנה."
+      ],
+      "explanation": "DMA מעביר את ההעתקה לחומרה ייעודית. ה-CPU רק מגדיר ומקבל interrupt בסיום, ובאמצע רץ קוד אחר, ולכן double buffering מאפשר עיבוד בזמן שהבאפר הבא מתמלא.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q34",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "driver צריך לקרוא רגיסטר סטטוס אחד של 4 בתים מהתקן, כמה פעמים בשנייה. האם להשתמש ב-DMA?",
+      "choices": [
+        "לא, כי DMA לא יכול לגשת לרגיסטרים",
+        "כן, כי קריאות MMIO אסורות ב-Linux",
+        "לא: התקורה של הגדרת ה-DMA (descriptor, הפעלה, interrupt, cache maintenance) גדולה בהרבה מקריאה אחת של MMIO. DMA משתלם להעברות גדולות או רציפות",
+        "כן, DMA תמיד מהיר יותר מגישה של ה-CPU"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: בקרי DMA יכולים לגשת לרגיסטרים של התקנים (למשל FIFO של UART). זה פשוט לא משתלם כאן.",
+        "שגוי: readl ו-ioread32 הן הדרך הרגילה לגשת לרגיסטרים ב-Linux.",
+        "נכון: קריאת MMIO אחת לוקחת מאות ננו-שניות עד מיקרו-שנייה. הגדרה וטיפול בסיום של DMA לוקחים יותר, וגם מסבכים את הקוד.",
+        "שגוי: ל-DMA יש עלות קבועה. בהעברות קטנות היא שולטת."
+      ],
+      "explanation": "PIO מתאים לגישות קטנות ונדירות, DMA להעברות גדולות או רציפות. ב-NIC, למשל, החבילות עוברות ב-DMA, ורגיסטרי הבקרה (doorbell, סטטוס) נכתבים ונקראים ב-MMIO.",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q35",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בשרת עם 64GB יש כרטיס עם DMA mask של 32 ביט (הוא מסוגל לייצר רק כתובות מתחת ל-4GB), ו-IOMMU מופעל. ה-driver ממפה באפר שנמצא פיזית ב-40GB. מה קורה?",
+      "choices": [
+        "המיפוי נכשל, כי ההתקן לא יכול להגיע לכתובת הזו",
+        "ה-IOMMU מקצה לבאפר IOVA (כתובת שההתקן רואה) מתחת ל-4GB, ומתרגם אותה לכתובת הפיזית ב-40GB. אין צורך ב-bounce buffer",
+        "הקרנל מעתיק את הנתונים לבאפר נמוך (bounce buffer) בכל העברה, גם עם IOMMU",
+        "ה-driver חייב לבקש מראש זיכרון מתחת ל-4GB"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה בדיוק אחד התפקידים של IOMMU: לאפשר להתקן מוגבל להגיע לכל הזיכרון.",
+        "נכון: ה-IOMMU הוא MMU עבור התקנים: ההתקן רואה מרחב כתובות משלו (IOVA), וה-IOMMU מתרגם כל גישה לפי טבלאות שהקרנל מנהל. ה-DMA API מקצה IOVAs שמתאימים ל-mask.",
+        "שגוי: swiotlb (bounce buffers) הוא הפתרון כשאין IOMMU. עם IOMMU, התרגום עושה את העבודה בלי העתקות.",
+        "שגוי: זה נדרש רק בלי IOMMU ובלי bounce buffers, ובכל מקרה ה-DMA API מסתיר את ההבדל מה-driver."
+      ],
+      "explanation": "IOMMU נותן להתקנים virtual memory: תרגום כתובות (מאפשר להתקן מוגבל לגשת לכל הזיכרון ולאחד באפרים מפוזרים לטווח רציף) והגנה (התקן ניגש רק למה שמופה לו). המחיר: תרגום, IOTLB misses, וזמן ביצירה ובביטול של מיפויים.",
+      "tags": [
+        "qualcomm",
+        "intel"
+      ],
+      "sources": [
+        "https://static.glassdoor.it/Interview/Qualcomm-Staff-Engineer-Interview-Questions-EI_IE640.0,8_KO9,23_IP2.htm",
+        "https://www.glassdoor.com/Interview/Intel-Corporation-Interview-E1519-RVW3166757.htm"
+      ],
+      "problem": "Qualcomm / Intel: DMA and the IOMMU",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q36",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "driver של user space (דרך VFIO) שולט בכרטיס PCIe. באג ב-driver מתכנת את ההתקן לכתוב ב-DMA לכתובת אקראית. מה מונע מההתקן לדרוס את הזיכרון של הקרנל?",
+      "choices": [
+        "ה-PCIe switch בודק את הכתובות",
+        "ה-MMU של ה-CPU",
+        "ה-IOMMU: ההתקן יכול לגשת רק ל-IOVAs שמופו לו דרך VFIO. גישה לכתובת אחרת נחסמת ומדווחת כ-IOMMU fault (DMAR fault ב-Intel)",
+        "שום דבר: DMA עוקף את כל מנגנוני ההגנה"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: switches מנתבים לפי כתובת, אבל לא אוכפים הרשאות על גישות לזיכרון המערכת.",
+        "שגוי: ה-MMU של ה-CPU מתרגם רק גישות של ה-CPU. DMA הוא גישה של ההתקן לזיכרון, שעוברת דרך ה-root complex, לא דרך ה-MMU.",
+        "נכון: ה-IOMMU מפעיל על ההתקן את אותו סוג הגנה שה-MMU מפעיל על processes. זה מה שמאפשר לתת ל-user space שליטה על התקן בלי לסכן את המערכת.",
+        "שגוי: בלי IOMMU זה נכון, ולכן VFIO דורש IOMMU (או מצב unsafe מפורש)."
+      ],
+      "explanation": "בלי IOMMU, כל התקן עם DMA הוא master שיכול לקרוא ולכתוב לכל הזיכרון הפיזי. ה-IOMMU מוסיף בידוד, וזה בסיס ל-VFIO, ל-device passthrough למכונות וירטואליות, ולהגנה מהתקנים זדוניים (Thunderbolt).",
+      "lesson": "sys.dma"
+    },
+    {
+      "id": "sys.dma.q37",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "על SoC של ARM בלי DMA קוהרנטי, driver מקצה באפר עם `dma_alloc_coherent` ולא מבצע שום פעולות cache, והכל עובד. מה ה-API עשה, ומה המחיר?",
+      "choices": [
+        "הוא ביקש מהחומרה להפעיל snooping לבאפר הזה",
+        "הוא מיפה את הבאפר ל-CPU כ-uncached (או write-combining), כך שכל גישה של ה-CPU הולכת ישר לזיכרון ואין lines ישנים. המחיר: גישה של ה-CPU לבאפר איטית בהרבה, במיוחד קריאות",
+        "הוא שומר את הבאפר ב-L1 בלבד",
+        "הוא העתיק את הבאפר ל-SRAM פנימי"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: אם אין חומרת snooping, ה-API לא יכול להפעיל אותה. הוא פותר את הבעיה מצד ה-CPU.",
+        "נכון: בלי caching אין חוסר עקביות, ולכן אין צורך ב-clean או ב-invalidate. מתאים ל-descriptor rings ולמבני בקרה קטנים. לבאפרי נתונים גדולים שה-CPU מעבד, עדיף dma_map_single עם sync, כדי שהעיבוד יהיה מה-cache.",
+        "שגוי: הפוך: הבאפר לא נשמר ב-cache בכלל.",
+        "שגוי: אין העתקה כזו. הבאפר יושב ב-DRAM רגיל."
+      ],
+      "explanation": "coherent mapping: פשוט, בלי sync, אבל גישה איטית מה-CPU על מערכות לא קוהרנטיות. streaming mapping: גישה מהירה מה-cache, אבל צריך sync בכל מעבר בעלות. בוחרים לפי מי ניגש כמה פעמים.",
+      "lesson": "sys.dma"
     }
   ]
 }

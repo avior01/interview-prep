@@ -232,6 +232,34 @@
         {
           "term": "volatile sig_atomic_t",
           "def": "הטיפוס שהתקן C מבטיח לגישה בטוחה מ-signal handler. ב-C++ מודרני std::atomic lock-free הוא הבחירה הכללית יותר."
+        },
+        {
+          "term": "החזרה מ-interrupt (iret / EXC_RETURN)",
+          "def": "פקודה או מנגנון שמשחזרים את ה-PC וה-flags שהמעבד שמר בכניסה, וממשיכים מהפקודה הבאה של הקוד שנקטע."
+        },
+        {
+          "term": "גבול בין פקודות",
+          "def": "המעבד מקבל interrupts רק בין פקודות, כך שכל פקודה מתבצעת במלואה. פקודות ארוכות (rep movs) מעדכנות רגיסטרים כך שאפשר לקטוע ולהמשיך."
+        },
+        {
+          "term": "reentrant function",
+          "def": "פונקציה שבטוח להיכנס אליה שוב לפני שהקריאה הקודמת הסתיימה: בלי מצב סטטי משותף ובלי locks. printf ו-malloc אינן reentrant, ולכן אסור לקרוא להן מ-ISR או מ-signal handler."
+        },
+        {
+          "term": "Cortex-M exception stacking",
+          "def": "בכניסה ל-exception החומרה דוחפת r0-r3, r12, lr, pc ו-xPSR, וכותבת EXC_RETURN ל-LR. לכן ISR היא פונקציית C רגילה, וחזרה עם bx lr משחזרת הכל."
+        },
+        {
+          "term": "spin_lock_bh / spin_lock_irqsave",
+          "def": "גרסאות של spinlock שגם מבטלות bottom halves או interrupts מקומיים בזמן ההחזקה. חובה כשהנעילה משותפת עם softirq/tasklet או עם ISR, אחרת הקוד שקוטע על אותו CPU מסתובב לנצח."
+        },
+        {
+          "term": "GFP_ATOMIC / GFP_KERNEL",
+          "def": "דגלי הקצאה ב-kmalloc. GFP_KERNEL רשאי לישון (reclaim) ולכן אסור ב-atomic context. GFP_ATOMIC לא ישן, ועלול להיכשל."
+        },
+        {
+          "term": "lockdep",
+          "def": "מנגנון בדיקה בקרנל שעוקב אחרי סדר הנעילות וההקשרים שבהם כל נעילה נלקחת, ומדווח על deadlocks אפשריים, למשל נעילה שנלקחת גם ב-IRQ וגם בלי לבטל interrupts."
         }
       ]
     }
@@ -398,9 +426,6 @@
       ],
       "explanation": "MSI פותר את בעיות הקווים המשותפים והפיזיים. כללי הסדר של PCIe לא מאפשרים לכתיבה posted לעקוף כתיבות posted קודמות, ולכן ה-interrupt לא מקדים את הנתונים (בניגוד לקו IRQ נפרד, שם driver צריך read-back כדי לוודא). handler עדיין נדרש.",
       "lesson": "sys.interrupts",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: MSI הוא הודעה (כתיבת זיכרון) ולכן edge-like, ופותר בדיוק את בעיית שיתוף הקווים. כל התקן מקבל וקטור משלו.",
         "נכון: לפי כללי הסדר של PCIe, posted write לא עוקף posted writes קודמות באותו מסלול. כתיבות ה-DMA יוצאות לפני ה-MSI, ולכן כשה-interrupt מגיע הנתונים כבר בזיכרון, בלי read-back.",
@@ -483,9 +508,6 @@
       "answer": 3,
       "explanation": "ה-interrupt לא יכול להתקבל כל עוד הוא חסום, ולכן ה-worst case הוא בערך ה-irqs-off section הארוך ביותר. ftrace מספק irqsoff tracer שמוצא בדיוק את הקטע הזה. PREEMPT_RT מקצר אותו כי רוב ה-spinlocks כבר לא חוסמים interrupts. מה שקורה בין ה-handler ל-thread שמחכה הוא כבר scheduling latency.",
       "lesson": "sys.interrupts",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: threads ב-user space לא יכולים לחסום interrupts. הם משפיעים על scheduling latency (מתי ה-thread שמחכה ירוץ), לא על הזמן עד תחילת ה-handler.",
         "לא נכון: מהירות השעון משפיעה על כמה מהר רץ כל קטע, אבל ה-worst case נשלט ע״י הקטע הארוך ביותר שבו interrupts חסומים. שעון מהיר לא מבטל קטע irqs-off של 500µs.",
@@ -530,10 +552,7 @@
         "כלי שיפור: coalescing, affinity ו-locality, busy polling, kernel bypass"
       ],
       "explanation": "זו שאלה שמבחינה בין מי שמכיר API לבין מי שמכיר את המערכת. UHD משתמש בדיוק במסלול הזה (או ב-DPDK) עבור ה-X310.",
-      "lesson": "sys.interrupts",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.interrupts"
     },
     {
       "id": "sys.interrupts.q15",
@@ -591,9 +610,6 @@
       "answer": 1,
       "explanation": "posted writes משפרים ביצועים כי ה-CPU לא מחכה לאישור. read מאותו התקן לא יכול לעקוף כתיבות posted קודמות באותו מסלול, ולכן הוא משמש כ-flush. fence של המעבד לא עוזר, כי הכתיבה כבר יצאה מה-CPU והעיכוב הוא בבאס. עם MSI הבעיה הספציפית הזו נעלמת, כי אין קו שנשאר פעיל.",
       "lesson": "sys.interrupts",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: המעבד לא מכפיל interrupts. ה-ISR נקרא שוב כי הקו level-triggered עדיין פעיל כשה-ISR חוזר, ולא בגלל כפילות.",
         "נכון: כתיבת MMIO ב-PCI היא posted, ה-CPU ממשיך מיד והכתיבה עדיין בדרך דרך bridges. ה-ISR חוזר, הקו עדיין פעיל וה-interrupt נכנס שוב בלי סיבה. קריאה חוזרת (read-back) מההתקן לא יכולה לעקוף את הכתיבה, ולכן היא מאלצת אותה להגיע.",
@@ -731,9 +747,6 @@
       "answer": 3,
       "explanation": "isolcpus מוציא את ה-core מה-scheduler, אבל לא מזיז IRQs של התקנים. IRQs של התקנים מזיזים עם affinity. LOC ו-IPIs שייכים לכל core ואין להם smp_affinity. ל-tick יש nohz_full (כשרץ task יחיד), ול-TLB shootdowns צריך לבדוק מי ב-process משחרר או משנה הרשאות של זיכרון בזמן ריצה.",
       "lesson": "sys.interrupts",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: local_irq_disable היא פונקציית קרנל ולא זמינה מ-user space. גם אם הייתה, כיבוי כל ה-interrupts היה שובר timers ו-IPIs שהקרנל זקוק להם.",
         "לא נכון: isolcpus מוציא את ה-core מה-load balancing של ה-scheduler בלבד. הוא לא מזיז IRQs של התקנים, לא מבטל את ה-tick ולא מונע IPIs, וכל אלה מוסיפים jitter.",
@@ -848,9 +861,6 @@
       "answer": 0,
       "explanation": "כל threads של process חולקים טבלאות דפים. כשמיפוי מוסר או משתנה (munmap, mprotect, madvise שמשחרר), כל core שאולי מחזיק את התרגום ב-TLB צריך לבטל אותו, וזה נעשה ב-IPI. ה-core המבודד חייב לטפל ב-IPI הזה. פתרונות: להקצות מראש ולא לשחרר בזמן ריצה, לכוון malloc (M_MMAP_THRESHOLD, M_TRIM_THRESHOLD) כך שלא יחזיר זיכרון ל-OS, או להעביר את ה-GUI וה-logging ל-process נפרד שמתקשר דרך shared memory.",
       "lesson": "sys.interrupts",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: כל ה-threads של process חולקים טבלאות דפים. free של בלוק גדול מוביל ל-munmap או madvise, והקרנל שולח TLB shootdown IPI לכל core שמריץ את מרחב הכתובות, כולל ה-core המבודד. הפתרון: לא לשחרר זיכרון בזמן ריצה, לכוון את malloc, או להפריד את ה-GUI ל-process אחר.",
         "לא נכון: גודל ה-TLB משפיע על TLB misses (page walks), לא על IPIs. העלייה בשורת TLB ב-/proc/interrupts מצביעה על shootdowns, לא על misses.",
@@ -872,10 +882,316 @@
         "סדר נתונים מול מונה, affinity, ומדידת max latency"
       ],
       "explanation": "השאלה בודקת אם המועמד יודע לחשב, להבחין בין סוגי latency, ולבחור לפי הקצב. התשובה החזקה מגיעה למסקנה ש-polling מתאים כאן, ויודעת מתי לחזור ל-interrupts.",
-      "lesson": "sys.interrupts",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q31",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "interrupt קוטע תוכנית באמצע לולאה. אחרי שה-ISR מסתיים, התוכנית ממשיכה כאילו כלום לא קרה. מה מאפשר את זה?",
+      "choices": [
+        "המעבד שומר אוטומטית לפחות את ה-program counter ואת רגיסטר הסטטוס (flags), וה-ISR (או הקוד של מערכת ההפעלה) שומר כל רגיסטר אחר שהוא משנה. פקודת חזרה מיוחדת (למשל iret) משחזרת את המצב וממשיכה מהפקודה הבאה",
+        "ה-ISR מתחיל את התוכנית מחדש מההתחלה של הפונקציה",
+        "המעבד מריץ את ה-ISR על core אחר, כך שהתוכנית לא נקטעת באמת",
+        "הקומפיילר מוסיף לכל לולאה בדיקה של interrupts"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: זה החוזה של interrupt: כל מה שה-ISR משנה נשמר ומשוחזר, והחזרה מחדשת את הביצוע בדיוק בנקודה שנקטעה.",
+        "שגוי: אין שום התחלה מחדש. התוכנית ממשיכה מהפקודה שאחרי זו שהסתיימה לפני ה-interrupt.",
+        "שגוי: ה-interrupt נשלח ל-core מסוים, והוא קוטע את מה שרץ עליו.",
+        "שגוי: interrupts הם מנגנון חומרה. המעבד בודק אותם בין פקודות, בלי שום קוד מצד הקומפיילר."
+      ],
+      "explanation": "שלבי interrupt: ההתקן מאותת, המעבד מסיים את הפקודה הנוכחית, שומר PC ו-flags, מוצא את ה-ISR בטבלת הווקטורים, וה-ISR שומר רגיסטרים, מטפל, מאשר (EOI או ניקוי דגל בהתקן), משחזר וחוזר. התוכנית שנקטעה לא מרגישה דבר, חוץ מהזמן שעבר.",
+      "tags": [
+        "qualcomm",
+        "intel",
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=152508",
+        "https://www.geeksforgeeks.org/?p=130688",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer/"
+      ],
+      "problem": "Qualcomm / Intel / NVIDIA: what happens when an interrupt occurs",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q32",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "interrupt מגיע בזמן שהמעבד באמצע פקודת חילוק שלוקחת 40 cycles. מתי המעבד מטפל בו?",
+      "choices": [
+        "מיד, באמצע הפקודה, וממשיך את החילוק אחרי ה-ISR",
+        "רק כשהתוכנית קוראת ל-syscall",
+        "אחרי שהפקודה הנוכחית מסתיימת. interrupts מטופלים בגבולות בין פקודות, כך שכל פקודה מתבצעת במלואה או לא בכלל (פקודות ארוכות מאוד, כמו rep movs, מוגדרות כך שאפשר לקטוע אותן ולהמשיך)",
+        "אחרי שהלולאה הנוכחית מסתיימת"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: המעבד לא שומר מצב פנימי של פקודה חצי-מבוצעת. זה היה מסבך מאוד את השמירה והשחזור.",
+        "שגוי: interrupts מגיעים בכל רגע, גם בלולאה שלא קוראת לקרנל. זה בדיוק מה שמאפשר preemption.",
+        "נכון: interrupts הם אסינכרוניים, אבל המעבד מקבל אותם רק בגבול בין פקודות. פקודות string עם rep מעדכנות את הרגיסטרים בכל איטרציה, ולכן אפשר לקטוע אותן באמצע ולהמשיך.",
+        "שגוי: למעבד אין מושג של 'לולאה'. הוא רואה רק פקודות."
+      ],
+      "explanation": "interrupt (אסינכרוני) מטופל בין פקודות וחוזר לפקודה הבאה. exception (סינכרוני, כמו page fault) נגרם על ידי פקודה מסוימת, ולפעמים חוזר אליה.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q33",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איך המעבד יודע איזה ISR להריץ כשמגיע interrupt?",
+      "choices": [
+        "ההתקן שולח את הכתובת של ה-ISR יחד עם ה-interrupt",
+        "המעבד מריץ את כל ה-ISRs שרשומים, וכל אחד בודק אם זה בשבילו",
+        "מערכת ההפעלה בודקת את כל ההתקנים ב-polling",
+        "ה-interrupt controller מוסר מספר וקטור, והמעבד משתמש בו כאינדקס לטבלת וקטורים (IDT ב-x86, vector table ב-Cortex-M) שמכילה את הכתובות של ה-handlers"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: ההתקן לא יודע כלום על הקוד. ב-MSI הוא כותב מספר וקטור (data) לכתובת מיוחדת, לא כתובת של קוד.",
+        "שגוי: זה מה שקורה ברמת התוכנה כשכמה התקנים חולקים קו אחד (IRQF_SHARED), אבל ברמת החומרה יש קפיצה לוקטור אחד.",
+        "שגוי: זה הפוך: interrupts קיימים כדי לחסוך polling.",
+        "נכון: הטבלה מאותחלת על ידי מערכת ההפעלה או ה-firmware. כל מקור interrupt ממופה לווקטור, והמעבד קופץ לכתובת שבטבלה."
+      ],
+      "explanation": "טבלת הווקטורים מקשרת בין מקור ה-interrupt לבין ה-handler. ב-Cortex-M הטבלה מכילה גם את ערך ה-stack pointer ההתחלתי בכניסה הראשונה, ואפשר להזיז אותה עם VTOR.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q34",
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי ISR על microcontroller, לעומת פונקציה רגילה?",
+      "choices": [
+        "מותר לקרוא בתוך ה-ISR לפונקציה שחוסמת, למשל המתנה ל-mutex, אם ההמתנה קצרה",
+        "ISR צריך להיות קצר: כל זמן שהוא רץ, interrupts באותה עדיפות ומתחתיה מחכים",
+        "ב-ARM Cortex-M חובה לכתוב ISR באסמבלי, כי צריך לשמור רגיסטרים בצורה מיוחדת",
+        "ה-ISR יכול להתחיל בין כל שתי פקודות של הקוד הראשי, ולכן נתונים משותפים צריכים הגנה (volatile, ולפעמים ביטול interrupts סביב הגישה בקוד הראשי)",
+        "ל-ISR אין ארגומנטים ואין ערך החזרה: אף אחד בקוד לא קורא לה, ולכן אין מי שיעביר לה נתונים או יקבל ממנה ערך"
+      ],
+      "answer": [
+        1,
+        3,
+        4
+      ],
+      "notes": [
+        "שגוי: ISR לא רץ בהקשר של task, ולכן אין מה 'להרדים'. ב-RTOS משתמשים רק בגרסאות FromISR שלא חוסמות, וב-Linux אסור לישון ב-hard IRQ.",
+        "נכון: ISR ארוך מגדיל את ה-latency של כל ה-interrupts האחרים. עושים מינימום ודוחים את השאר ל-task.",
+        "שגוי: ב-Cortex-M החומרה שומרת בעצמה את r0-r3, r12, lr, pc ו-xPSR, כך ש-ISR הוא פונקציית C רגילה לגמרי.",
+        "נכון: מבחינת הקוד הראשי, ה-ISR יכול לקרות בכל רגע. לכן גם קריאה של משתנה רחב או read-modify-write משותף דורשים critical section.",
+        "נכון: החומרה קוראת ל-ISR. נתונים עוברים דרך משתנים גלובליים ורגיסטרים של ההתקן."
+      ],
+      "explanation": "ISR היא פונקציה שהחומרה קוראת לה בכל רגע, בהקשר שאין בו task. לכן: בלי ארגומנטים, בלי חסימה, קצרה ככל האפשר, ונתונים משותפים מוגנים.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=563889"
+      ],
+      "problem": "Qualcomm: how an ISR differs from a normal function",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q35",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בקוד bare-metal, מתכנת הוסיף `printf(\"rx %d\\n\", byte);` בתוך ה-ISR של UART כדי לדבג. מדי פעם המערכת נתקעת או מדפיסה שורות משובשות. מה הסיבה הסבירה?",
+      "choices": [
+        "printf לא בטוח לקריאה מ-ISR: הוא לא reentrant (באפר פנימי ו-lock של stdio). אם ה-ISR קוטע printf של הקוד הראשי, הוא דורס את הבאפר או מחכה ל-lock שלעולם לא ישתחרר. וגם, הוא איטי, ומאריך את ה-ISR כך שבתים הבאים הולכים לאיבוד",
+        "printf לא עובד ב-bare-metal בכלל",
+        "byte צריך להיות volatile",
+        "ה-ISR חייב להחזיר ערך כדי ש-printf יעבוד"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: פונקציה לא reentrant היא פונקציה שאסור להיכנס אליה שוב לפני שהקריאה הקודמת הסתיימה. ISR שקוטע אותה בדיוק עושה את זה. בנוסף, printf שולח את הפלט דרך UART, וזה אורך מילי-שניות.",
+        "שגוי: עם retargeting (למשל _write ל-UART) printf עובד ב-bare-metal. הבעיה היא ההקשר שבו הוא נקרא.",
+        "שגוי: byte הוא משתנה מקומי של ה-ISR. אין שום גורם אחר שמשנה אותו.",
+        "שגוי: ל-ISR אין ערך החזרה."
+      ],
+      "explanation": "בתוך ISR קוראים רק לפונקציות reentrant וקצרות. לדיבאג: כותבים את האירוע ל-ring buffer, ומדפיסים מהלולאה הראשית, או משתמשים ב-GPIO toggle ולוגיק אנלייזר.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q36",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-ARM Cortex-M, למה ISR יכול להיות פונקציית C רגילה, בלי attributes מיוחדים ובלי קוד אסמבלי?",
+      "choices": [
+        "כי Cortex-M לא קוטע פונקציות באמצע, אלא רק בין קריאות לפונקציות",
+        "כי הקומפיילר מזהה לפי השם (`*_IRQHandler`) שזו פונקציית interrupt ומוסיף קוד שמירה",
+        "כי ה-ISRs רצים במצב Thread ולא במצב Handler",
+        "כי החומרה, בכניסה ל-exception, דוחפת בעצמה ל-stack את הרגיסטרים שמוגדרים caller-saved ב-AAPCS (r0-r3, r12, lr, pc, xPSR), וכותבת ל-LR ערך מיוחד (EXC_RETURN). כשהפונקציה חוזרת עם `bx lr` רגיל, החומרה מזהה את הערך הזה ומשחזרת הכל"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: interrupts מגיעים בין כל שתי פקודות, ואפילו באמצע פקודות load/store multiple (שהן ניתנות להמשך).",
+        "שגוי: השם חשוב רק לטבלת הווקטורים (דרך ה-linker וה-startup). הקומפיילר לא מוסיף שום קוד מיוחד.",
+        "שגוי: הפוך: exceptions רצים ב-Handler mode, עם MSP. Thread mode משמש לקוד הרגיל.",
+        "נכון: התכנון הזה מתאים את ה-stacking לחוזה הקריאה של C: הפונקציה שומרת בעצמה r4-r11 אם היא משתמשת בהם, והחומרה דואגת לכל השאר."
+      ],
+      "explanation": "ב-Cortex-M, ISR הוא פונקציית C רגילה, כי ה-stacking בחומרה מתאים ל-AAPCS. EXC_RETURN ב-LR מסמן לחומרה שהחזרה היא מ-exception, וגם לאיזה stack לחזור. בארכיטקטורות אחרות (למשל AVR) צריך attribute כמו ISR() שמוסיף שמירת רגיסטרים ו-reti.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q37",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות נכונות לגבי top half ו-bottom half ב-Linux?",
+      "choices": [
+        "ה-top half (ה-hard IRQ handler) רץ כשקו ה-IRQ הזה מושתק, ולכן הוא עושה רק את המינימום: מאשר את ה-interrupt בהתקן, מעתיק את מה שחייבים, ומתזמן bottom half",
+        "ה-bottom half תמיד רץ על CPU אחר מזה שקיבל את ה-interrupt",
+        "workqueue רץ בהקשר של kernel thread, ולכן מותר לו לישון (mutex, kmalloc עם GFP_KERNEL, המתנה ל-I/O)",
+        "softirq מאותו סוג יכול לרוץ במקביל על כמה CPUs, ולכן הקוד שלו חייב להגן על נתונים משותפים",
+        "tasklet רץ בהקשר של softirq, ולכן גם בו מותר לישון"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "notes": [
+        "נכון: כל עוד ה-top half רץ, interrupts נוספים מאותו קו מחכים. לכן הוא צריך להיות קצר, וכל עבודה שאפשר לדחות נדחית.",
+        "שגוי: ברירת המחדל היא דווקא על אותו CPU, כדי לנצל את ה-cache. workqueue יכול להיות unbound, אבל זה לא 'תמיד'.",
+        "נכון: workqueue הוא ה-bottom half היחיד שרץ ב-process context, ולכן היחיד שמותר בו לישון.",
+        "נכון: softirqs (למשל NET_RX) רצים על כל CPU שהעלה אותם, גם במקביל. זה נותן ביצועים, ודורש per-CPU data או spinlocks.",
+        "שגוי: tasklet רץ ב-softirq context, שהוא atomic context. אסור לישון בו בדיוק כמו ב-hard IRQ."
+      ],
+      "explanation": "top half: מהיר, עם הקו מושתק, בלי שינה. bottom halves: softirq (מקבילי לחלוטין, סטטי), tasklet (מבוסס softirq, אותו tasklet לא רץ במקביל לעצמו), workqueue ו-threaded IRQ (process context, מותר לישון). הבחירה נקבעת לפי latency ולפי הצורך לישון.",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.jointaro.com/interviews/companies/nvidia/experiences/systems-software-engineer-santa-clara-ca-march-1-2016-no-offer-negative-588e423c/"
+      ],
+      "problem": "NVIDIA: ISR top half and bottom half",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q38",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "driver משתמש ב-tasklet לעיבוד חבילות. ה-interrupt מגיע פעמיים ברצף, על CPU 0 ועל CPU 1 (בגלל IRQ affinity משתנה), ושניהם מתזמנים את **אותו** tasklet. מה מובטח?",
+      "choices": [
+        "ה-tasklet ירוץ פעמיים, תמיד על CPU 0",
+        "ה-tasklet ירוץ פעמיים במקביל, פעם על כל CPU",
+        "אותו tasklet לא ירוץ אף פעם במקביל לעצמו: אם הוא כבר רץ על CPU אחד, הוא יסומן לריצה נוספת אחר כך. אבל תזמון כפול לפני שהוא התחיל לרוץ עלול להתמזג לריצה אחת, ולכן הקוד חייב לעבד את כל מה שהצטבר",
+        "הריצה השנייה תידחה עם שגיאה"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: tasklet רץ על ה-CPU שתזמן אותו, ולא על CPU קבוע.",
+        "שגוי: זה נכון ל-softirqs, לא ל-tasklets. ההגבלה הזו היא בדיוק הסיבה שכותבים tasklets, כי הם פשוטים יותר לכתיבה נכונה.",
+        "נכון: tasklet_schedule על tasklet שכבר מתוזמן ולא התחיל לרוץ לא מוסיף ריצה. לכן ה-handler צריך לרוקן את כל התור, ולא להניח 'ריצה אחת לכל interrupt'.",
+        "שגוי: אין כישלון. התזמון פשוט מתמזג או נדחה."
+      ],
+      "explanation": "tasklets הם serialized ביחס לעצמם, בניגוד ל-softirqs, וזה מקל על הכתיבה שלהם במחיר של סקלביליות. בקרנלים חדשים מעדיפים threaded IRQs או workqueues, ו-tasklets נחשבים מיושנים.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q39",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "נתונים משותפים בין tasklet לבין קוד ב-process context (למשל write של ה-driver). איזו נעילה צריך להשתמש בה בצד ה-process context?",
+      "choices": [
+        "`spin_lock_irqsave` הוא היחיד שעובד",
+        "`spin_lock` רגיל מספיק",
+        "`spin_lock_bh`: הוא נועל spinlock וגם מבטל bottom halves על ה-CPU המקומי. בלי זה, tasklet יכול לרוץ על אותו CPU בזמן שהקוד מחזיק את הנעילה, ולהסתובב לעד על spinlock שלעולם לא ישתחרר",
+        "`mutex_lock`, כי process context מותר לישון"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: irqsave עובד (ביטול interrupts מונע גם את ה-softirq שבא אחריהם), אבל הוא חזק מהנדרש ופוגע ב-latency של interrupts. _bh מספיק כשה-hard IRQ לא נוגע בנתונים.",
+        "שגוי: spin_lock רגיל לא מונע מה-tasklet לקטוע את הקוד על אותו CPU, וזה deadlock.",
+        "נכון: softirqs ו-tasklets רצים כשחוזרים מ-interrupt. אם הם קוטעים את ה-process context על אותו CPU בזמן שהנעילה מוחזקת, מתקבל deadlock. _bh מונע את הקטיעה הזו. בתוך ה-tasklet עצמו מספיק spin_lock.",
+        "שגוי: ה-tasklet לא יכול לנעול mutex, כי אסור לו לישון, ולכן הנעילה המשותפת חייבת להיות spinlock."
+      ],
+      "explanation": "בחירת הנעילה נקבעת לפי ההקשר החזק ביותר שנוגע בנתונים: process מול process → mutex. מול softirq או tasklet → spin_lock_bh. מול hard IRQ → spin_lock_irqsave.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q40",
+      "level": 4,
+      "type": "bug",
+      "prompt": "driver בקרנל של Linux. ה-ISR סופר אירועים, ופונקציה ב-process context אוספת אותם. על מכונה עמוסה המערכת נתקעת מדי פעם: CPU אחד מסתובב לנצח. איפה הבאג?",
+      "code": "static DEFINE_SPINLOCK(lock);\nstatic int pending;\n\nirqreturn_t my_isr(int irq, void* dev) {\n    spin_lock(&lock);\n    pending++;\n    spin_unlock(&lock);\n    return IRQ_HANDLED;\n}\n\nvoid consume(void) {            /* process context */\n    spin_lock(&lock);\n    int n = pending;\n    pending = 0;\n    spin_unlock(&lock);\n    handle_events(n);\n}",
+      "lang": "cpp",
+      "choices": [
+        "`pending` צריך להיות volatile",
+        "ה-ISR לא יכול להשתמש ב-spinlock בכלל, וצריך להשתמש ב-mutex",
+        "handle_events צריך להיקרא בתוך ה-critical section",
+        "consume נועל עם spin_lock רגיל, ולכן interrupts נשארים פעילים. אם ה-interrupt מגיע על אותו CPU בזמן שהנעילה מוחזקת, ה-ISR מסתובב עליה, והקוד שמחזיק אותה לא ירוץ שוב עד שה-ISR יחזור: deadlock. צריך spin_lock_irqsave (או spin_lock_irq)"
+      ],
+      "answer": 3,
+      "bugLine": 12,
+      "notes": [
+        "שגוי: spin_lock ו-spin_unlock הם barriers, ולכן אין בעיה של compiler caching. הבעיה היא deadlock, לא נראות.",
+        "שגוי: הפוך: ב-ISR אסור mutex כי אסור לישון. spinlock הוא הכלי הנכון, רק צריך להשתמש בו נכון בצד השני.",
+        "שגוי: ההפך הוא הנכון: עבודה ארוכה מחוץ לנעילה מקצרת את הזמן שבו interrupts מבוטלים.",
+        "נכון: spinlock מגן מפני CPUs אחרים, לא מפני interrupt על אותו CPU. לכן בצד שלא רץ ב-IRQ מבטלים interrupts מקומיים בזמן ההחזקה. ב-ISR עצמו spin_lock רגיל מספיק (על ה-CPU הזה ה-IRQ כבר מושתק)."
+      ],
+      "explanation": "הכלל: כל נעילה שה-ISR לוקח, כל מי שלוקח אותה מחוץ ל-ISR חייב לבטל interrupts מקומיים בזמן ההחזקה. lockdep בקרנל מזהה את זה ומדווח 'inconsistent lock state'.",
+      "tags": [
+        "google",
+        "nvidia"
+      ],
+      "sources": [
+        "https://static.glassdoor.nl/Interview/Google-Interview-E9079-RVW597517.htm",
+        "https://www.glassdoor.com.au/Interview/NVIDIA-Interview-E7633-RVW5298526.htm"
+      ],
+      "problem": "Google / NVIDIA: spinlocks and interrupts, disable interrupts before taking a lock shared with an ISR",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q41",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו מהקריאות הבאות מותרות בתוך hard IRQ handler ב-Linux?",
+      "choices": [
+        "`kmalloc(size, GFP_KERNEL)`",
+        "`spin_lock(&lock)`",
+        "`mutex_lock(&m)`",
+        "`wake_up_process(task)` או `complete(&done)`",
+        "`kmalloc(size, GFP_ATOMIC)`",
+        "`copy_to_user(ubuf, kbuf, n)`"
+      ],
+      "answer": [
+        1,
+        3,
+        4
+      ],
+      "notes": [
+        "שגוי: GFP_KERNEL רשאי לישון בזמן reclaim, ולכן אסור בהקשר atomic.",
+        "נכון: spinlock לא ישן, ולכן מותר. (בצד השני, מחוץ ל-ISR, צריך irqsave.)",
+        "שגוי: mutex_lock עלול לישון. אין בהקשר של interrupt task שאפשר להרדים.",
+        "נכון: להעיר task אחר לא דורש לישון. זו הדרך הרגילה לסמן ל-thread שיש עבודה.",
+        "נכון: GFP_ATOMIC לא ישן. אם אין זיכרון זמין מיד, הוא נכשל, והקוד חייב לטפל בכישלון.",
+        "שגוי: copy_to_user עלול לגרום ל-page fault שדורש שינה, וממילא אין ב-ISR 'process נוכחי' שהכתובת שלו רלוונטית."
+      ],
+      "explanation": "hard IRQ הוא atomic context: אסור כל דבר שעלול לישון. מותר: spinlocks, הקצאה עם GFP_ATOMIC, להעיר tasks ולתזמן bottom halves. עבודה שצריכה לישון עוברת ל-workqueue או ל-threaded IRQ.",
+      "lesson": "sys.interrupts"
+    },
+    {
+      "id": "sys.interrupts.q42",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בקרנל שנבנה ל-core יחיד (CONFIG_SMP כבוי), `spin_lock` מתקמפל בעצם ל-`preempt_disable()` בלבד. האם עדיין צריך `spin_lock_irqsave` כשה-ISR משתמש באותם נתונים?",
+      "choices": [
+        "כן, אבל רק בגלל שה-spinlock מסתובב לנצח ב-UP",
+        "לא: ב-UP ה-ISR תמיד מחכה לסוף ה-critical section",
+        "כן: preempt_disable מונע החלפת tasks, אבל לא מונע interrupt. ה-ISR עדיין יכול לקטוע את הקוד באמצע עדכון. ב-UP, irqsave מתקמפל לביטול interrupts מקומי, וזה בדיוק מה שצריך",
+        "לא: עם core יחיד אין מקביליות, ולכן אין צורך בשום נעילה"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: ב-UP ה-spinlock לא מסתובב בכלל. אין שם לולאה, רק ביטול preemption.",
+        "שגוי: interrupt לא מחכה לשום דבר. אם הוא לא מבוטל, הוא נכנס.",
+        "נכון: הקוד נכתב פעם אחת, וה-API מתאים את עצמו: ב-SMP הוא גם מסתובב, וב-UP הוא רק מבטל את מה שצריך (preemption או interrupts). מה שקובע את הבחירה הוא מי עוד נוגע בנתונים, לא מספר ה-cores.",
+        "שגוי: גם עם core יחיד יש מקביליות מדומה: interrupts ו-preemption קוטעים קוד בכל רגע."
+      ],
+      "explanation": "API הנעילה של Linux מתאר את ההקשרים שצריך להגן מפניהם (preemption, bottom halves, interrupts), והמימוש מותאם לתצורה. לכן כותבים spin_lock_irqsave לפי הצורך הלוגי, גם על מערכת עם core אחד.",
+      "lesson": "sys.interrupts"
     }
   ]
 }

@@ -167,6 +167,30 @@
         {
           "term": "busy-poll / futex / eventfd",
           "def": "דרכי המתנה של צרכן: סיבוב על ה-CPU, או שינה על futex או eventfd שהיצרן מעיר. בחירה בין latency לבין צריכת CPU."
+        },
+        {
+          "term": "thread confinement / העברת בעלות",
+          "def": "כל אובייקט שייך בכל רגע ל-thread אחד, ומעבירים בעלות דרך תור מסונכרן. ההעברה היא נקודת הסנכרון היחידה, והאובייקט עצמו לא צריך lock."
+        },
+        {
+          "term": "immutable after publish",
+          "def": "נתונים שנבנים לפני יצירת ה-threads (או לפני פרסום עם release) ולא משתנים אחר כך. קוראים מכמה threads בלי lock, כי קריאות במקביל לא יוצרות race."
+        },
+        {
+          "term": "double / triple buffering",
+          "def": "double: כותבים ל-back וסורקים את front, ומחליפים ב-vblank, אבל הכותב מחכה להחלפה. triple: buffer שלישי מאפשר לכותב להמשיך מיד, ובכל vblank מוצג ה-frame המלא האחרון."
+        },
+        {
+          "term": "vblank / vsync",
+          "def": "הפרק הקצר בין סוף סריקה של frame לתחילת הבא. החלפת buffers רק בו מונעת tearing, כי הפאנל אף פעם לא סורק buffer שמשתנה."
+        },
+        {
+          "term": "screen tearing",
+          "def": "תמונה שמורכבת מחלק של frame ישן וחלק של frame חדש, כי ה-buffer השתנה באמצע הסריקה. סוג של קריאה לא עקבית (torn read) ברמת מסך."
+        },
+        {
+          "term": "העברת בעלות ב-exchange (acq_rel)",
+          "def": "exchange שגם נותן buffer וגם מקבל אחר צריך release כדי לפרסם את מה שנעשה ב-buffer שנמסר, ו-acquire כדי לראות את מה שהבעלים הקודם עשה ב-buffer שמתקבל, כולל קריאות."
         }
       ]
     }
@@ -298,9 +322,6 @@
       "answer": 0,
       "explanation": "ה-release על head מפרסם רק את מה שנכתב **לפניו**. כאן הכתיבה ל-buf_ אחריו, ולכן הצרכן יכול לקרוא slot שעוד לא נכתב, וזה גם data race. הקריאה של head עצמו ב-relaxed נכונה, כי רק היצרן כותב אותו.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. store עם release מפרסם רק כתיבות שקדמו לו ב-program order. כאן buf_[h] נכתב אחרי הפרסום, ולכן הצרכן יכול לראות head חדש ולקרוא slot ריק, וזה data race. הכתיבה ל-buf_ חייבת לבוא לפני ה-store.",
         "שגוי. ה-acquire על tail נחוץ: הוא מבטיח שהצרכן סיים לקרוא את ה-slot לפני שהיצרן דורס אותו. החלשה ל-relaxed רק תוסיף race, ולא תתקן את הבאג.",
@@ -327,9 +348,6 @@
       ],
       "explanation": "זוג אחד מפרסם את האיבר מהיצרן לצרכן. הזוג השני (tail release בצרכן, tail acquire ביצרן) מבטיח שהצרכן סיים לקרוא את ה-slot לפני שהיצרן דורס אותו, ובלעדיו יש race על ה-slot. קריאה של משתנה שרק אתה כותב יכולה להיות relaxed. seq_cst לא נדרש, כי אין כאן תבנית StoreLoad.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. זה ה-release שמפרסם את תוכן ה-slot: כל כתיבה לאיבר לפני ה-store נראית לצרכן שקורא את head ב-acquire.",
         "נכון. ה-release על tail מבטיח שהקריאה של הצרכן מה-slot הסתיימה לפני שהיצרן (שקורא tail ב-acquire) רואה אותו פנוי ודורס אותו. בלעדיו יש race על ה-slot.",
@@ -354,10 +372,7 @@
         "בונוס: cached copy של האינדקס של הצד השני כדי לחסוך cache misses"
       ],
       "explanation": "החיסור head - tail על size_t נכון גם אחרי גלישה, כי החשבון הוא modulo 2 בחזקת 64 וההפרש תמיד קטן או שווה ל-N. התנאי שהקיבולת היא חזקה של 2 מבטיח שהמיפוי & (N-1) רציף גם בגלישה.",
-      "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.lock-free"
     },
     {
       "id": "conc.lock-free.q10",
@@ -373,9 +388,6 @@
       "answer": 3,
       "explanation": "היתרון המרכזי הוא progress guarantee: הכותב לדיסק יכול להיתקע על I/O או להיות מוחלף, וה-RX thread עדיין משלים push בזמן קבוע (או מקבל false כשהתור מלא ומחליט מה לעשות). ייתכן שהוא גם מהיר יותר, אבל זה לא העיקר. mutex עובד בין עדיפויות, רק עם סיכון ל-inversion.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. lock-free לא תמיד מהיר יותר בממוצע; mutex לא-מתוחרה הוא atomic אחד. היתרון כאן הוא ה-worst-case, לא הממוצע.",
         "שגוי. mutex עובד מצוין בין threads בכל עדיפות. הבעיה היא priority inversion: ה-thread בעדיפות גבוהה נחסם על lock שמחזיק thread בעדיפות נמוכה.",
@@ -397,9 +409,6 @@
       "answer": 2,
       "explanation": "בכל push היצרן קורא את tail, שהצרכן כותב כל הזמן, ולכן ה-line שלו עובר בין ה-cores כל פעם. עם cached tail, היצרן קורא את tail האמיתי רק פעם בהרבה פעולות. זו הטכניקה של מימושים כמו rigtorp SPSCQueue ו-folly ProducerConsumerQueue. batching (push של כמה איברים ועדכון head פעם אחת) עוזר מאותה סיבה.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. seq_cst רק מוסיף fences ומחמיר את המצב. ה-misses נובעים מתעבורת coherence על tail ו-head, לא מ-ordering.",
         "שגוי. גודל ה-cache line קבוע בחומרה ולא ניתן לשינוי מהתוכנה. ריפוד ל-128 בתים עוזר רק נגד adjacent-line prefetch, וההפרדה כבר קיימת.",
@@ -424,9 +433,6 @@
       "answer": 1,
       "explanation": "שתי בעיות קשורות: גישה ל-old->next לנוד שאולי כבר שוחרר, ו-ABA כשהכתובת ממוחזרת. weak בלולאה תקין, וה-CAS מעדכן את old בכישלון, כך שהלולאה נכונה. התיקונים: hazard pointers או epoch-based reclamation לשחרור בטוח, ו-tagged pointer (מונה גרסה עם CAS כפול רוחב) נגד ABA.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. כישלון ספורדי של weak בתוך לולאת retry הוא תקין לחלוטין: הלולאה פשוט מנסה שוב. strong נחוץ רק כשאין לולאה.",
         "נכון. old->next נקרא בלי שום הגנה, אז אם thread אחר שלף ומחק את old זו קריאה מזיכרון משוחרר. ואם הכתובת מוחזרה ונדחפה מחדש, ה-CAS מצליח עם next ישן (ABA). התיקון: hazard pointers או epochs, ו-tagged pointer.",
@@ -469,10 +475,7 @@
         "אסטרטגיית המתנה בצרכן (poll מול block)"
       ],
       "explanation": "זה בדיוק הפתרון שמשתמשים בו ב-SDR ובמערכות audio: מחזור באפרים בין שני תורים. מועמד חזק מתייחס במפורש למקרה של צרכן איטי.",
-      "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.lock-free"
     },
     {
       "id": "conc.lock-free.q15",
@@ -488,9 +491,6 @@
       "answer": 1,
       "explanation": "החיסור ב-unsigned דווקא נכון אחרי גלישה, כי הוא modulo 2^32. הבעיה היא במיפוי ל-slot: הרציפות של counter % N לאורך הגלישה דורשת ש-N יחלק את 2^32, כלומר חזקה של 2. 2^32 mod 1000 = 296, ולכן אחרי הגלישה האינדקס מתחיל מ-0 במקום מ-296. עם uint32_t בקצב של מיליוני פריטים בשנייה הגלישה קורית אחרי דקות עד שעות, וזה מסביר את העיתוי.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. % איטי יותר מ-&, אבל מהירות לא גורמת ל-overflow או לשיבוש נתונים. זה מערבב בין עניין ביצועים לבעיית נכונות.",
         "נכון. 2^32 mod 1000 = 296, ולכן המונה 2^32-1 ממופה ל-slot 295, ואחרי הגלישה המונה 0 ממופה ל-slot 0 במקום 296. היצרן והצרכן מגיעים לגלישה בזמנים שונים וממפים את אותו פריט ל-slots שונים.",
@@ -512,9 +512,6 @@
       "answer": 0,
       "explanation": "release/acquire לא אוסרים להעביר store ואחריו load לכתובת אחרת, ושני הצדדים עושים בדיוק את זה. הדרישה היא שלפחות אחד יראה את הכתיבה של השני, וזה מה ש-seq_cst נותן. מימושים מודרניים מעבירים את רוב המחיר לצד ה-reclaimer עם asymmetric fences (membarrier ב-Linux), כדי שהקורא, שהוא המסלול החם, לא ישלם mfence.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. שני הצדדים עושים store ואז load לכתובת אחרת (תבנית SB), ו-release/acquire מתירים ששני ה-loads יראו ערכים ישנים. רק total order של seq_cst (או fence מלא) מבטיח שלפחות צד אחד יראה את הכתיבה של השני.",
         "שגוי. acquire עובד על כל טיפוס atomic, כולל std::atomic<T*>. הבעיה היא שאין בתבנית זוג release->acquire שמסנכרן את הכיוון הנדרש.",
@@ -541,9 +538,6 @@
       ],
       "explanation": "ב-SPSC אין לולאות ניסיון חוזר: כל פעולה מסתיימת במספר צעדים קבוע. ב-Treiber thread יכול להפסיד ב-CAS שוב ושוב, ולכן הוא רק lock-free ו-starvation אפשרי. spinlock לא lock-free בלי קשר לאורך ה-critical section: אם המחזיק נעצר, כולם תקועים. malloc יכול לחסום ולגרום ל-page fault, ולכן מבנים ל-RT מקצים מראש.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. malloc יכול לקחת lock פנימי, לבצע mmap או brk, ולגרום ל-page fault. כך התור יורש את חוסר החסימות שלו, ולכן מבנים ל-RT מקצים מראש.",
         "נכון. CAS loop מבטיח שאם CAS נכשל זה כי מישהו אחר הצליח (lock-free), אבל thread ספציפי יכול להפסיד לנצח, ולכן הוא לא wait-free.",
@@ -729,9 +723,6 @@
       "answer": 2,
       "explanation": "הצרכנים מחכים ל-sequence == pos + 1 של ה-slot הבא בתור, וה-slot נשאר במצב 'נתפס אבל לא פורסם'. יצרנים אחרים ממשיכים לתפוס slots הלאה, אבל הצרכנים תקועים. בפועל זה תור מהיר ומצוין, אבל ההבחנה חשובה ל-RT: 'בלי mutex' אינו אומר progress guarantee.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. בתור Vyukov הסדר נקבע ע״י dequeue_pos: הצרכן תופס את המיקום הבא בתור ומחכה ל-sequence שלו. אין מנגנון דילוג, ודילוג היה שובר FIFO.",
         "שגוי. ה-CAS על enqueue_pos כבר נתן את ה-slot ליצרן הזה; יצרנים אחרים מקבלים pos גבוה יותר ו-slots אחרים, ולא יכולים לדרוס אותו.",
@@ -756,9 +747,6 @@
       "answer": 0,
       "explanation": "cachedTail_ הוא עותק פרטי של היצרן ולכן לא צריך להיות atomic, אבל צריך לרענן אותו מה-tail האמיתי כשנראה מלא. בלי זה הוא נשאר 0 לנצח. ה-acquire בריענון נחוץ כדי שהצרכן באמת סיים לקרוא את ה-slot לפני שהיצרן דורס אותו. החיסור ב-unsigned נכון גם אחרי גלישה.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. cachedTail_ לא מתעדכן לעולם, ולכן אחרי N push התנאי h - cachedTail_ == N נשאר אמת לתמיד. כשנראה מלא צריך לטעון את tail_ האמיתי ב-acquire (שמסנכרן עם ה-release של הצרכן, כך שה-slot נקרא לפני הדריסה) ולבדוק שוב.",
         "שגוי. release מספיק כדי לפרסם את האיבר לצרכן; seq_cst לא נוגע בכך ש-cachedTail_ לא מתרענן.",
@@ -780,9 +768,6 @@
       "answer": 2,
       "explanation": "הכותב מפרסם גרסה חדשה עם rcu_assign_pointer (release), וב-synchronize_rcu מחכה שכל CPU יעבור context switch. כיוון ש-read section לא יכול לכלול context switch, כל קורא שהתחיל לפני העדכון בוודאות סיים. בקרנל preemptible (PREEMPT_RCU) יש מונה nesting פר-task, עדיין זול אבל לא אפס. מונה פר-CPU הוא הרעיון של SRCU ושל מימושים ב-user space.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. rcu_read_lock לא לוקח שום lock ולא מבצע שום פעולה אטומית; ה-'lock' בשם מטעה.",
         "שגוי. מונה פר-CPU הוא הרעיון של SRCU ושל מימושי RCU ב-user space. בקרנל לא-preemptible הקורא לא כותב כלום.",
@@ -804,9 +789,6 @@
       "answer": 3,
       "explanation": "זה ABA: head שווה ל-A כמו שהיה, ולכן ה-CAS מצליח, אבל ה-next ש-T1 שמר (B) כבר לא במחסנית. head מצביע עכשיו על B (dangling אם שוחרר), והמחסנית התקינה (A ל-C) אבדה. tagged pointer היה מכשיל את ה-CAS, ו-hazard pointer על A היה מונע את שחרורו ומחזורו בזמן ש-T1 מחזיק אותו.",
       "lesson": "conc.lock-free",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. CAS משווה רק את הערך הנוכחי: head שוב שווה A, ולכן ה-CAS מצליח. זו בדיוק בעיית ה-ABA, שהשינוי באמצע בלתי נראה.",
         "שגוי. T1 כותב את ה-next שהוא שמר, B, ולא את A->next הנוכחי (C). לכן head לא מצביע על C.",
@@ -827,10 +809,143 @@
         "בחירה מנומקת ל-read-mostly: RCU או EBR, עם הסבר על צד הכותב"
       ],
       "explanation": "השאלה בודקת אם המועמד מבין שאין פתרון reclamation אחד, ושהבחירה נובעת מיחס קריאה-כתיבה ומדרישות robustness.",
-      "lesson": "conc.lock-free",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "המראיין שואל: \"אי אפשר לשתף נתונים בין threads בלי mutex?\" אילו מהדוגמאות הן דרכים נכונות?",
+      "choices": [
+        "SPSC ring buffer: היצרן מפרסם את head ב-release, והצרכן קורא אותו ב-acquire (ולהפך ל-tail)",
+        "נתונים שנבנו לפני יצירת ה-threads ולא משתנים יותר (immutable), ונקראים מכולם",
+        "`volatile` על כל המשתנים המשותפים",
+        "`std::atomic` למשתנה בודד (מונה, דגל, pointer), עם memory order מתאים",
+        "`bool ready` רגיל ו-`int data` רגיל, כשהכותב פשוט כותב את data לפני ready בסדר הקוד"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "mutex הוא דרך אחת ליצור happens-before. atomics עם acquire ו-release, תורי SPSC, ונתונים שלא משתנים אחרי פרסום הם דרכים אחרות. מה שלא עובד: להסתמך על סדר שורות בקוד או על volatile, כי הם לא יוצרים סנכרון.",
+      "notes": [
+        "נכון: לכל אינדקס כותב יחיד, וה-release/acquire מבטיחים שהנתונים בתא נראים לפני האינדקס.",
+        "נכון: יצירת std::thread מסתנכרנת עם תחילת ה-thread, ולכן כל מה שנכתב לפני כן גלוי. בלי כתיבות אחר כך אין race.",
+        "שגוי: volatile לא נותן אטומיות ולא happens-before.",
+        "נכון: atomic נותן אטומיות, ועם acquire ו-release גם סדר.",
+        "שגוי: הקומפיילר והמעבד רשאים לסדר מחדש, ו-bool ו-int רגילים בגישה מקבילית הם data race."
+      ],
+      "problem": "Qualcomm interview: can't we share data without a mutex?",
       "tags": [
-        "nvidia"
-      ]
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1341747/qualcomm-by-monty4597-ys8n/"
+      ],
+      "id": "conc.lock-free.q31",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "`std::vector<int> table` ממולא ב-main, ואז main יוצר 8 threads שקוראים ממנו בלי שום lock, ואף אחד לא כותב אליו יותר. האם יש data race?",
+      "choices": [
+        "כן, כל גישה משותפת דורשת mutex",
+        "לא: הבנאי של std::thread מסתנכרן עם תחילת הפונקציה של ה-thread, ולכן כל מה ש-main כתב לפני היצירה גלוי. וקריאות במקביל לקריאות אינן race",
+        "לא, אבל רק אם table מוגדר const",
+        "כן, אלא אם table מוגדר volatile"
+      ],
+      "answer": 1,
+      "explanation": "data race דורש לפחות כתיבה אחת שמתבצעת במקביל. כאן כל הכתיבות קורות לפני יצירת ה-threads ומסתנכרנות איתם. זה הבסיס לדפוס \"בנה ואז פרסם\" (immutable after publish).",
+      "notes": [
+        "שגוי: קריאות מקבילות בלבד לא יוצרות race.",
+        "נכון: יצירת thread היא נקודת סנכרון, וקריאה בלבד אחריה בטוחה.",
+        "שגוי: const עוזר לקומפיילר לתפוס כתיבה בטעות, אבל הוא לא תנאי לבטיחות.",
+        "שגוי: volatile לא קשור לסנכרון בין threads."
+      ],
+      "id": "conc.lock-free.q32",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ארכיטקטורה של message passing: כל אובייקט Frame שייך בכל רגע ל-thread אחד. thread A ממלא Frame ומעביר pointer אליו דרך תור ל-thread B, ומאז לא נוגע בו. B משנה את ה-Frame בלי lock. מה התנאי לנכונות?",
+      "choices": [
+        "Frame חייב להכיל רק שדות atomic",
+        "התור עצמו חייב ליצור happens-before בין ה-push של A ל-pop של B (mutex או release ו-acquire), ו-A באמת לא ניגש ל-Frame אחרי ה-push. אז אין צורך בשום סנכרון על ה-Frame עצמו",
+        "צריך mutex בתוך כל Frame",
+        "B חייב להעתיק את ה-Frame לפני שהוא משתמש בו"
+      ],
+      "answer": 1,
+      "explanation": "העברת בעלות היא דרך ליצור thread confinement: בכל רגע רק thread אחד ניגש לאובייקט. הסנכרון היחיד שצריך הוא בנקודת ההעברה. זה המודל של תורים בין שלבי pipeline (כמו RX ל-DSP).",
+      "notes": [
+        "שגוי: אין גישות מקבילות לשדות, ולכן atomics מיותרים.",
+        "נכון: ההעברה דרך תור מסונכרן היא נקודת ה-happens-before היחידה שנדרשת.",
+        "שגוי: mutex על אובייקט שרק thread אחד ניגש אליו בכל רגע הוא רק עלות.",
+        "שגוי: העתקה לא נדרשת. ה-pointer שהועבר דרך תור מסונכרן מספיק."
+      ],
+      "id": "conc.lock-free.q33",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "SoC כותב frames ל-buffer משותף, והפאנל סורק אותו שורה אחרי שורה ב-120 Hz. כש-SoC כותב באמצע סריקה רואים tearing (חצי frame ישן וחצי חדש). איזה תכנון מבטל tearing **בלי** שה-SoC יחכה לסוף סריקה שלמה כמעט בכל frame?",
+      "choices": [
+        "seqlock על buffer יחיד: הפאנל בודק את ה-sequence בסוף הסריקה ומנסה שוב אם השתנה",
+        "buffer יחיד עם mutex: הפאנל מחזיק את ה-lock לאורך כל סריקה",
+        "double buffering, כשמחליפים front ו-back מיד כשה-SoC מסיים frame",
+        "triple buffering: ה-SoC כותב תמיד ל-buffer פנוי, ה-frame המוכן האחרון ממתין, והחלפת ה-front נעשית רק ב-vblank (בין סריקות)"
+      ],
+      "answer": 3,
+      "explanation": "tearing נמנע כשהבאפר שהפאנל סורק לא משתנה במהלך סריקה, כלומר החלפה רק ב-vblank. ב-double buffering עם vsync, ה-SoC שסיים מחכה ל-vblank כדי לקבל buffer פנוי. buffer שלישי נותן לו לכתוב מיד, ובכל vblank מוצג ה-frame המלא האחרון.",
+      "notes": [
+        "שגוי: seqlock מתאים לקורא שיכול לנסות שוב בזול. הפאנל לא יכול \"לבטל\" סריקה שכבר הוצגה.",
+        "שגוי: tearing נעלם, אבל ה-SoC חסום כמעט כל זמן הסריקה (כ-8.3ms בכל frame).",
+        "שגוי: החלפה באמצע סריקה היא בדיוק מה שיוצר tearing. בלי סנכרון ל-vblank זה לא עוזר.",
+        "נכון: הפאנל סורק front שלא משתנה, ה-SoC אף פעם לא מחכה, וההחלפה קורית רק בין סריקות."
+      ],
+      "problem": "Qualcomm display team interview: avoid screen tearing with a shared frame buffer",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/5079058/qualcomm-senior-engineer-hyderabad-april-u7dw/"
+      ],
+      "id": "conc.lock-free.q34",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "תצוגה ב-120 Hz עם double buffering וסנכרון ל-vsync: ה-SoC חייב לחכות להחלפה ב-vblank לפני שהוא מקבל buffer לכתוב אליו. כל frame לוקח ל-SoC לצייר 10ms בדיוק. כמה frames בשנייה יוצגו? (מספר)",
+      "accept": [
+        "60"
+      ],
+      "explanation": "תקופת vblank היא כ-8.33ms. frame שמוכן אחרי 10ms מפספס את ה-vblank הראשון ומוחלף בשני (16.67ms). רק אז ה-SoC מקבל buffer ומתחיל את הבא. כל frame תופס 2 תקופות, כלומר 60 fps. עם triple buffering ה-SoC לא מחכה, ומקבלים בממוצע כ-100 fps (בקצב לא אחיד).",
+      "id": "conc.lock-free.q35",
+      "lesson": "conc.lock-free"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "triple buffer lock-free בין writer לבין reader: יש `std::atomic<uint8_t> middle` (אינדקס של buffer, וביט \"dirty\"). ה-writer כותב ל-back שלו, ואז `back = middle.exchange(back | DIRTY, ?)`. ה-reader, אם יש dirty, עושה `front = middle.exchange(front, ?)`. למה ה-exchange של ה-writer צריך להיות acq_rel ולא רק release?",
+      "choices": [
+        "release מפרסם את הנתונים שה-writer כתב. acquire נדרש כי ה-buffer שה-writer מקבל בחזרה ייתכן שה-reader קרא ממנו עכשיו, וה-writer חייב לראות שהקריאות האלה הסתיימו לפני שהוא דורס אותו (אחרת write-after-read race)",
+        "acq_rel הופך את ה-exchange לאטומי",
+        "acquire מונע מה-reader לראות frame חלקי",
+        "הוא לא צריך, release מספיק"
+      ],
+      "answer": 0,
+      "explanation": "כל exchange מעביר בעלות על buffer בשני הכיוונים: נותן אחד ולוקח אחר. \"לוקח\" צריך acquire כדי לראות את כל מה שהבעלים הקודם עשה עם ה-buffer, כולל קריאות. לכן גם ה-reader עושה acq_rel: release כדי שה-writer יראה שהוא סיים לקרוא, ו-acquire כדי לראות את ה-frame.",
+      "notes": [
+        "נכון: העברת בעלות דו-כיוונית דורשת acquire על מה שמתקבל ו-release על מה שנמסר.",
+        "שגוי: exchange אטומי בכל memory order. acq_rel עוסק בסדר.",
+        "שגוי: זה התפקיד של ה-acquire בצד ה-reader, לא בצד ה-writer.",
+        "שגוי: release מכסה רק את הכיוון של ה-writer אל ה-reader. הכיוון ההפוך (ה-reader סיים לקרוא) לא מסונכרן."
+      ],
+      "id": "conc.lock-free.q36",
+      "lesson": "conc.lock-free"
     }
   ]
 }

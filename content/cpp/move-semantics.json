@@ -180,6 +180,14 @@
         {
           "term": "copy-and-swap",
           "def": "assignment שמקבל עותק by value ומבצע swap שהוא noexcept. נותן strong guarantee ומשמש גם כ-copy וגם כ-move assignment, במחיר הקצאה בכל השמה."
+        },
+        {
+          "term": "move מ-const",
+          "def": "std::move על אובייקט const נותן `const T&&`. move constructor ו-move assignment מקבלים `T&&` ולא נקשרים אליו, ולכן נבחרים ה-copy operations בשקט. אובייקט שמתכוונים להזיז ממנו לא מגדירים כ-const, וכך גם פרמטר `const T&`."
+        },
+        {
+          "term": "self-move assignment",
+          "def": "`a = std::move(a)` יכול לקרות בעקיפין באלגוריתמים. move assignment שמשחרר את המשאב לפני שהוא לוקח את המשאב מ-other משאיר dangling pointer. בודקים `this != &other` או מסדרים את הפעולות כך שיהיו בטוחות."
         }
       ]
     }
@@ -351,9 +359,6 @@
       "answer": 0,
       "explanation": "= default עדיין נחשב user-declared. כשיש destructor מוצהר, move operations לא מוצהרות כלל (לא deleted). לכן overload resolution מוצא רק את ה-copy, שמקבל const& ונקשר גם ל-rvalue. התוצאה היא ירידת ביצועים שקטה. הפתרון: למחוק את ה-destructor, או להוסיף במפורש את כל החמישה כ-= default.",
       "lesson": "cpp.move-semantics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. destructor שהמשתמש הצהיר (גם `= default`) מונע הצהרה מרומזת של move operations ([class.copy.ctor]). הן לא deleted אלא פשוט לא קיימות, וה-rvalue נקשר ל-copy constructor שמקבל const&.",
         "שגוי. ה-move operations לא מוגדרות כ-deleted אלא לא מוצהרות כלל, ולכן אין שגיאה: overload resolution נופל בשקט ל-copy.",
@@ -377,9 +382,6 @@
       "answer": 3,
       "explanation": "ה-emplace_back השני חורג מה-capacity. האיבר החדש נבנה ב-default ctor (לא מודפס), והאיבר הישן מועבר עם std::move_if_noexcept. ה-move constructor לא noexcept ויש copy constructor, ולכן נבחרת העתקה כדי לשמור על strong guarantee. עם noexcept הפלט היה M.",
       "lesson": "cpp.move-semantics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. זה היה הפלט אם ה-move constructor היה noexcept. בלי noexcept, move_if_noexcept מעדיף copy כשיש copy constructor.",
         "שגוי. האיבר החדש נבנה ב-default constructor ישירות בזיכרון החדש, בלי copy ובלי move. רק האיבר הישן מועבר, וזה מודפס פעם אחת.",
@@ -436,9 +438,6 @@
       "answer": 1,
       "explanation": "make מחזירה prvalue, ולכן C++17 מבטיח elision: c אחד בלבד. ב-make2 הביטוי b ? x : y הוא lvalue ולא שם של משתנה. לכן אין NRVO ואין implicit move (שחלים רק על id-expression), ונבחר copy (C). אחר כך y ו-x נהרסים. בסוף main נהרסים b ו-a. הפתרון: if (b) return x; return y;.",
       "lesson": "cpp.move-semantics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. `b ? x : y` הוא lvalue ולא id-expression, ולכן implicit move לא חל ונבחר copy (C), לא move (M).",
         "נכון. make מחזירה prvalue ולכן elision מובטח (c בלבד). ב-make2, `b ? x : y` הוא lvalue: אין NRVO ואין implicit move, ולכן C, ואז y ו-x נהרסים. בסוף b ו-a.",
@@ -511,10 +510,7 @@
         "swap שהוא noexcept, ו-destructor שמשחרר עם delete[]"
       ],
       "explanation": "copy-and-swap פותר בבת אחת self-assignment, exception safety ושכפול קוד. החיסרון שמראיין סניור ישאל עליו: הוא תמיד מקצה buffer חדש, גם כשהישן בגודל מתאים ואפשר היה לעשות בו שימוש חוזר.",
-      "lesson": "cpp.move-semantics",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.move-semantics"
     },
     {
       "id": "cpp.move-semantics.q16",
@@ -551,9 +547,6 @@
       "answer": 2,
       "explanation": "by-value sink מצוין ל-constructors, כי שם אין buffer קיים לנצל. ב-setter שנקרא שוב ושוב, copy assignment לתוך string עם capacity מספיק הוא memcpy בלבד. ב-A כל קריאה עם lvalue היא malloc ו-free. זו הנקודה שהציג Herb Sutter ב-CppCon 2014. עם rvalues שתי הגרסאות דומות (A עושה move נוסף).",
       "lesson": "cpp.move-semantics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. עם lvalue, A מעתיק את הארגומנט לפרמטר s (הקצאה חדשה) ורק אז מבצע move. כלומר יש copy אחד ועוד move, לא אפס העתקות.",
         "שגוי. ההבדל הוא ב-reuse של capacity: copy assignment לתוך name_ קיים לא מקצה, ואילו A תמיד מקצה ומשחרר.",
@@ -771,9 +764,6 @@
         "T&& כאן הוא rvalue reference רגיל, ולכן dispatch לא מקבלת lvalues"
       ],
       "answer": 2,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "כשהועבר rvalue, T הוא std::string ו-std::forward<T>(msg) הוא rvalue בשתי הקריאות. אם push לוקח את ה-buffer, audit רואה string ריק. עם lvalue, forward מחזיר lvalue ואין בעיה, ולכן הבאג מופיע רק בחלק מהקריאות. התיקון: audit(msg) קודם, ואז queue.push(std::forward<T>(msg)).",
       "lesson": "cpp.move-semantics",
       "notes": [
@@ -843,9 +833,6 @@
         "target מקבל vector by value, ו-perfect forwarding עובד רק עם reference parameters"
       ],
       "answer": 0,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "זה אחד ממקרי הכשל של perfect forwarding. בקריאה ישירה, {1,2,3} מאתחל את הפרמטר std::vector<int>. בהסקה, {1,2,3} הוא non-deduced context. פתרונות: wrap(std::vector<int>{1,2,3}), או auto il = {1,2,3}; wrap(il). מקרים דומים: 0 או NULL כ-null pointer (מוסקים כ-int), שם של פונקציה עם overloads, ו-bit-fields.",
       "lesson": "cpp.move-semantics",
       "notes": [
@@ -854,6 +841,166 @@
         "שגוי. forwarding reference נקשר ל-temporaries מצוין; `wrap(std::vector<int>{1,2,3})` עובד.",
         "שגוי. perfect forwarding עובד גם כשהפונקציה היעד מקבלת by value; הארגומנט מועבר ל-constructor של הפרמטר. הבעיה היא רק ההסקה מ-{...}."
       ]
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "נתונה מחלקה move-only שמנהלת buffer:\n```cpp\nclass IntBuffer {\npublic:\n  explicit IntBuffer(std::size_t cap);\n  IntBuffer(const IntBuffer&) = delete;\n  IntBuffer& operator=(const IntBuffer&) = delete;\n  IntBuffer(IntBuffer&&) noexcept;\n  IntBuffer& operator=(IntBuffer&&) noexcept;\n  ~IntBuffer();\n};\nvoid sink(IntBuffer b);\nIntBuffer a(4);\n```\nאילו שורות מתקמפלות? (כל אחת בנפרד)",
+      "choices": [
+        "`IntBuffer b = a;`",
+        "`IntBuffer b = std::move(a);`",
+        "`sink(a);`",
+        "`sink(IntBuffer(8));`",
+        "`std::vector<IntBuffer> v; v.push_back(IntBuffer(2));`",
+        "`IntBuffer c = 4;`"
+      ],
+      "answer": [
+        1,
+        3,
+        4
+      ],
+      "explanation": "copy מחוק, ולכן כל העתקה מ-lvalue נכשלת: `IntBuffer b = a;` ו-`sink(a)`. אפשר להעביר בעלות עם std::move, ו-prvalue (`IntBuffer(8)`) בונה ישירות, בלי copy ובלי move (C++17). explicit חוסם המרה מרומזת מ-size_t, ולכן `IntBuffer c = 4;` לא עובר.",
+      "notes": [
+        "שגוי: copy initialization מ-lvalue בוחרת את ה-copy constructor, שהוא deleted.",
+        "נכון: std::move הופך את a ל-xvalue, ונבחר ה-move constructor. אחרי זה a במצב שה-move השאיר (ריק).",
+        "שגוי: העברה by value מ-lvalue דורשת copy. צריך `sink(std::move(a))`.",
+        "נכון: prvalue מאתחל את הפרמטר ישירות (guaranteed copy elision), ולא נדרש אפילו move.",
+        "נכון: push_back(T&&) מזיז את ה-temporary לתוך ה-vector. בגלל שה-move הוא noexcept, גם reallocation תשתמש ב-move.",
+        "שגוי: ה-constructor מ-size_t הוא explicit, ולכן copy initialization מ-4 לא מותרת. `IntBuffer c(4);` כן עובר."
+      ],
+      "tags": [
+        "apple"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/write-a-usage-example-for-a-resource-owning-cplusplus-class-and-explain-its-semantics"
+      ],
+      "problem": "Apple technical screen: usage example for a move-only resource-owning class",
+      "id": "cpp.move-semantics.q31",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (ה-move constructor של Buf מאפס את המקור עם std::exchange)",
+      "code": "class Buf {\n  int* d_; std::size_t cap_, n_ = 0;\npublic:\n  explicit Buf(std::size_t c) : d_(new int[c]), cap_(c) {}\n  Buf(Buf&& o) noexcept\n    : d_(std::exchange(o.d_, nullptr)),\n      cap_(std::exchange(o.cap_, 0)),\n      n_(std::exchange(o.n_, 0)) {}\n  ~Buf() { delete[] d_; }\n  void push(int v) { d_[n_++] = v; }\n  std::size_t size() const { return n_; }\n  std::size_t capacity() const { return cap_; }\n};\n\nint main() {\n  Buf a(4);\n  a.push(7);\n  Buf b = std::move(a);\n  std::cout << a.size() << a.capacity() << b.size();\n}",
+      "choices": [
+        "141",
+        "001",
+        "UB: אסור לקרוא ל-a אחרי move",
+        "041"
+      ],
+      "answer": 1,
+      "explanation": "ה-move constructor לוקח את data, capacity ו-size מ-a, ומציב בהם nullptr ו-0 בעזרת std::exchange. לכן אחרי ה-move a.size() = 0 ו-a.capacity() = 0, ו-b.size() = 1. כאן המצב של a ידוע, כי המחלקה מגדירה אותו. בטיפוסים של הספרייה הסטנדרטית מובטח רק valid but unspecified.",
+      "notes": [
+        "שגוי: מניח ש-move משאיר את המקור כמו שהוא (כמו copy). כאן std::exchange מאפס אותו במפורש.",
+        "נכון: a אופס לגמרי (0 ו-0), ו-b קיבל את ה-buffer עם האיבר היחיד.",
+        "שגוי: מותר להשתמש באובייקט אחרי move. הוא עדיין אובייקט חי. מה שאסור הוא להניח מצב שלא הוגדר. כאן המחלקה מגדירה אותו.",
+        "שגוי: גם capacity עבר דרך std::exchange ואופס ל-0."
+      ],
+      "id": "cpp.move-semantics.q32",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "level": 4,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "move assignment של Buf. אחרי `a = std::move(a);` (self-move, למשל דרך std::swap עם אותו אובייקט או אלגוריתם שמזיז איבר על עצמו), התוכנית קורסת מאוחר יותר. איפה הבאג?",
+      "code": "Buf& Buf::operator=(Buf&& other) noexcept {\n  delete[] d_;\n  d_   = std::exchange(other.d_, nullptr);\n  cap_ = std::exchange(other.cap_, 0);\n  n_   = std::exchange(other.n_, 0);\n  return *this;\n}",
+      "bugLine": 2,
+      "choices": [
+        "ב-self-move, delete[] משחרר את ה-buffer, ואז d_ מקבל בחזרה את ה-pointer המשוחרר: dangling ו-double delete",
+        "move assignment חייב להיות לא noexcept",
+        "std::exchange לא עובד עם pointers",
+        "צריך לקרוא ל-destructor במפורש לפני ההשמה"
+      ],
+      "answer": 0,
+      "explanation": "ב-self-move, other הוא *this. delete[] משחרר את d_, ואז `std::exchange(other.d_, nullptr)` מחזיר את ה-pointer שכבר שוחרר ומציב nullptr ב-d_, ומיד ההשמה דורסת את d_ עם ה-pointer המשוחרר. d_ dangling, וה-destructor יעשה double delete. התיקון: `if (this != &other)`, או לקחת קודם את המשאב של other ורק אחר כך לשחרר את הישן (`auto* old = std::exchange(d_, std::exchange(other.d_, nullptr)); delete[] old;`).",
+      "notes": [
+        "נכון: מחיקה לפני לקיחה שוברת self-assignment. בודקים `this != &other`, או לוקחים את המשאב החדש קודם ומוחקים את הישן אחר כך.",
+        "שגוי: להפך: move assignment צריך להיות noexcept כדי שקונטיינרים ישתמשו בו.",
+        "שגוי: std::exchange הוא template כללי ועובד עם כל טיפוס שניתן להשמה.",
+        "שגוי: קריאה מפורשת ל-destructor על *this בתוך assignment מסיימת את חיי האובייקט ויוצרת בעיות חדשות. זה לא התיקון."
+      ],
+      "id": "cpp.move-semantics.q33",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct S {\n  S() {}\n  S(const S&) { std::cout << 'C'; }\n  S(S&&)      { std::cout << 'M'; }\n};\n\nint main() {\n  const S a;\n  S b = std::move(a);\n  S c = std::move(b);\n}",
+      "choices": [
+        "MM",
+        "CM",
+        "CC",
+        "שגיאת קומפילציה: אי אפשר לעשות move ל-const"
+      ],
+      "answer": 1,
+      "explanation": "std::move(a) על a שהוא const מחזיר `const S&&`. ה-move constructor מקבל `S&&` ולא יכול להיקשר ל-const, ולכן נבחר `S(const S&)`: העתקה (C). b אינו const, ולכן std::move(b) בוחר את ה-move constructor (M). זו הסיבה שאובייקטים שמתכוונים להזיז לא מגדירים כ-const.",
+      "notes": [
+        "שגוי: move מ-const לא יכול לשנות את המקור, ולכן ה-move constructor לא ניתן לקריאה.",
+        "נכון: `const S&&` נקשר רק ל-`const S&`, ולכן copy. b לא const, ולכן move.",
+        "שגוי: b לא const, ולכן std::move(b) בוחר את S(S&&).",
+        "שגוי: זה מתקמפל בלי אזהרה כברירת מחדל, וזו בדיוק המלכודת: std::move שקט שהופך ל-copy (clang-tidy מזהה עם performance-move-const-arg)."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/demonstrate-software-engineering-fundamentals"
+      ],
+      "problem": "NVIDIA onsite: explain move semantics and const-correctness",
+      "id": "cpp.move-semantics.q34",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "פרופיילר מראה שבכל קריאה ל-`set_name` מוקצית מחרוזת חדשה, למרות ה-std::move. למה?",
+      "code": "class Channel {\n  std::string name_;\npublic:\n  void set_name(const std::string& s) {\n    name_ = std::move(s);\n  }\n};",
+      "bugLine": 5,
+      "choices": [
+        "std::move על const reference נותן `const string&&`, וזה בוחר copy assignment",
+        "std::move בתוך member function לא עובד על members",
+        "צריך std::forward במקום std::move",
+        "name_ צריך להיות const"
+      ],
+      "answer": 0,
+      "explanation": "s הוא `const std::string&`, ולכן std::move(s) מחזיר `const std::string&&`. move assignment של string מקבל `string&&` ולא יכול להיקשר ל-const, ולכן נבחר copy assignment. אם ה-capacity של name_ לא מספיקה, נוצרת הקצאה. אפשר לקבל `std::string s` by value ולעשות move (או overloads של const& ושל &&).",
+      "notes": [
+        "נכון: אי אפשר להזיז מ-const. ה-move הופך בשקט ל-copy.",
+        "שגוי: std::move הוא cast שעובד בכל הקשר. הבעיה היא ה-const של s.",
+        "שגוי: std::forward מיועד ל-forwarding reference ב-template. כאן s אינו template, ו-forward עדיין היה מחזיר const.",
+        "שגוי: const member היה מונע את ההשמה לגמרי."
+      ],
+      "id": "cpp.move-semantics.q35",
+      "lesson": "cpp.move-semantics"
+    },
+    {
+      "level": 4,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct S {\n  S() {}\n  S(const S&) { std::cout << 'C'; }\n  S(S&&)      { std::cout << 'M'; }\n};\n\nint main() {\n  const S a;\n  S b = std::move(a);\n  S c = std::move(b);\n  S d = static_cast<const S&&>(c);\n}",
+      "choices": [
+        "CMM",
+        "CMC",
+        "MMM",
+        "CCC"
+      ],
+      "answer": 1,
+      "explanation": "a הוא const, ולכן std::move(a) הוא `const S&&`, שנקשר רק ל-copy constructor: C. b לא const, ולכן M. `static_cast<const S&&>(c)` הוא שוב const rvalue, ושוב נבחר copy: C. המסקנה: כל const בשרשרת מבטל את ה-move.",
+      "notes": [
+        "שגוי: `const S&&` לא יכול להיקשר ל-`S&&`, ולכן גם ההמרה האחרונה בוחרת את ה-copy constructor.",
+        "נכון: const rvalue בוחר את `S(const S&)`. רק b, שאינו const, מוזז.",
+        "שגוי: a הוא const, ולכן גם בשורה הראשונה מתבצעת העתקה.",
+        "שגוי: b אינו const, ולכן std::move(b) בוחר את ה-move constructor."
+      ],
+      "id": "cpp.move-semantics.q36",
+      "lesson": "cpp.move-semantics"
     }
   ]
 }

@@ -219,6 +219,34 @@
         {
           "term": "LTO ו-PGO",
           "def": "LTO: אופטימיזציה בזמן link שרואה את כל התוכנית ולכן יודעת למשל שלמחלקה אין derived. PGO: קומפילציה לפי profile ריצה, כולל ניחוש הטיפוס הנפוץ ב-call site."
+        },
+        {
+          "term": "private constructor ו-factory",
+          "def": "constructor פרטי מאפשר רק למחלקה עצמה (ול-friends) ליצור מופעים. משתמשים בו ל-singleton, ל-factory סטטי שמבצע ולידציה ול-named constructors. std::make_unique לא יכול לקרוא לו כי הוא קוד חיצוני, ולכן ב-factory כותבים `std::unique_ptr<T>(new T(...))` או משתמשים ב-passkey."
+        },
+        {
+          "term": "protected non-virtual destructor",
+          "def": "חלופה ל-virtual destructor לפי Core Guidelines C.35: destructor שהוא protected מונע `delete` דרך pointer ל-base כבר בקומפילציה, ועדיין מאפשר למחלקות נגזרות להיהרס. מתאים ל-base שלא נועד לבעלות פולימורפית."
+        },
+        {
+          "term": "private destructor (heap-only)",
+          "def": "משתנה מקומי דורש destructor נגיש, ולכן destructor פרטי מונע יצירה על ה-stack ומשאיר רק `new`. השחרור נעשה דרך מתודה כמו `destroy()` שקוראת `delete this`."
+        },
+        {
+          "term": "compile-time מול run-time polymorphism",
+          "def": "compile-time: overloading, templates ו-CRTP, שנפתרים לפי טיפוסים סטטיים ויכולים לעבור inlining. run-time: virtual functions (ו-type erasure כמו std::function), שבהן היעד נקבע בזמן ריצה לפי הטיפוס הדינמי. overload resolution אף פעם לא מסתכל על הטיפוס הדינמי."
+        },
+        {
+          "term": "class מול struct",
+          "def": "ההבדל היחיד: ב-struct ברירת המחדל של members ושל ירושה היא public, וב-class היא private. כל יכולת אחרת (virtual, constructors, templates) זהה."
+        },
+        {
+          "term": "pure virtual עם גוף",
+          "def": "מותר להגדיר גוף ל-`virtual void f() = 0;` מחוץ למחלקה. המחלקה נשארת abstract, והגוף נקרא רק בקריאה מוסמכת `Base::f()`. pure virtual destructor חייב גוף, כי הוא תמיד נקרא בסוף ההריסה."
+        },
+        {
+          "term": "slicing בהעברה by value",
+          "def": "העברה או החזרה של אובייקט נגזר כ-Base by value בונה Base חדש עם ה-copy constructor של Base. חלק ה-Derived נחתך, וה-vptr של העותק מצביע ל-vtable של Base. גם std::vector<Base> חותך את האיברים."
         }
       ]
     }
@@ -476,9 +504,6 @@
       ],
       "explanation": "ה-dispatch הוא אינדקס קבוע ב-vtable שנקבע בקומפילציה, בלי חיפוש לפי שם. ה-indirect branch predictor מנבא טוב call sites שבהם הטיפוס כמעט לא משתנה (monomorphic). המחיר הגדול הוא אובדן inlining: אין constant propagation, vectorization או hoisting. final, LTO ו-PGO מאפשרים devirtualization.",
       "lesson": "cpp.polymorphism",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: קריאה וירטואלית טוענת את ה-vptr מהאובייקט, טוענת את ה-slot מה-vtable באינדקס שנקבע בקומפילציה, ומבצעת indirect call.",
         "נכון: הקומפיילר לא יודע לאיזו פונקציה הקריאה תגיע ולכן לא יכול לבצע inlining. devirtualization (כשהטיפוס ידוע) מחזיר את האפשרות.",
@@ -628,10 +653,7 @@
         "מזכיר STL ו-exceptions בגבול ה-ABI"
       ],
       "explanation": "בחברות שמפיצות SDKs (כמו drivers ו-CUDA libraries), יציבות ABI היא שיקול תכנון מרכזי, ומראיין סניור מצפה שתכיר אותו.",
-      "lesson": "cpp.polymorphism",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.polymorphism"
     },
     {
       "id": "cpp.polymorphism.q20",
@@ -808,9 +830,6 @@
       "answer": 3,
       "explanation": "variant מחזיק את האובייקט בתוכו, ולכן הוקטור רציף ואין pointer chasing. visit מתורגם בדרך כלל ל-jump table או ל-switch על ה-index, בלי vptr. החיסרון הוא הגודל (המקסימום ועוד index) והקבוצה הסגורה. היררכיה וירטואלית מאפשרת להוסיף טיפוסים בלי לגעת בקוד הקיים, ומחייבת indirection והקצאות.",
       "lesson": "cpp.polymorphism",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: std::visit לא משתמש ב-virtual functions. הוא ממומש כ-jump table או switch על ה-index של ה-variant, בלי vptr.",
         "שגוי: visit בודק index, אבל זה מקביל ל-dispatch דרך vptr. בפועל variant בדרך כלל מהיר יותר בזכות זיכרון רציף ו-inlining.",
@@ -887,6 +906,605 @@
         "שגוי: החזרה ב-derived לא יכולה להיות יותר cv-qualified מזו של ה-base. B* לא const, ולכן const D* לא מתאים.",
         "שגוי: covariance קיימת רק ל-pointers ו-references למחלקות. int ו-long הם טיפוסים בסיסיים שונים, ולכן זו שגיאת קומפילציה."
       ]
+    },
+    {
+      "level": 2,
+      "type": "order",
+      "prompt": "נתון `B* p` שמצביע לאובייקט D, ו-f היא virtual. סדר את מה שקורה בפועל (Itanium ABI, GCC/Clang) בקריאה `p->f()`:",
+      "items": [
+        "קוראים את ה-vptr מתחילת האובייקט ש-p מצביע עליו",
+        "ניגשים ל-vtable של D, בכניסה של f (slot קבוע שנקבע בזמן קומפילציה)",
+        "טוענים מהכניסה את הכתובת של D::f",
+        "מבצעים קריאה עקיפה (indirect call) לכתובת הזו, עם this = p"
+      ],
+      "explanation": "זו העלות האמיתית של virtual call: שתי טעינות מהזיכרון (ה-vptr ואז הכניסה ב-vtable) וקריאה עקיפה. ה-offset של f בתוך ה-vtable ידוע בזמן קומפילציה, כי כל מחלקה בהיררכיה שומרת את f באותו slot. מה שנקבע בזמן ריצה הוא רק איזו vtable, כלומר הטיפוס הדינמי.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-3-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-4-on-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
+      ],
+      "problem": "NVIDIA interview: how virtual functions are implemented",
+      "id": "cpp.polymorphism.q31",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ל-`struct D : B`, ול-B יש פונקציות virtual. באיזה רגע במהלך `new D` ה-vptr של האובייקט מצביע לראשונה ל-vtable של D (במימושים הנפוצים)?",
+      "choices": [
+        "מיד אחרי ש-operator new מחזיר זיכרון, לפני ש-B() מתחיל",
+        "בתחילת ה-constructor של D, אחרי ש-B() הסתיים ולפני אתחול ה-members של D",
+        "רק בסוף ה-constructor של D, אחרי שהגוף שלו רץ",
+        "בזמן קומפילציה: ה-vptr הוא קבוע שנשמר בקוד ולא בתוך האובייקט"
+      ],
+      "answer": 1,
+      "explanation": "ה-constructor של כל מחלקה בשרשרת מציב את ה-vptr ל-vtable שלה בתחילת הריצה שלו, אחרי שה-bases נבנו ולפני אתחול ה-members והגוף. לכן בזמן B() הטיפוס הדינמי הוא B, ורק כש-D() מתחיל ה-vptr עובר ל-D. זה המימוש של הכלל ב-[class.cdtor] שקריאה virtual מתוך constructor נשלחת לפי המחלקה שנבנית כרגע.",
+      "notes": [
+        "שגוי: operator new מחזיר זיכרון גולמי ולא נוגע ב-vptr. ה-vptr נכתב רק ע\"י ה-constructors, ו-B() כותב קודם את ה-vtable של B.",
+        "נכון: B() מציב vptr ל-vtable של B. כש-D() מתחיל (אחרי שה-bases נבנו) הוא מציב vptr ל-D, ורק אז מאתחל members ומריץ את הגוף. לכן קריאה virtual בגוף D() כבר מגיעה ל-D.",
+        "שגוי: אם זה היה כך, קריאה virtual מתוך הגוף של D() הייתה מגיעה ל-B, אבל בפועל היא מגיעה ל-D. ה-vptr מעודכן לפני הגוף.",
+        "שגוי: ה-vptr הוא שדה נסתר בתוך כל אובייקט, וזה מה שמאפשר לקריאה דרך B* לגלות את הטיפוס הדינמי בזמן ריצה."
+      ],
+      "id": "cpp.polymorphism.q32",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על Linux x86-64 (Itanium ABI), מה `sizeof(A)`? ```cpp\nstruct A {\n  int x;\n  virtual void f();\n  virtual void g();\n  virtual void h();\n};\n```",
+      "choices": [
+        "32",
+        "16",
+        "8",
+        "40"
+      ],
+      "answer": 1,
+      "explanation": "האובייקט מחזיק vptr אחד בלבד (8 בתים) שמצביע ל-vtable משותפת לכל האובייקטים מהמחלקה. מספר הפונקציות הווירטואליות משפיע רק על גודל ה-vtable. 8 בתים של vptr ועוד int של 4, מעוגל ל-alignment של 8, נותנים 16.",
+      "notes": [
+        "שגוי: מניח vptr לכל פונקציה וירטואלית (3×8) ועוד int. בפועל יש vptr אחד לאובייקט, והוא מצביע לטבלה של כל הפונקציות.",
+        "נכון: vptr אחד (8) ועוד int (4) ו-4 בתים של padding בסוף כדי שה-alignment יהיה 8: סה\"כ 16, בדיוק כמו עם פונקציה וירטואלית אחת.",
+        "שגוי: שוכח את ה-int, או מניח שה-vptr לא נמצא בתוך האובייקט. ה-int יושב אחרי ה-vptr ותופס מקום.",
+        "שגוי: סופר את ה-vtable בתוך האובייקט. ה-vtable נמצאת פעם אחת בזיכרון הסטטי (.rodata) ולא בכל אובייקט."
+      ],
+      "id": "cpp.polymorphism.q33",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual ~B() { std::cout << \"b\"; }\n};\nstruct D : B {\n  std::string s{\"x\"};\n  ~D() override { std::cout << \"d\"; }\n};\n\nint main() {\n  B* p = new D;\n  delete p;\n  std::cout << '|';\n  { D d; }\n}",
+      "choices": [
+        "b|db",
+        "db|db",
+        "bd|bd",
+        "d|d"
+      ],
+      "answer": 1,
+      "explanation": "כי ~B הוא virtual, `delete p` דרך B* מגיע קודם ל-~D, ואחריו רץ ~B אוטומטית (גם ה-std::string member של D נהרס בדרך). ה-destructor של מחלקה נגזרת הוא virtual גם בלי לכתוב virtual, כי הוא דורס destructor וירטואלי. עבור d המקומי הסדר זהה: קודם D ואז B.",
+      "notes": [
+        "שגוי: זה היה קורה (ובעצם UB) אם ~B לא היה virtual. כאן הוא virtual, ולכן delete דרך B* מגיע ל-~D.",
+        "נכון: ~B הוא virtual, ולכן delete p קורא ל-~D ואחריו ל-~B: \"db\". ה-D המקומי נהרס באותו סדר בסוף ה-block.",
+        "שגוי: סדר ההריסה הפוך לסדר הבנייה: קודם הגוף של ~D, ורק אחר כך ה-base. B נבנה ראשון ולכן נהרס אחרון.",
+        "שגוי: אחרי ש-~D מסתיים, ה-destructor של ה-base רץ תמיד באופן אוטומטי. לא צריך לקרוא לו ידנית."
+      ],
+      "tags": [
+        "nvidia",
+        "microsoft",
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-3-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/microsoft-idc-interview-experience-set-177-on-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/amazon-interview-experience-sde1-off-campus-3/"
+      ],
+      "problem": "NVIDIA / Microsoft / Amazon interview: virtual destructor",
+      "id": "cpp.polymorphism.q34",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct A { virtual ~A() { std::cout << 'a'; } };\nstruct B : A { ~B() { std::cout << 'b'; } };\nstruct C : B { ~C() { std::cout << 'c'; } };\n\nint main() {\n  A* p = new C;\n  delete p;\n}",
+      "choices": [
+        "a",
+        "abc",
+        "cba",
+        "ca"
+      ],
+      "answer": 2,
+      "explanation": "virtual עובר בירושה: מספיק ש-~A הוא virtual כדי ש-~B ו-~C יהיו virtual גם בלי המילה. delete דרך A* מגיע ל-~C, ומשם השרשרת רצה מהנגזרת ביותר ל-base: c, b, a.",
+      "notes": [
+        "שגוי: זה מניח ש-~C לא virtual כי לא נכתב virtual. destructor שדורס destructor וירטואלי הוא virtual אוטומטית.",
+        "שגוי: סדר ההריסה הפוך לבנייה. A נבנה ראשון ולכן נהרס אחרון.",
+        "נכון: ~A virtual ולכן גם ~B ו-~C. delete מגיע ל-~C, ואחריו ~B ו-~A רצים לפי הסדר: \"cba\".",
+        "שגוי: אין דילוג על רמות. כל destructor בשרשרת קורא אוטומטית ל-destructor של ה-base הישיר שלו."
+      ],
+      "id": "cpp.polymorphism.q35",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ל-base class `Codec` יש מתודות virtual, אבל לא רוצים לשלם על virtual destructor, ואף פעם לא מוחקים דרך `Codec*`. מה ההגנה שה-C++ Core Guidelines ממליצים עליה כדי שמחיקה דרך pointer ל-base לא תתקמפל בכלל?",
+      "choices": [
+        "להגדיר את ה-destructor של Codec כ-protected ולא virtual",
+        "להגדיר את ה-destructor של Codec כ-private",
+        "לסמן את Codec כ-final",
+        "להגדיר את ה-destructor כ-`= delete`"
+      ],
+      "answer": 0,
+      "explanation": "לפי C.35: destructor של base צריך להיות public ו-virtual, או protected ולא virtual. destructor שהוא protected מונע `delete p` דרך Codec* כבר בקומפילציה, ועדיין מחלקות נגזרות יכולות לקרוא לו מה-destructor שלהן.",
+      "notes": [
+        "נכון: protected destructor חוסם `delete codec_ptr` מחוץ להיררכיה (שגיאת קומפילציה), אבל Derived עדיין יכול להיהרס כי ה-destructor שלו קורא ל-~Codec המוגן.",
+        "שגוי: private destructor חוסם גם את המחלקות הנגזרות. ~Derived לא יוכל לקרוא ל-~Codec, ולכן אי אפשר יהיה ליצור Derived כלל.",
+        "שגוי: final מונע ירושה מ-Codec, ואז אין בכלל טעם ב-virtual methods. זה לא פותר את בעיית המחיקה דרך base.",
+        "שגוי: destructor מחוק הופך כל אובייקט מסוג Codec או נגזרת שלו ללא ניתן להריסה, ולכן אי אפשר ליצור אותם על ה-stack או למחוק אותם בכלל."
+      ],
+      "id": "cpp.polymorphism.q36",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו מההחלטות הבאות מתקבלות בזמן קומפילציה (compile-time polymorphism)?",
+      "choices": [
+        "בחירה בין `print(int)` ל-`print(double)` בקריאה `print(2.5)`",
+        "קריאה ל-`area()` שהיא virtual דרך `const Shape&`",
+        "יצירת `max<int>` ו-`max<double>` מאותו function template",
+        "קריאה `static_cast<D*>(this)->step()` בתוך base של CRTP",
+        "קריאה ל-`std::function<void()>` שמחזיק lambda"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "overloading, templates ו-CRTP נפתרים לפי טיפוסים סטטיים בזמן קומפילציה. קריאה ל-virtual דרך reference או pointer ל-base נפתרת בזמן ריצה לפי ה-vptr, ו-std::function מבצע קריאה עקיפה דרך type erasure שאת היעד שלה מגלים רק בזמן ריצה.",
+      "notes": [
+        "נכון: overload resolution נעשה בזמן קומפילציה לפי הטיפוס הסטטי של הארגומנט (double), ונבחרת print(double).",
+        "שגוי: זו הדוגמה הקלאסית ל-run-time polymorphism: היעד נקבע לפי הטיפוס הדינמי דרך ה-vptr.",
+        "נכון: template instantiation קורה בזמן קומפילציה, ונוצרות שתי פונקציות נפרדות.",
+        "נכון: ב-CRTP ה-base יודע את D כ-template parameter, ולכן הקריאה סטטית ואפילו ניתנת ל-inlining.",
+        "שגוי: std::function מסתיר את הטיפוס האמיתי (type erasure), והקריאה עוברת דרך pointer לפונקציה שנקבע בזמן ריצה."
+      ],
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/microsoft-idc-interview-experience-set-177-on-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/microsoft-idc-internship-interview-experience-on-campus/",
+        "https://prachub.com/interview-questions/discuss-mutexes-memory-alignment-polymorphism-idempotency"
+      ],
+      "problem": "Microsoft interview: compile-time vs run-time polymorphism",
+      "id": "cpp.polymorphism.q37",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  virtual void f(int) { std::cout << \"Bi\"; }\n  void g(double)      { std::cout << \"Bd\"; }\n};\nstruct D : B {\n  void f(int) override { std::cout << \"Di\"; }\n  void g(int)          { std::cout << \"Dg\"; }\n};\n\nint main() {\n  D d;\n  B* p = &d;\n  p->f(1); p->g(1); d.g(1.5);\n}",
+      "choices": [
+        "DiDgDg",
+        "DiBdBd",
+        "DiBdDg",
+        "BiBdDg"
+      ],
+      "answer": 2,
+      "explanation": "f היא virtual ולכן p->f(1) מגיע ל-D::f. g לא virtual, ולכן p->g(1) נבחרת לפי הטיפוס הסטטי B, וה-int מומר ל-double. ב-d.g(1.5) הטיפוס הסטטי הוא D, ו-D::g(int) מסתירה (name hiding) את B::g(double), כך שנבחרת D::g אחרי המרה של 1.5 ל-int.",
+      "notes": [
+        "שגוי: g לא virtual, ולכן p->g(1) נקבעת לפי B* ולא מגיעה ל-D::g.",
+        "שגוי: d.g(1.5) מחפש g קודם ב-D. השם g ב-D מסתיר את B::g, ולכן B::g(double) בכלל לא מועמדת.",
+        "נכון: dispatch דינמי ל-f (Di), בחירה סטטית של B::g ל-p (Bd), ו-name hiding ב-d.g שמוביל ל-D::g(int) עם המרה (Dg).",
+        "שגוי: f היא virtual והאובייקט הוא D, ולכן p->f(1) מגיע ל-D::f."
+      ],
+      "id": "cpp.polymorphism.q38",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה מודפס בקריאה `h(r)`? ```cpp\nstruct B { virtual ~B() = default; };\nstruct D : B {};\nvoid h(B&) { std::cout << \"B\"; }\nvoid h(D&) { std::cout << \"D\"; }\n\nD d;\nB& r = d;\nh(r);\n```",
+      "choices": [
+        "D, כי האובייקט האמיתי הוא D ול-B יש virtual destructor",
+        "B, כי בחירת overload נעשית בזמן קומפילציה לפי הטיפוס הסטטי B&",
+        "שגיאת קומפילציה, כי הקריאה דו-משמעית",
+        "תלוי במימוש"
+      ],
+      "answer": 1,
+      "explanation": "overload resolution מסתכל רק על הטיפוס הסטטי של הביטוי r, שהוא B&. הטיפוס הדינמי לא משפיע על בחירת overload, גם אם ל-B יש virtual. כדי לבחור לפי הטיפוס הדינמי של ארגומנט צריך virtual function על האובייקט עצמו או double dispatch (למשל visitor).",
+      "notes": [
+        "שגוי: virtual משפיע רק על קריאה למתודה virtual של האובייקט. בחירת overload של פונקציה חופשית לא מסתכלת על ה-vptr.",
+        "נכון: ל-r יש טיפוס סטטי B&, ורק h(B&) מתאימה בלי המרה מפורשת, ולכן מודפס B.",
+        "שגוי: h(D&) לא ניתנת לקריאה עם B& בלי cast, ולכן יש מועמדת אחת בלבד ואין דו-משמעות.",
+        "שגוי: overload resolution מוגדר במלואו בתקן ולא תלוי במימוש."
+      ],
+      "id": "cpp.polymorphism.q39",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו טענות על pure virtual functions ו-abstract classes נכונות?",
+      "choices": [
+        "אי אפשר ליצור אובייקט מטיפוס abstract, אבל מותר להחזיק `Shape*` או `Shape&`",
+        "מותר לתת מימוש (גוף) לפונקציה pure virtual",
+        "מחלקה נגזרת שלא דורסת את כל ה-pure virtual functions היא עדיין abstract",
+        "ל-abstract class אסור שיהיו data members או constructor",
+        "pure virtual destructor לא צריך הגדרה, כי אף אחד לא קורא לו"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "pure virtual (`= 0`) הופכת את המחלקה ל-abstract: אי אפשר ליצור ממנה אובייקט, אבל אפשר להחזיק אליה pointer או reference. מותר לתת לה גוף, ואפשר לקרוא לו בקריאה מוסמכת (`Base::f()`). מחלקה נגזרת שלא דורסת את כל ה-pure virtuals נשארת abstract. ל-abstract class יכולים להיות constructors, members ו-data.",
+      "notes": [
+        "נכון: `Shape s;` לא מתקמפל, אבל `Shape& r = circle;` ו-`Shape* p = &circle;` תקינים, וזו כל המטרה של interface.",
+        "נכון: `virtual void f() = 0;` יחד עם הגדרה מחוץ למחלקה תקין. הגוף נקרא רק בקריאה מוסמכת, למשל `Base::f()` מתוך מחלקה נגזרת.",
+        "נכון: היא יורשת את ה-pure virtual שלא נדרסה, ולכן גם ממנה אי אפשר ליצור אובייקט.",
+        "שגוי: abstract class יכולה להחזיק state ו-constructors, וה-constructor שלה רץ כחלק מבניית המחלקה הנגזרת.",
+        "שגוי: ה-destructor של ה-base תמיד נקרא בסוף ההריסה של נגזרת. pure virtual destructor חייב הגדרה, אחרת יש שגיאת link."
+      ],
+      "tags": [
+        "nvidia",
+        "intel",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/",
+        "https://www.geeksforgeeks.org/interview-experiences/intel-interview-experience-set-4-campus-full-time/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2/"
+      ],
+      "problem": "NVIDIA / Intel / Qualcomm interview: abstract class and pure virtual functions",
+      "id": "cpp.polymorphism.q40",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "השורה `Sq s;` לא מתקמפלת: \"cannot declare variable 's' to be of abstract type 'Sq'\". איפה הטעות?",
+      "code": "struct Shape {\n  virtual double area() const = 0;\n  virtual ~Shape() = default;\n};\nstruct Sq : Shape {\n  double side = 1;\n  double area() { return side * side; }\n};\n\nint main() { Sq s; }",
+      "bugLine": 8,
+      "choices": [
+        "ל-area ב-Sq חסר const, ולכן היא לא דורסת את Shape::area, ו-Sq נשארת abstract",
+        "חסר `virtual` לפני area ב-Sq",
+        "אסור ש-Shape יהיה עם destructor ש-`= default` כשיש pure virtual",
+        "צריך לאתחל את side ב-constructor ולא ב-default member initializer"
+      ],
+      "answer": 0,
+      "explanation": "החתימה של area ב-Sq שונה מזו של Shape (חסר const), ולכן זו פונקציה חדשה שלא דורסת את ה-pure virtual. Sq נשארת abstract. אילו היה כתוב override, הקומפיילר היה מצביע בדיוק על השורה הזו.",
+      "notes": [
+        "נכון: const הוא חלק מהחתימה. `double area()` היא overload חדש, וה-pure virtual `area() const` נשארת לא ממומשת. התיקון: `double area() const override`.",
+        "שגוי: virtual לא נדרש במחלקה הנגזרת. פונקציה עם אותה חתימה דורסת גם בלעדיו. הבעיה היא שהחתימה שונה.",
+        "שגוי: virtual destructor שמוגדר `= default` תקין לגמרי, וזו הדרך המומלצת ב-interface.",
+        "שגוי: default member initializer מותר מ-C++11 ואינו קשור לשאלה אם המחלקה abstract."
+      ],
+      "id": "cpp.polymorphism.q41",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct I {\n  virtual void f() = 0;\n  virtual ~I() = default;\n};\nvoid I::f() { std::cout << 'I'; }\n\nstruct C : I {\n  void f() override { I::f(); std::cout << 'C'; }\n};\n\nint main() {\n  C c;\n  I& r = c;\n  r.f();\n}",
+      "choices": [
+        "C",
+        "IC",
+        "שגיאת קומפילציה: אסור להגדיר גוף ל-pure virtual",
+        "שגיאת link: undefined reference ל-I::f"
+      ],
+      "answer": 1,
+      "explanation": "pure virtual function יכולה לקבל גוף. C דורסת את f, ובתוכה קוראת במפורש ל-`I::f()`. קריאה מוסמכת עוקפת את ה-vtable ומגיעה ישר לגוף של I. לכן מודפס I ואחריו C.",
+      "notes": [
+        "שגוי: מתעלם מהקריאה המפורשת `I::f()` בתוך C::f, שמריצה את הגוף של I.",
+        "נכון: r.f() מגיע ל-C::f, וזו קוראת קודם לגוף של I (קריאה מוסמכת, לא virtual) ואז מדפיסה C.",
+        "שגוי: התקן מתיר הגדרה של pure virtual function מחוץ למחלקה, ובכך משתמשים למשל כמימוש ברירת מחדל.",
+        "שגוי: I::f מוגדרת בקוד, ולכן ל-linker יש מה לקשר."
+      ],
+      "id": "cpp.polymorphism.q42",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  B() {}\n  B(const B&) { std::cout << 'c'; }\n  virtual void who() const { std::cout << 'B'; }\n};\nstruct D : B {\n  void who() const override { std::cout << 'D'; }\n};\nvoid byVal(B b)        { b.who(); }\nvoid byRef(const B& b) { b.who(); }\n\nint main() {\n  D d;\n  byVal(d);\n  byRef(d);\n}",
+      "choices": [
+        "DD",
+        "cDD",
+        "cBD",
+        "BD"
+      ],
+      "answer": 2,
+      "explanation": "byVal מקבל B לפי ערך: נבנה B חדש מתוך d עם ה-copy constructor של B (מודפס c), חלק ה-D נחתך (slicing), וה-vptr של העותק מצביע ל-B, ולכן B. byRef מקבל reference לאובייקט המקורי, ו-dynamic dispatch מגיע ל-D.",
+      "notes": [
+        "שגוי: מתעלם מה-copy ומה-slicing ב-byVal. העותק הוא B אמיתי, ו-who שלו היא של B.",
+        "שגוי: נכון שיש copy, אבל העותק נבנה ע\"י B(const B&) ולכן הוא B עם vptr של B, לא D.",
+        "נכון: byVal מעתיק (c) וחותך ל-B (B). byRef עובד על d עצמו, ולכן dispatch ל-D (D).",
+        "שגוי: שוכח שהעברה by value מפעילה את ה-copy constructor, שמדפיס c."
+      ],
+      "tags": [
+        "nvidia",
+        "intel"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-sde-2/",
+        "https://www.geeksforgeeks.org/interview-experiences/intel-interview-experience-set-2-on-campus-for-full-time/"
+      ],
+      "problem": "NVIDIA / Intel interview: output question on virtual functions and copy constructor",
+      "id": "cpp.polymorphism.q43",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (B ו-D כמו בקוד)",
+      "code": "struct B {\n  B() {}\n  B(const B&) { std::cout << 'c'; }\n  virtual void who() const { std::cout << 'B'; }\n};\nstruct D : B {\n  void who() const override { std::cout << 'D'; }\n};\nB make() {\n  D d;\n  return d;\n}\n\nint main() { make().who(); }",
+      "choices": [
+        "cB",
+        "D",
+        "B",
+        "cD"
+      ],
+      "answer": 0,
+      "explanation": "make מחזירה B, אבל d הוא D. אין כאן copy elision, כי הטיפוסים שונים, ואין move constructor ל-B (ה-copy constructor המוצהר מבטל אותו). לכן B נבנה מ-d עם B(const B&): מודפס c, והאובייקט שחוזר הוא B אמיתי שמדפיס B.",
+      "notes": [
+        "נכון: ההחזרה בונה B מ-d עם ה-copy constructor (c), ו-slicing משאיר B עם vptr של B (B).",
+        "שגוי: טיפוס ההחזרה הוא B by value, ולכן לא ייתכן שיחזור D. רק pointer או reference שומרים על הטיפוס הדינמי.",
+        "שגוי: NRVO אפשרי רק כשהמשתנה מאותו טיפוס כמו ערך ההחזרה. כאן d הוא D, ולכן נבנה B חדש ונקרא ה-copy constructor.",
+        "שגוי: נכון שיש c, אבל האובייקט המוחזר הוא B, ולכן who מדפיסה B."
+      ],
+      "id": "cpp.polymorphism.q44",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct B {\n  B() {}\n  B(const B&) { std::cout << 'c'; }\n  virtual void who() const { std::cout << 'B'; }\n};\nstruct D : B {\n  void who() const override { std::cout << 'D'; }\n};\n\nint main() {\n  D d;\n  std::vector<B> v;\n  v.reserve(2);\n  v.push_back(d);\n  v.emplace_back(d);\n  for (const auto& b : v) b.who();\n}",
+      "choices": [
+        "ccDD",
+        "cBB",
+        "ccBB",
+        "DD"
+      ],
+      "answer": 2,
+      "explanation": "vector<B> מחזיק אובייקטי B by value. push_back(d) בוחר את push_back(const B&) ומעתיק את חלק ה-B (c). emplace_back(d) בונה B במקום מ-d, כלומר שוב B(const B&) (c). reserve(2) מבטיח שאין reallocation, ולכן אין העתקות נוספות. שני האיברים הם B, ולכן BB.",
+      "notes": [
+        "שגוי: ה-vector מחזיק B ולא D. כל איבר נבנה ע\"י B(const B&) ולכן הוא B.",
+        "שגוי: גם emplace_back בונה אובייקט B חדש מ-d, ולכן מודפס c פעמיים.",
+        "נכון: שתי העתקות (c, c) שחותכות ל-B, ואז B פעמיים. כדי לשמור על פולימורפיזם מחזיקים std::vector<std::unique_ptr<B>>.",
+        "שגוי: vector<B> לא יכול להחזיק D. האיברים מאוחסנים by value, וכל העתקה עוברת דרך ה-copy constructor."
+      ],
+      "id": "cpp.polymorphism.q45",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "לשם מה משתמשים ב-constructor פרטי (private)?",
+      "choices": [
+        "singleton: רק פונקציה סטטית של המחלקה יוצרת את המופע היחיד",
+        "factory method סטטי שבודק קלט ויכול להחזיר nullptr או שגיאה במקום אובייקט לא תקין",
+        "named constructors, למשל `Angle::degrees(90)` מול `Angle::radians(1.57)`",
+        "כדי שהמחלקה תהיה abstract בלי pure virtual",
+        "כדי ש-std::make_unique ייצור את האובייקט בבטחה במקום new"
+      ],
+      "answer": [
+        0,
+        1,
+        2
+      ],
+      "explanation": "constructor פרטי אומר שרק המחלקה (ו-friends) יכולים ליצור אובייקטים. משתמשים בזה ל-singleton, ל-factory שמחזיר למשל std::unique_ptr אחרי ולידציה, ול-named constructors כמו `Angle::degrees(90)`. זה לא הופך את המחלקה ל-abstract, ו-std::make_unique לא יכול לקרוא לו, כי make_unique הוא קוד חיצוני למחלקה.",
+      "notes": [
+        "נכון: המופע נוצר רק בתוך `instance()`, וקוד חיצוני לא יכול ליצור עותק נוסף.",
+        "נכון: ה-factory הוא נקודת כניסה יחידה עם בדיקות, וה-constructor הפרטי מונע עקיפה שלו.",
+        "נכון: שני constructors שהיו מקבלים double ומתנגשים מוחלפים בפונקציות סטטיות עם שמות ברורים.",
+        "שגוי: abstract נקבע רק לפי pure virtual functions. מחלקה עם constructor פרטי אינה abstract, ופונקציות של המחלקה עדיין יכולות ליצור ממנה אובייקטים.",
+        "שגוי: make_unique הוא קוד חיצוני ולא יכול לגשת ל-constructor פרטי. זה דווקא מכשיל קומפילציה."
+      ],
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/amazon-interview-experience-sde1-off-campus-3/"
+      ],
+      "problem": "Amazon interview: private constructor",
+      "id": "cpp.polymorphism.q46",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "למה `create` לא מתקמפלת?",
+      "code": "class Widget {\n  int n_;\n  explicit Widget(int n) : n_(n) {}\npublic:\n  static std::unique_ptr<Widget> create(int n) {\n    if (n < 0) return nullptr;\n    return std::make_unique<Widget>(n);\n  }\n};",
+      "bugLine": 7,
+      "choices": [
+        "make_unique הוא קוד חיצוני למחלקה ולכן אין לו גישה ל-constructor הפרטי",
+        "אסור להחזיר nullptr מפונקציה שמחזירה unique_ptr",
+        "constructor שהוא explicit לא יכול להיקרא דרך make_unique",
+        "פונקציה סטטית לא יכולה לגשת ל-members פרטיים"
+      ],
+      "answer": 0,
+      "explanation": "std::make_unique קורא ל-`new Widget(...)` מתוך הקוד של הספרייה, שאינו member או friend של Widget, ולכן אין לו גישה ל-constructor הפרטי. הפתרונות: `std::unique_ptr<Widget>(new Widget(n))` מתוך create, או passkey idiom: constructor ציבורי שמקבל טיפוס-תג שרק Widget יכול ליצור.",
+      "notes": [
+        "נכון: הקריאה ל-constructor מתבצעת בתוך std::make_unique, שאינו friend. התיקון: `return std::unique_ptr<Widget>(new Widget(n));`, שם ה-new כתוב בתוך create עצמה.",
+        "שגוי: ל-unique_ptr יש constructor מ-nullptr_t, ולכן `return nullptr;` תקין.",
+        "שגוי: make_unique עושה direct-initialization, ולכן explicit לא מפריע. הבעיה היא access.",
+        "שגוי: static member function היא חלק מהמחלקה ויש לה גישה מלאה לחלקים הפרטיים. הקריאה ל-new פשוט לא נמצאת בה."
+      ],
+      "id": "cpp.polymorphism.q47",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "רוצים מחלקה `Session` שאפשר ליצור רק על ה-heap (עם new), ולא כמשתנה מקומי על ה-stack. מה הדרך הפשוטה?",
+      "choices": [
+        "להגדיר את ה-destructor כ-private ולספק `void destroy() { delete this; }`",
+        "להגדיר את operator new כ-private",
+        "לסמן את המחלקה כ-final",
+        "להגדיר את ה-copy constructor כ-`= delete`"
+      ],
+      "answer": 0,
+      "explanation": "משתנה מקומי נהרס אוטומטית בסוף ה-scope, ולכן הקומפיילר דורש destructor נגיש בנקודת ההגדרה. destructor פרטי גורם ל-`Session s;` לא להתקמפל, בעוד `new Session` עדיין עובר. השחרור נעשה דרך מתודה כמו `destroy()` שקוראת `delete this` (או deleter שהוא friend).",
+      "notes": [
+        "נכון: `Session s;` דורש destructor נגיש ולכן נכשל, בעוד `new Session` לא צריך את ה-destructor ועובר. destroy() משחררת מבפנים.",
+        "שגוי: זה עושה בדיוק את ההפך: חוסם `new Session` ומשאיר יצירה על ה-stack אפשרית.",
+        "שגוי: final מונע רק ירושה ולא משפיע על המקום שבו האובייקט נוצר.",
+        "שגוי: חוסם העתקה, אבל `Session s;` עדיין מתקמפל ויוצר אובייקט על ה-stack."
+      ],
+      "id": "cpp.polymorphism.q48",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "מראיין שואל: \"אם היית כותב את הקומפיילר, איך היית מממש virtual functions?\" תאר את המימוש (layout, בנייה, קריאה), ואיך הוא מתמודד עם ירושה מרובה ועם קריאה ל-virtual מתוך constructor.",
+      "modelAnswer": "- לכל מחלקה פולימורפית הקומפיילר מייצר טבלה סטטית אחת (vtable) של מצביעים לפונקציות, ונותן לכל פונקציה virtual slot קבוע. מחלקה נגזרת מעתיקה את הטבלה של ה-base, מחליפה את ה-slots שהיא דורסת ומוסיפה slots חדשים בסוף. לכן אותו index תקף לכל ההיררכיה.\n- כל אובייקט מקבל שדה נסתר, vptr, בתחילתו. קריאה `p->f()` מתורגמת לטעינת p->vptr, טעינת vptr[slot_f] וקריאה עקיפה עם this=p. העלות: שתי טעינות, indirect branch שתלוי ב-branch predictor, ובדרך כלל אין inlining (אלא אם יש devirtualization).\n- ה-constructor של כל מחלקה בשרשרת כותב את ה-vptr שלה לפני אתחול ה-members. לכן בזמן B() האובייקט מתנהג כ-B, וזה מממש את הכלל שקריאה virtual מ-constructor מגיעה למחלקה הנבנית. ה-destructor עושה את אותו הדבר בסדר הפוך.\n- בירושה מרובה `C : A, B` יש לאובייקט vptr לכל base שאינו בהיסט 0. המרה ל-B* מזיזה את המצביע, ולכן כשקוראים דרך B* לפונקציה ש-C דרס, ה-vtable מצביעה על thunk שמתקן את this ל-C* לפני הקפיצה. ירושה וירטואלית מוסיפה ל-vtable גם vbase offsets.\n- ב-vtable יושבים גם RTTI (typeinfo pointer) ו-offset-to-top, שעליהם נשענים dynamic_cast ו-typeid.\n- ב-C אפשר לבנות את זה ידנית: struct של function pointers סטטי לכל \"מחלקה\", ושדה ops בתחילת כל אובייקט (כמו file_operations בקרנל של Linux).",
+      "rubric": [
+        "vtable אחת לכל מחלקה עם slots קבועים, ו-vptr אחד לכל אובייקט",
+        "תרגום הקריאה: טעינת vptr, טעינת slot, קריאה עקיפה עם this, והעלות שלה (indirect branch, אין inlining)",
+        "עדכון ה-vptr בכל שלב של constructor/destructor ולמה זה מממש את חוקי הקריאה מתוך constructor",
+        "ירושה מרובה: כמה vptrs, התאמת this ו-thunks",
+        "מקום ל-RTTI/offset-to-top, או השוואה למימוש ידני ב-C עם function pointers"
+      ],
+      "explanation": "תשובה טובה מתארת vtable לכל מחלקה, vptr בכל אובייקט, slot קבוע לכל פונקציה, עדכון ה-vptr בכל שלב של הבנייה, ולבסוף ירושה מרובה עם כמה vptrs ו-thunks להתאמת this.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/"
+      ],
+      "problem": "NVIDIA interview: how would you implement virtual functions in a compiler",
+      "id": "cpp.polymorphism.q49",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במימוש ידני של פולימורפיזם ב-C, שוקלים שתי אפשרויות: (A) כל אובייקט מחזיק בעצמו מערך של 6 function pointers, (B) כל אובייקט מחזיק pointer אחד לטבלה סטטית משותפת לכל \"מחלקה\". על מכונה של 64 ביט, עם מיליון אובייקטים קטנים, מה ה-trade-off הנכון?",
+      "choices": [
+        "A עדיף תמיד, כי הוא חוסך טעינה ואין לו עלות זיכרון משמעותית",
+        "B חוסך כ-40 בתים לאובייקט ומשפר cache locality במחיר טעינה נוספת לכל קריאה. A שימושי רק כשצריך להחליף התנהגות לאובייקט בודד",
+        "שתי האפשרויות זהות בזיכרון, כי הקומפיילר מאחד function pointers זהים",
+        "B אסור ב-C, כי אי אפשר להגדיר מערך סטטי של function pointers"
+      ],
+      "answer": 1,
+      "explanation": "B הוא בדיוק ה-vtable: 8 בתים לאובייקט במקום 48, טבלה אחת שנשארת חמה ב-cache, ותמיכה טבעית ב\"טיפוס\" אחד לכל האובייקטים. A חוסך טעינה אחת לכל קריאה ומאפשר להחליף פונקציה לאובייקט בודד, אבל מנפח כל אובייקט ב-40 בתים, כלומר כ-40MB על מיליון אובייקטים, ופוגע ב-cache.",
+      "notes": [
+        "שגוי: 6×8 = 48 בתים לאובייקט מול 8 ב-B. על מיליון אובייקטים זה בערך 40MB נוספים, ויותר cache misses.",
+        "נכון: זה בדיוק השיקול שהוביל ל-vtable: pointer אחד לאובייקט וטבלה משותפת. A מתאים רק כשההתנהגות היא per-instance, כמו callbacks.",
+        "שגוי: function pointers הם שדות רגילים בכל אובייקט, והקומפיילר לא יכול לאחד אותם בין אובייקטים.",
+        "שגוי: מערך סטטי וקבוע של function pointers הוא C תקני ונפוץ, למשל struct file_operations בקרנל."
+      ],
+      "id": "cpp.polymorphism.q50",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "בלי להשתמש במילה virtual, ממש \"פולימורפיזם\" בסגנון C בתוך C++: `struct Shape` עם pointer לטבלת פעולות (`area`, `name`), שני \"טיפוסים\" (Circle, Rect) שכל אחד עם טבלה סטטית משלו, ופונקציה `double total_area(Shape* const* shapes, int n)`.",
+      "starter": "struct ShapeOps;\nstruct Shape { const ShapeOps* ops; };\ndouble total_area(Shape* const* shapes, int n);",
+      "modelAnswer": "struct Shape;\nstruct ShapeOps {\n  double (*area)(const Shape*);\n  const char* (*name)(const Shape*);\n};\nstruct Shape { const ShapeOps* ops; };\n\nstruct Circle { Shape base; double r; };   // base must be first\nstruct Rect   { Shape base; double w, h; };\n\nstatic double circle_area(const Shape* s) {\n  auto* c = reinterpret_cast<const Circle*>(s);  // OK: base is first member, standard-layout\n  return 3.14159265358979 * c->r * c->r;\n}\nstatic const char* circle_name(const Shape*) { return \"circle\"; }\nstatic double rect_area(const Shape* s) {\n  auto* r = reinterpret_cast<const Rect*>(s);\n  return r->w * r->h;\n}\nstatic const char* rect_name(const Shape*) { return \"rect\"; }\n\nstatic const ShapeOps kCircleOps{circle_area, circle_name};  // one table per type\nstatic const ShapeOps kRectOps{rect_area, rect_name};\n\nCircle make_circle(double r) { return Circle{{&kCircleOps}, r}; }\nRect make_rect(double w, double h) { return Rect{{&kRectOps}, w, h}; }\n\ndouble total_area(Shape* const* shapes, int n) {\n  double sum = 0;\n  for (int i = 0; i < n; ++i)\n    sum += shapes[i]->ops->area(shapes[i]);   // load table, load slot, indirect call\n  return sum;\n}",
+      "rubric": [
+        "טבלת פעולות סטטית אחת לכל טיפוס, ולא function pointers בכל אובייקט",
+        "Shape כ-member ראשון ו-cast תקין חזרה לטיפוס הקונקרטי (standard-layout)",
+        "הקריאה עוברת דרך ops עם העברת האובייקט כ-this מפורש",
+        "factory/אתחול שמחבר כל אובייקט לטבלה הנכונה, ו-total_area בזמן O(n)"
+      ],
+      "explanation": "המימוש מחקה את מה שהקומפיילר עושה: טבלה סטטית לכל טיפוס, pointer לטבלה בתחילת כל אובייקט, וקריאה עקיפה עם \"this\" מפורש. בגלל ש-Shape הוא ה-member הראשון, ההמרה מ-Shape* ל-Circle* תקינה (pointer-interconvertible ב-standard-layout).",
+      "id": "cpp.polymorphism.q51",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה ההבדל בין `class` ל-`struct` ב-C++?",
+      "choices": [
+        "struct לא יכול להכיל פונקציות, רק נתונים",
+        "ב-struct ברירת המחדל ל-members ולירושה היא public, וב-class היא private. מעבר לזה הם זהים",
+        "אובייקטים של struct נוצרים על ה-stack ושל class על ה-heap",
+        "ל-struct אסור שיהיו virtual functions"
+      ],
+      "answer": 1,
+      "explanation": "ההבדל היחיד הוא ברירות המחדל: ב-struct ה-members וה-base classes הם public כברירת מחדל, וב-class הם private. כל השאר זהה: ל-struct יכולים להיות constructors, virtual functions, templates וירושה.",
+      "notes": [
+        "שגוי: זה נכון ב-C, אבל ב-C++ ל-struct יכולים להיות methods, constructors ו-operators.",
+        "נכון: זה ההבדל היחיד בשפה. הבחירה ביניהם היא קונבנציה: struct לנתונים פשוטים, class כשיש invariant.",
+        "שגוי: מיקום האובייקט נקבע לפי אופן היצירה (משתנה מקומי, new, static) ולא לפי המילה class או struct.",
+        "שגוי: struct יכול להיות פולימורפי לגמרי, ואפילו interface עם pure virtual."
+      ],
+      "tags": [
+        "intel"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/intel-graphics-software-engineer-interview-experience/"
+      ],
+      "problem": "Intel interview: difference between class and struct",
+      "id": "cpp.polymorphism.q52",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "איזו שורה לא מתקמפלת?",
+      "code": "struct B { void run() {} };\nstruct D1 : B {};\nclass  D2 : B {};\n\nint main() {\n  D1 d1;\n  D2 d2;\n  d1.run();\n  d2.run();\n}",
+      "bugLine": 9,
+      "choices": [
+        "`d2.run()`: ב-class הירושה private כברירת מחדל, ולכן run לא נגישה מבחוץ",
+        "`d1.run()`: ב-struct הירושה private כברירת מחדל",
+        "`class D2 : B` לא חוקי: class לא יכול לרשת מ-struct",
+        "`D2 d2;`: ל-D2 אין constructor ציבורי"
+      ],
+      "answer": 0,
+      "explanation": "ב-class, ירושה בלי specifier היא private. לכן ב-D2 החלק של B הוא private, ו-`d2.run()` מבחוץ לא נגיש. ב-struct D1 הירושה public כברירת מחדל, ולכן `d1.run()` עובר.",
+      "notes": [
+        "נכון: `class D2 : B` שקול ל-`class D2 : private B`, ולכן ה-members של B הם private ב-D2. התיקון: `class D2 : public B`.",
+        "שגוי: ב-struct ברירת המחדל היא public, גם ל-members וגם לירושה, ולכן d1.run() תקין.",
+        "שגוי: class ו-struct ניתנים לערבוב חופשי בירושה. ההבדל הוא רק ב-access ברירת המחדל.",
+        "שגוי: ה-default constructor שהקומפיילר מייצר הוא public גם ב-class. רק members שנכתבו בלי specifier הם private."
+      ],
+      "id": "cpp.polymorphism.q53",
+      "lesson": "cpp.polymorphism"
+    },
+    {
+      "level": 1,
+      "type": "mcq",
+      "prompt": "איזו מהיכולות הבאות קיימת ב-class אבל לא ב-struct?",
+      "choices": [
+        "virtual functions",
+        "private members",
+        "constructors ו-destructors",
+        "אף אחת. ההבדל הוא רק ב-access ברירת המחדל"
+      ],
+      "answer": 3,
+      "explanation": "אין כזו. struct ו-class שקולים לחלוטין חוץ מברירת המחדל של access: לשניהם יש constructors, destructors, virtual functions, private members, templates ו-operators.",
+      "notes": [
+        "שגוי: struct יכול להצהיר virtual functions ולשמש כ-base פולימורפי.",
+        "שגוי: גם ב-struct אפשר לכתוב `private:` ולהסתיר members.",
+        "שגוי: ל-struct יש constructors ו-destructors בדיוק כמו ל-class.",
+        "נכון: כל יכולת של class קיימת גם ב-struct. רק ברירת המחדל של access (members וירושה) שונה."
+      ],
+      "id": "cpp.polymorphism.q54",
+      "lesson": "cpp.polymorphism"
     }
   ]
 }

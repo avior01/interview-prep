@@ -204,6 +204,26 @@
         {
           "term": "async-signal-safe",
           "def": "פונקציות שמותר לקרוא להן מ-signal handler. גם הן עלולות לשנות errno, ולכן שומרים ומשחזרים אותו."
+        },
+        {
+          "term": "privileged instruction",
+          "def": "פקודה שמותרת רק ב-kernel mode (ring 0), כמו cli, hlt או כתיבה ל-CR3. ניסיון לבצע אותה ב-user mode גורם ל-#GP, והקרנל שולח SIGSEGV."
+        },
+        {
+          "term": "syscall (פקודה) ו-LSTAR",
+          "def": "ב-x86-64, הפקודה syscall שומרת RIP ב-RCX ו-RFLAGS ב-R11, עוברת ל-ring 0 וקופצת לכתובת שב-MSR בשם LSTAR. הקרנל מחליף stack ושומר רגיסטרים בעצמו."
+        },
+        {
+          "term": "library call מול system call",
+          "def": "library call היא קוד ב-user space (printf, malloc, strlen) שלפעמים קורא ל-syscall ולפעמים לא. system call היא כניסה לקרנל. strace מראה רק את השנייה, ltrace את הראשונה."
+        },
+        {
+          "term": "stdio buffering",
+          "def": "stdout שמחובר לטרמינל הוא line-buffered, ולקובץ או pipe הוא fully buffered. stderr תמיד unbuffered. הבאפר נשפך ב-fflush, ביציאה רגילה, או כשהוא מתמלא."
+        },
+        {
+          "term": "brk / mmap ו-M_MMAP_THRESHOLD",
+          "def": "glibc מגדילה את ה-heap עם brk בחתיכות גדולות ומחלקת אותן בעצמה. בלוקים מעל הסף (128KB בברירת מחדל, דינמי) מוקצים עם mmap נפרד ומשוחררים מיד עם munmap."
         }
       ]
     }
@@ -277,9 +297,6 @@
       "answer": 0,
       "explanation": "הקרנל מעדכן דף נתונים (vvar) עם בסיס הזמן והכיול, וקוד ה-vDSO מחשב את הזמן מה-TSC ב-user space. כך אפשר למדוד זמן מתוך RT loop בלי syscall.",
       "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: vDSO הוא קוד שהקרנל ממפה לכל process, יחד עם דף vvar שמכיל בסיס זמן וכיול. הקוד קורא את ה-TSC ומחשב את הזמן ב-user space, בלי מעבר ל-kernel mode, ולכן כ-20ns.",
         "הקריאה רצה על אותו thread ואותו core שקרא לה. העברה ל-core אחר הייתה דווקא יקרה יותר, כי היא דורשת תקשורת בין cores.",
@@ -391,9 +408,6 @@
       "answer": 2,
       "explanation": "ה-overhead הוא פר-syscall, ו-batching מחלק אותו על הרבה חבילות. select לפני כל קריאה מכפיל את מספר ה-syscalls. TCP לא מתאים ל-streaming של דגימות ולא מוריד את העלות. השלב הבא אחרי זה הוא kernel bypass (DPDK, AF_XDP), שבו UHD תומך עבור USRP.",
       "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "select לפני כל recvfrom מוסיף syscall נוסף לכל חבילה, כך שמספר המעברים לקרנל מוכפל. הוא שימושי להמתנה על הרבה fds, לא להורדת overhead על socket אחד עמוס.",
         "עדיפות גבוהה יותר משפרת latency מול threads אחרים, אבל לא משנה את העלות של כל syscall. ה-60% ב-kernel נשארים כי מספר הקריאות לא השתנה.",
@@ -436,9 +450,6 @@
       "answer": 0,
       "explanation": "Meltdown איפשר לקרוא זיכרון קרנל מ-user space דרך speculative execution, ולכן KPTI מוציא את רוב הקרנל מטבלאות הדפים של user. המחיר הוא החלפת CR3 בכל מעבר. PCID מתייג רשומות TLB לפי מרחב, כך שלא צריך לרוקן. המסקנה המעשית: batching של syscalls חשוב עוד יותר. מעבדים חדשים שאינם פגיעים ל-Meltdown לא צריכים KPTI.",
       "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: KPTI מוציא את רוב הקרנל מטבלאות הדפים של user, ולכן כל כניסה ויציאה מחליפה CR3. בלי PCID זה מרוקן את ה-TLB, ועם PCID המחיר קטן יותר אבל לא אפס. workload עם הרבה syscalls קטנים משלם את זה בכל מעבר.",
         "KPTI לא מבטל את ה-vDSO: דפי ה-vDSO וה-vvar נשארים ממופים ב-user space ו-clock_gettime ממשיך לעבוד בלי syscall. אם בכלל, workload שנשען על vDSO פחות נפגע מ-KPTI.",
@@ -501,10 +512,7 @@
         "copy_to_user, חזרה עם מספר בתים (אולי חלקי), EINTR"
       ],
       "explanation": "שאלה שבודקת אם יש מודל מנטלי שמחבר syscall, scheduler, interrupts ו-DMA.",
-      "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.syscalls"
     },
     {
       "id": "sys.syscalls.q15",
@@ -520,9 +528,6 @@
       "answer": 3,
       "explanation": "בלי SQPOLL, האפליקציה כותבת entries ל-ring וקוראת ל-io_uring_enter כדי להודיע לקרנל. זה עדיין batching של הרבה פעולות ב-syscall אחד. עם SQPOLL הקרנל מסתובב על ה-ring על core משלו, ותמורת core שרוף מקבלים אפס מעברים. O_DIRECT עוקף את ה-page cache ולא קשור למספר ה-syscalls.",
       "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "בלי SQPOLL צריך io_uring_enter כדי להודיע לקרנל על בקשות חדשות (ולפעמים כדי לחכות לתוצאות). io_uring מקטין את מספר ה-syscalls בעזרת batching, אבל לא מאפס אותו כברירת מחדל.",
         "O_DIRECT עוקף את ה-page cache ומשפיע על מסלול הנתונים, לא על מספר ה-syscalls. עם או בלי O_DIRECT עדיין צריך להגיש את הבקשות.",
@@ -785,9 +790,6 @@
       "answer": 3,
       "explanation": "מודל ה-readiness של epoll מתאים לאובייקטים שבהם נתונים מגיעים מבחוץ (sockets, pipes). לקובץ רגיל אין מצב 'לא מוכן', ולכן הוא לא נתמך ב-epoll. זו הסיבה ש-libuv ו-Node משתמשים ב-thread pool לקבצים, וש-io_uring נבנה בין השאר כדי לפתור את זה.",
       "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "על קבצים רגילים O_NONBLOCK לא משפיע: read שמחכה לדיסק פשוט נחסם, ולא מחזיר EAGAIN. בנוסף, epoll בכלל לא מקבל את הרישום.",
         "epoll לא תומך בקבצים רגילים ולא מדווח עליהם דבר. את ההבחנה בין נתונים ב-page cache ללא נותן preadv2 עם RWF_NOWAIT, לא epoll.",
@@ -809,9 +811,6 @@
       "answer": 2,
       "explanation": "שינה יחסית מוסיפה את זמן העבודה ואת ה-latency של ההתעוררות לכל סיבוב, ולכן השגיאה מצטברת. קיצור השינה תלוי בזמן העבודה, שמשתנה. SCHED_FIFO מקטין את ה-latency אבל לא מבטל את ההצטברות. עם זמן מוחלט, כל איחור מופיע כ-jitter של סיבוב אחד בלבד. CLOCK_MONOTONIC חשוב כדי ששינוי של שעון המערכת לא יקפיץ את הלולאה.",
       "lesson": "sys.syscalls",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "קיצור השינה מתקן רק זמן עבודה קבוע וידוע. זמן העבודה וה-wakeup latency משתנים, ולכן השגיאה ממשיכה להצטבר, רק בקצב אחר (ואפילו יכולה להתהפך).",
         "SCHED_FIFO מקטין את ה-wakeup latency ואת ה-jitter, אבל השינה עדיין יחסית, ולכן זמן העבודה וה-latency שנותר עדיין מתווספים לכל סיבוב.",
@@ -833,10 +832,147 @@
         "מודעות לביצועי ה-SSD לאורך זמן ומדידה"
       ],
       "explanation": "השאלה מחברת syscalls, page cache ו-RT. מועמד חזק מסביר למה write פשוט נכשל בקצב הזה, ולא רק מציין io_uring.",
-      "lesson": "sys.syscalls",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q31",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "למה תוכנית ב-user space לא יכולה פשוט לקפוץ (call) לכתובת של פונקציה בקרנל, למשל זו שכותבת לדיסק, במקום לבצע system call?",
+      "choices": [
+        "כי ה-linker לא יודע את הכתובות של פונקציות הקרנל",
+        "אפשר, וזה אפילו מהיר יותר. syscalls קיימים רק בשביל נוחות",
+        "כי הקרנל כתוב בשפה אחרת, ואין לו ABI תואם",
+        "כי הדפים של הקרנל מסומנים כ-supervisor-only, והקוד שם מניח שהוא רץ ב-kernel mode עם הרשאות מלאות. הדרך היחידה להיכנס היא פקודה מיוחדת (כמו `syscall`) שמעלה את רמת ההרשאה וקופצת לנקודת כניסה שהקרנל קבע"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: גם כשהכתובות ידועות (למשל דרך /proc/kallsyms), קפיצה אליהן מ-user mode נחסמת בחומרה.",
+        "שגוי: אילו כל תוכנית יכלה לקפוץ לקרנל, לא הייתה הפרדה בין processes, וכל באג היה מפיל את המערכת.",
+        "שגוי: הקרנל כתוב ב-C, והבעיה היא הרשאות, לא שפה. אילו הייתה הרשאה, הקריאה הייתה עובדת.",
+        "נכון: ה-MMU חוסם גישה מ-user mode לדפים שה-U/S bit שלהם מסמן supervisor. syscall מעביר ל-ring 0 בצורה מבוקרת, רק לנקודת הכניסה, כך שהקרנל יכול לבדוק כל ארגומנט."
+      ],
+      "explanation": "user mode ו-kernel mode הם רמות הרשאה של המעבד. בקוד user אסור לבצע פקודות privileged ואסור לגשת לדפי הקרנל. system call היא הכניסה המבוקרת: פקודה שמעלה הרשאה וקופצת לכתובת קבועה, והקרנל מאמת את הבקשה לפני שהוא מבצע אותה.",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
+      ],
+      "problem": "NVIDIA: user mode vs kernel mode, what is a system call",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q32",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה עושה בפועל הפקודה `syscall` ב-x86-64?",
+      "choices": [
+        "מבצעת context switch ל-process של הקרנל",
+        "קוראת לפונקציה בספריית C שמבצעת את הפעולה",
+        "מייצרת interrupt מספר 0x80, והמעבד מחפש את ה-handler ב-IDT",
+        "שומרת את RIP ב-RCX ואת RFLAGS ב-R11, עוברת ל-ring 0, וקופצת לכתובת שהקרנל כתב מראש ברגיסטר MSR (LSTAR). שמירת שאר הרגיסטרים והחלפת ה-stack הם באחריות הקרנל"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: אין process של הקרנל. ה-syscall רץ בהקשר של אותו thread, רק ברמת הרשאה גבוהה יותר.",
+        "שגוי: glibc מספקת עטיפה (למשל write), אבל העטיפה עצמה מבצעת את הפקודה syscall. הפקודה לא קוראת לשום ספרייה.",
+        "שגוי: `int 0x80` הוא המנגנון הישן של 32 ביט. הוא איטי יותר כי הוא עובר דרך מנגנון ה-interrupts.",
+        "נכון: syscall היא פקודה מינימליסטית ומהירה: היא אפילו לא מחליפה stack. הקוד בנקודת הכניסה של הקרנל מחליף ל-kernel stack ושומר את הרגיסטרים."
+      ],
+      "explanation": "syscall ב-x86-64: מספר ה-syscall ב-RAX, ארגומנטים ב-RDI, RSI, RDX, R10, R8, R9, וחזרה עם sysret. זה mode switch ולא context switch: אותו thread ממשיך לרוץ, רק בקרנל.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q33",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "תוכנית ב-user space מבצעת את הפקודה `cli` (ביטול interrupts) על x86 ב-Linux. מה קורה?",
+      "choices": [
+        "הקרנל מבצע אותה במקום ה-process וממשיך",
+        "הפקודה מתבצעת רק על ה-core של ה-process",
+        "המעבד מעלה general protection fault, כי cli היא פקודה privileged ב-ring 3. הקרנל שולח ל-process SIGSEGV",
+        "ה-interrupts מבוטלים, והמערכת קופאת"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: הקרנל לא מבצע פקודות privileged בשם תוכנית. אם צריך שירות, מבקשים אותו דרך syscall מוגדר.",
+        "שגוי: אין גרסה מקומית של cli ל-user mode.",
+        "נכון: פקודות privileged מותרות רק ב-ring 0 (או לפי IOPL, שב-Linux מכובה). המעבד מעלה #GP, והקרנל הופך אותו ל-SIGSEGV.",
+        "שגוי: אילו user space היה יכול לבטל interrupts, כל תוכנית הייתה יכולה לתקוע את המערכת. בדיוק בשביל זה יש רמות הרשאה."
+      ],
+      "explanation": "רמות ההרשאה של המעבד מגנות על המערכת: פקודות כמו cli, hlt, או כתיבה ל-CR3 מותרות רק לקרנל. ניסיון לבצע אותן מ-user mode הוא exception, וה-process מקבל signal.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q34",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "התוכנית מבצעת `printf(\"a\\n\"); printf(\"b\\n\"); printf(\"c\\n\");` ומסתיימת. מריצים אותה פעם עם הפלט לטרמינל ופעם עם הפנייה לקובץ (`> out.txt`), ובודקים עם strace. כמה קריאות write יופיעו בכל מקרה?",
+      "choices": [
+        "0 לקובץ, כי כתיבה לקובץ לא עוברת דרך write",
+        "3 בשני המקרים, כי כל printf הוא system call",
+        "3 לטרמינל (stdout שמחובר לטרמינל הוא line-buffered, ולכן כל `\\n` שופך את הבאפר), ו-1 לקובץ (fully buffered, והבאפר נשפך ביציאה)",
+        "1 בשני המקרים, כי stdio תמיד אוסף את כל הפלט עד היציאה"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: כל כתיבה לקובץ עוברת בסוף דרך write (או writev). השאלה היא רק כמה פעמים.",
+        "שגוי: printf היא פונקציית ספרייה שכותבת לבאפר ב-user space. רק כשהבאפר נשפך מתבצע write.",
+        "נכון: stdio בוחרת מצב buffering לפי סוג ה-fd: טרמינל הוא line-buffered, קובץ או pipe הם fully buffered. לכן ב-strace רואים write לכל שורה רק בטרמינל.",
+        "שגוי: לטרמינל השורות חייבות להופיע מיד, ולכן הוא line-buffered."
+      ],
+      "explanation": "library call היא קוד רגיל ב-user space (printf, strlen, malloc), שלפעמים קורא ל-system call (write, brk, mmap) ולפעמים לא. buffering של stdio הוא הדוגמה הקלאסית, ומסביר גם למה פלט 'נעלם' כשתוכנית קורסת לפני flush.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=123669"
+      ],
+      "problem": "Qualcomm: library call vs system call",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q35",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "תוכנית כותבת שלוש הודעות שגיאה עם `fprintf(stderr, ...)`, כל אחת בלי `\\n` בסוף, ו-stderr מופנה לקובץ. כמה קריאות write יופיעו ב-strace?",
+      "choices": [
+        "1, כי הפלט לקובץ fully buffered",
+        "3, כי stderr הוא unbuffered בברירת מחדל, ולכן כל fprintf מבצע write מיד, בלי קשר ליעד",
+        "תלוי בגודל ההודעות בלבד",
+        "0, כי stderr לא נכתב לקבצים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה נכון ל-stdout. stderr הוא חריג: הוא unbuffered תמיד, כדי שהודעות שגיאה יגיעו גם אם התוכנית קורסת מיד אחר כך.",
+        "נכון: התקן דורש ש-stderr לא יהיה fully buffered, ו-glibc הופכת אותו ל-unbuffered. כל קריאה הופכת ל-write אחד (או יותר).",
+        "שגוי: הגודל לא משנה את ההחלטה אם לשפוך. במצב unbuffered כל קריאה נכתבת מיד.",
+        "שגוי: אפשר להפנות stderr לכל יעד, עם `2>`."
+      ],
+      "explanation": "stdout: line-buffered לטרמינל, fully buffered לקובץ. stderr: תמיד unbuffered. כשמערבבים את שניהם לאותו קובץ, הסדר בקובץ יכול להיות שונה מסדר הקריאות בקוד.",
+      "lesson": "sys.syscalls"
+    },
+    {
+      "id": "sys.syscalls.q36",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "תוכנית קוראת 1000 פעמים ל-`malloc(32)`, ואחר כך פעם אחת ל-`malloc(1 << 20)` (1MB). מה יראה strace, עם glibc בהגדרות ברירת מחדל?",
+      "choices": [
+        "1001 קריאות mmap, אחת לכל malloc",
+        "קריאות brk בודדות להגדלת ה-heap עבור הבלוקים הקטנים (רובם מוקצים מאותו אזור בלי syscall), וקריאת mmap אחת לבלוק של 1MB, כי הוא מעל M_MMAP_THRESHOLD (128KB בברירת מחדל)",
+        "1000 קריאות brk ו-mmap אחת",
+        "שום syscall, כי malloc הוא פונקציית ספרייה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: syscall לכל הקצאה קטנה היה איטי מאוד. ה-allocator מבקש זיכרון מהקרנל בחתיכות גדולות ומחלק אותן בעצמו.",
+        "נכון: 32,000 בתים נכנסים בהגדלה אחת או שתיים של ה-heap. בלוק גדול ממופה בנפרד עם mmap, וכשמשחררים אותו הוא חוזר לקרנל מיד עם munmap.",
+        "שגוי: brk מגדיל את ה-heap בחתיכות של לפחות 128KB בדרך כלל (M_TOP_PAD), לא לכל הקצאה.",
+        "שגוי: malloc היא פונקציית ספרייה, אבל היא חייבת לקבל זיכרון מהקרנל מתישהו, דרך brk או mmap."
+      ],
+      "explanation": "malloc היא library call שמבצעת syscall רק כשנגמר לה המקום. סף ה-mmap של glibc הוא דינמי: אחרי free של בלוק גדול, הסף עולה, ובלוקים בגודל הזה יוקצו מה-heap מעכשיו.",
+      "lesson": "sys.syscalls"
     }
   ]
 }

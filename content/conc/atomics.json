@@ -184,6 +184,38 @@
         {
           "term": "ABA",
           "def": "ערך שהשתנה מ-A ל-B וחזר ל-A. מי שמשווה רק ערכים לא מבחין שמשהו קרה. ב-wait/notify זה גורם לממתין להמשיך לישון."
+        },
+        {
+          "term": "lost update",
+          "def": "הגדלה שנעשית כ-load ואז store נפרדים: thread אחר כותב בין שתי הפעולות, ואחת ההגדלות נדרסת. גם כשכל load ו-store אטומיים לבדם. fetch_add (RMW) פותר."
+        },
+        {
+          "term": "אטומיות RMW לא תלויה ב-memory order",
+          "def": "כל read-modify-write קורא את הערך האחרון בסדר השינויים של המשתנה, גם עם relaxed. לכן fetch_add relaxed מספיק לייחודיות של מונה. memory order קובע רק מה נראה ממשתנים אחרים."
+        },
+        {
+          "term": "הקצאת IDs בבלוקים",
+          "def": "במקום fetch_add(1) לכל ID, כל thread לוקח טווח (fetch_add(1000)) ומחלק ממנו מקומית, או משתמש ב-prefix של thread או שרת. מקטין contention על cache line אחד, במחיר של IDs לא רציפים."
+        },
+        {
+          "term": "CAS לתפיסת משאב",
+          "def": "compare_exchange מ-FREE ל-HELD משנה רק אם המצב עדיין FREE ומצליח לבקשה אחת בלבד. exchange או fetch_add היו דורסים מצבים אחרים."
+        },
+        {
+          "term": "ABA במצב לוגי",
+          "def": "כשערך חוזר לאותו ערך עם משמעות אחרת (HELD של משתמש אחר), CAS לא מבחין. מכניסים מזהה או גרסה לתוך הערך המושווה."
+        },
+        {
+          "term": "tearing על מעבד צר",
+          "def": "משתנה רחב מה-bus (32 ביט על מעבד 8 ביט) נקרא בכמה פעולות, ו-interrupt באמצע מייצר ערך מעורב. פותרים בביטול interrupts סביב הקריאה או בקריאה כפולה עד התאמה."
+        },
+        {
+          "term": "אריזת שני שדות למילה אחת",
+          "def": "כשה-invariant כולל שני ערכים (שנייה ו-count), אורזים אותם למילה אטומית אחת ומעדכנים ב-CAS. כך ההחלטה והעדכון אטומיים יחד, בלי lock."
+        },
+        {
+          "term": "snapshot מול קריאות אטומיות",
+          "def": "סכום של כמה קריאות אטומיות אינו תמונה של רגע אחד. לערך עקבי צריך לעצור את הכותבים או מנגנון כמו seqlock."
         }
       ]
     }
@@ -283,9 +315,6 @@
       "answer": 0,
       "explanation": "volatile נועד ל-memory-mapped IO ולמשתנים שמשתנים מחוץ לתוכנית: כל גישה מתבצעת בפועל. הוא לא מונע reordering של גישות לא-volatile סביבו, לא נותן fence בחומרה, ו-`flag++` עליו אינו אטומי. במודל הזיכרון של C++ גישה מקבילית אליו היא data race ו-UB.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: volatile רק מבטיח שכל גישה תתבצע בפועל (נועד ל-MMIO). אין לו אטומיות ל-RMW, אין fence בחומרה ואין happens-before, ולכן לפי מודל הזיכרון של C++ גישה מקבילית אליו היא data race ו-UB.",
         "שגוי: volatile אינו בטוח לתקשורת בין threads בכלל. הוא גם לא בהכרח איטי יותר; ההבדל הוא בסמנטיקה, לא בביצועים.",
@@ -379,9 +408,6 @@
       "answer": 3,
       "explanation": "הבעיה היא ה-cache line שקופץ בין 32 cores בכל הגדלה. relaxed חוסך fences, אבל ב-x86 lock xadd נשאר אותה הוראה, והקפיצות של ה-line נשארות. sharding (מונה פר-thread עם alignas(64)) מבטל את התחרות. הקורא מקבל סכום שאולי לא עקבי לרגע מסוים, וזה מקובל לסטטיסטיקה.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: relaxed חוסך ordering אבל לא את ההעברה של ה-cache line בין cores. ב-x86 זה נשאר `lock xadd`, וצוואר הבקבוק הוא ה-coherence traffic על line אחת.",
         "שגוי: mutex מחמיר את המצב: גם ה-lock עצמו הוא cache line מתחרה, ובנוסף יש serialization ואולי sleep.",
@@ -405,10 +431,7 @@
         "בונוס: להזכיר ש-C++26 מוסיף fetch_max"
       ],
       "explanation": "התנאי `cur < v` נבדק מחדש בכל סיבוב, כי thread אחר אולי כבר כתב ערך גדול יותר. הימנעות מכתיבה כשאין צורך חשובה לביצועים: כל CAS מוצלח מעביר את ה-cache line ל-Modified.",
-      "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.atomics"
     },
     {
       "id": "conc.atomics.q11",
@@ -424,9 +447,6 @@
       "answer": 1,
       "explanation": "x86 הוא TSO: כל load הוא כבר acquire וכל store הוא release. seq_cst load הוא `mov` רגיל. seq_cst store דורש לחסום reordering של store ואחריו load, ולכן הוא `xchg` (או `mov` ואחריו `mfence`). כל RMW, גם relaxed, חייב lock prefix (`lock xadd`, `lock cmpxchg`) כדי להיות אטומי, כך ש-relaxed לא חוסך שם הוראות.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ב-TSO מותר store-load reordering דרך ה-store buffer, ו-seq_cst אוסר אותו. לכן seq_cst store מתקמפל ל-`xchg` (או `mov` ואחריו `mfence`).",
         "נכון: x86 הוא TSO, כל load כבר בעל סמנטיקת acquire, וה-fence של seq_cst ממומש בצד ה-store. לכן seq_cst load הוא `mov` רגיל.",
@@ -448,9 +468,6 @@
       "answer": 2,
       "explanation": "ב-LL/SC ה-store-conditional נכשל אם ה-reservation אבד מכל סיבה, גם כשאף אחד לא שינה את הערך. strong חייב להסתיר את זה בלולאה. ב-x86 (`lock cmpxchg`) ו-ב-ARMv8.1 עם הוראת CAS שתיהן זהות. ה-memory order לא קשור להבחנה. כלל אצבע: weak בתוך לולאה, strong לניסיון בודד.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: גם weak וגם strong מעדכנים את expected לערך הנוכחי בכישלון, כולל בכישלון spurious של weak (שם expected מקבל את אותו ערך שהיה בו).",
         "שגוי: ה-memory order נבחר בנפרד דרך פרמטרים, ושתי הגרסאות מקבלות אותם פרמטרים. ההבחנה weak/strong נוגעת ל-spurious failure, לא לסדר.",
@@ -472,9 +489,6 @@
       "answer": 1,
       "explanation": "ההבטחה של shared_ptr: threads שונים יכולים להעתיק ולהרוס עותקים שונים שחולקים את אותו control block בלי סנכרון. אבל אותו אובייקט shared_ptr שאחד כותב אליו ואחר קורא ממנו הוא data race, והקורא יכול לקבל pointer לאובייקט שה-count שלו כבר הגיע ל-0. C++20 מוסיף `std::atomic<std::shared_ptr<T>>` (לרוב לא lock-free), ולפניו היו `std::atomic_load` ו-`std::atomic_store` על shared_ptr.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: make_shared עצמו thread-safe כמו כל הקצאה. הבעיה היא בהשמה לאובייקט shared_ptr משותף שנקרא במקביל.",
         "נכון: ה-reference count ב-control block אטומי, אבל אובייקט ה-shared_ptr (pointer לאובייקט ו-pointer ל-control block) לא. כתיבה וקריאה מקבילות לאותו אובייקט הן data race, והקורא עלול להגדיל count של control block שכבר שוחרר.",
@@ -495,10 +509,7 @@
         "מתייחס לעקביות בין כמה מונים: seqlock או double buffer, והכותב לא נחסם"
       ],
       "explanation": "התשובה החלשה: atomic גלובלי עם seq_cst. התשובה החזקה מבינה את מחיר ה-cache coherence ומפרידה בין דרישת האטומיות לבין דרישת הסדר.",
-      "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.atomics"
     },
     {
       "id": "conc.atomics.q15",
@@ -514,9 +525,6 @@
       "answer": 3,
       "explanation": "atomic שאינו lock-free עדיין אטומי ונכון בין threads של אותו process, אבל דרך lock. אם signal קוטע thread שמחזיק את ה-lock וה-handler ניגש לאותו אובייקט, זה deadlock, ולכן התקן מגדיר כ-signal-safe רק פעולות אטומיות lock-free. בין processes, כל process מחזיק טבלת locks משלו, כך שאין הדדיות. ב-x86-64 עם GCC זה המצב עבור 16 בתים, למרות שיש cmpxchg16b, בין היתר כי load דרך cmpxchg16b כותב לזיכרון ולא עובד על דפים read-only.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: std::atomic<T> חוקי לכל T שהוא trivially copyable, בלי קשר לגודל. is_lock_free רק מדווח על המימוש, לא מונע קומפילציה.",
         "שגוי: התקן מחייב אטומיות גם כשאין lock-free, ולכן אין tearing. המימוש פשוט משיג אותה דרך lock.",
@@ -542,9 +550,6 @@
       ],
       "explanation": "לכל atomic יש modification order אחד, ו-RMW תמיד קורא את הערך האחרון בסדר הזה, ולכן אין עדכונים אבודים גם ב-relaxed. coherence מבטיח שקריאות של אותו משתנה באותו thread לא הולכות אחורה בסדר הזה. relaxed לא נותן שום סדר **בין משתנים שונים**, ולכן B יכול לראות y לפני x, ולכן גם פרסום באפר דרך דגל relaxed הוא data race.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: לכל atomic יש modification order אחד, ו-RMW תמיד קורא את הערך האחרון בסדר הזה, גם ב-relaxed. לכן אין עדכונים אבודים, ו-join נותן happens-before לקריאה הסופית.",
         "שגוי: read-read coherence אוסר זאת. קריאות של אותו atomic באותו thread לא יכולות ללכת אחורה ב-modification order, גם ב-relaxed.",
@@ -569,9 +574,6 @@
       "answer": 1,
       "explanation": "compare_exchange משווה את ייצוג האובייקט בזיכרון (כמו memcmp), לא עם `==`. -0.0 ו-+0.0 שווים לפי `==` אבל שונים בביט הסימן, ולכן ה-CAS נכשל, a נשאר -0 (cout מדפיס -0), ו-e מתעדכן ל--0.0 כך ש-signbit מחזיר 1. באותו אופן, NaN עם אותם bits כן יצליח בהשוואה, למרות ש-NaN == NaN הוא false.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: זה היה נכון אם ה-CAS היה משווה עם `==`, שלפיו -0.0 == 0.0. אבל compare_exchange משווה ייצוג בזיכרון כמו memcmp, וביט הסימן שונה.",
         "נכון: ההשוואה לפי bits נכשלת (ביט הסימן שונה), ולכן ok הוא 0, a נשאר -0.0 ש-cout מדפיס כ-`-0`, ו-e מקבל את הערך הנוכחי -0.0 כך ש-signbit(e) הוא 1.",
@@ -721,9 +723,6 @@
       ],
       "explanation": "8 מונים של 8 בתים הם בדיוק 64 בתים, line אחת. ה-coherence עובד ברמת line, לא ברמת משתנה, ולכן כל כתיבה דורשת בעלות בלעדית על כל ה-line, למרות שאין שיתוף לוגי. relaxed לא עוזר, כי ב-x86 ה-RMW נשאר lock xadd וה-line עדיין קופצת. padding ל-64 (או 128 במעבדים שמביאים זוגות lines) פותר.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: 8 מונים של 8 בתים הם בדיוק 64 בתים, cache line אחת. ה-coherence עובד ברמת line, ולכן כל כתיבה דורשת בעלות בלעדית על כל ה-line, והיא קופצת בין cores. זה false sharing.",
         "שגוי: relaxed לא משנה את יחידת ה-coherence. ב-x86 ההגדלה נשארת `lock xadd`, וה-line עדיין עוברת בין cores בכל כתיבה.",
@@ -772,9 +771,6 @@
       "answer": 2,
       "explanation": "הדדיות (רק אחד בפנים) נשמרת גם ב-relaxed, כי test_and_set הוא RMW. אבל מה שהקודם כתב ל-balance לפני release נראה רק למי שקורא את הדגל ב-**acquire**. בלי זה, על ARM הקריאה של balance יכולה להתבצע לפני שהלולאה ראתה את הדגל פנוי, ולהחזיר ערך ישן. ב-x86 הבאג כנראה לא יתגלה, כי כל RMW שם הוא full barrier. release ב-clear מספיק, seq_cst לא נחוץ.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: test_and_set הוא RMW אטומי בכל memory order, ולכן ההדדיות נשמרת גם ב-relaxed. הבאג בנראות, לא בהדדיות.",
         "שגוי: atomic_flag הוא הבסיס הקלאסי ל-spinlock והוא lock-free. החלפה ל-atomic<bool> עם אותו relaxed לא תתקן כלום.",
@@ -825,9 +821,6 @@
       "answer": 3,
       "explanation": "התקן מגדיר שחשבון fetch_add ו-fetch_sub על atomic של טיפוס שלם עם סימן מתבצע כאילו ההמרה ל-unsigned, החישוב שם, וההמרה חזרה (two's complement). אין UB, בניגוד ל-`int x = INT_MAX; x + 1`. אין רוויה. זו הבחנה של standard-lawyer שמעניינת במונים שעשויים לגלוש.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: זה נכון ל-`int` רגיל, אבל התקן מגדיר שחשבון fetch_add על atomic של טיפוס שלם עם סימן מתבצע ב-two's complement בלי תוצאות לא מוגדרות.",
         "שגוי: אין רוויה (saturation) באף פעולה אטומית בתקן. הגלישה עוטפת.",
@@ -849,9 +842,6 @@
       "answer": 0,
       "explanation": "atomic_ref לא משנה את האובייקט, הוא רק מבצע עליו פעולות אטומיות. אם thread אחר קורא אותו ישירות באותו זמן, זו גישה לא-אטומית מקבילית לכתיבה, כלומר data race. מותר ליצור atomic_ref זמניים רבים לאותו אובייקט, ואחרי שהשלב המקבילי הסתיים (ויש happens-before, למשל join) מותר לגשת ישירות. required_alignment יכול להיות גדול מ-alignof(T), במיוחד בטיפוסים לא סטנדרטיים בגודלם.",
       "lesson": "conc.atomics",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: atomic_ref לא הופך את האובייקט לאטומי, אלא רק את הגישות שעוברות דרכו. כל עוד יש גישה דרך atomic_ref, גישה ישירה מקבילית היא data race. בנוסף האובייקט חייב להיות מיושר ל-required_alignment, שיכול להיות גדול מ-alignof(int).",
         "שגוי: מותר ליצור ולהרוס atomic_ref זמניים רבים לאותו אובייקט. האטומיות נובעת מכך שכל הגישות אטומיות, לא מאורך החיים של אובייקט ref מסוים.",
@@ -872,10 +862,376 @@
         "קשר ל-packed structs, atomic_ref ומצביעים לא מיושרים, ו-alignment fault ב-ARM"
       ],
       "explanation": "תשובה חלשה עוצרת ב-\"ה-lock prefix נועל את ה-bus\", מה שנכון רק במקרה הלא מיושר. תשובה חזקה מבחינה בין cache lock ל-bus lock ומבינה את ההשפעה הרוחבית.",
-      "lesson": "conc.atomics",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 4,
+      "type": "output",
+      "prompt": "שני threads מריצים את f. כל load ו-store אטומיים בנפרד, אבל ההגדלה עצמה לא אטומית. אילו ערכים יכולים להיות מודפסים (על ידי אחד מה-threads)?",
+      "lang": "cpp",
+      "code": "std::atomic<int> i{0};\n\nvoid f() {\n  for (int k = 0; k < 3; ++k)\n    i.store(i.load() + 1);      // load and store, not one RMW\n  std::printf(\"%d\\n\", i.load());\n}\n\nint main() {\n  std::thread t1(f), t2(f);\n  t1.join();\n  t2.join();\n}",
+      "choices": [
+        "רק 6",
+        "כל ערך בין 3 ל-6, כי כל thread רואה לפחות את 3 ההגדלות של עצמו",
+        "כל ערך בין 2 ל-6",
+        "כל ערך בין 1 ל-6"
+      ],
+      "answer": 3,
+      "explanation": "ההגדלה היא load ואז store, ולכן store של thread אחד יכול לדרוס כמה הגדלות של השני. תרחיש ל-1: T1 טוען 0 ונעצר. T2 מבצע את שלוש ההגדלות (i = 3). T1 כותב 1. T2 קורא ומדפיס 1. המקסימום 6 כשאין חפיפה בכלל. (ערך ה-i הסופי, לעומת זאת, לא יורד מתחת ל-2.)",
+      "notes": [
+        "שגוי: 6 מתקבל רק אם ההגדלות לא חופפות. עם load ו-store נפרדים, store של thread אחד יכול לדרוס הגדלות של השני.",
+        "שגוי: ה-thread לא \"מחזיק\" את ההגדלות שלו. store ישן של ה-thread השני יכול לדרוס אותן אחרי שהן נכתבו, בדיוק לפני ההדפסה.",
+        "שגוי: 2 הוא המינימום של הערך **הסופי** של i, לא של מה שמודפס. ההדפסה יכולה לקרות בדיוק אחרי ש-store ישן כתב 1.",
+        "נכון: T1 טוען 0, T2 משלים 3 הגדלות, T1 כותב 1, ו-T2 מדפיס 1. 6 כשאין חפיפה."
+      ],
+      "problem": "Microsoft interview: two unsynchronized threads increment i three times, max and min value printed",
       "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/318583/microsoft-sde-2-pune-by-anonymous_user-bc6p/"
+      ],
+      "id": "conc.atomics.q31",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 4,
+      "type": "output",
+      "prompt": "שני threads, וכל אחד מבצע 3 פעמים `i.store(i.load() + 1)` על `std::atomic<int> i{0}`. מה טווח הערך של i **אחרי** ששני ה-threads הסתיימו (main קורא אותו אחרי join)?",
+      "lang": "cpp",
+      "code": "std::atomic<int> i{0};\n\nvoid f() {\n  for (int k = 0; k < 3; ++k)\n    i.store(i.load() + 1);\n}\n\nint main() {\n  std::thread t1(f), t2(f);\n  t1.join();\n  t2.join();\n  std::printf(\"%d\\n\", i.load());\n}",
+      "choices": [
+        "בין 2 ל-6",
+        "בין 1 ל-6",
+        "תמיד 6",
+        "בין 3 ל-6"
+      ],
+      "answer": 0,
+      "explanation": "המינימום 2: T1 טוען 0. T2 מבצע 2 הגדלות (i = 2). T1 כותב 1. T2 טוען 1 ונעצר. T1 משלים את 2 ההגדלות שלו (i = 3). T2 כותב 2. ערך סופי 1 לא אפשרי: ה-store האחרון בא מההגדלה השלישית של thread כלשהו, וה-load שלה קרה אחרי שה-thread כבר כתב בעצמו. לפי coherence הוא רואה את הכתיבה שלו או כתיבה מאוחרת יותר, ושתיהן לפחות 1, ולכן הוא כותב לפחות 2.",
+      "notes": [
+        "נכון: התרחיש הקלאסי של lost updates מגיע ל-2, ו-6 כשאין חפיפה.",
+        "שגוי: 1 אפשרי כערך מודפס באמצע, אבל לא כערך סופי. ה-load של ההגדלה האחרונה רואה ערך של לפחות 1, ולכן ה-store האחרון כותב לפחות 2.",
+        "שגוי: זה היה נכון עם fetch_add. load ו-store נפרדים מאבדים הגדלות.",
+        "שגוי: 3 מניח שההגדלות של thread אחד לפחות שורדות. התרחיש שבו כל thread דורס את השני מוביל ל-2."
+      ],
+      "id": "conc.atomics.q32",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "`std::atomic<int> i{0};`. שני threads, וכל אחד מבצע 3 פעמים `i.fetch_add(1)` ואז מדפיס `i.load()`. מה מובטח?",
+      "choices": [
+        "הפלט זהה בכל ריצה",
+        "שני ה-threads מדפיסים 6",
+        "כל הדפסה היא בין 3 ל-6, ולפחות thread אחד מדפיס 6. הערך הסופי של i הוא 6",
+        "הדפסה יכולה להיות גם 2, אם ה-load מוקדם"
+      ],
+      "answer": 2,
+      "explanation": "fetch_add הוא RMW אטומי: אף הגדלה לא הולכת לאיבוד, ולכן הסופי 6. כל thread קורא אחרי 3 ההגדלות שלו, ולפי coherence רואה לפחות 3. ה-thread שביצע את ההגדלה השישית (האחרונה בסדר השינויים) קורא אחריה ולכן רואה 6.",
+      "notes": [
+        "שגוי: ה-thread השני עשוי עדיין להגדיל כשהראשון מדפיס, כך שהערך המודפס משתנה בין ריצות.",
+        "שגוי: thread שסיים מוקדם יכול להדפיס 4 או 5 בזמן שהשני עוד מגדיל.",
+        "נכון: מינימום 3 בזכות coherence (קריאה אחרי כתיבה של עצמו), ומישהו מבצע את ההגדלה ה-6 וקורא אחריה.",
+        "שגוי: כל thread כבר ביצע 3 הגדלות שלא אבדו, ו-load אחרי RMW של אותו thread לא יכול לראות ערך מוקדם יותר בסדר השינויים."
+      ],
+      "id": "conc.atomics.q33",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מחולל IDs ייחודיים שנקרא מעשרות threads. איזה מימוש מבטיח שאף ID לא יחזור על עצמו?",
+      "choices": [
+        "`thread_local uint64_t next = 0; return next++;`",
+        "`return std::chrono::steady_clock::now().time_since_epoch().count();`",
+        "`static std::atomic<uint64_t> next{0}; return next.fetch_add(1, std::memory_order_relaxed);`",
+        "`static std::atomic<uint64_t> next{0}; uint64_t id = next.load(); next.store(id + 1); return id;`"
+      ],
+      "answer": 2,
+      "explanation": "fetch_add הוא RMW אטומי: כל קריאה מקבלת ערך שונה מהסדר הכולל של השינויים. relaxed מספיק לייחודיות, כי ייחודיות לא תלויה בסדר מול משתנים אחרים.",
+      "notes": [
+        "שגוי: לכל thread מונה משלו שמתחיל ב-0, ולכן כל thread יחזיר 0, 1, 2... אותם IDs.",
+        "שגוי: שני threads יכולים לקרוא את השעון באותו tick (או ב-tick שווה על cores שונים), ולקבל אותו ערך.",
+        "נכון: כל fetch_add קורא את הערך האחרון בסדר השינויים וכותב ערך חדש באופן אטומי. אין שני מקבלים לאותו ערך.",
+        "שגוי: check-then-act: שני threads יכולים לטעון את אותו id לפני שמישהו כתב, ושניהם מחזירים אותו."
+      ],
+      "problem": "Amazon interview: generate unique IDs from many threads",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1054063/amazon-sde-reject-by-anonymous_user-949w/"
+      ],
+      "id": "conc.atomics.q34",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מחולל ה-IDs עם `fetch_add(1)` הפך לצוואר בקבוק ב-64 threads (cache line bouncing על המונה). המראיין מכוון ל\"prefix או בלוקים\". מה הפתרון?",
+      "choices": [
+        "כל thread לוקח בלוק של IDs בבת אחת (`base = next.fetch_add(1000)`) ומחלק ממנו מקומית, או משתמש ב-ID = (מזהה thread או שרת בביטים העליונים, מונה מקומי בתחתונים)",
+        "להוסיף padding סביב המונה",
+        "להחליף את fetch_add בלולאת compare_exchange",
+        "להחליף ל-memory_order_relaxed"
+      ],
+      "answer": 0,
+      "explanation": "ה-contention הוא על בעלות על cache line, לא על ordering. בלוקים מורידים את הפעולות המשותפות פי 1000. prefix מבטל את השיתוף לגמרי, וזה גם מה שמתרחב לכמה שרתים (Snowflake IDs). המחיר: IDs לא רציפים ולא מסודרים גלובלית בזמן.",
+      "notes": [
+        "נכון: מקטינים את מספר הפעולות על המשתנה המשותף, או מבטלים את השיתוף.",
+        "שגוי: padding עוזר נגד false sharing בין משתנים שונים. כאן יש משתנה אחד שכולם כותבים אליו, true sharing.",
+        "שגוי: CAS בלולאה עושה אותה גישה בלעדית ל-cache line, ועוד נכשל וחוזר תחת תחרות. זה גרוע יותר מ-fetch_add.",
+        "שגוי: על x86 כל RMW הוא lock prefix בכל מקרה. relaxed לא מבטל את המעבר של ה-cache line בין cores."
+      ],
+      "id": "conc.atomics.q35",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "האם `next.fetch_add(1, std::memory_order_relaxed)` מספיק כדי ש-IDs יהיו ייחודיים בין threads?",
+      "choices": [
+        "כן, אבל רק על x86",
+        "לא, צריך seq_cst כדי שה-IDs יהיו ייחודיים",
+        "לא, relaxed יכול להחזיר לשני threads את אותו ערך",
+        "כן: גם RMW עם relaxed תמיד קורא את הערך האחרון בסדר השינויים של המשתנה, ולכן כל קריאה מקבלת ערך שונה. relaxed רק לא מסדר את הפעולה מול **משתנים אחרים**"
+      ],
+      "answer": 3,
+      "explanation": "אטומיות של RMW לא תלויה ב-memory order: כל RMW קורא את הערך שקדם לו מיד בסדר השינויים. memory order קובע רק מה נראה ממשתנים אחרים. אם ה-ID משמש גם לפרסום נתונים (למשל אינדקס לתא שמולא), צריך release ו-acquire על מה שמפרסם.",
+      "notes": [
+        "שגוי: זו הבטחה של מודל הזיכרון של C++, בכל ארכיטקטורה.",
+        "שגוי: seq_cst מוסיף סדר כולל מול פעולות אחרות. לייחודיות של מונה יחיד הוא לא נדרש.",
+        "שגוי: זה נכון ל-load ו-store נפרדים, לא ל-RMW. RMW לעולם לא \"מפספס\" ערך.",
+        "נכון: ייחודיות נובעת מאטומיות ה-RMW, לא מה-ordering."
+      ],
+      "id": "conc.atomics.q36",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מערכת הזמנת כרטיסים: לכל מושב `std::atomic<int> state` עם FREE = 0, HELD = 1, SOLD = 2. אלפי בקשות במקביל מנסות לתפוס מושבים. איזה מימוש של `bool try_hold(int s)` נכון?",
+      "choices": [
+        "`return state[s].exchange(HELD) == FREE;`",
+        "`int e = FREE; return state[s].compare_exchange_strong(e, HELD);`",
+        "`return state[s].fetch_add(1) == FREE;`",
+        "`if (state[s].load() == FREE) { state[s].store(HELD); return true; } return false;`"
+      ],
+      "answer": 1,
+      "explanation": "צריך \"אם פנוי, תפוס\" כפעולה אחת שלא משנה כלום אם המושב לא פנוי. זה בדיוק CAS: מצליח ל-thread אחד בלבד, ומשאיר HELD או SOLD כמו שהם. זו גם הגרסה ב-SQL: `UPDATE ... SET state = HELD WHERE id = ? AND state = FREE`.",
+      "notes": [
+        "שגוי: exchange מחזיר FREE רק לאחד, אבל דורס את המצב בכל מקרה: מושב SOLD הופך ל-HELD, וזה שובר את המכירה.",
+        "נכון: CAS משנה רק אם המצב הוא FREE, ומחזיר הצלחה לבקשה אחת בלבד.",
+        "שגוי: fetch_add מחזיר FREE רק לראשון, אבל כל בקשה נוספת מגדילה את state: HELD הופך ל-SOLD ואחר כך לערכים לא חוקיים.",
+        "שגוי: check-then-act. שתי בקשות קוראות FREE ושתיהן כותבות HELD, וכל אחת חושבת שהמושב שלה."
+      ],
+      "problem": "Meta interview: ticket booking, race conditions and concurrency control",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/6336311/meta-system-design-by-anonymous_user-1n24/",
+        "https://leetcode.com/discuss/post/4544611/meta-infra-e5-onsite-by-anonymous_user-kl5c/"
+      ],
+      "id": "conc.atomics.q37",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "במערכת הכרטיסים: try_hold עושה CAS מ-FREE ל-HELD. thread expiry משחרר holds ישנים ב-CAS מ-HELD ל-FREE. ה-checkout של המשתמש עושה CAS מ-HELD ל-SOLD. נמצא באג: משתמש A שה-hold שלו פג קנה את המושב, למרות שמשתמש B תפס אותו אחרי ה-expiry. איך זה קרה, ומה התיקון?",
+      "choices": [
+        "ה-CAS לא אטומי. צריך mutex",
+        "ABA: המושב עבר HELD(A), FREE, HELD(B). ה-CAS של A מ-HELD ל-SOLD מצליח, כי הוא בודק רק \"HELD\" ולא של מי. התיקון: לקודד ב-state גם את מזהה ה-hold (או גרסה), ולעשות CAS מ-(HELD, idA) ל-SOLD",
+        "צריך compare_exchange_weak במקום strong",
+        "thread ה-expiry צריך להשתמש ב-exchange במקום CAS"
+      ],
+      "answer": 1,
+      "explanation": "CAS משווה ערכים, לא היסטוריה. כשאותו ערך (HELD) חוזר עם משמעות אחרת (בעלים אחר), CAS לא מבחין. הפתרון הוא לכלול את הזהות או גרסה בערך שמושווה, למשל 64 ביט עם state ו-holdId, וזה בדיוק tagged pointer של ABA.",
+      "notes": [
+        "שגוי: CAS אטומי. הבעיה היא מה הוא משווה.",
+        "נכון: HELD של B נראה זהה ל-HELD של A. מזהה hold בתוך הערך המושווה פותר את ה-ABA.",
+        "שגוי: weak רק מוסיף כישלונות מדומים. הוא משווה את אותו ערך.",
+        "שגוי: exchange היה גרוע יותר: הוא היה משחרר גם מושב שכבר נמכר."
+      ],
+      "id": "conc.atomics.q38",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "משתמש רוצה 3 מושבים צמודים, הכול או כלום. המימוש עושה CAS מ-FREE ל-HELD על כל מושב לפי הסדר. מה נכון?",
+      "choices": [
+        "צריך לבצע את שלושת ה-CAS במקביל משלושה threads",
+        "אי אפשר לממש את זה בלי transaction של מסד נתונים",
+        "זה אטומי, כי כל CAS אטומי",
+        "אם ה-CAS על המושב השלישי נכשל, צריך לשחרר (rollback) את שני הראשונים. בינתיים משתמשים אחרים רואים אותם תפוסים, וזה מקובל כי החזקה זמנית היא לא מכירה"
+      ],
+      "answer": 3,
+      "explanation": "רצף של פעולות אטומיות אינו אטומי. אבל כאן מספיקה אטומיות לוגית: מחזיקים זמנית, ואם נכשלים משחררים. תפיסה בסדר עולה של מספרי מושבים מונעת מצב שבו שני משתמשים מחזיקים כל אחד חלק ומחכים לשני. אם צריך שאף אחד לא יראה מצב ביניים, צריך lock על הקבוצה או CAS על מילה אחת שמכילה את כל המושבים בשורה (bitmask).",
+      "notes": [
+        "שגוי: ביצוע מקבילי לא הופך את הקבוצה לאטומית, רק מסבך את ה-rollback.",
+        "שגוי: אפשר, עם rollback, או עם CAS על bitmask של שורה שלמה במילה אחת.",
+        "שגוי: כל CAS אטומי לבדו, והרצף לא. משתמש אחר יכול לתפוס את המושב השלישי בין ה-CAS-ים.",
+        "נכון: hold זמני ו-rollback, בסדר קבוע כדי למנוע livelock ותלות מעגלית."
+      ],
+      "id": "conc.atomics.q39",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "באילו מצבים `volatile` הוא הכלי הנכון ב-C או C++?",
+      "choices": [
+        "דגל מסוג `volatile sig_atomic_t` ש-signal handler מדליק והלולאה הראשית בודקת",
+        "דגל שמפרסם נתונים מ-thread על core אחד ל-thread על core אחר",
+        "משתנה מקומי שמשתנה בין `setjmp` ל-`longjmp` וצריך את ערכו אחרי החזרה",
+        "גישה לרגיסטר חומרה ממופה לזיכרון (MMIO), שכל קריאה וכתיבה אליו היא פעולה שיש לה משמעות",
+        "מונה שני threads מגדילים במקביל"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "volatile אומר לקומפיילר: כל גישה היא side effect, אל תאחד, תשמיט או תשמור ברגיסטר. זה מה שצריך כשמשהו מחוץ לזרימה הרגילה של הקוד משנה או קורא את הזיכרון באותו thread (חומרה, signal, longjmp). volatile לא נותן אטומיות ולא סדר בין cores, ולכן הוא לא כלי לתקשורת בין threads.",
+      "notes": [
+        "נכון: זו הצורה היחידה שהתקן מגדיר לכתיבה מ-signal handler למשתנה רגיל.",
+        "שגוי: volatile לא מונע מהמעבד לסדר מחדש, ולא יוצר happens-before. על ARM הקורא יכול לראות את הדגל לפני הנתונים.",
+        "נכון: התקן אומר שמשתנים מקומיים לא volatile ששונו אחרי setjmp הם indeterminate אחרי longjmp.",
+        "נכון: בלי volatile הקומפיילר רשאי לאחד שתי קריאות מאותו רגיסטר, או להשמיט כתיבה, וזה שובר עבודה מול חומרה.",
+        "שגוי: `x++` על volatile הוא עדיין load, הוספה ו-store נפרדים. הגדלות הולכות לאיבוד, וזה גם data race (UB). צריך std::atomic."
+      ],
+      "problem": "Qualcomm / NVIDIA interview: what does the volatile keyword do",
+      "tags": [
+        "qualcomm",
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/8365964/qualcomm-senior-engineer-by-anonymous_us-zu9g/",
+        "https://leetcode.com/discuss/post/824537/qualcomm-engineer-india-new-grad-by-anon-0y2s/",
+        "https://geeksforgeeks.org/qualcomm-interview-experience-off-campus-2021",
+        "https://leetcode.com/discuss/post/8510550/nvidia-interview-experience-senior-syste-vr87/",
+        "https://www.glassdoor.es/Entrevista/NVIDIA-Entrevista-E7633-RVW22514159.htm"
+      ],
+      "id": "conc.atomics.q40",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מיקרו-בקר 8 ביט עם core אחד. ISR של טיימר מגדיל `volatile uint32_t ticks;` כל מילי-שנייה, והלולאה הראשית קוראת אותו. לפעמים הלולאה הראשית רואה ערכים לא הגיוניים (קפיצה של 256 קדימה ואחורה). למה?",
+      "choices": [
+        "צריך להגדיר ticks כ-`static`",
+        "volatile לא מונע מהקומפיילר לשמור את ticks ברגיסטר",
+        "קריאה של משתנה 32 ביט על מעבד 8 ביט היא 4 קריאות נפרדות. ה-ISR יכול לרוץ באמצע, למשל כשה-byte הנמוך עובר מ-255 ל-0, והתוצאה מחוברת מחלקים ישנים וחדשים (tearing). צריך לבטל interrupts סביב הקריאה, או לקרוא פעמיים עד שמתקבל אותו ערך",
+        "ה-ISR צריך להשתמש ב-`ticks += 1` במקום `ticks++`"
+      ],
+      "answer": 2,
+      "explanation": "volatile מבטיח שכל הגישות יתבצעו, לא שהן יהיו אטומיות. גישה רחבה מרוחב ה-bus מתפצלת, ו-interrupt באמצע מייצר ערך מעורב. על core יחיד הפתרון הקלאסי הוא critical section קצר עם interrupts כבויים.",
+      "notes": [
+        "שגוי: static קובע linkage ואורך חיים, לא אטומיות.",
+        "שגוי: זה בדיוק מה ש-volatile כן מונע. כל קריאה מתבצעת מהזיכרון.",
+        "נכון: tearing. ההגדלה ב-ISR עצמה בטוחה (הלולאה הראשית לא קוטעת את ה-ISR), אבל הקריאה בלולאה הראשית ניתנת לקטיעה.",
+        "שגוי: שתי הצורות זהות. הבעיה בצד הקורא."
+      ],
+      "id": "conc.atomics.q41",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "קוד bare-metal על core יחיד, בלי מערכת הפעלה: `bool done = false;` גלובלי, ISR של סיום DMA קובע `done = true`, והלולאה הראשית מחכה `while (!done) {}`. עם `-O2` הלולאה לא מסתיימת לעולם. מה התיקון המינימלי שמקובל כאן?",
+      "choices": [
+        "להוריד אופטימיזציות ל-`-O0` בכל הפרויקט",
+        "להוסיף `printf` בתוך הלולאה",
+        "להגדיר `volatile bool done`: הקומפיילר הניח שהלולאה לא משנה את done והוציא את הקריאה מהלולאה. volatile מכריח קריאה מהזיכרון בכל איטרציה",
+        "להגדיר את done כ-`static`"
+      ],
+      "answer": 2,
+      "explanation": "הקומפיילר לא יודע שה-ISR יכול לרוץ באמצע הלולאה, ולכן מותר לו לקרוא את done פעם אחת. על core יחיד בלי cache coherence issues, volatile הוא התיקון הסטנדרטי. בקוד multi-threaded על כמה cores, התיקון הוא std::atomic, כי שם יש גם עניין של סדר ושל data race.",
+      "notes": [
+        "שגוי: זה מסתיר את הבאג. בגרסה עם אופטימיזציות הוא יחזור.",
+        "שגוי: קריאה לפונקציה חיצונית אולי תכריח את הקומפיילר לטעון מחדש, אבל זה תיקון במקרה ולא בכוונה, ומאט את הלולאה.",
+        "נכון: volatile הוא בדיוק \"משהו מחוץ לקוד הזה משנה את המשתנה\". מקובל ל-ISR על core יחיד.",
+        "שגוי: static משפיע על linkage. הקומפיילר עדיין רשאי לשמור את הערך ברגיסטר."
+      ],
+      "id": "conc.atomics.q42",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 4,
+      "type": "bug",
+      "prompt": "hit counter של 5 הדקות האחרונות: 300 buckets, אחד לכל שנייה. `time` ו-`count` בכל bucket הם `std::atomic` נפרדים. hit() נקרא מהרבה threads. בבדיקות עומס חסרות hits, בעיקר במעבר בין שניות. איפה הבאג?",
+      "lang": "cpp",
+      "code": "struct Bucket { std::atomic<int64_t> time{-1}; std::atomic<int> count{0}; };\nBucket b[300];\n\nvoid hit(int64_t sec) {\n  Bucket& x = b[sec % 300];\n  if (x.time.load() != sec) {\n    x.time.store(sec);\n    x.count.store(0);\n  }\n  x.count.fetch_add(1);\n}",
+      "bugLine": 6,
+      "choices": [
+        "הבדיקה והאיפוס הם check-then-act על שני שדות נפרדים: שני threads בתחילת שנייה חדשה רואים זמן ישן, ואחד מאפס את count אחרי שהשני כבר הגדיל אותו, וה-hit הולך לאיבוד",
+        "צריך `sec % 300` כ-unsigned",
+        "count צריך להיות int64_t",
+        "fetch_add צריך להיות עם memory_order_seq_cst מפורש"
+      ],
+      "answer": 0,
+      "explanation": "כל שדה אטומי לבדו, אבל הרצף \"בדוק זמן, אפס, הגדל\" לא. תרחיש: T1 ו-T2 רואים זמן ישן. T1 קובע time ומאפס ומגדיל (count = 1). T2 מאפס (count = 0) ומגדיל (count = 1). hit אחד אבד. התיקון: mutex לכל bucket, או לארוז את (שנייה, count) במילה אחת של 64 ביט ולעדכן ב-CAS.",
+      "notes": [
+        "נכון: invariant שמשתרע על שני שדות דורש עדכון אטומי של שניהם יחד.",
+        "שגוי: sec חיובי, כך ש-% נותן אינדקס תקין.",
+        "שגוי: בשנייה אחת אין סיכוי ל-2 מיליארד hits ב-bucket. זה לא הבאג.",
+        "שגוי: ברירת המחדל כבר seq_cst. הבעיה היא אטומיות של רצף, לא ordering."
+      ],
+      "problem": "Apple interview: hit counter, is it thread-safe and what is the critical section",
+      "tags": [
+        "apple"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/2432962/apple-onsite-london-reject-by-anonymous_-pozj/"
+      ],
+      "id": "conc.atomics.q43",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "hit counter של 5 הדקות האחרונות עם 300 buckets (אחד לכל שנייה), שנקרא מהרבה threads. כל bucket הוא `std::atomic<uint64_t>` אחד, 32 הביטים העליונים הם השנייה ו-32 התחתונים הם ה-count. איזה hit() נכון?",
+      "choices": [
+        "תמיד `x.fetch_add(1)`, ואם השנייה ישנה מתקנים אחר כך",
+        "`x.store((sec << 32) | 1)` בכל hit",
+        "קוראים old, ואם השנייה שונה כותבים `(sec << 32) | 1` ב-store, אחרת fetch_add(1)",
+        "לולאת CAS: `old = x.load(); do { nw = (old >> 32) == sec ? old + 1 : (sec << 32) | 1; } while (!x.compare_exchange_weak(old, nw));`"
+      ],
+      "answer": 3,
+      "explanation": "CAS על המילה כולה מבטיח שההחלטה (לאפס או להגדיל) מבוססת על הערך שבאמת מוחלף. אם מישהו שינה את המילה בינתיים, ה-CAS נכשל, old מתעדכן, וההחלטה מחושבת מחדש. זה lock-free ובלי hits אבודים.",
+      "notes": [
+        "שגוי: fetch_add על מילה עם שנייה ישנה מגדיל את ה-count של השנייה הישנה, ו\"תיקון אחר כך\" שוב חושף race.",
+        "שגוי: כל hit מאפס את ה-count ל-1. הספירה נהרסת.",
+        "שגוי: store של האיפוס יכול לדרוס fetch_add של thread אחר שכבר ראה את השנייה החדשה. אותה בעיה בצורה אחרת.",
+        "נכון: ההחלטה והעדכון קורים אטומית יחד. כישלון של CAS מחזיר את הערך העדכני ומנסים שוב."
+      ],
+      "id": "conc.atomics.q44",
+      "lesson": "conc.atomics"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "hit counter של 5 דקות עם 300 buckets אטומיים (אחד לכל שנייה). get_hits() סוכם את 300 ה-buckets (שבשנייה שלהם בטווח 5 הדקות) בזמן ש-hits ממשיכים להגיע. מה נכון לגבי התוצאה?",
+      "choices": [
+        "היא snapshot מדויק של רגע אחד, כי כל קריאה אטומית",
+        "כל קריאה אטומית, אבל הסכום אינו snapshot: buckets שנקראו מוקדם ומאוחר משקפים רגעים שונים. למוניטורינג זה מקובל. לערך מדויק ברגע אחד צריך לעצור את כל הכותבים (lock על כל המבנה)",
+        "היא עלולה לכלול ערכים חלקיים (torn) של bucket",
+        "היא תמיד קטנה מהערך האמיתי"
+      ],
+      "answer": 1,
+      "explanation": "אטומיות של כל קריאה לא הופכת קבוצת קריאות לעקבית. הסכום יכול לכלול hit שקרה אחרי ש-bucket אחר כבר נקרא, ולהחסיר hit שהגיע אחרי שה-bucket שלו נקרא. ב-counters זה בדרך כלל בסדר.",
+      "notes": [
+        "שגוי: 300 קריאות אטומיות נפרדות קורות ברגעים שונים.",
+        "נכון: linearizability של כל קריאה לא נותנת snapshot של הקבוצה.",
+        "שגוי: כל bucket הוא atomic אחד, ולכן כל קריאה שלמה.",
+        "שגוי: הסכום יכול להיות גם גדול מהערך ברגע ההתחלה, כי hits חדשים נספרים בזמן הסכימה."
+      ],
+      "id": "conc.atomics.q45",
+      "lesson": "conc.atomics"
     }
   ]
 }

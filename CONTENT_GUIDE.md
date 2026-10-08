@@ -135,6 +135,20 @@ the app shows each note under its choice after answering, in shuffled display or
 - For `bug` questions the notes explain each candidate reason.
 - `explanation` stays: it's the overall summary shown above the notes.
 
+### Sourced questions (`sources`) and company tags — strict rule
+
+A company tag means "a public source reports this was asked at that company". Nothing else.
+
+- `tags` ("nvidia" / "microsoft" / "meta" / "apple" / "google" / "amazon" / "qualcomm" / "intel") are allowed ONLY on
+  questions that also have `sources`: an array of the URLs (opened and read) where the question, or the exact
+  problem, is reported as asked at that company. Every tag must be backed by at least one of those URLs.
+- `problem` names the reported problem/question (e.g. "LeetCode 283 · Move Zeroes" or "NVIDIA phone screen:
+  volatile vs atomic").
+- Questions you write yourself (including variants of sourced questions) get NO tags, NO `sources`, NO `problem`.
+- Variants: to make the bank bigger without rote memorization, write variants of sourced questions at the same
+  weight/difficulty with small changes: different numbers or inputs, the mirror case, the follow-up, the same idea
+  tested from another angle. Never a reworded copy.
+
 ### Company problems (`problem`, `tags`)
 
 Questions based on well-known interview problems (LeetCode etc.) carry `problem`
@@ -162,7 +176,5 @@ Rules:
   Level 3: mid, choosing the approach, LeetCode medium. Level 4: senior, medium-hard,
   trade-offs, follow-ups. Level 5: strong senior: hard problems, subtle edge cases,
   standard-lawyer C++, deep "why", design under constraints.
-- Add `"tags": ["nvidia"]` / `["microsoft"]` where the question is typical for that
-  company (NVIDIA: C++, performance, systems, concurrency, GPU-adjacent thinking;
-  Microsoft: algorithms, system design, behavioral).
+- Company `tags` only with `sources` (see "Sourced questions"). Never tag a question because it seems typical for a company.
 - JSON must be valid: escape quotes and newlines (`\n`) inside strings.

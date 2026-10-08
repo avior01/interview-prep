@@ -182,6 +182,30 @@
         {
           "term": "compute-sanitizer",
           "def": "הכלי של NVIDIA לקוד CUDA: memcheck לגישות זיכרון, racecheck ל-races על shared memory, synccheck לשימוש שגוי ב-__syncthreads."
+        },
+        {
+          "term": "סדר חישוב ארגומנטים",
+          "def": "התקן לא קובע סדר בין ארגומנטים של קריאה. לפני C++17 (וב-C) הם unsequenced, ולכן שינוי של אותו משתנה בשני ארגומנטים הוא UB. מ-C++17 כל פרמטר indeterminately sequenced, כלומר בסדר כלשהו שלא ידוע מראש. GCC מזהיר עם -Wsequence-point."
+        },
+        {
+          "term": "P0145 (C++17 evaluation order)",
+          "def": "קבע סדר לאופרטורים מסוימים: ב-`a << b`, `a >> b`, `a[b]`, `a.b` ו-`a->b` השמאלי לפני הימני, ובהשמה (`a = b`, `a += b`) הימני לפני השמאלי. לכן `i = i++ + 1` מוגדר מ-C++17, ושרשרת `cout << f() << g()` מסודרת."
+        },
+        {
+          "term": "malloc(0)",
+          "def": "implementation-defined: מחזיר null או pointer ייחודי שאסור לגשת דרכו. אם אינו null חייבים free. new int[0] ב-C++ מחזיר תמיד pointer שאינו null, ומשחררים אותו עם delete[]."
+        },
+        {
+          "term": "overcommit ו-OOM killer",
+          "def": "ב-Linux, malloc גדול מקצה כתובות וירטואליות בלבד, והדפים הפיזיים מוקצים בגישה הראשונה. אם הזיכרון נגמר אז, ה-OOM killer הורג תהליך (SIGKILL). לכן הצלחה של malloc לא מבטיחה זיכרון. במערכות זמן-אמת מקצים מראש ונוגעים בכל הדפים או משתמשים ב-mlockall."
+        },
+        {
+          "term": "memmove",
+          "def": "כמו memcpy, אבל מוגדר גם כשהאזורים חופפים: התוצאה כאילו הועתק קודם ל-buffer זמני. מימוש טיפוסי בוחר העתקה קדימה או אחורה לפי סדר הכתובות. memcpy עם חפיפה הוא UB."
+        },
+        {
+          "term": "unsigned wrap-around בלולאות",
+          "def": "חשבון unsigned מוגדר modulo 2^N, ולכן `i >= 0` תמיד נכון עבור unsigned, ו-0-1 הוא הערך המקסימלי. לולאה הפוכה בטוחה: `for (size_t i = n; i-- > 0;)`."
         }
       ]
     }
@@ -424,9 +448,6 @@
       "answer": 2,
       "explanation": "[intro.races]: שתי גישות מתנגשות שלפחות אחת מהן כתיבה, בלי happens-before ביניהן, הן UB. הקומפיילר יכול להחזיק את counter ברגיסטר כל הלולאה. volatile לא נותן אטומיות ולא סדר בין threads. הפתרון: std::atomic<int> או mutex.",
       "lesson": "cpp.ub",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: lost updates הם מה שרואים בפועל, אבל לפי [intro.races] data race על אובייקט לא-atomic הוא UB, ולכן אין הבטחה אפילו לזה.",
         "שגוי: התקן לא מתייחס לארכיטקטורה. גם ב-x86 inc בלי lock הוא read-modify-write לא אטומי, והקומפיילר יכול להחזיק את counter ברגיסטר.",
@@ -476,9 +497,6 @@
       "answer": 1,
       "explanation": "הקומפיילר מבצע strength reduction: מחליף את i * 1e9 במונה שגדל ב-1e9, ומבטא את תנאי היציאה דרכו. כיוון ש-overflow לא אמור לקרות, ההמרה נחשבת חוקית, והתנאי החדש לא מתקיים לעולם. זו דוגמה ש-UB משפיע על קוד שנראה לא קשור, כמו תנאי הלולאה.",
       "lesson": "cpp.ub",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: signed overflow לא מוגדר כ-wrap. 3 * 10^9 גדול מ-INT_MAX, וזה UB, ולכן אין הבטחה לערך שלילי.",
         "נכון: ב-i=3 המכפלה גולשת, וזה UB. הקומפיילר מניח שאין overflow, ולכן מסיק ש-i < 3. אחרי strength reduction תנאי היציאה מבוטא דרך המונה החדש ולא מתקיים, ו-GCC ב-O2 ייצר בפועל לולאה אינסופית.",
@@ -521,10 +539,7 @@
         "מניעה בעיצוב הקוד (RAII, atomic, checked arithmetic, hardening)"
       ],
       "explanation": "מראיין סניור מצפה לתהליך מסודר ומדיד, ולא רק לרשימת כלים. גם חשוב להבין שאסור להשאיר flags כמו -fwrapv כ'תיקון'.",
-      "lesson": "cpp.ub",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.ub"
     },
     {
       "id": "cpp.ub.q16",
@@ -605,10 +620,7 @@
         "בדיקה של מקרי קצה: INT_MIN, INT_MAX, -1, 0"
       ],
       "explanation": "הבדיקה עצמה חייבת להיות נקייה מ-UB, וזו המלכודת: INT_MIN / a עם a == -1 היה UB, ולכן המקרה a > 0 מופרד. בדיקה קפדנית עם מקרי הקצה היא מה שמבדיל תשובה של סניור.",
-      "lesson": "cpp.ub",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.ub"
     },
     {
       "id": "cpp.ub.q20",
@@ -774,9 +786,6 @@
       "answer": 3,
       "explanation": "integer promotion הופך טיפוסים קטנים ל-int ולא ל-unsigned int, כל עוד int יכול לייצג את כל הערכים שלהם. החישוב ב-int גולש, וזה UB למרות שאין בקוד אף טיפוס signed. ב-constexpr הקומפיילר מוציא overflow in constant expression, ו-UBSan מדווח בזמן ריצה. הטיפוס של היעד לא משפיע על הטיפוס של החישוב.",
       "lesson": "cpp.ub",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: האופרנדים לא נשארים unsigned. integer promotion הופך uint16_t ל-int, כי int מכיל את כל הערכים שלו, והחישוב signed.",
         "שגוי: הטיפוס של היעד לא משפיע על טיפוס החישוב. המכפלה מחושבת ב-int וגולשת לפני ההשמה ל-uint32_t.",
@@ -801,9 +810,6 @@
       "answer": 1,
       "explanation": "אין אובייקט uint32_t בכתובת הזו, ולכן הגישה מפרה aliasing, והכתובת לא מיושרת ל-alignof(uint32_t). הקומפיילר רשאי להשתמש בהוראות שמניחות יישור, ולסדר מחדש את הקריאה ביחס לכתיבות ל-buf. memcpy מוגדר, והקומפיילר מתרגם אותו להוראת load אחת שמתאימה לפלטפורמה. בפרוטוקולי רשת צריך גם לטפל ב-byte order.",
       "lesson": "cpp.ub",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: static_cast בין pointers לטיפוסים לא קשורים לא מתקמפל. וגם אילו התקמפל, הגישה הייתה מפרה aliasing ו-alignment באותה מידה.",
         "נכון: אין אובייקט uint32_t בכתובת, ולכן הגישה מפרה strict aliasing. buf + 1 גם לא מיושר ל-alignof(uint32_t). שניהם UB. x86 סובל גישה לא מיושרת, ARM או הוראות SIMD לא. התיקון: memcpy ל-uint32_t מקומי.",
@@ -858,6 +864,304 @@
         "שגוי: union punning מוגדר ב-C, אבל ב-C++ רק ה-member הפעיל חי, וקריאה מ-member אחר היא UB.",
         "נכון: memcpy בין טיפוסים trivially copyable באותו גודל מעתיק את ה-bits לאובייקט היעד, וזה מוגדר."
       ]
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שאלת \"מה הפלט\" ממבחן: \n```cpp\nint a = 10;\nstd::printf(\"%d %d %d %d %d\\n\", a++, ++a, a++, a++, ++a);\n```\nמה התשובה הנכונה?",
+      "choices": [
+        "תמיד `10 12 12 13 15`, כי הארגומנטים מחושבים משמאל לימין",
+        "תמיד `15 15 12 11 11` על x86, כי שם מחשבים מימין לשמאל",
+        "אין פלט מובטח: ב-C זה UB, וב-C++ הסדר לכל הפחות לא נקבע ע\"י התקן. GCC, למשל, מדפיס 14 15 12 11 15",
+        "שגיאת קומפילציה: אסור לשנות משתנה יותר מפעם אחת בקריאה"
+      ],
+      "answer": 2,
+      "explanation": "ב-C (וב-C++ לפני C++17), חישובי הארגומנטים של קריאה לא מסודרים זה ביחס לזה (unsequenced), ושינוי של a כמה פעמים בלי סדר הוא UB. ב-C++17 אתחול כל פרמטר indeterminately sequenced ביחס לאחרים, ולכן לכל הפחות הסדר לא נקבע ע\"י התקן. בקריאה variadic כמו printf יש אפילו ויכוח אם הכלל הזה בכלל חל. כך או כך אין פלט מובטח: GCC מדפיס בפועל 14 15 12 11 15 (חישוב מימין לשמאל, ו-++a מחזיר reference שנקרא בסוף), ומזהיר עם -Wsequence-point. התשובה הנכונה בראיון: \"לא מוגדר, ולא כותבים קוד כזה\".",
+      "notes": [
+        "שגוי: אין בתקן כלל של שמאל לימין לארגומנטים של פונקציה. C++17 קבע סדר משמאל לימין רק לאופרטורים כמו <<, = ו-[], לא לארגומנטים.",
+        "שגוי: סדר החישוב לא נקבע לפי ארכיטקטורה ואינו מובטח. גם מימין לשמאל, ++a מחזיר reference ל-a ונקרא בשלב מאוחר, ולכן GCC מדפיס 15 בשני המקומות של ++a ולא 11.",
+        "נכון: אי אפשר להסתמך על אף פלט. זו בדיוק הנקודה שהמראיין בודק: הבנה של sequencing ולא ניחוש של מימוש מסוים.",
+        "שגוי: הקוד מתקמפל. במקרה הטוב יש אזהרה (-Wsequence-point / -Wunsequenced)."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/4032849/nvidia-interview-off-campus-2023"
+      ],
+      "problem": "NVIDIA online test: output of printf with a++ and ++a",
+      "id": "cpp.ub.q31",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מה הערך של i אחרי `int i = 5; i = i++ + 1;` ב-C++17, ומה היה המצב ב-C++14?",
+      "choices": [
+        "C++17: 6 ומוגדר היטב. C++14: UB",
+        "C++17: 7. C++14: 7",
+        "בשני התקנים UB",
+        "C++17: 5, כי ההשמה דורסת את ההגדלה"
+      ],
+      "answer": 0,
+      "explanation": "C++17 (P0145) קבע שבהשמה האופרנד הימני, כולל ה-side effects שלו, sequenced לפני השמאלי ולפני ההשמה. לכן: i++ מחזיר 5 ומגדיל את i ל-6, 5+1 = 6, ואז ההשמה כותבת 6. ב-C++14 ה-side effect של i++ וההשמה היו unsequenced, ולכן זה היה UB.",
+      "notes": [
+        "נכון: בצד ימין i++ מחזיר 5 והגדלה ל-6 מתבצעת. התוצאה 6 נכתבת ל-i אחרי זה. לפני C++17 שני השינויים ל-i לא היו מסודרים.",
+        "שגוי: 7 היה יוצא אם ההגדלה הייתה נוספת על ההשמה. ההשמה כותבת 6 ודורסת את הערך 6 של ה-i++.",
+        "שגוי: C++17 הגדיר במפורש את הסדר הזה. מה שעדיין UB הוא למשל `i++ + i++`.",
+        "שגוי: הערך שנכתב הוא i++ + 1 = 5 + 1 = 6, לא 5."
+      ],
+      "id": "cpp.ub.q32",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט ב-C++17?",
+      "code": "int f() { std::cout << 'f'; return 1; }\nint g() { std::cout << 'g'; return 2; }\n\nint main() { std::cout << f() << g(); }",
+      "choices": [
+        "fg12",
+        "f1g2",
+        "gf12",
+        "12fg"
+      ],
+      "answer": 1,
+      "explanation": "מ-C++17, בביטוי `a << b` האופרנד השמאלי sequenced לפני הימני, ולכן בשרשרת `std::cout << f() << g()` הקריאה ל-f() מתבצעת ראשונה, מודפס הערך שלה, ורק אז g(). לפני C++17 הסדר היה unspecified, ו-\"gf12\" היה פלט אפשרי.",
+      "notes": [
+        "שגוי: מניח ששתי הפונקציות נקראות לפני כל הדפסה. ב-C++17 `(cout << f())` מחושב כולו (כולל ההדפסה של 1) לפני ש-g() נקראת.",
+        "נכון: f מדפיסה f, אחריה מודפס 1, ואז g מדפיסה g ומודפס 2.",
+        "שגוי: זה היה פלט אפשרי לפני C++17. מ-C++17 האופרנד השמאלי של << מסודר לפני הימני.",
+        "שגוי: הערכים לא יכולים להיות מודפסים לפני שהפונקציות שמחזירות אותם רצו."
+      ],
+      "id": "cpp.ub.q33",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (int של 32 ביט, size_t של 64 ביט)",
+      "code": "int n = -1;\nif (n < sizeof(int)) std::cout << \"less\";\nelse                 std::cout << \"not less\";\nstd::cout << ' ' << (n < 4);",
+      "choices": [
+        "less 1",
+        "not less 1",
+        "not less 0",
+        "less 0"
+      ],
+      "answer": 1,
+      "explanation": "sizeof מחזיר size_t, שהוא unsigned. בהשוואה `n < sizeof(int)`, לפי usual arithmetic conversions, n מומר ל-size_t, ו-(-1) הופך ל-2^64-1, שגדול מ-4. לכן ההשוואה false. ב-`n < 4` שני הצדדים int, ולכן 1. GCC מזהיר עם -Wsign-compare.",
+      "notes": [
+        "שגוי: מניח השוואה מתמטית. בפועל n מומר ל-unsigned והופך למספר ענק.",
+        "נכון: -1 כ-size_t הוא 0xFFFFFFFFFFFFFFFF, ולכן לא קטן מ-4. ההשוואה השנייה היא בין שני int ונכונה.",
+        "שגוי: `n < 4` הוא השוואה בין שני signed int, בלי המרה, ולכן true.",
+        "שגוי: שתי ההשוואות לא נכונות כאן: הראשונה false בגלל ההמרה, והשנייה true."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
+      ],
+      "problem": "NVIDIA interview: signed vs unsigned int output question",
+      "id": "cpp.ub.q34",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הלולאה אמורה לעבור על v מהסוף להתחלה, אבל היא לא נגמרת ובסוף קורסת. למה?",
+      "code": "void print_reversed(const std::vector<int>& v) {\n  for (std::size_t i = v.size() - 1; i >= 0; --i)\n    std::cout << v[i] << ' ';\n}",
+      "bugLine": 2,
+      "choices": [
+        "i הוא unsigned, ולכן `i >= 0` תמיד נכון ו-`--i` מ-0 עוטף לערך ענק",
+        "`v.size() - 1` הוא UB של signed overflow כש-v ריק",
+        "צריך `v.at(i)` במקום `v[i]`, כי operator[] לא עובד בלולאה הפוכה",
+        "אסור להשתמש ב-std::size_t באינדקס של לולאה"
+      ],
+      "answer": 0,
+      "explanation": "i הוא unsigned, ולכן `i >= 0` תמיד true. כש-i מגיע ל-0, `--i` עוטף ל-SIZE_MAX, והגישה v[i] יוצאת מהטווח. וגם אם v ריק, `v.size() - 1` כבר עוטף בהתחלה. תיקונים: `for (std::size_t i = v.size(); i-- > 0;)`, להשתמש באינדקס signed, או ב-reverse iterators.",
+      "notes": [
+        "נכון: unsigned לא יכול להיות שלילי. התנאי לא נכשל אף פעם, וה-wrap-around (מוגדר עבור unsigned) מוביל לגישה מחוץ לטווח.",
+        "שגוי: size_t הוא unsigned, ולכן 0-1 הוא wrap-around מוגדר (SIZE_MAX), לא UB. זה עדיין באג, אבל לא signed overflow.",
+        "שגוי: at() רק היה זורק exception במקום UB. זה לא מתקן את הלולאה.",
+        "שגוי: size_t הוא הטיפוס הנכון לאינדקסים. צריך רק לכתוב את התנאי כך שלא ייפול ל-wrap-around."
+      ],
+      "id": "cpp.ub.q35",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (short של 16 ביט, int ו-unsigned של 32 ביט)",
+      "code": "unsigned short a = 1;\nunsigned int   c = 1;\nint b = -2;\nstd::cout << (a + b < 0) << ' ' << (c + b < 0);",
+      "choices": [
+        "1 1",
+        "0 0",
+        "1 0",
+        "0 1"
+      ],
+      "answer": 2,
+      "explanation": "ב-`a + b`, ה-unsigned short עובר integer promotion ל-int (כי int מכיל את כל הערכים שלו), ולכן החישוב 1 + (-2) = -1 ב-int, ו-`-1 < 0` נכון. ב-`c + b` הטיפוס unsigned int לא עובר promotion. b מומר ל-unsigned, והתוצאה 4294967295, שאינה קטנה מ-0.",
+      "notes": [
+        "שגוי: התוצאה השנייה היא unsigned ולכן לעולם לא קטנה מ-0.",
+        "שגוי: unsigned short עובר promotion ל-int לפני החישוב, ולכן התוצאה הראשונה signed ושלילית.",
+        "נכון: טיפוסים צרים מ-int מקודמים ל-int (signed). unsigned int נשאר unsigned ו\"גורר\" את b אליו.",
+        "שגוי: הפוך. ה-short הוא זה שמתנהג כ-signed אחרי promotion."
+      ],
+      "id": "cpp.ub.q36",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה מחזירה `malloc(0)` לפי התקן של C (שגם C++ מאמץ)?",
+      "choices": [
+        "תמיד nullptr",
+        "implementation-defined: nullptr או pointer ייחודי שאינו null. אסור לגשת דרכו, ואם אינו null צריך free",
+        "pointer לבלוק של בית אחד שמותר לכתוב אליו",
+        "UB, כבר בקריאה עצמה"
+      ],
+      "answer": 1,
+      "explanation": "זה implementation-defined: או null pointer, או pointer ייחודי שאינו null, שאסור לגשת דרכו לאובייקט אבל צריך לשחרר אותו ב-free. glibc מחזיר pointer תקין לבלוק מינימלי. לכן קוד שבודק `if (!p) error()` אחרי malloc(n) עם n=0 עלול לדווח על שגיאה בטעות בפלטפורמה אחרת.",
+      "notes": [
+        "שגוי: חלק מהמימושים מחזירים null, אבל glibc ורבים אחרים מחזירים pointer תקין.",
+        "נכון: זה מה שהתקן אומר. בפועל: לא לבצע dereference, תמיד לקרוא ל-free, ולא לפרש null כשגיאה כש-n=0.",
+        "שגוי: גם אם המימוש מקצה בלוק מינימלי, התקן אוסר לגשת דרך ה-pointer.",
+        "שגוי: הקריאה מוגדרת. רק השימוש ב-pointer לגישה אסור."
+      ],
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2021/"
+      ],
+      "problem": "Qualcomm interview: what does malloc(0) return",
+      "id": "cpp.ub.q37",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "על Linux עם הגדרות ברירת המחדל, מכונה עם 16GB RAM ובלי swap. `char* p = (char*)malloc(12ull << 30);` מצליח, וכעבור זמן תהליך אחר עושה `memset(p, 1, 12ull << 30)` בזמן שתהליכים אחרים תופסים 8GB. מה סביר שיקרה?",
+      "choices": [
+        "malloc היה צריך להחזיר nullptr מראש, כי אין 12GB פנויים",
+        "ה-memset מצליח כי הקרנל דוחס את הזיכרון",
+        "באמצע ה-memset נגמר ה-RAM הפיזי, וה-OOM killer הורג תהליך (אולי את זה) עם SIGKILL",
+        "memset זורק std::bad_alloc"
+      ],
+      "answer": 2,
+      "explanation": "Linux עושה overcommit: malloc גדול ממפה זיכרון וירטואלי (mmap) בלי להקצות דפים פיזיים, כך שהוא מצליח כל עוד הבקשה סבירה לפי ה-heuristic. הדפים מוקצים בגישה הראשונה (page fault). כשה-RAM נגמר באמצע ה-memset, אין שגיאה שאפשר לטפל בה: ה-OOM killer בוחר תהליך והורג אותו (SIGKILL). לכן בדיקת null אחרי malloc לא מגינה מפני מחסור בזיכרון ב-Linux.",
+      "notes": [
+        "שגוי: עם overcommit (vm.overcommit_memory=0) הקרנל מאשר הקצאות וירטואליות שגדולות מהזיכרון הפנוי כרגע.",
+        "שגוי: zswap ודחיסה קיימים רק אם הוגדרו, ובכל מקרה לא מספיקים לפער של 4GB בלי swap.",
+        "נכון: ה-commit האמיתי קורה ב-page faults. כשאין דפים, ה-OOM killer פועל. לכן מערכות זמן-אמת מקצות מראש ונוגעות בכל הדפים (או משתמשות ב-mlockall).",
+        "שגוי: memset היא פונקציה של C ולא זורקת. הכשל מגיע כסיגנל מהקרנל."
+      ],
+      "id": "cpp.ub.q38",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "נתון `int* p = new int[0];`. אילו טענות נכונות? (כל אחת בנפרד)",
+      "choices": [
+        "`p != nullptr` מובטח",
+        "`p[0] = 1;` חוקי, כי הוקצה לפחות בית אחד",
+        "חייבים `delete[] p;`, אחרת יש דליפה",
+        "`int* e = p + 0;` חוקי",
+        "new int[0] זורק std::bad_array_new_length"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "new של מערך באורך 0 חוקי ומחזיר pointer תקין שאינו null, ושונה מכל pointer חי אחר. אין בו איברים, ולכן כל גישה דרכו היא UB. חייבים לשחרר אותו עם `delete[]`. `p + 0` חוקי, כי זה מצביע one-past-the-end של מערך ריק.",
+      "notes": [
+        "נכון: [expr.new] מחייב pointer שאינו null עבור מערך ריק (בגרסה שזורקת של new).",
+        "שגוי: למערך אין איברים. גישה ל-p[0] היא גישה מחוץ לגבולות, ולכן UB, גם אם הוקצה בפועל בלוק מינימלי.",
+        "נכון: operator new[] הקצה זיכרון (לפחות metadata), וצריך delete[] כמו לכל new[].",
+        "נכון: p + 0 הוא p עצמו, one-past-the-end של מערך באורך 0.",
+        "שגוי: bad_array_new_length נזרק לאורך שלילי או גדול מדי. אורך 0 חוקי."
+      ],
+      "id": "cpp.ub.q39",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הפונקציה מסירה את התו הראשון מהמחרוזת ע\"י הזזה שמאלה. לפעמים היא עובדת ולפעמים משבשת את התוכן. למה?",
+      "code": "// len = strlen(s); copies the trailing '\\0' as well\nvoid drop_first(char* s, std::size_t len) {\n  std::memcpy(s, s + 1, len);\n}",
+      "bugLine": 3,
+      "choices": [
+        "האזורים חופפים, ולכן memcpy הוא UB. צריך memmove",
+        "צריך להעתיק len - 1 בתים, אחרת נכתב בית אחרי סוף המחרוזת",
+        "memcpy לא מעתיק את '\\0'",
+        "אסור להעביר ל-memcpy pointer שמצביע לאמצע מערך"
+      ],
+      "answer": 0,
+      "explanation": "המקור s+1 והיעד s חופפים. memcpy מניח שאין חפיפה, וזה UB: מימוש שמעתיק בבלוקים רחבים או מהסוף להתחלה יכתוב בתים לפני שקרא אותם. memmove מוגדר לחפיפה (\"כאילו\" דרך buffer זמני) ובוחר כיוון העתקה בטוח.",
+      "notes": [
+        "נכון: [s+1, s+1+len) ו-[s, s+len) חופפים. memmove(s, s + 1, len) הוא התיקון.",
+        "שגוי: len בתים מ-s+1 הם בדיוק len-1 התווים שנשארו ועוד ה-'\\0'. אין כתיבה מעבר לסוף.",
+        "שגוי: memcpy מעתיק בתים בלי לפרש אותם, כולל אפסים. העתקה של '\\0' היא דווקא החלק הנכון.",
+        "שגוי: מותר להעביר כל pointer תקין, כולל לאמצע מערך. הבעיה היא החפיפה."
+      ],
+      "tags": [
+        "qualcomm",
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2021/",
+        "https://www.aced.io/experiences/nvidia-software-engineer-interview-90647e",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/"
+      ],
+      "problem": "Qualcomm / NVIDIA interview: memcpy vs memmove",
+      "id": "cpp.ub.q40",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 3,
+      "type": "code",
+      "lang": "cpp",
+      "prompt": "ממש `void* my_memmove(void* dst, const void* src, std::size_t n)` שמטפל נכון בחפיפה, בלי buffer זמני ובלי לקרוא ל-memmove או ל-memcpy.",
+      "starter": "void* my_memmove(void* dst, const void* src, std::size_t n);",
+      "modelAnswer": "#include <cstddef>\n#include <functional>\n\nvoid* my_memmove(void* dst, const void* src, std::size_t n) {\n  auto* d = static_cast<unsigned char*>(dst);\n  auto* s = static_cast<const unsigned char*>(src);\n  if (d == s || n == 0) return dst;\n  if (std::less<const unsigned char*>{}(d, s)) {\n    // dst before src: forward copy never overwrites unread bytes\n    for (std::size_t i = 0; i < n; ++i) d[i] = s[i];\n  } else {\n    // dst after src: copy backward\n    for (std::size_t i = n; i-- > 0;) d[i] = s[i];\n  }\n  return dst;\n}",
+      "rubric": [
+        "זיהוי שני הכיוונים: קדימה כשהיעד לפני המקור, אחורה כשהוא אחריו",
+        "השוואת כתובות תקינה (std::less או uintptr_t) ולא < גולמי בין pointers לא קשורים",
+        "לולאה אחורית בלי underflow של unsigned (למשל `i-- > 0`)",
+        "מקרי קצה: n == 0, dst == src, וזמן O(n) וזיכרון O(1)",
+        "בונוס: העתקה במילים רחבות כשה-alignment מאפשר, ועדיין נכונה בחפיפה"
+      ],
+      "explanation": "הרעיון: אם היעד לפני המקור, העתקה קדימה בטוחה, כי כל בית נקרא לפני שהוא נדרס. אם היעד אחרי המקור (וחופף), מעתיקים מהסוף להתחלה. השוואה בין pointers לא קשורים עם < היא unspecified, ולכן משתמשים ב-std::less (שנותן סדר כולל) או ב-uintptr_t.",
+      "id": "cpp.ub.q41",
+      "lesson": "cpp.ub"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "תוכנה ישנה קראה ל-memcpy עם אזורים חופפים (יעד לפני המקור) ועבדה שנים. אחרי עדכון של glibc היא התחילה להפיק נתונים משובשים, רק במעבדים מסוימים. מה ההסבר?",
+      "choices": [
+        "באג ב-glibc החדש, שהפר את ההבטחה של memcpy",
+        "memcpy לא מבטיח סדר העתקה, וחפיפה היא UB. המימוש החדש (שנבחר לפי ה-CPU) מעתיק בכיוון אחר, והקוד השבור נחשף",
+        "המעבדים החדשים לא תומכים ב-memcpy על זיכרון לא מיושר",
+        "הקומפיילר החדש הסיר את הקריאה ל-memcpy"
+      ],
+      "answer": 1,
+      "explanation": "memcpy רשאי להעתיק בכל סדר ובכל רוחב, כי חפיפה היא UB. המימוש הישן העתיק קדימה, ובמקרה זה התאים לחפיפה הזו. המימוש החדש בוחר גרסה לפי ה-CPU (ifunc), ואחת מהן העתיקה מהסוף להתחלה. זה מה שקרה ב-glibc 2.13 (2011) עם Flash ותוכנות אחרות. התיקון הוא בקוד שקורא: להשתמש ב-memmove.",
+      "notes": [
+        "שגוי: ה-API אף פעם לא הבטיח סדר או התנהגות בחפיפה. הקוד הקורא הוא זה שהיה שבור.",
+        "נכון: זה מקרה מפורסם של UB \"רדום\": קוד שנשען על פרט מימוש נשבר כשהמימוש משתנה, בלי ששום ממשק השתנה.",
+        "שגוי: memcpy תומך בכל alignment. ממילא זה לא היה מסביר נתונים משובשים דווקא בחפיפה.",
+        "שגוי: הנתונים שובשו, אבל לא נעלמו. הקריאה התבצעה, רק בסדר העתקה אחר."
+      ],
+      "id": "cpp.ub.q42",
+      "lesson": "cpp.ub"
     }
   ]
 }

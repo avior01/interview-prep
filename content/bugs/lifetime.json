@@ -184,6 +184,30 @@
         {
           "term": "אזהרות dangling בקומפיילר",
           "def": "GCC: `-Wreturn-local-addr`, `-Wdangling-reference` (GCC 13+). Clang: `-Wreturn-stack-address`, `-Wdangling-gsl`. תופסות מקרים מקומיים בלבד, לא זרימה בין פונקציות."
+        },
+        {
+          "term": "החזרת כתובת של משתנה מקומי",
+          "def": "UB בשימוש בכתובת. GCC מזהיר (-Wreturn-local-addr) ובפועל מחזיר nullptr במקום הכתובת, כך שהגישה קורסת מיד. התיקון: להחזיר by value, באפר של הקורא, או הקצאה עם בעלות ברורה."
+        },
+        {
+          "term": "static buffer מוחזר",
+          "def": "פותר את בעיית ה-lifetime, אבל כל הקריאות חולקות אותו באפר: שתי קריאות באותו ביטוי מחזירות אותו תוכן, והוא לא בטוח ל-threads. זו הסיבה לגרסאות _r כמו strerror_r ו-localtime_r."
+        },
+        {
+          "term": "block scope",
+          "def": "lifetime של משתנה אוטומטי נגמר בסוף הבלוק {} שבו הוא הוגדר, לא בסוף הפונקציה. pointer אליו מחוץ לבלוק הוא dangling (ASan: stack-use-after-scope)."
+        },
+        {
+          "term": "alloca / VLA",
+          "def": "הקצאה בגודל דינמי על ה-stack, שמשתחררת ביציאה מהפונקציה. אין דיווח כישלון, וגודל גדול דורס את ה-stack."
+        },
+        {
+          "term": "storage duration: automatic / static / thread_local",
+          "def": "automatic: עותק לכל קריאה, מת ביציאה. static: עותק אחד לכל התוכנית. thread_local: עותק לכל thread, חי עד שה-thread מסתיים. הסוג קובע מי חולק את המשתנה, ולכן אם יש race."
+        },
+        {
+          "term": "malloc arenas",
+          "def": "glibc מחזיקה כמה אזורי heap (arenas) כדי ש-threads שמקצים במקביל לא יחכו לנעילה אחת. ה-allocator thread-safe, אבל הבלוקים עצמם לא מוגנים."
         }
       ]
     }
@@ -440,10 +464,7 @@
         "שגוי: ה-thread נוצר רק אחרי fill, ו-join לפני fill אינו חוקי (אין עוד thread); הבעיה היא ה-detach."
       ],
       "explanation": "אחרי detach אין שום סנכרון בין סיום startWorker לבין ה-thread. ה-vector נהרס ביציאה, וה-thread קורא heap משוחרר. תחת עומס ה-thread מתחיל מאוחר יותר ולכן הקריסה מופיעה דווקא שם. תיקון: להעביר בעלות, `[s = std::move(samples)] { process(s); }`, או להחזיק את ה-thread ולעשות join. mutex לא יעזור, הבעיה היא lifetime ולא race על ערכים.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q12",
@@ -494,10 +515,7 @@
         "שגוי: makeVector מחזיר by value, כלומר prvalue, ו-const auto& נקשר אליו ישירות ומאריך את חייו."
       ],
       "explanation": "lifetime extension קורה רק כש-reference נקשר ישירות לזמני, כמו `const std::string& r = std::string(\"abc\")` ו-`const auto& r = makeVector()`. ב-`std::max(x, 1)` מוחזר `const int&` לאחד הארגומנטים, והזמני `1` מת בסוף השורה; ההרחבה לא עוברת דרך קריאה לפונקציה. ב-`std::vector<int>{1, 2}[0]`, `operator[]` מחזיר reference לאיבר בתוך vector זמני שנהרס. string_view אינו reference ולכן אין הרחבה.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q14",
@@ -537,10 +555,7 @@
         "דפוסים חשודים ב-review ומניעה: ASan ב-CI, טסט רגרסיה"
       ],
       "explanation": "מראיין סניור מחפש הבנה שהסימפטום רחוק מהגורם, ושיטה מסודרת משחזור, דרך כלים, ועד מניעה.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q16",
@@ -564,10 +579,7 @@
         "שגוי: ביטוי הטווח מוערך פעם אחת בלבד, לפני הלולאה."
       ],
       "explanation": "range-for מתורגם ל-`auto&& __range = <expr>;` ולולאה עליו. lifetime extension חל רק על הזמני שהוא התוצאה הסופית של הביטוי, כאן reference שמוחזר מפונקציה, ולא על ה-Packet שממנו הוא בא. מעניין: `for (int x : recv().data)` היה תקין, כי גישה ל-member של prvalue קושרת ישירות ל-subobject של הזמני ומאריכה את חיי כולו. C++23 (P2718) מאריך את חיי כל הזמניים ב-range initializer. `&&`-qualifier היה מונע קריאה על זמני, לא מתקן. `recv()` נקרא פעם אחת.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q17",
@@ -591,10 +603,7 @@
         "שגוי: co_await משעה את ה-coroutine ומחזיר שליטה לקורא; הוא לא חוסם את ה-thread של onError."
       ],
       "explanation": "הפרמטרים אכן מועתקים ל-frame, אבל העתקה של `const std::string&` היא העתקה של ה-reference. הזמני חי עד סוף ה-full-expression בקורא, כלומר עד ש-`logLater` מחזיר את ה-Task בהשעיה הראשונה; כשה-coroutine ממשיך שנייה אחר כך, `msg` dangling. תיקון: לקבל `std::string msg` by value. זה כלל אצבע ידוע ל-coroutines: לא לקבל references או views אם ה-coroutine חי יותר מהקריאה.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q18",
@@ -611,10 +620,7 @@
         "מזכיר שה-callback עצמו נשאר רשום (עלות קטנה) ושעדיף API של unsubscribe/token אם אפשר"
       ],
       "explanation": "weak_ptr הוא הדרך הסטנדרטית להחזיק 'הפניה שיודעת אם האובייקט מת'. `lock()` מחזיר shared_ptr ריק אחרי ההריסה, ואם הוא לא ריק הוא מחזיק את האובייקט חי עד סוף הקריאה, גם אם thread אחר משחרר את ה-shared_ptr האחרון באמצע.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q19",
@@ -771,10 +777,7 @@
         "שגוי: ה-int עצמו לא זז ולא התאפס; רק הבעלות עברה, ו-*q הוא 5."
       ],
       "explanation": "בניגוד לרוב הטיפוסים, שאחרי move הם valid but unspecified, unique_ptr מובטח להיות null אחרי move. לכן `p` הוא false ו-`*q` הוא 5. בדיקת `p` חוקית לחלוטין; מה שהיה UB הוא `*p`. האובייקט עצמו (ה-int) לא זז, רק הבעלות עליו.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q26",
@@ -791,10 +794,7 @@
         "מזכיר חלופות ואת המחיר שלהן: deque או vector<unique_ptr<Stage>>, ושעם erase האינדקס עלול להצביע לאיבר אחר"
       ],
       "explanation": "אינדקס הוא הפניה יציבה ל-vector שרק גדל: אחרי הקצאה מחדש הוא עדיין מצביע לאותו איבר לוגי. `reserve` אינו תיקון אמיתי, כי מי שמוסיף יותר מהמתוכנן מחזיר את הבאג. deque או unique_ptr פותרים גם הם, במחיר של cache locality או הקצאה לכל Stage.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q27",
@@ -841,10 +841,7 @@
         "שגוי: operator>> למחרוזת מנקה את word לפני הקריאה; זו לא הבעיה."
       ],
       "explanation": "`counts[word]` בונה string_view שמצביע לתוכן הנוכחי של `word`. בקריאה הבאה התוכן נדרס, כך שמפתחות קיימים משנים ערך אחרי שה-hash שלהם חושב והמבנה נשבר; ובסוף הפונקציה `word` נהרס וכל המפתחות dangling. rehash מזיז nodes בין buckets אבל לא נוגע בנתונים שה-views מצביעים עליהם, ולכן reserve לא עוזר. `operator[]` מוסיף ערך ברירת מחדל ולא זורק. תיקון: מפתח `std::string`.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q29",
@@ -872,10 +869,7 @@
         "שגוי: map הוא node-based, והוספה לא מבטלת שום reference או iterator."
       ],
       "explanation": "vector שמקצה מחדש (push_back מלא, או reserve שמגדיל capacity) מעביר את כל האיברים ל-buffer חדש, ולכן כל reference מתבטל. ב-deque, push_back בקצוות מבטל iterators אבל לא references, כי הבלוקים הקיימים לא זזים. ב-unordered_map, rehash מבטל iterators בלבד; כל איבר חי ב-node משלו. list ו-map הם node-based ולא מבטלים כלום בהוספה. ההבחנה בין iterator ל-reference היא בדיוק מה שמראיין סניור בודק.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q30",
@@ -898,10 +892,7 @@
         "שגוי: references מוארכים נהרסים בסדר הפוך ליצירה, ולכן T3 (שנוצר אחרון) נהרס לפני T1."
       ],
       "explanation": "`a` נקשר ישירות לזמני ולכן T1 חי עד סוף main. ב-`b` הזמני T2 נקשר לפרמטר של pick, וה-reference שמוחזר אינו קשירה ישירה, לכן T2 נהרס בסוף השורה (ו-`b` dangling; GCC 13 מזהיר `-Wdangling-reference`). ב-`c`, גישה ל-member של prvalue קושרת ל-subobject ומאריכה את חיי T3 כולו. בסוף main ה-references המוארכים נהרסים בסדר הפוך ליצירה: T3 ואז T1.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q31",
@@ -925,10 +916,7 @@
         "שגוי: std::function מעתיק את ה-closure, שמכיל רק את המצביע this; Tuner עצמו לא מועתק."
       ],
       "explanation": "בתוך member function, `freq_` הוא `this->freq_`, ולכן `[=]` לוכד את המצביע `this` ולא העתקה של ה-member. ה-Tuner הוא זמני שמת בסוף השורה של `auto f`, וה-closure נשאר עם this מת. C++20 הוציא משימוש את הלכידה המובלעת הזו (GCC מזהיר `-Wdeprecated`). העתקת ה-closure ל-std::function מעתיקה רק את המצביע. תיקון: `[freq = freq_]` או `[*this]`.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q32",
@@ -943,10 +931,7 @@
         "לא פוסל אוטומטית: מבקש מדידה ומבחין בין נתיב חם ל-API כללי"
       ],
       "explanation": "מראיין סניור מצפה לאיזון: views הם כלי ביצועים לגיטימי, אבל API ציבורי צריך להפוך את חוזה ה-lifetime לקשה לשבירה, או לפחות למפורש ונבדק.",
-      "lesson": "bugs.lifetime",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "bugs.lifetime"
     },
     {
       "id": "bugs.lifetime.q33",
@@ -969,6 +954,232 @@
         "שגוי: אחרי mv.release() אין עוד exports, וה-extend השני מצליח; האורך 6 ולא 4."
       ],
       "explanation": "כל עוד יש memoryview פעיל, bytearray מסרב לשנות גודל וזורק BufferError, כי הגדלה עלולה להקצות מחדש את ה-buffer ולהשאיר את ה-view מצביע לזיכרון ששוחרר, בדיוק הבאג של reference ל-vector אחרי push_back. אחרי `mv.release()` אין exports, ה-extend מצליח והאורך 6. ההרחבה הראשונה לא בוצעה כלל, ולכן לא 8. ב-C++ אין הגנה כזו, ולכן צריך sanitizer.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q34",
+      "level": 4,
+      "type": "output",
+      "prompt": "מה קורה כשמקמפלים עם GCC עם `-O2` ומריצים?",
+      "code": "int* make() {\n    int a[4] = {1, 2, 3, 4};\n    return a;\n}\n\nint main() {\n    int* p = make();\n    std::printf(\"%d\\n\", p[0]);\n}",
+      "lang": "cpp",
+      "choices": [
+        "שגיאת קומפילציה: אסור להחזיר מערך מקומי",
+        "זה undefined behavior. בפועל GCC מזהה שמוחזרת כתובת של משתנה מקומי (מזהיר עם -Wreturn-local-addr), ומחזיר במקומה nullptr, ולכן התוכנית קורסת עם segmentation fault",
+        "מודפס ערך זבל כלשהו",
+        "מודפס `1`, כי אף אחד לא דרס את ה-stack בין החזרה להדפסה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה מתקמפל, רק עם אזהרה. התקן לא אוסר להחזיר את הכתובת, רק להשתמש בה אחרי שה-lifetime של a נגמר.",
+        "נכון: בגרסאות GCC מודרניות (למשל GCC 15), החזרה של כתובת מקומית מוחלפת ב-nullptr, כדי שהשימוש בה ייכשל מיד ולא ייתן זבל שקט. ההתנהגות עדיין UB לפי התקן, ואסור לסמוך עליה.",
+        "שגוי: זה תרחיש אפשרי של UB בקומפיילרים אחרים, אבל GCC מתנהג כאן באופן צפוי יותר: הוא מחזיר null.",
+        "שגוי: זה מה שקורה לעיתים קרובות עם -O0, וזו בדיוק הסיבה שהבאג הזה שורד בדיקות. עם -O2 ההתנהגות שונה."
+      ],
+      "explanation": "משתנה מקומי חי עד סוף הפונקציה. pointer אליו אחרי החזרה הוא dangling, וכל גישה דרכו היא UB. התיקונים: להחזיר std::array או std::vector by value, לקבל באפר מהקורא, או להקצות דינמית עם בעלות ברורה.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-5/"
+      ],
+      "problem": "NVIDIA: what's wrong with returning a local array",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q35",
+      "level": 3,
+      "type": "output",
+      "prompt": "הפונקציה 'פותרת' את בעיית ה-dangling pointer עם באפר static. מה ידוע על הפלט?",
+      "code": "const char* fmt(int v) {\n    static char buf[16];\n    std::snprintf(buf, sizeof buf, \"v%d\", v);\n    return buf;\n}\n\nint main() {\n    std::printf(\"%s %s\\n\", fmt(1), fmt(2));\n}",
+      "lang": "cpp",
+      "choices": [
+        "אותה מחרוזת פעמיים (`v1 v1` או `v2 v2`): שתי הקריאות מחזירות את אותו pointer, והתוכן הוא של הקריאה שהתבצעה אחרונה. סדר החישוב של ארגומנטים לא מוגדר",
+        "שגיאת קומפילציה, כי אסור להחזיר pointer לאובייקט static",
+        "`v1 v2`",
+        "undefined behavior, כי buf הוא dangling"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: הסדר בין fmt(1) ל-fmt(2) הוא unspecified (GCC על x86-64 מחשב מימין לשמאל ומדפיס v1 v1). בכל מקרה שני ה-%s קוראים את אותו באפר.",
+        "שגוי: מותר לגמרי. כך עובדות גם פונקציות ישנות כמו strerror ו-inet_ntoa.",
+        "שגוי: זה היה נכון אם כל קריאה הייתה מחזירה באפר משלה. כאן שתיהן מחזירות את אותו באפר, ו-printf קורא אותו רק אחרי ששתי הקריאות הסתיימו.",
+        "שגוי: אובייקט static חי עד סוף התוכנית, ולכן ה-pointer תקף. הבעיה היא שיתוף, לא lifetime."
+      ],
+      "explanation": "באפר static פותר את בעיית ה-lifetime ויוצר בעיה חדשה: כל הקריאות חולקות אותו. זה שובר שימוש כפול באותו ביטוי, שימוש מכמה threads (זו הסיבה ל-strerror_r ו-localtime_r) ו-reentrancy.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q36",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הקוד בוחר ערך ברירת מחדל ומדפיס אותו. ב-build אחד זה עובד, ובאחר מודפס זבל. מה הבאג?",
+      "code": "int main(int argc, char** argv) {\n    const int* p;\n    {\n        int fallback = 42;\n        p = &fallback;\n    }\n    if (argc > 1) p = nullptr;\n    if (p) std::printf(\"%d\\n\", *p);\n}",
+      "lang": "cpp",
+      "choices": [
+        "`fallback` מת בסוף הבלוק הפנימי, ולכן `*p` קורא אובייקט שה-lifetime שלו נגמר: UB (ASan מדווח stack-use-after-scope)",
+        "p לא מאותחל בשורת ההצהרה",
+        "אסור להשוות pointer ל-nullptr עם if",
+        "`const int*` לא יכול להצביע ל-int שאינו const"
+      ],
+      "answer": 0,
+      "bugLine": 8,
+      "notes": [
+        "נכון: lifetime של משתנה אוטומטי נגמר בסוף הבלוק שבו הוא הוגדר, לא בסוף הפונקציה. הקומפיילר רשאי להשתמש באותו מקום ב-stack לדברים אחרים.",
+        "שגוי: p מקבל ערך לפני כל שימוש, ולכן אי האתחול בשורת ההצהרה לא יוצר קריאה של ערך לא מאותחל.",
+        "שגוי: `if (p)` היא הדרך הרגילה לבדוק pointer.",
+        "שגוי: pointer ל-const יכול להצביע לאובייקט שאינו const. הוא רק לא מאפשר לשנות אותו דרכו."
+      ],
+      "explanation": "dangling pointer לא דורש החזרה מפונקציה: מספיק בלוק פנימי. אם צריך ערך ברירת מחדל שחי מספיק זמן, מגדירים אותו באותו scope של ה-pointer, או משתמשים ב-std::optional<int> ומעתיקים את הערך.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q37",
+      "level": 2,
+      "type": "multi",
+      "prompt": "פונקציה ב-C צריכה להחזיר לקורא מערך של 8 מדידות שהיא מחשבת. אילו מהדרכים נכונות (בלי dangling)?",
+      "choices": [
+        "להחזיר by value struct שמכיל `int v[8]`",
+        "להחזיר את הכתובת של `res` אחרי שמסמנים אותו `register`",
+        "להקצות עם `malloc` ולהחזיר את ה-pointer, כשהקורא אחראי לקרוא ל-`free`",
+        "לקבל מהקורא `int* out` וגודל, ולכתוב לשם (הקורא אחראי על הבאפר)",
+        "להגדיר `int res[8]` מקומי ולהחזיר `res`"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "notes": [
+        "נכון: מערך בתוך struct מועתק by value. עבור 32 בתים זה זול, ולעיתים הקומפיילר בונה את התוצאה ישר במקום של הקורא.",
+        "שגוי: register הוא רק רמז (ובעצם מבוטל), והוא לא משנה lifetime. ב-C אי אפשר בכלל לקחת כתובת של משתנה register.",
+        "נכון: הזיכרון חי עד free. החיסרון: בעלות שעוברת בין פונקציות היא מקור נפוץ לדליפות, ולכן מתעדים אותה בבירור.",
+        "נכון: זה הדפוס המועדף ב-embedded: אין הקצאה דינמית, והבעלות על הזיכרון ברורה. הגודל מונע overflow.",
+        "שגוי: res מת כשהפונקציה חוזרת, וה-pointer המוחזר הוא dangling."
+      ],
+      "explanation": "כדי שנתונים ישרדו את החזרה מהפונקציה, הם צריכים לחיות במקום שהקורא שולט בו: באפר של הקורא, heap עם בעלות מוגדרת, או ערך מוחזר by value. static מקומי עובד, אבל משותף לכל הקריאות.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=123669"
+      ],
+      "problem": "Qualcomm: getting data out of a function after its locals are gone",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q38",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הפונקציה מחזירה pointer לדגימות המסוננות. לפעמים הקורא רואה זבל או קורס. מה הבאג?",
+      "code": "const float* filtered(const float* in, size_t n) {\n    std::vector<float> out(n);\n    for (size_t i = 1; i < n; ++i)\n        out[i] = 0.5f * (in[i] + in[i - 1]);\n    out[0] = in[0];\n    return out.data();\n}",
+      "lang": "cpp",
+      "choices": [
+        "out[0] נכתב אחרי הלולאה, ולכן הוא לא מאותחל בזמן הלולאה",
+        "data() מחזיר pointer רק לאיבר הראשון, ולכן הקורא יכול לקרוא רק דגימה אחת",
+        "חסר `std::move` ב-return",
+        "out הוא vector מקומי, והוא משחרר את הזיכרון שלו כשהפונקציה חוזרת. ה-pointer שמוחזר מ-data() מצביע לזיכרון ששוחרר: heap-use-after-free"
+      ],
+      "answer": 3,
+      "bugLine": 6,
+      "notes": [
+        "שגוי: הלולאה לא קוראת את out[0]. היא רק כותבת לאיברים 1 עד n-1. הסדר תקין.",
+        "שגוי: data() מחזיר pointer לתחילת מערך רציף, ודרכו אפשר לקרוא את כל n האיברים, כל עוד ה-vector חי.",
+        "שגוי: move של ה-vector לא היה עוזר כשמחזירים `float*`. צריך לשנות את טיפוס ההחזרה ל-`std::vector<float>`.",
+        "נכון: הזיכרון של vector נמצא ב-heap, אבל הבעלים שלו הוא האובייקט המקומי, וה-destructor שלו משחרר אותו. מחזירים את ה-vector עצמו by value (עם move או copy elision), לא pointer לתוכו."
+      ],
+      "explanation": "pointer שמתקבל מ-data(), c_str(), begin() או span תקף רק כל עוד הבעלים חי ולא שינה את גודלו. החזרה של pointer כזה מפונקציה שבה הבעלים מקומי היא אותו באג כמו החזרה של מערך מקומי, רק ב-heap.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q39",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "פונקציה מקצה באפר זמני עם `alloca(n)` (הקצאה על ה-stack), ממלאת אותו ומחזירה אליו pointer. מה נכון?",
+      "choices": [
+        "זה בטוח רק אם קוראים ל-free על הבאפר בסוף",
+        "זה dangling: הזיכרון של alloca שייך ל-frame של הפונקציה ומשתחרר כשהיא חוזרת, בדיוק כמו מערך מקומי",
+        "זה בטוח, כי alloca מקצה זיכרון שחי עד שהתוכנית מסתיימת",
+        "זה בטוח אם n קטן מ-4KB"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: אסור לקרוא ל-free על זיכרון של alloca. הוא לא הוקצה מה-heap.",
+        "נכון: alloca היא הקצאה דינמית בגודל, אבל אוטומטית ב-lifetime. החזרה של pointer אליה היא אותו באג כמו החזרה של מערך מקומי.",
+        "שגוי: alloca מקצה ב-stack frame הנוכחי. כל ההקצאות שלה משתחררות יחד ביציאה מהפונקציה.",
+        "שגוי: הגודל לא משנה את ה-lifetime. (n גדול מסוכן מסיבה אחרת: stack overflow בלי שום בדיקה.)"
+      ],
+      "explanation": "alloca ו-VLA נותנים זיכרון על ה-stack בגודל דינמי, עם lifetime של הפונקציה. הם מהירים, אבל אין להם דיווח כישלון (גודל גדול מדי פשוט דורס את ה-stack), ולכן הרבה תקני קוד אוסרים אותם.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q40",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "הפונקציה נקראת 1000 פעמים מכל אחד מ-8 threads, במקביל.\n\n```cpp\nvoid work() {\n    int a = 5;\n    int* b = new int(10);\n    a += *b;\n    log(a);\n}\n```\n\nמה נכון?",
+      "choices": [
+        "יש data race על a, כי כל ה-threads מריצים את אותה פונקציה",
+        "אין data race: לכל קריאה יש a משלה על ה-stack של ה-thread שלה, ו-new מחזיר בלוק נפרד לכל קריאה (ה-allocator thread-safe). אבל אין delete, ולכן 8000 בלוקים דולפים",
+        "new יחזיר לכל ה-threads את אותה כתובת, כי הם מבקשים את אותו גודל",
+        "b ישוחרר אוטומטית כשהפונקציה חוזרת, כי הוא משתנה מקומי"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: משתנים מקומיים (בלי static) נוצרים מחדש בכל קריאה, על ה-stack של ה-thread שקורא. אין שום שיתוף.",
+        "נכון: a חי על ה-stack ומת עם הקריאה. ה-int ש-new הקצה חי ב-heap עד delete, ו-b (ה-pointer) מת עם הקריאה. לכן כל קריאה מאבדת את הכתובת היחידה של הבלוק: דליפה של לפחות 4 בתים ועוד תקורה של ה-allocator לכל קריאה.",
+        "שגוי: כל הקצאה חיה מקבלת כתובת ייחודית. אותה כתובת יכולה לחזור רק אחרי delete.",
+        "שגוי: רק ה-pointer מת. האובייקט שהוא מצביע אליו נשאר עד delete. זו בדיוק הסיבה ל-unique_ptr."
+      ],
+      "explanation": "stack: אוטומטי, פרטי לכל קריאה ולכל thread, משתחרר לבד. heap: משותף לכל ה-threads, חי עד שמשחררים אותו במפורש. ה-allocator עצמו thread-safe (glibc משתמשת ב-arenas לכל thread כדי להקטין תחרות). כאן גם אין סיבה ל-heap: `int b = 10` מספיק.",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/microsoft-interview-experience-set-106/"
+      ],
+      "problem": "Microsoft: an int on the stack vs new int, effect with many threads",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q41",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "פונקציה שבה המשתנה המקומי `a` מוגדר `static`:\n\n```cpp\nvoid work() {\n    static int a = 5;\n    a += 1;\n    log(a);\n}\n```\n\n8 threads קוראים לה במקביל. מה נכון?",
+      "choices": [
+        "יש race רק על האתחול, ולכן הוא בעייתי רק בקריאה הראשונה",
+        "האתחול `= 5` יתבצע מחדש בכל קריאה",
+        "יש data race: יש a אחד לכל התוכנית, וכל ה-threads מבצעים עליו read-modify-write בלי סנכרון. זה UB, ובפועל עדכונים הולכים לאיבוד",
+        "אין בעיה: כל thread מקבל עותק משלו של a"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: האתחול עצמו בטוח מאז C++11 (magic statics). ה-race הוא על כל ה-+= שאחריו.",
+        "שגוי: אתחול של static מקומי מתבצע פעם אחת בלבד, בכניסה הראשונה.",
+        "נכון: `a += 1` הוא load, add ו-store. בלי atomic או mutex שני threads יכולים לקרוא את אותו ערך. הפתרון: `static std::atomic<int>` או mutex, או thread_local אם לא צריך ערך משותף.",
+        "שגוי: static מקומי הוא אובייקט יחיד שחי לאורך כל התוכנית ומשותף לכל ה-threads. עותק לכל thread הוא thread_local."
+      ],
+      "explanation": "שינוי של מילה אחת הופך משתנה פרטי לכל קריאה למשתנה גלובלי משותף. static מקומי יושב ב-.data, לא על ה-stack, ולכן הוא חי לנצח ומשותף לכל ה-threads.",
+      "lesson": "bugs.lifetime"
+    },
+    {
+      "id": "bugs.lifetime.q42",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בפונקציה מוגדר `thread_local int a = 5;`. כמה עותקים של a קיימים, ומתי כל אחד מת?",
+      "choices": [
+        "עותק אחד לכל התוכנית, כמו static",
+        "עותק אחד לכל קריאה לפונקציה, שמת כשהיא חוזרת",
+        "עותק אחד לכל core",
+        "עותק אחד לכל thread שהגיע לפונקציה. הוא מאותחל ב-5 בכניסה הראשונה של אותו thread, שומר את ערכו בין קריאות, ומת כשה-thread מסתיים"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: זה static. thread_local נותן עותק נפרד לכל thread.",
+        "שגוי: זה התיאור של משתנה מקומי רגיל (automatic).",
+        "שגוי: threads נודדים בין cores. העותק שייך ל-thread, לא לחומרה.",
+        "נכון: thread_local הוא static ברמת ה-thread: נשמר בין קריאות, אבל פרטי לכל thread, ולכן אין data race. pointer אליו שעובר ל-thread אחר נהיה dangling כשה-thread הבעלים מסתיים."
+      ],
+      "explanation": "שלושה סוגי storage duration למשתנה בתוך פונקציה: automatic (לכל קריאה), static (אחד לתוכנית), thread_local (אחד לכל thread). השאלה 'כמה עותקים, ומי חולק אותם' קובעת אם יש race.",
       "lesson": "bugs.lifetime"
     }
   ]

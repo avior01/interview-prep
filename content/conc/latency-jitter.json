@@ -191,6 +191,26 @@
         {
           "term": "false sharing",
           "def": "משתנים שנכתבים ונקראים על ידי threads שונים באותה cache line. גורם ל-misses במסלול ה-RT."
+        },
+        {
+          "term": "top half / bottom half",
+          "def": "ה-ISR (top half) מאשר את ה-interrupt ועושה מינימום. שאר העבודה נדחית ל-bottom half (softirq, tasklet, threaded IRQ או משימה), שבה אפשר להפסיק ולתזמן לפי עדיפות."
+        },
+        {
+          "term": "מה אסור ב-ISR",
+          "def": "כל דבר שעלול לחסום או לחכות ל-lock (mutex, malloc, I/O חוסם). מותר: עבודה קצרה, SPSC lock-free, ממשקי FromISR של ה-RTOS, והערת משימה."
+        },
+        {
+          "term": "זמן פקיעה מוחלט",
+          "def": "שמירת זמן הפקיעה כ-now + delay ולא כ-delay שמתעדכן. מונעת drift מצטבר ומאפשרת להשוות בין טיימרים."
+        },
+        {
+          "term": "min-heap של טיימרים",
+          "def": "הטיימר הבא בתור בראש ה-heap (O(1)), הכנסה ב-O(log n). את טיימר החומרה מתכנתים לראש, ומתכנתים מחדש כשנכנס זמן מוקדם יותר."
+        },
+        {
+          "term": "hashed timing wheel",
+          "def": "מערך מעגלי של slots, כל אחד רשימת טיימרים. הכנסה וביטול ב-O(1), ו-tick מתקדם slot אחד. מוותר על דיוק ל-tick, ולכן מתאים ל-timeouts שרובם מבוטלים."
         }
       ]
     }
@@ -339,9 +359,6 @@
       ],
       "explanation": "גישה ראשונה לדף מפעילה page fault ואיפוס דף. C-states עמוקים חוסכים חשמל אבל ההתעוררות מהם לוקחת עשרות עד מאות µs. SMI עוצר את כל ה-cores בלי שהקרנל יודע. THP יכול לגרום ל-compaction ול-faults כבדים. reserve בזמן האתחול לא משפיע על הלולאה, וזו בדיוק הדרך הנכונה להימנע מהקצאות בזמן ריצה.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא מקור: reserve באתחול מקצה את הזיכרון לפני הלולאה, וזו בדיוק הדרך הנכונה להימנע מהקצאות בזמן ריצה. מי שבוחר בזה חושב שכל הקצאה היא בעיה, בלי לשים לב מתי היא קורית.",
         "מקור: malloc מחזיר זיכרון וירטואלי, והדף הפיזי מוקצה ומאופס רק בגישה הראשונה (minor fault). אם הגישה הראשונה קורית בתוך הלולאה, משלמים עליה שם.",
@@ -408,10 +425,7 @@
         "בונוס: להזכיר SCHED_FIFO, mlockall ו-affinity לפני ההרצה"
       ],
       "explanation": "זה בעצם cyclictest מינימלי. הנקודות שבודקים: deadline מוחלט ולא sleep יחסי, ומדידת התפלגות ולא ממוצע.",
-      "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.latency-jitter"
     },
     {
       "id": "conc.latency-jitter.q11",
@@ -427,9 +441,6 @@
       "answer": 2,
       "explanation": "mlockall מבטיח שזיכרון נעול לא ייצא, אבל לא מונע מ-malloc לבקש זיכרון חדש מהקרנל ולהחזיר אותו. ההמלצה הקלאסית ל-RT (מה-wiki של PREEMPT_RT): להקצות מראש ולא להקצות בלולאה בכלל, ובנוסף `mallopt(M_MMAP_MAX, 0)` ו-`mallopt(M_TRIM_THRESHOLD, -1)` כדי ש-glibc לא יחזיר זיכרון לקרנל. ה-mlockall חל על כל ה-process, כולל threads.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: malloc יכול בהחלט לגרום ל-page faults: זיכרון חדש שהתקבל מהקרנל מוקצה פיזית רק כשנוגעים בו (או מיד, תחת MCL_FUTURE).",
         "שגוי: mlockall עובד גם על זיכרון של malloc, וזה בדיוק מה ש-MCL_FUTURE עושה. הבעיה היא לא שהנעילה נכשלת, אלא ש-malloc ממפה ומשחרר זיכרון חדש בכל איטרציה.",
@@ -451,9 +462,6 @@
       "answer": 3,
       "explanation": "rdtscp מחכה שכל ההוראות הקודמות יסתיימו לפני הקריאה (אבל לא מונע מהבאות להתחיל, ולכן מוסיפים lfence אחריו). במעבדים מודרניים יש invariant TSC שקצבו קבוע ולא משתנה עם P-states, כך שהטענה על תדר לא נכונה שם. ה-TSC סופר בקצב נומינלי, לא מחזורי ליבה אמיתיים בטורבו.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי במעבדים מודרניים: ל-invariant TSC יש קצב קבוע שלא משתנה עם P-states או טורבו. זה היה נכון במעבדים ישנים, ומשם הבלבול.",
         "שגוי: rdtsc מחזיר מונה (ticks בקצב הנומינלי של ה-TSC), לא ננו-שניות. ההמרה לזמן דורשת לדעת את תדר ה-TSC.",
@@ -475,9 +483,6 @@
       "answer": 2,
       "explanation": "זמן מילוי = N / fs = 65536 / 100e6 ≈ 655 µs. לזה מתווספים זמן החישוב, העברות מה-USRP ו-buffering בצד TX. לתגובה מהירה יותר מקטינים N (ברזולוציית תדר נמוכה יותר), משתמשים ב-FFT עם חפיפה, או מבצעים detection ב-FPGA. זה ה-trade-off הבסיסי בין רזולוציה, throughput ו-latency.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: 0.66 µs הוא 65536 / 100e9, כלומר טעות של פי 1000 ביחידות (GS/s במקום MS/s).",
         "שגוי: 65.5 µs הוא 65536 / 1e9, טעות של פי 10 בהמרה של 100 MS/s.",
@@ -499,10 +504,7 @@
         "שינוי אחד בכל פעם ואימות לאורך זמן"
       ],
       "explanation": "מראיינים מחפשים גישה שיטתית ממדידה לבידוד ואז לסיבה, ולא ניחושים או שינוי של עשרה פרמטרים בבת אחת.",
-      "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.latency-jitter"
     },
     {
       "id": "conc.latency-jitter.q15",
@@ -518,9 +520,6 @@
       "answer": 2,
       "explanation": "SMI מכניס את המעבד ל-System Management Mode: הקושחה רצה, וכל מה שמערכת ההפעלה רואה הוא שהזמן קפץ. לכן ftrace לא רואה כלום. hwlat מחפש בדיוק פערים כאלה כשה-interrupts כבויים. הפתרון בדרך כלל בהגדרות BIOS (power management, ניטור חומרה, emulation של USB legacy) או בבחירת פלטפורמה שמיועדת ל-RT.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: strace מראה syscalls של process, וגם מוסיף overhead עצום. ftrace כבר לא ראה שום פעילות של הקרנל, אז syscall איטי היה נראה שם.",
         "שגוי: valgrind מריץ את הקוד באמולציה איטית פי עשרות, ולא מתאים למדידת spikes בזמן אמת. cache miss עולה עשרות ns, לא 100µs.",
@@ -542,9 +541,6 @@
       "answer": 1,
       "explanation": "כל ה-threads של process חולקים page tables. כשמבטלים מיפוי, צריך לוודא שאף core לא ממשיך להשתמש בתרגום ישן מה-TLB שלו, ולכן ה-core המבודד מקבל interrupt. אפשר לראות את זה ב-/proc/interrupts בשורת TLB shootdowns. תיקונים: לא לבצע munmap או mprotect ב-process הזה בזמן ריצה (mallopt, pools), או להעביר את ה-GUI ל-process נפרד שמתקשר דרך shared memory.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: L1 הוא פרטי לכל core פיזי, ו-thread של ה-GUI שרץ על core אחר לא נוגע בו. החשד הזה מגיע מבלבול עם ה-L3 המשותף.",
         "נכון: כל ה-threads של process חולקים mm ו-page tables. munmap משנה אותן, והקרנל שולח IPI לכל ה-CPUs שעשויים להחזיק את ה-mm ב-TLB, כולל ה-core המבודד, כדי לבטל תרגומים ישנים (TLB shootdown).",
@@ -566,9 +562,6 @@
       "answer": 0,
       "explanation": "SMT מחלק core פיזי אחד בין שני הקשרים. ה-sibling מתחרה על ה-ports, ה-caches וה-TLB, והחלפת רישיון התדר של AVX-512 (ב-Skylake-SP ודומיו) משפיעה על כל ה-core ולוקחת זמן. עדיפות של ה-scheduler לא עוזרת, כי זה לא אותו logical CPU. בידוד אמיתי מתבצע ברמת core פיזי.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: שני ה-hardware threads חולקים execution ports, L1, L2 ו-TLB, ובמעבדי Intel רבים (Skylake-SP ודומיו) עומס AVX-512 מוריד את התדר של כל ה-core. התיקון: להשאיר את ה-sibling ריק או לכבות SMT.",
         "שגוי: עדיפות ה-scheduler משפיעה רק על מי ירוץ באותו logical CPU. ה-job של AVX-512 רץ על logical CPU אחר, כך שאין כאן החלטת scheduling לשנות.",
@@ -707,9 +700,6 @@
       "answer": 2,
       "explanation": "זה standing queue: רק צרכן מהיר מהיצרן יכול לרוקן תור. בזמן התקיעה נכנסו 20 בלוקים לתור של 16, אז 4 אבדו והתור מלא. אחרי זה הקצבים שווים, והתור לא מתרוקן לעולם. לכן מתכננים DSP עם מרווח (מהר מהקצב), או drop oldest אם בלוק מאוחר חסר ערך. ה-RX לא מאט, הדגימות מגיעות בקצב קבוע.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: זה היה נכון אם ה-DSP היה מהיר מקצב ה-RX. כשהקצבים שווים, אין שום עודף קיבולת שירוקן את התור.",
         "שגוי: 16ms נשמע כמו זמן ריקון של 16 בלוקים, אבל ריקון דורש שהצרכן יוציא יותר ממה שנכנס. עם קצבים שווים התור לא מתרוקן אף פעם.",
@@ -760,9 +750,6 @@
       "answer": 1,
       "explanation": "THP מוריד TLB misses, וזה יתרון אמיתי לבאפרים גדולים, אבל המנגנון האוטומטי מוסיף עבודה בזמנים לא צפויים, כולל מעבר בין דפים קטנים לגדולים בזיכרון קיים. huge pages מוקצים מראש נותנים את היתרון בלי ההפתעות.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: THP לא מבטל את mlockall, והזיכרון נשאר נעול ב-RAM. הבעיה היא עבודה נוספת של הקרנל על דפים נעולים, לא שחרור שלהם.",
         "נכון: עם THP=always, khugepaged מבצע compaction ומאחד דפים ל-2MB ברקע, ו-fault על huge page מאפס 2MB בבת אחת. ההמלצה: THP ב-madvise או never, ו-huge pages מוקצים מראש (hugetlbfs) לבאפרים שצריכים אותם.",
@@ -784,9 +771,6 @@
       "answer": 3,
       "explanation": "ה-tick נחוץ לחלוקת זמן בין tasks. עם task יחיד אין מה לחלק, ולכן אפשר לעצור אותו (עדיין נשאר tick נדיר של שנייה לניהול). בודקים מה עוד רץ על ה-core (ps עם עמודת psr, או ftrace), ומוודאים rcu_nocbs ושאין work queues שמוצמדים לשם.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: nohz_full הוא אפשרות של הקרנל שעובדת גם בלי PREEMPT_RT. היא דורשת CONFIG_NO_HZ_FULL, לא קרנל RT.",
         "שגוי: invariant TSC קשור למדידת זמן, לא להחלטה אם לעצור את ה-tick. הוא לא מסביר interrupts נוספים.",
@@ -808,9 +792,6 @@
       "answer": 2,
       "explanation": "דקה אחת מתוך 60 היא 1/60 מהמדידות, ו-1% העליון של השעה כולו בתוכה. ממוצע ה-p99 מטעה פי 38. באופן כללי percentiles לא ניתנים למיצוע ולא תמיד ניתנים לשחזור מ-percentiles של חלונות: אם הדקה הגרועה הייתה מכילה פחות מ-1% מהשעה ב-5ms, p99 השעתי היה נקבע לפי הזנב של הדקות הטובות. לכן שומרים היסטוגרמות (למשל HdrHistogram) וממזגים. max של maxים, לעומת זאת, תמיד נכון.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "microsoft"
-      ],
       "notes": [
         "שגוי: (59·50 + 5000) / 60 ≈ 132 µs הוא חשבון נכון של דבר חסר משמעות. percentiles לא ניתנים למיצוע, והממוצע כאן נמוך פי 38 מהתשובה האמיתית.",
         "שגוי: החציון של ה-p99 מתעלם לגמרי מהדקה הגרועה. זו טעות של מי שחושב שאפשר לגזור percentile של המכלול מ-percentiles של החלקים.",
@@ -832,9 +813,6 @@
       "answer": 0,
       "explanation": "coalescing הוא trade-off קלאסי בין throughput ל-latency: בקצב גבוה הוא חוסך מאות אלפי interrupts בשנייה, אבל בחבילה בודדת הוא מוסיף עד rx-usecs. adaptive coalescing מנסה לבחור לבד, וזה מוסיף jitter. במערכות latency-critical: ערך נמוך וקבוע, SO_BUSY_POLL, או DPDK שעוקף את מנגנון ה-interrupts.",
       "lesson": "conc.latency-jitter",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: interrupt coalescing. עם rx-usecs: 50 הכרטיס מחכה עד 50 µs (או עד מספר חבילות) לפני interrupt כדי לחסוך interrupts ו-CPU. הורדה ל-0 או לערך קטן, או busy polling, מורידים latency במחיר יותר interrupts או core שלם.",
         "שגוי: השהיית התפשטות בכבל היא כ-5 ns למטר, כלומר זניחה. ו-ethtool מראה פרמטר שאפשר לשנות.",
@@ -855,10 +833,150 @@
         "מרווח jitter לפי max, מדידה עם timestamps, וההכרה מתי צריך FPGA"
       ],
       "explanation": "שאלת system design שבודקת חשיבה כמותית. מועמד חזק מחשב, לא מנחש, ומבין שה-buffers הם latency.",
-      "lesson": "conc.latency-jitter",
+      "lesson": "conc.latency-jitter"
+    },
+    {
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את מה שקורה כשמגיע interrupt מהתקן, מנקודת המבט של המעבד ומערכת ההפעלה:",
+      "items": [
+        "ההתקן מסמן interrupt, ובקר ה-interrupts מעביר אותו למעבד",
+        "המעבד מסיים את ההוראה הנוכחית ובודק אם יש interrupt ממתין ולא ממוסך",
+        "המעבד שומר את ההקשר הבסיסי (PC, flags) ועובר למצב kernel",
+        "לפי טבלת הווקטורים מבוצעת קפיצה ל-ISR המתאים",
+        "ה-ISR מאשר (acknowledge) את ה-interrupt, עושה עבודה מינימלית, ודוחה את השאר ל-bottom half או ל-thread",
+        "שחזור ההקשר וחזרה (או מעבר דרך ה-scheduler אם משימה בעדיפות גבוהה יותר התעוררה)"
+      ],
+      "explanation": "ה-latency של interrupt הוא סכום השלבים האלה, ועוד כל זמן שבו interrupts ממוסכים. ISR קצר שדוחה עבודה הוא הכלל שמחזיק את ה-latency של כל המערכת נמוך.",
+      "problem": "Qualcomm / NVIDIA interview: steps followed when an interrupt occurs, ISR handling",
       "tags": [
+        "qualcomm",
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1341747/qualcomm-by-monty4597-ys8n/",
+        "https://leetcode.com/discuss/post/8510550/nvidia-interview-experience-senior-syste-vr87/"
+      ],
+      "id": "conc.latency-jitter.q31",
+      "lesson": "conc.latency-jitter"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה ISRs (top half) עושים מינימום עבודה ודוחים את השאר (bottom half, tasklet, threaded IRQ או משימה)?",
+      "choices": [
+        "כי ISR רץ בעדיפות נמוכה",
+        "כי ISR לא יכול לקרוא לפונקציות",
+        "כי ל-ISR אין גישה לזיכרון",
+        "בזמן ה-ISR, interrupts אחרים (לפחות מאותו קו, ולעיתים כולם) ממוסכים וה-scheduler לא רץ. ISR ארוך מגדיל את ה-latency של כל ה-interrupts ומשימות ה-real-time, ובנוסף אסור בו לישון"
+      ],
+      "answer": 3,
+      "explanation": "כל מיקרו-שנייה ב-ISR היא מיקרו-שנייה שבה המערכת לא מגיבה לשום דבר אחר. לכן ה-ISR מאשר, מעתיק את המינימום, ומעיר thread שיעשה את העבודה בהקשר שאפשר להפסיק ולתזמן לפי עדיפות.",
+      "notes": [
+        "שגוי: ISR מפסיק כל משימה, כלומר הוא מעל כל העדיפויות של משימות.",
+        "שגוי: ISR קורא לפונקציות. הבעיה היא משך וחסימה.",
+        "שגוי: ISR ניגש לזיכרון בחופשיות.",
+        "נכון: ISR ארוך מוסיף jitter לכל המערכת, ואסור בו לחסום."
+      ],
+      "id": "conc.latency-jitter.q32",
+      "lesson": "conc.latency-jitter"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו פעולות **אסורות** (או מסוכנות) בתוך ISR?",
+      "choices": [
+        "קריאה לפונקציה FromISR של ה-RTOS שמשחררת semaphore (למשל xSemaphoreGiveFromISR)",
+        "קריאה חוסמת, כמו read מ-UART עם המתנה לנתונים",
+        "כתיבה ל-SPSC ring buffer lock-free שמשימה אחת קוראת ממנו",
+        "נעילת mutex שעלול להיות תפוס (למשל std::mutex או mutex של RTOS)",
+        "malloc"
+      ],
+      "answer": [
+        1,
+        3,
+        4
+      ],
+      "explanation": "ISR לא יכול לישון: אין לו הקשר של משימה שאפשר להעביר להמתנה, ואם הוא קטע את בעל ה-lock, הוא יחכה לנצח. פעולות שלא חוסמות ולא לוקחות locks (SPSC lock-free, ממשקי FromISR) הן הדרך המקובלת להעביר עבודה החוצה.",
+      "notes": [
+        "שגוי: ממשקי FromISR מתוכננים לזה: לא חוסמים, ומחזירים דגל שאומר אם צריך context switch ביציאה.",
+        "נכון: ISR לא יכול לחכות. חסימה בו עוצרת את כל המערכת.",
+        "שגוי: SPSC lock-free עם כותב יחיד (ה-ISR) וקורא יחיד הוא בדיוק הכלי המתאים.",
+        "נכון: אם ה-ISR קטע את המשימה שמחזיקה את ה-mutex, היא לא תרוץ עד שה-ISR יסתיים, וה-ISR לא יסתיים. deadlock, או שגיאה ב-RTOS.",
+        "נכון: malloc לוקחת locks ואינה reentrant. ה-ISR עלול לקטוע malloc אחר באמצע."
+      ],
+      "id": "conc.latency-jitter.q33",
+      "lesson": "conc.latency-jitter"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "יש טיימר חומרה יחיד. צריך לממש `register_callback(fn, arg, delay)` (נקרא מהרבה threads) ו-`timer_interrupt()` (נקרא כשהטיימר פוקע) כך שכל callback ירוץ בזמן שלו. איזה תכנון נכון?",
+      "choices": [
+        "min-heap, וה-callbacks רצים בתוך timer_interrupt בזמן שה-lock של ה-heap מוחזק",
+        "רשימה לא ממוינת. בכל interrupt סורקים את כולה ומתכנתים את הטיימר מחדש ל-delay הקטן ביותר שנשאר",
+        "min-heap לפי זמן פקיעה **מוחלט** (now + delay). הטיימר מתוכנת תמיד לראש ה-heap. register שמוסיף זמן מוקדם יותר מהראש הנוכחי מתכנת את הטיימר מחדש. ב-interrupt מוציאים את כל מה שפקע ומתכנתים לראש החדש",
+        "min-heap לפי זמן מוחלט, אבל מתכנתים את הטיימר רק כשהוא לא פעיל, כדי לא לבטל טיימר קיים"
+      ],
+      "answer": 2,
+      "explanation": "זמנים מוחלטים לא נסחפים. ה-heap נותן את הבא בתור ב-O(1) והכנסה ב-O(log n). הנקודה שמפספסים: כש-callback חדש מוקדם מהבא בתור, חייבים לתכנת מחדש את הטיימר. ו-callbacks לא מריצים תחת lock, ועדיף לא בהקשר של interrupt בכלל.",
+      "notes": [
+        "שגוי: callback שקורא ל-register_callback ינסה לנעול lock שכבר מוחזק (deadlock), ו-callbacks ארוכים בהקשר interrupt פוגעים ב-latency.",
+        "שגוי: O(n) לכל interrupt. ושמירת delays יחסיים שמתעדכנים בכל פעם צוברת שגיאות (drift).",
+        "נכון: זמן מוחלט, heap, ותכנות מחדש כשנכנס זמן מוקדם יותר.",
+        "שגוי: callback חדש עם delay קצר ירוץ רק כשהטיימר הישן (המאוחר) יפקע, כלומר באיחור."
+      ],
+      "problem": "Google interview: timer callbacks with a single hardware timer",
+      "tags": [
+        "google"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1690850/google-online-timer-callback-by-anonymou-yhcx/"
+      ],
+      "id": "conc.latency-jitter.q34",
+      "lesson": "conc.latency-jitter"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במיקרו-בקר עם core יחיד: register_callback (נקרא ממשימות) ו-timer_interrupt (נקרא ב-ISR) חולקים heap של טיימרים. איך מגינים על ה-heap?",
+      "choices": [
+        "spinlock שגם המשימה וגם ה-ISR מסתובבים עליו",
+        "mutex של ה-RTOS, שגם ה-ISR נועל",
+        "בצד המשימה: ביטול interrupts (או לפחות interrupt הטיימר) לזמן העדכון הקצר של ה-heap. בצד ה-ISR אין צורך ב-lock, כי במהלכו אף משימה לא רצה",
+        "אין צורך בהגנה על core יחיד"
+      ],
+      "answer": 2,
+      "explanation": "על core יחיד ה-ISR יכול לקטוע את המשימה באמצע עדכון, אבל לא להפך. לכן המשימה צריכה למנוע את הקטיעה בזמן העדכון. על multi-core מוסיפים spinlock וביטול interrupts יחד (spin_lock_irqsave).",
+      "notes": [
+        "שגוי: על core יחיד, ISR שמסתובב על spinlock שהמשימה הקטועה מחזיקה לא ייגמר לעולם.",
+        "שגוי: ISR לא יכול לחכות ל-mutex. אם הוא קטע את המשימה שמחזיקה אותו, הוא יחכה לנצח.",
+        "נכון: ה-section קצר ומוגבל, ולכן ביטול interrupts הוא הכלי הנכון.",
+        "שגוי: ה-ISR יכול לקטוע את המשימה באמצע שינוי של ה-heap ולראות מבנה שבור."
+      ],
+      "id": "conc.latency-jitter.q35",
+      "lesson": "conc.latency-jitter"
+    },
+    {
+      "level": 5,
+      "type": "mcq",
+      "prompt": "מערכת עם מאות אלפי טיימרים (למשל timeouts של חיבורי רשת), שרובם מבוטלים לפני שהם פוקעים. למה מעדיפים hashed timing wheel על פני heap?",
+      "choices": [
+        "ב-wheel הכנסה וביטול הם O(1) (רשימה ב-slot לפי הזמן), לעומת O(log n) ב-heap, וביטול מתוך heap גם דורש אינדקס. המחיר: רזולוציה של slot (tick), ו-timeouts רחוקים דורשים כמה רמות או סבבים",
+        "כי heap לא תומך בביטול בכלל",
+        "כי wheel לא צריך טיימר חומרה",
+        "כי wheel מדויק יותר"
+      ],
+      "answer": 0,
+      "explanation": "timeouts של רשת כמעט תמיד מבוטלים, ולכן עלות ההכנסה והביטול שולטת. wheel מחלק את הזמן ל-slots, ו-tick מתקדם slot אחד. כך עובד ה-timer wheel של Linux, שמוותר על דיוק ל-timeouts רחוקים.",
+      "notes": [
+        "נכון: O(1) להכנסה ולביטול הוא הסיבה, במחיר של granularity.",
+        "שגוי: heap תומך בביטול ב-O(log n) אם שומרים את מיקום כל איבר.",
+        "שגוי: wheel מתקדם בעזרת tick מחזורי, כלומר דווקא צריך טיימר.",
+        "שגוי: wheel מעגל ל-tick, ולכן דווקא פחות מדויק. heap מדויק לזמן המדויק."
+      ],
+      "id": "conc.latency-jitter.q36",
+      "lesson": "conc.latency-jitter"
     }
   ]
 }

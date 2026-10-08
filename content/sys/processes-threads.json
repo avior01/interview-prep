@@ -208,6 +208,26 @@
         {
           "term": "RLIMIT_NPROC, pids.max, threads-max",
           "def": "מגבלות על מספר tasks: למשתמש, ל-cgroup ולמערכת. כולן סופרות threads, ו-pthread_create נכשל עם EAGAIN כשמגיעים אליהן."
+        },
+        {
+          "term": "TGID / TID",
+          "def": "ב-Linux, PID במובן POSIX הוא ה-TGID (מזהה קבוצת ה-threads), ו-TID הוא המזהה של task בודד. getpid מחזיר TGID, gettid מחזיר TID, וב-main thread הם שווים."
+        },
+        {
+          "term": "process group ו-session",
+          "def": "process group מקבץ processes שמקבלים signals יחד מהטרמינל (Ctrl+C שולח SIGINT לכל קבוצת ה-foreground). session מקבץ process groups סביב טרמינל אחד, ומוביל ה-session מקבל SIGHUP כשהטרמינל נסגר."
+        },
+        {
+          "term": "SIGHUP, nohup, setsid, disown",
+          "def": "SIGHUP נשלח כשהטרמינל נסגר, וברירת המחדל שלו היא לסיים. nohup גורם להתעלם ממנו, setsid יוצר session חדש בלי טרמינל, ו-disown מוציא job מהרשימה של ה-shell."
+        },
+        {
+          "term": "spinlock / mutex / semaphore",
+          "def": "spinlock: ממתין מסתובב, ל-critical sections קצרים מאוד על multi-core ובהקשרים שאסור לישון. mutex: ממתין ישן, עם בעלות. semaphore: מונה של משאבים או אירועים, בלי בעלות, מתאים לאיתות."
+        },
+        {
+          "term": "counting semaphore",
+          "def": "semaphore שהערך שלו הוא מספר המשאבים הפנויים. wait מקטין וחוסם כשהוא 0, post מגדיל ומעיר ממתין."
         }
       ]
     }
@@ -444,9 +464,6 @@
       "answer": 0,
       "explanation": "החלק הישיר (שמירת רגיסטרים ובחירת task) דומה. ההבדל העיקרי הוא בעלות העקיפה: החלפת מרחב כתובות ו-TLB misses אחר כך. PCID ב-x86 (ו-ASID ב-ARM) מאפשרים לשמור רשומות TLB של כמה מרחבים, ומקטינים את ההבדל, אבל לא מבטלים אותו.",
       "lesson": "sys.processes-threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: בין threads של אותו process אין טעינת CR3, ה-TLB נשאר תקף וה-caches חמים לשניהם. בין processes מחליפים מרחב כתובות, וה-TLB מתרוקן או, עם PCID, נשמר אבל קר ל-process החדש. שמירת הרגיסטרים דומה בשני המקרים.",
         "threads לא קשורים ל-core מסוים: ה-scheduler מריץ אותם על כל core פנוי, כמו processes. affinity הוא הגדרה מפורשת, לא תכונה של threads.",
@@ -468,9 +485,6 @@
       "answer": 0,
       "explanation": "COW לא מעתיק דפים, אבל כן מעתיק page tables: לכל 4KB יש PTE של 8 בתים, כלומר כ-80MB של PTEs ל-40GB. בנוסף, אחרי ה-fork כל כתיבה של האב לדף משותף היא fault ו-העתקה עד שהילד מבצע exec. posix_spawn או vfork משתמשים במרחב הכתובות של האב עד ה-exec. huge pages מקטינות את מספר ה-PTEs.",
       "lesson": "sys.processes-threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: system() עושה fork, שמעתיק כ-80MB של PTEs (8 בתים לכל דף של 4KB ב-40GB) ומסמן הכול COW, ואחר כך כל כתיבה של האב לדף משותף היא fault והעתקה עד exec. posix_spawn (clone עם CLONE_VM | CLONE_VFORK) לא משכפל את מרחב הכתובות.",
         "system() אכן מתעלם מ-SIGINT ו-SIGQUIT וחוסם SIGCHLD בזמן ההמתנה, אבל זה לא מקפיא את ה-service, ולא מסביר עלות שגדלה עם גודל ה-RSS.",
@@ -509,10 +523,7 @@
         "מזכיר השפעות עקיפות בין threads: TLB shootdown, page faults, קריסה משותפת"
       ],
       "explanation": "אין תשובה אחת נכונה, אבל צריך נימוק מבוסס trade-offs ולא העדפה כללית.",
-      "lesson": "sys.processes-threads",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "sys.processes-threads"
     },
     {
       "id": "sys.processes-threads.q15",
@@ -803,9 +814,6 @@
       "answer": 0,
       "explanation": "signal שמכוון ל-process נמסר ל-thread שרירותי מבין אלה שלא חוסמים אותו. אם זה ה-RT thread, ה-handler רץ על ה-stack שלו ובזמן שלו. threads יורשים את ה-mask מה-thread שיצר אותם, ולכן חוסמים ב-main לפני היצירה. thread ייעודי שמקבל signals כאירועים רגילים גם פותר את בעיית ה-async-signal-safety.",
       "lesson": "sys.processes-threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: SIGINT הוא process-directed, והקרנל מוסר אותו ל-thread כלשהו שלא חוסם אותו, כולל ה-RT, וה-handler רץ על הזמן שלו. חוסמים הכול עם pthread_sigmask לפני יצירת threads (הם יורשים את ה-mask) ומקבלים ב-thread ייעודי עם sigwait או signalfd.",
         "Ctrl+C גורם רק ל-tty לשלוח SIGINT ל-foreground process group, ואין לו השפעה על מהירות ה-CPUs.",
@@ -827,9 +835,6 @@
       "answer": 3,
       "explanation": "ה-mutex מועתק כמו שהוא, כולל הסימון שהוא נעול. הבעלים שלו לא קיים בילד. זה נדיר כי צריך שה-fork יקרה בדיוק בזמן שמישהו אחר מחזיק את ה-lock, ולכן הבאג מופיע רק בעומס. pthread_atfork יכול לפתור את זה ל-lock אחד, אבל לא לכל הספריות שהקוד משתמש בהן.",
       "lesson": "sys.processes-threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "קובץ שהאב סוגר אחרי fork לא משפיע על ה-fd של הילד, ובכל מקרה כתיבה ל-fd סגור מחזירה EBADF ולא נתקעת לנצח.",
         "fork הוא אטומי: הוא מצליח (ילד מלא עם thread אחד) או נכשל. אין \"fork חלקי\".",
@@ -857,6 +862,286 @@
         "orphans לא מקבלים PID חדש: רק ה-PPID שלהם משתנה. ובכל מקרה ה-workers הם ילדים של ה-supervisor החי, ולא orphans.",
         "גם אם ה-SIGTERM נמסר ל-thread כלשהו בתוך ה-worker, הוא עדיין מגיע ל-worker הנכון. זה לא מסביר הריגה של process לא קשור."
       ]
+    },
+    {
+      "id": "sys.processes-threads.q31",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-Linux, איך ה-scheduler מתייחס ל-threads לעומת processes?",
+      "choices": [
+        "הקרנל נותן ל-threads עדיפות גבוהה יותר מ-processes",
+        "הוא מתזמן processes, ו-threads של אותו process חולקים את ה-time slice של ה-process",
+        "threads מתוזמנים בספריית pthreads ב-user space, והקרנל רואה רק את ה-process",
+        "הוא מתזמן tasks: כל thread הוא task_struct נפרד שמתוזמן בנפרד. threads של אותו process פשוט חולקים מרחב כתובות וקבצים פתוחים"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: אין שום הבחנה כזו. העדיפות נקבעת לפי policy ו-nice של כל task.",
+        "שגוי: זה המודל של כמה מערכות אחרות. ב-Linux, process עם 8 threads שעסוקים ב-CPU יכול לקבל עד פי 8 זמן CPU מ-process עם thread אחד (אלא אם מגבילים עם cgroups או autogroup).",
+        "שגוי: NPTL היא 1:1. כל pthread הוא task בקרנל, ולכן חסימה של thread אחד ב-syscall לא חוסמת את האחרים.",
+        "נכון: ב-Linux אין הבדל מבני: clone עם flags כמו CLONE_VM ו-CLONE_FILES יוצר task שחולק משאבים. ה-scheduler רואה רק tasks."
+      ],
+      "explanation": "ב-Linux, process הוא קבוצה של tasks (thread group) עם TGID משותף, ו-thread הוא task. ה-scheduler מחלק זמן בין tasks. לכן הוגנות 'לפי process' דורשת cgroups או autogroup.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/"
+      ],
+      "problem": "NVIDIA: process vs thread, how the kernel schedules each",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q32",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בתוך process עם כמה threads ב-Linux, thread קורא ל-`getpid()` ול-`gettid()`. מה הוא מקבל?",
+      "choices": [
+        "gettid קיים רק ב-Windows",
+        "getpid מחזיר מזהה שונה לכל thread, כי כל thread הוא task",
+        "שני הערכים שונים בכל thread, כולל ה-main",
+        "getpid מחזיר את ה-TGID, שזהה בכל ה-threads, ו-gettid מחזיר מזהה ייחודי ל-thread. ב-main thread שני הערכים שווים"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: gettid הוא syscall של Linux, ו-glibc מספקת עטיפה מאז 2.30.",
+        "שגוי: זה היה המצב ב-LinuxThreads הישנה, לפני NPTL. היום getpid מחזיר TGID ולכן זהה בכל ה-threads, כמו ש-POSIX דורש.",
+        "שגוי: ב-main thread ה-TID וה-TGID זהים, כי ה-TGID נקבע לפי ה-thread הראשון.",
+        "נכון: מה ש-user space מכנה PID הוא ה-TGID, המזהה של קבוצת ה-threads. כל task מקבל TID משלו, וה-TID של ה-main thread שווה ל-TGID."
+      ],
+      "explanation": "ב-Linux, PID במובן POSIX הוא ה-TGID, ו-TID הוא המזהה של ה-task. כלים כמו top -H ו-/proc/<pid>/task/ מציגים את ה-TIDs, ו-signals ל-process נשלחים ל-TGID.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q33",
+      "level": 4,
+      "type": "short",
+      "prompt": "על core יחיד רצים שני processes עם nice 0, בלי autogroup ובלי cgroups נפרדים. ל-A יש thread אחד עסוק ב-CPU, ול-B יש 4 threads עסוקים ב-CPU. בערך כמה אחוזים מה-CPU מקבל A?",
+      "accept": [
+        "20",
+        "20%"
+      ],
+      "explanation": "ה-scheduler מחלק זמן בין tasks, לא בין processes. יש 5 tasks עם אותו weight, ולכן כל אחד מקבל כ-20%. A מקבל 20% ו-B מקבל 80%. כדי לחלק 50-50 בין processes, שמים כל אחד ב-cgroup משלו עם אותו cpu.weight.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q34",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Chrome מריץ את רוב הלשוניות (ליתר דיוק, את רוב האתרים) ב-processes נפרדים, ולא כ-threads בתוך process אחד. מה הסיבה העיקרית, ומה המחיר?",
+      "choices": [
+        "בידוד: קריסה או זליגת זיכרון של renderer לא מפילה את כל הדפדפן, ודף זדוני לא יכול לקרוא זיכרון של אתר אחר. המחיר: יותר זיכרון ו-IPC בין ה-processes",
+        "processes רצים מהר יותר מ-threads, כי context switch ביניהם זול יותר",
+        "threads לא יכולים להשתמש ב-GPU",
+        "Windows מגביל כל process ל-thread אחד של UI"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: כל process הוא crash domain ו-security domain נפרד, ואפשר לשים אותו ב-sandbox עם הרשאות מינימליות. המחיר: מרחב כתובות נפרד, עותקים של מבני runtime, ותקשורת דרך IPC במקום זיכרון משותף.",
+        "שגוי: הפוך: context switch בין threads של אותו process זול יותר, כי לא מחליפים טבלאות דפים.",
+        "שגוי: אין מגבלה כזו. בפועל Chrome מרכז את העבודה מול ה-GPU ב-process נפרד, גם זה לצורך בידוד.",
+        "שגוי: process יכול להחזיק כמה threads, וכמה חלונות UI."
+      ],
+      "explanation": "process מול thread זו החלטה של בידוד מול עלות. threads חולקים זיכרון, ולכן זולים ומהירים לתקשורת, אבל באג באחד מפיל את כולם. processes מבודדים, אבל דורשים IPC ויותר זיכרון.",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/microsoft-interview-experience-set-126-campus-internship/"
+      ],
+      "problem": "Microsoft: is a new Chrome tab a process or a thread?",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q35",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-process עם 10 threads, thread אחד מבצע dereference ל-nullptr ומקבל SIGSEGV, ואין handler. מה קורה?",
+      "choices": [
+        "הקרנל ממפה דף אפסים בכתובת 0 וה-thread ממשיך",
+        "ה-thread מושעה עד שמישהו מטפל בו",
+        "כל ה-process מסתיים (עם core dump אם מופעל), כי פעולת ברירת המחדל של SIGSEGV היא לסיים את ה-process כולו",
+        "רק ה-thread הזה מת, ושאר ה-threads ממשיכים"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: mmap_min_addr מונע מיפוי של הדפים הנמוכים, כדי שגישה ל-null תיכשל תמיד.",
+        "שגוי: השעיה היא פעולת ברירת מחדל של SIGSTOP ו-SIGTSTP, לא של SIGSEGV.",
+        "נכון: הפעולה של signal (terminate, core) חלה על כל ה-process. זו בדיוק הסיבה שדפדפנים מפרידים לשוניות ל-processes.",
+        "שגוי: אין דרך בטוחה לסיים thread אחד אחרי גישה לא חוקית, כי הזיכרון המשותף אולי כבר משובש. POSIX מגדיר שהפעולה חלה על כל ה-process."
+      ],
+      "explanation": "threads חולקים גורל: קריסה של אחד מפילה את כולם. זו הסיבה לתכנן רכיבים לא אמינים (plugins, ספריות חיצוניות, renderers) כ-processes נפרדים.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q36",
+      "level": 3,
+      "type": "multi",
+      "prompt": "מתכננים מעבר מארכיטקטורה של thread לכל לשונית לארכיטקטורה של process לכל לשונית. אילו מחירים יופיעו?",
+      "choices": [
+        "צריכת זיכרון גבוהה יותר: לכל process מרחב כתובות, heap ו-runtime משלו",
+        "תקשורת בין הלשונית ל-UI הראשי דורשת IPC (pipes, sockets, shared memory) עם serialization",
+        "context switch בין לשוניות יעלה יותר, כי צריך להחליף מרחב כתובות",
+        "יצירת לשונית חדשה איטית יותר (fork/exec או spawn ואתחול runtime)",
+        "קריסה של לשונית תפיל את כל הדפדפן"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "notes": [
+        "נכון: כל process מחזיק עותקים של מבנים שאפשר היה לשתף. שיתוף דפי קוד של ספריות מקטין את זה, אבל לא מבטל.",
+        "נכון: בלי זיכרון משותף, כל הודעה צריכה לעבור דרך ערוץ IPC, וכל אובייקט צריך להיות מסודר לפורמט שאפשר להעביר.",
+        "נכון: מעבר בין processes מחליף CR3 ופוגע ב-TLB וב-caches. בין threads של אותו process המחיר הזה לא קיים.",
+        "נכון: יצירת process ואתחולו יקרים יותר מיצירת thread. לכן דפדפנים מחזיקים processes מוכנים מראש.",
+        "שגוי: זה בדיוק מה שהמעבר מונע. קריסה של process פוגעת רק בו."
+      ],
+      "explanation": "המעבר ל-processes קונה בידוד ואבטחה ומשלם בזיכרון, בזמן יצירה, ב-IPC ובמעברי הקשר. מערכות אמיתיות מאזנות: Chrome מאחד כמה לשוניות של אותו אתר ל-process אחד כשהזיכרון לחוץ.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q37",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "process אב יצר ילד עם fork. אם הורגים את האב עם `kill -9`, הילד ממשיך לרוץ (ומאומץ על ידי init). אבל כשלוחצים Ctrl+C בטרמינל שבו הם רצים, שניהם מסתיימים. למה?",
+      "choices": [
+        "הטרמינל סוגר את ה-stdin, והילד מת מ-EOF",
+        "SIGINT, בניגוד ל-SIGKILL, הורג גם את הילדים",
+        "האב מקבל SIGINT ומעביר אותו אוטומטית לכל הילדים שלו",
+        "Ctrl+C שולח SIGINT לכל ה-process group של ה-foreground, והילד יורש את ה-process group של האב. כל אחד מקבל את ה-signal ומת בעצמו"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: Ctrl+C לא סוגר את ה-stdin. הוא מייצר SIGINT דרך ה-line discipline של הטרמינל.",
+        "שגוי: שום signal לא הורג אוטומטית את הילדים של מי שקיבל אותו. ההבדל הוא למי ה-signal נשלח.",
+        "שגוי: אין העברה אוטומטית. אב שרוצה שהילדים ימותו צריך לשלוח להם signal בעצמו.",
+        "נכון: הטרמינל שולח את ה-signal ל-process group שנמצא ב-foreground, לא ל-process יחיד. ילדים נשארים באותה קבוצה אלא אם קוראים ל-setpgid או ל-setsid."
+      ],
+      "explanation": "מות האב לא הורג את הילד: הילד הופך ל-orphan ומאומץ על ידי init או subreaper. מה שהורג קבוצה שלמה הוא signal שנשלח ל-process group, כמו Ctrl+C או `kill -- -PGID`. כדי שילד ימות עם האב משתמשים ב-PR_SET_PDEATHSIG.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-4-on-campus/"
+      ],
+      "problem": "NVIDIA: what happens to the children when you kill the parent",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q38",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "daemon יוצר worker כילד, ורוצה שה-worker ימות אוטומטית אם ה-daemon נהרג, גם ב-SIGKILL. מה הפתרון הנכון ב-Linux?",
+      "choices": [
+        "להריץ את הילד עם nohup",
+        "הילד קורא ל-`prctl(PR_SET_PDEATHSIG, SIGTERM)` מיד אחרי ה-fork, ובודק ש-getppid עדיין שווה ל-PID של האב (כדי לכסות מצב שבו האב מת לפני הקריאה)",
+        "ה-daemon מתקין handler ל-SIGKILL שהורג את הילדים",
+        "שום דבר: ילדים תמיד מתים עם האב"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: nohup עושה הפוך: הוא גורם ל-process להתעלם מ-SIGHUP כדי שישרוד סגירה של הטרמינל.",
+        "נכון: PR_SET_PDEATHSIG מבקש מהקרנל לשלוח signal לילד כשהאב מת. יש חלון: אם האב מת לפני ה-prctl, ה-signal לא יישלח, ולכן בודקים את getppid מיד אחרי. (שימו לב שזה מופעל כשה-thread שיצר את הילד מסתיים, לא בהכרח כל ה-process.)",
+        "שגוי: אי אפשר לתפוס SIGKILL. אין handler שירוץ.",
+        "שגוי: ילדים לא מתים עם האב. הם הופכים ליתומים ומאומצים."
+      ],
+      "explanation": "הקרנל לא קושר את חיי הילד לאב, אלא אם מבקשים במפורש עם PR_SET_PDEATHSIG. חלופה מודרנית: pidfd או pipe שהילד מאזין לו, שנסגר אוטומטית כשהאב מת.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q39",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "הרצת `./long_job &` ב-ssh, ואז ניתקת את החיבור. ה-job נעלם. מה קרה?",
+      "choices": [
+        "sshd הורג כל process שה-UID שלו מחובר",
+        "ה-job הפך ל-zombie ונמחק",
+        "ה-job נהרג כי ה-stdout שלו נסגר",
+        "ה-shell (מוביל ה-session) קיבל SIGHUP כשהטרמינל נסגר, ושלח SIGHUP לכל ה-jobs שלו. פעולת ברירת המחדל של SIGHUP היא לסיים. פתרונות: nohup, setsid, disown, או tmux"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: sshd לא הורג processes לפי UID. (systemd עם KillUserProcesses יכול לעשות משהו דומה, אבל זו לא ברירת המחדל ברוב ההפצות.)",
+        "שגוי: zombie הוא process שכבר הסתיים. השאלה היא למה הוא הסתיים.",
+        "שגוי: כתיבה לטרמינל סגור יכולה להחזיר שגיאה (EIO), אבל לא היא מה שהורג את ה-job. ה-SIGHUP מגיע קודם.",
+        "נכון: הטרמינל הווירטואלי שולח SIGHUP למוביל ה-session, וה-shell מעביר אותו ל-jobs. nohup מתעלם מ-SIGHUP, setsid יוצר session חדש בלי טרמינל, ו-disown מוציא את ה-job מהרשימה של ה-shell."
+      ],
+      "explanation": "sessions, process groups ו-SIGHUP הם המנגנון שקושר processes לטרמינל. הם, ולא הקשר אב-ילד, קובעים מה מת כשהטרמינל נסגר או כשלוחצים Ctrl+C.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q40",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מתי spinlock עדיף על mutex רגיל?",
+      "choices": [
+        "כשה-critical section קצר מאוד (כמה עשרות ננו-שניות), יש כמה cores, וה-thread שמחזיק את הנעילה לא יכול לישון בתוכה. אז ה-spin זול יותר מלהירדם ולהתעורר",
+        "על מעבד עם core יחיד, כי אין שם context switch",
+        "כשה-critical section כולל קריאה מהדיסק",
+        "תמיד, כי spinlock לא מערב את הקרנל"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: להירדם ולהתעורר עולה מיקרו-שניות. אם הנעילה תשתחרר תוך ננו-שניות, עדיף להמתין בלולאה. בקרנל spinlock הכרחי גם בהקשרים שאסור לישון בהם, כמו interrupt handler.",
+        "שגוי: על core יחיד spin הוא בזבוז מוחלט: מי שמחזיק את הנעילה לא יכול לרוץ בזמן שמחכים לו, עד שה-time slice נגמר.",
+        "שגוי: I/O לוקח מילי-שניות. ה-waiters ישרפו CPU כל הזמן הזה. כאן צריך mutex.",
+        "שגוי: spinlock ב-user space מסוכן: אם מי שמחזיק אותו מקבל preemption, כל ה-waiters שורפים CPU. mutex מודרני (futex) לא נכנס לקרנל כשאין תחרות."
+      ],
+      "explanation": "mutex: ממתין ישן, מתאים ל-critical sections ארוכים או שעלולים לישון. spinlock: ממתין מסתובב, מתאים ל-critical sections קצרים מאוד על multi-core, ובקרנל בהקשרים שאסור לישון. semaphore: מונה, מתאים לספירת משאבים ולאיתות בין threads. ב-user space ה-mutex של glibc כבר עושה spin קצר לפני שהוא ישן.",
+      "tags": [
+        "microsoft",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=338497",
+        "https://www.geeksforgeeks.org/?p=477855"
+      ],
+      "problem": "Microsoft / Qualcomm: semaphore vs mutex vs spinlock",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q41",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה ההבדל העיקרי בין mutex לבין binary semaphore (semaphore עם ערך התחלתי 1)?",
+      "choices": [
+        "ל-mutex יש בעלות: רק ה-thread שנעל אותו רשאי לשחרר אותו, וזה מאפשר priority inheritance ובדיקת שגיאות. semaphore יכול לקבל post מכל thread, ולכן מתאים לאיתות בין threads",
+        "mutex עובד רק בין processes, ו-semaphore רק בין threads",
+        "אין הבדל: שניהם נועלים ומשחררים",
+        "semaphore מהיר יותר כי הוא לא נכנס לקרנל"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: בעלות היא ההבדל. בגללה mutex תומך ב-priority inheritance (המערכת יודעת את מי להעלות בעדיפות) וב-robust/errorcheck. semaphore מתאים לדפוס שבו thread אחד מחכה ו-thread אחר (או ISR) מאותת לו.",
+        "שגוי: שניהם יכולים לעבוד בין processes, עם pshared או PTHREAD_PROCESS_SHARED וזיכרון משותף.",
+        "שגוי: בשימוש הפשוט הם דומים, אבל הסמנטיקה שונה, וזה משנה גם את מה שהמערכת יכולה לעשות בשבילך.",
+        "שגוי: שניהם ממומשים מעל futex ב-Linux, ושניהם נכנסים לקרנל רק כשצריך לחכות."
+      ],
+      "explanation": "mutex לנעילה (מי שנעל משחרר), semaphore לספירה ולאיתות. ב-RTOS כמו FreeRTOS זה בולט במיוחד: mutex תומך ב-priority inheritance, ו-binary semaphore משמש להעיר task מתוך ISR.",
+      "lesson": "sys.processes-threads"
+    },
+    {
+      "id": "sys.processes-threads.q42",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ל-driver יש pool של 3 באפרים של DMA, ו-5 threads צריכים באפר בו זמנית. איזה מנגנון מתאים, ואיך הוא מאותחל?",
+      "choices": [
+        "mutex אחד שנעול כל זמן שמישהו משתמש באפר כלשהו",
+        "counting semaphore עם ערך התחלתי 3: כל thread עושה wait לפני שהוא לוקח באפר, ו-post כשהוא מחזיר. שלושה ממשיכים מיד, והשניים האחרים חוסמים עד שבאפר מתפנה",
+        "binary semaphore עם ערך התחלתי 0",
+        "spinlock, כי ההמתנה קצרה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה מאפשר רק thread אחד בכל רגע, ובזבוז של שני באפרים.",
+        "נכון: semaphore סופר משאבים זהים. הערך הוא מספר הבאפרים הפנויים. עדיין צריך mutex קצר (או מבנה lock-free) כדי לבחור איזה באפר, אבל ה-semaphore מגביל את מספר המשתמשים.",
+        "שגוי: ערך 0 אומר שאין משאבים פנויים, וכל ה-threads יחסמו מיד.",
+        "שגוי: לא ידוע כמה זמן thread מחזיק באפר (כל העברת DMA). spin על זה ישרוף CPU."
+      ],
+      "explanation": "counting semaphore: הערך הוא כמות המשאבים הפנויים. wait מקטין (וחוסם ב-0), post מגדיל ומעיר ממתין. זה ההבדל המעשי מ-mutex, שמגן על משאב יחיד.",
+      "lesson": "sys.processes-threads"
     }
   ]
 }

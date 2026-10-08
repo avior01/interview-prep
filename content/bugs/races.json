@@ -185,6 +185,54 @@
         {
           "term": "TSO (x86) מול ARM",
           "def": "x86 מתיר רק ל-load לעקוף store קודם, ולכן קוד עם relaxed שגוי 'עובד' שם; ARM מסדר מחדש יותר וחושף את הבאג."
+        },
+        {
+          "term": "semaphore לאיתות סדר",
+          "def": "כדי ש-A יקרה לפני B: semaphore שמתחיל ב-0, A עושה post אחרי הפעולה, B עושה wait לפניה. ל-N שלבים צריך N-1 semaphores."
+        },
+        {
+          "term": "lost update – ערך מינימלי",
+          "def": "שני threads שמבצעים כל אחד k ≥ 2 הגדלות לא אטומיות יכולים להגיע לתוצאה 2 בלבד, כי כתיבה מאוחרת של ערך ישן דורסת את כל מה שקרה בינתיים."
+        },
+        {
+          "term": "per-thread counters",
+          "def": "דרך לספור בלי סנכרון: לכל thread מונה פרטי (מרופד ל-cache line), וסכימה אחרי join. בדרך כלל המהירה ביותר."
+        },
+        {
+          "term": "thread-safe מול reentrant",
+          "def": "thread-safe: בטוחה לקריאות מקבילות מ-threads שונים (למשל עם mutex). reentrant: בטוחה גם כשקריאה קוטעת קריאה אחרת באותו thread (ISR, signal handler). פונקציה עם mutex יכולה להיות thread-safe אבל לא reentrant."
+        },
+        {
+          "term": "rand_r / strtok_r",
+          "def": "גרסאות של rand ו-strtok שמקבלות את המצב מהקורא במקום לשמור אותו ב-static. ב-C++ עדיף מחולל פרטי לכל thread (std::mt19937) ו-string_view."
+        },
+        {
+          "term": "deadlock ותנאי Coffman",
+          "def": "deadlock קיים רק כשמתקיימים יחד mutual exclusion, hold and wait, no preemption ו-circular wait. סדר נעילה אחיד שובר את circular wait."
+        },
+        {
+          "term": "std::scoped_lock / std::lock",
+          "def": "נעילה של כמה mutexes יחד בלי deadlock, גם כשהקוד מעביר אותם בסדרים שונים. משתמשים בהם כשפעולה צריכה שתי נעילות או יותר."
+        },
+        {
+          "term": "wait-for graph",
+          "def": "גרף שבו קשת X → Y אומרת ש-X מחכה למשאב ש-Y מחזיק. עם משאבים בעותק יחיד, deadlock קיים בדיוק כשיש מעגל. מזהים עם DFS בשלושה צבעים או עם Kahn."
+        },
+        {
+          "term": "deadlock detection (עותקים מרובים)",
+          "def": "כשלמשאבים יש כמה עותקים, מעגל הכרחי אבל לא מספיק. אלגוריתם הזיהוי מדמה סיום של כל process שאפשר לספק את הבקשה שלו ומשחרר את המשאבים שלו."
+        },
+        {
+          "term": "memory location ו-bits",
+          "def": "היחידה שבה מוגדר data race היא memory location: משתנה סקלרי, או רצף של bitfields סמוכים. ביטים שונים באותה מילה, או bitfields סמוכים, הם אותו memory location."
+        },
+        {
+          "term": "fetch_or / fetch_and / fetch_xor",
+          "def": "פעולות RMW אטומיות על std::atomic של מספר שלם. מדליקות, מכבות או הופכות ביטים בלי לאבד עדכונים של threads אחרים, ומחזירות את הערך הקודם."
+        },
+        {
+          "term": "lock striping",
+          "def": "חלוקה של מבנה גדול לחלקים, כל אחד עם mutex משלו, כדי לאפשר מקביליות. פעולה שנוגעת בכמה חלקים חייבת לנעול אותם בסדר קבוע."
         }
       ]
     }
@@ -370,10 +418,7 @@
         "שגוי: sleep לא יוצר סנכרון; הוא אולי מסתיר את הבעיה, אבל זה עדיין data race שהקומפיילר רשאי לנצל."
       ],
       "explanation": "מאחר ש-data race הוא UB, הקומפיילר רשאי להניח שאף thread אחר לא משנה את `stop`. כש-processBlock inlined ולא נוגע ב-stop, `while(!stop)` הופך ל-`if(!stop) for(;;)`. התיקון: `std::atomic<bool> stop{false}` (אפשר load עם relaxed או acquire). volatile 'עובד' בפועל ב-GCC/Clang אבל זה עדיין data race לפי התקן ולא נותן ordering לנתונים אחרים.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q09",
@@ -445,10 +490,7 @@
         "נכון: הקריאה בשורה 5 בלי סנכרון מול הכתיבה, ואין release/acquire. thread יכול לראות מצביע לא-null ולקרוא שדות של Config שעוד לא נראים לו. תיקון: magic static, call_once או atomic עם acquire/release."
       ],
       "explanation": "הקריאה בשורה 5 לא מוגנת, וה-write ל-g_cfg לא release, ולכן אין happens-before בין בניית Config לקריאת השדות שלו ב-thread אחר. גם הקומפיילר רשאי לכתוב את המצביע לפני שסיים לאתחל. תיקונים: `static Config cfg = load(); return cfg;` (magic statics, thread-safe מ-C++11), `std::call_once`, או `std::atomic<Config*>` עם acquire בקריאה ו-release בכתיבה.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q12",
@@ -472,10 +514,7 @@
         "שגוי: make_shared כבר מחזיר rvalue, כך ש-std::move לא משנה דבר; ובכל מקרה זה לא נוגע ל-race."
       ],
       "explanation": "ה-refcount אכן מעודכן אטומית, ולכן שני threads יכולים להחזיק עותקים נפרדים בבטחה. אבל קריאה וכתיבה של אותו אובייקט shared_ptr (שני מצביעים) אינן אטומיות: הקורא יכול לקרוא את מצביע האובייקט החדש עם control block ישן, או להעלות refcount של בלוק שכבר שוחרר. תיקון: `std::atomic<std::shared_ptr<const Params>>` (C++20) או mutex קצר סביב ההעתקה. זה גם הדפוס הנכון ל-RCU פשוט.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q13",
@@ -542,10 +581,7 @@
         "lock-free, O(1) amortized; מזכיר ABA לא רלוונטי כאן כי זה counter"
       ],
       "explanation": "CAS הופך check-then-act לפעולה אחת: אם ערך אחר נכתב בין הקריאה לניסיון, ה-CAS נכשל ומנסה שוב עם הערך העדכני. אם הערך הגיע ל-0, יוצאים בלי להוריד.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q16",
@@ -569,10 +605,7 @@
         "שגוי: release על tail.store כבר מספיק לפרסום ה-slot הפנוי; seq_cst לא נדרש."
       ],
       "explanation": "publish דורש זוג release/acquire: כתיבת הנתונים, ואז store עם release על האינדקס; הצד השני load עם acquire ורק אז קורא את הנתונים. עם relaxed אין synchronizes-with, ולכן הקריאה של `buf` היא data race. על x86 (TSO) ה-store לא מוקדם בחומרה, אז זה 'עובד' כל עוד הקומפיילר לא מסדר מחדש; ARM מסדר מחדש stores. `% N` נכון לכל N כש-head ו-tail רצים מונוטונית (wrap של size_t דורש N חזקה של 2, אבל זה רק אחרי 2^64). `tail.store` עם release כבר נכון.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q17",
@@ -593,10 +626,7 @@
         "נכון: עם כותב יחיד אין צורך ב-RMW אטומי. load ו-store relaxed נפרדים מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם."
       ],
       "explanation": "volatile עדיין data race לפי התקן (גם אם עובד בפועל). `fetch_add` נכון אבל מתקמפל ל-`lock xadd`, RMW עם lock prefix שעולה בערך 20 מחזורים ויותר. כשיש כותב יחיד, אין צורך ב-RMW אטומי: load ו-store נפרדים עם relaxed מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם. mutex נכון אבל היקר מכולם במסלול החם.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q18",
@@ -612,10 +642,7 @@
         "מניעה: טסט רגרסיה ו-TSan ב-CI"
       ],
       "explanation": "מראיין מחפש גישה שיטתית ולא 'להוסיף mutex בכל מקום': הבנת מגבלות הכלי, הגדלת כיסוי, וזיהוי הגורם לפני תיקון.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q19",
@@ -672,10 +699,7 @@
         "נכון: כל איבר הוא memory location נפרד, ולכן אין data race. אבל שני האיברים באותו cache line, וכל כתיבה מבטלת את ה-line אצל הליבה השנייה: false sharing."
       ],
       "explanation": "data race מוגדר לפי memory location, ואיברי מערך שונים הם locations נפרדים. ה-cache coherence שומר את ה-line עקבי והחומרה כותבת ברזולוציה של בתים, כך שהשכן לא נדרס. אבל ה-line קופץ בין הליבות בכל כתיבה (false sharing), והלולאה מאטה מאוד. תיקון: `alignas(64)` לכל counter, או צבירה מקומית.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q22",
@@ -791,10 +815,7 @@
         "שגוי: std::mutex מסנכרן threads באותו תהליך; המתחרה כאן הוא תהליך אחר."
       ],
       "explanation": "זה check-then-act מול מערכת הקבצים. שני תהליכים רואים שהקובץ לא קיים, ושניהם יוצרים או פותחים אותו בהצלחה. mutex לא עוזר כי המתחרה הוא תהליך אחר. התיקון הוא שה-OS יבצע check ו-act יחד: `O_CREAT | O_EXCL` (POSIX), `CREATE_NEW` (Windows) או `std::ios::noreplace` (C++23). ofstream נסגר ב-destructor (RAII), ו-`fs::exists` שזורק היה מפיל את הפונקציה, לא מחזיר true.",
-      "lesson": "bugs.races",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q27",
@@ -833,11 +854,7 @@
         "מציין ש-TSan תופס data races אבל לא race conditions לוגיים"
       ],
       "explanation": "מראיינים בודקים שהמועמד לא משתמש בשני המושגים כמילים נרדפות, ושהוא מבין ש-atomic פותר data race אבל לא בהכרח race condition.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia",
-        "microsoft"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q29",
@@ -860,10 +877,7 @@
         "שגוי: 1 1 אפשרי כששני ה-stores קודמים לשני ה-loads בסדר הכולל, ו-0 0 הוא דווקא הבלתי אפשרי."
       ],
       "explanation": "ללא ארגומנט, הפעולות הן seq_cst, ויש סדר כולל אחד על ארבעתן. הפעולה האחרונה בסדר הזה היא load, ושני ה-stores קודמים לה, ולכן היא קוראת 1: לפחות אחד מ-r1, r2 הוא 1. `1 1` אפשרי כששני ה-stores קודמים לשני ה-loads. עם release/acquire או relaxed, `0 0` מותר וקורה בפועל אפילו ב-x86 בגלל ה-store buffer, ולכן seq_cst store ב-x86 עולה `xchg` או `mfence`. r1 ו-r2 הרגילים נקראים אחרי join, ש-synchronizes, ולכן אין עליהם data race.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q30",
@@ -910,10 +924,7 @@
         "נכון: כל תא הוא memory location נפרד, ו-join יוצר happens-before לקריאה בסוף, ולכן 4000000. הבעיה: false sharing, כי ה-line קופץ בין ארבע הליבות."
       ],
       "explanation": "data race דורש אותו memory location; תאים שונים במערך הם locations נפרדים, וקריאת הסכום באה אחרי join, שיוצר happens-before. ה-coherence של ה-cache לא דורס בתים שכנים. אבל כל כתיבה דורשת בעלות בלעדית על ה-line, והוא קופץ בין ארבע הליבות. ב-O2 הקומפיילר עשוי לצבור ברגיסטר ולהעלים את התופעה ב-micro-benchmark, אבל בקוד אמיתי עם עבודה בין ההגדלות היא חוזרת. תיקון: struct עם `alignas(64)` לכל counter, או משתנה מקומי וכתיבה אחת בסוף.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q32",
@@ -942,10 +953,7 @@
         "שגוי: exchange עם relaxed הוא RMW אטומי בלי סמנטיקת release, ולכן לא מפרסם את data."
       ],
       "explanation": "acquire בצד אחד לא מספיק; צריך פעולת release בצד הכותב שה-acquire קורא את ערכה. store-release עושה זאת, וגם store seq_cst (שהוא גם release). release fence שבא **לפני** store relaxed מסתנכרן עם ה-acquire שקורא את ערך ה-store, לפי כללי ה-fences בתקן. fence אחרי ה-store לא מסדר את `data = 42` ביחס ל-store. volatile לא יוצר happens-before, ו-exchange עם relaxed הוא RMW אטומי בלי סמנטיקת release.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q33",
@@ -969,10 +977,7 @@
         "שגוי: notify מחוץ ל-lock תקין. מה שחשוב הוא שהשינוי של stop ייעשה תחת ה-lock, לא שה-notify יהיה בתוכו."
       ],
       "explanation": "`wait(lk, pred)` הוא לולאה של בדיקה ואז שחרור-והירדמות, וזה אטומי רק ביחס למי שלוקח את m. shutdown לא לוקח את m, ולכן יכול לשנות את stop ולהודיע בדיוק בחלון בין הבדיקה להירדמות. תיקון: `{ std::lock_guard<std::mutex> g(m); stop = true; } cv.notify_all();`. ה-notify עצמו יכול להישאר מחוץ ל-lock; מה שחשוב הוא שהשינוי נעשה תחתיו (אפילו lock ו-unlock ריקים בין ה-store ל-notify מספיקים). atomic לא פותר את זה, כי הבעיה היא החלון ולא ה-visibility; ה-load כבר seq_cst כברירת מחדל.",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q34",
@@ -996,10 +1001,7 @@
         "שגוי: unsigned ברוחב ביט אחד מחזיק 0 ו-1; דווקא signed ברוחב ביט אחד בעייתי (0 ו-−1)."
       ],
       "explanation": "לפי התקן, רצף bit-fields סמוכים ברוחב שונה מאפס הוא memory location אחד. אין לחומרה כתיבה של ביט בודד, ולכן הקומפיילר קורא את המילה, משנה ביט וכותב: TX יכול לכתוב חזרה ערך ישן של rxOverflow. זה data race אמיתי, לא false sharing. תיקון: bit-field ברוחב אפס (`unsigned : 0;`) בין השדות, שדות bool נפרדים, או `std::atomic<uint32_t>` עם `fetch_or`. `{}` מאפס את כל השדות, ו-unsigned של ביט אחד מחזיק 0 ו-1 (דווקא signed של ביט אחד בעייתי).",
-      "lesson": "bugs.races",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.races"
     },
     {
       "id": "bugs.races.q35",
@@ -1017,10 +1019,438 @@
         "דן ב-trade-offs: שמירת חריגה לתמיד מול retry, זיכרון לא חסום (eviction), ו-deadlock אם fn קוראת רקורסיבית לאותו key"
       ],
       "explanation": "הגרסה הנאיבית בודקת `if key not in cache` מחוץ ל-lock (check-then-act), או מחזיקה lock גלובלי בזמן החישוב ומסדרת את כל המפתחות בתור. ה-Future הוא placeholder שנרשם אטומית: רק ה-thread שרשם אותו מחשב, וכל השאר מחכים לאותו אובייקט. זה אותו רעיון כמו `std::call_once` לכל מפתח.",
-      "lesson": "bugs.races",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q36",
+      "level": 3,
+      "type": "bug",
+      "prompt": "thread A חייב להדפיס A לפני ש-thread B מדפיס B, בלי קשר לסדר שבו הם מתחילים לרוץ. לפעמים B מודפס ראשון. איפה הבאג?",
+      "code": "sem_t s;\n\nvoid* thA(void*) { std::puts(\"A\"); sem_post(&s); return nullptr; }\nvoid* thB(void*) { sem_wait(&s); std::puts(\"B\"); return nullptr; }\n\nint main() {\n    sem_init(&s, 0, 1);\n    pthread_t a, b;\n    pthread_create(&b, nullptr, thB, nullptr);\n    pthread_create(&a, nullptr, thA, nullptr);\n    pthread_join(a, nullptr);\n    pthread_join(b, nullptr);\n}",
+      "lang": "cpp",
+      "choices": [
+        "ה-semaphore מאותחל ל-1, ולכן sem_wait של B עובר מיד, עוד לפני ש-A הדפיס. semaphore לאיתות צריך להתחיל ב-0",
+        "pshared צריך להיות 1",
+        "צריך ליצור את A לפני B",
+        "puts אינה thread-safe, ולכן הפלט מתערבב"
+      ],
+      "answer": 0,
+      "bugLine": 7,
+      "notes": [
+        "נכון: הערך של semaphore הוא מספר ה'אישורים' הזמינים. כאן B צריך לחכות לאישור ש-A נותן, ולכן מתחילים מ-0. אז B חוסם עד sem_post של A, גם אם הוא רץ קודם.",
+        "שגוי: שני ה-threads באותו process, ולכן pshared = 0 נכון.",
+        "שגוי: סדר היצירה לא מבטיח סדר ריצה. ה-scheduler רשאי להריץ את B ראשון גם אם הוא נוצר שני.",
+        "שגוי: puts ב-glibc נועלת את stdout, ולכן שורה לא מתערבבת. הבעיה היא הסדר בין השורות."
+      ],
+      "explanation": "semaphore של איתות מתחיל ב-0: הממתין עושה wait, והמאותת עושה post. ערך 1 הוא mutex, לא איתות. הערך שומר את ה-post גם אם הוא קורה לפני ה-wait, ולכן אין lost wakeup.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
+      ],
+      "problem": "NVIDIA: use semaphores so thread A prints before thread B",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q37",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שלושה threads, A, B ו-C, מתחילים יחד וחייבים להדפיס בסדר A, B, C. מה הפתרון המינימלי עם semaphores?",
+      "choices": [
+        "semaphore אחד, עם ערך התחלתי 0",
+        "שני semaphores, s1 ו-s2, שניהם מתחילים ב-0. A מדפיס ואז post(s1). B עושה wait(s1), מדפיס ואז post(s2). C עושה wait(s2) ומדפיס",
+        "שלושה semaphores עם ערך התחלתי 1",
+        "mutex אחד שכולם נועלים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: עם semaphore אחד, ה-post של A יכול להעיר את C במקום את B, ו-C ידפיס שני.",
+        "נכון: כל גבול בין שלבים מקבל semaphore משלו, וכל אחד מתחיל סגור. A לא צריך לחכות לאף אחד.",
+        "שגוי: ערך התחלתי 1 אומר שאף אחד לא חוסם בהתחלה, ולכן אין סדר.",
+        "שגוי: mutex מונע ריצה בו-זמנית, אבל לא קובע סדר. כל אחד מהשלושה יכול לנעול ראשון."
+      ],
+      "explanation": "סדר בין N threads דורש N-1 נקודות סנכרון. אותו רעיון אפשר לממש עם condition variable ומונה שלב משותף, או ב-C++20 עם std::binary_semaphore או std::latch.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q38",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "כדי ש-A ידפיס לפני B, מתכנת הוסיף `sleep(1)` בתחילת thread B. בבדיקות זה תמיד עבד. מה הבעיה?",
+      "choices": [
+        "sleep אסור בתוך thread",
+        "sleep לא מבטיח סדר, רק משנה את ההסתברות. במכונה עמוסה, ב-VM, או כש-A מחכה ל-I/O או מקבל preemption, A יכול להתעכב יותר משנייה. וגם כשזה עובד, הוא מבזבז שנייה בכל ריצה",
+        "אין בעיה: שנייה היא הרבה יותר מכל עיכוב אפשרי",
+        "sleep משחרר את כל ה-mutexes של ה-process"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: sleep מותר בכל thread. הוא פשוט משעה את ה-thread הקורא.",
+        "נכון: sleep הוא 'סנכרון בתקווה'. סדר נכון דורש מנגנון שמחכה לאירוע עצמו: semaphore, condition variable, join או future.",
+        "שגוי: אין שום חסם על זמן התזמון של thread רגיל. מערכת עמוסה, swap או debugger יכולים לעכב אותו בהרבה.",
+        "שגוי: sleep לא נוגע ב-mutexes."
+      ],
+      "explanation": "race שמוסתר עם sleep עובר בדיקות ונשבר ב-production. אם רוצים סדר, מחכים לאירוע. ואם רק צריך ש-A יסיים לפני B, אפשר פשוט להריץ את B אחרי join של A.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q39",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שני threads, וכל אחד מבצע פעמיים `count++` על `int count = 0` משותף, בלי סנכרון. נניח שכל `++` מתקמפל ל-load, add ו-store נפרדים, והחומרה משלבת אותם בכל סדר (מתעלמים לרגע מכך שזה UB לפי התקן). מה הערך הסופי **המינימלי** האפשרי?",
+      "choices": [
+        "4",
+        "2",
+        "3",
+        "1"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: 4 הוא הערך בלי שום התנגשות, וזה גם המקסימום.",
+        "נכון: T1 קורא 0. T2 מבצע את ה-++ הראשון שלו במלואו (count = 1). T1 כותב 1. T2 קורא 1 ל-++ השני שלו. T1 מבצע את ה-++ השני שלו במלואו (count = 2). T2 כותב 2. התוצאה 2.",
+        "שגוי: 3 אפשרי (עדכון אחד הולך לאיבוד), אבל אפשר להגיע נמוך יותר.",
+        "שגוי: ה-store האחרון כותב (ערך שנקרא) + 1. כדי לקבל 1, הוא היה צריך לקרוא 0 אחרי ששני ה-threads כבר התחילו לעדכן. בדיקה של כל השילובים מראה שזה בלתי אפשרי."
+      ],
+      "explanation": "lost update יכול לבלוע הרבה יותר מעדכון אחד. גם עם 1000 הגדלות לכל thread, המינימום הוא 2. התיקון: std::atomic עם fetch_add, mutex, או מונה נפרד לכל thread שמחברים אחרי join.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=152508"
+      ],
+      "problem": "Qualcomm: two threads update a counter without a mutex",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q40",
+      "level": 4,
+      "type": "short",
+      "prompt": "שני threads, וכל אחד מבצע 5 פעמים `count++` (load, add, store נפרדים) על `int count = 0` משותף, בלי סנכרון. מה הערך הסופי המינימלי האפשרי (בהנחה שהחומרה משלבת את הפעולות בכל סדר)?",
+      "accept": [
+        "2"
+      ],
+      "explanation": "T1 קורא 0 ומחכה. T2 מבצע 4 הגדלות במלואן. T1 כותב 1, ודורס את כל ההתקדמות של T2. T2 קורא 1 להגדלה האחרונה שלו ומחכה. T1 מבצע את 4 ההגדלות הנותרות שלו. T2 כותב 2. התוצאה 2, בלי קשר למספר ההגדלות (כל עוד יש לפחות 2 לכל thread).",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q41",
+      "level": 3,
+      "type": "multi",
+      "prompt": "8 threads סופרים אירועים למונה משותף אחד. אילו פתרונות נכונים **בלי mutex**?",
+      "choices": [
+        "`volatile long count;` ו-`count++;`",
+        "מונה נפרד לכל thread (מרופד ל-cache line), וסכימה של כולם אחרי join",
+        "`std::atomic<long> count;` ו-`count.fetch_add(1, std::memory_order_relaxed);`",
+        "להגדיל רק כש-`count % 8 == thread_id`",
+        "לולאת CAS: לקרוא את הערך, ולנסות `compare_exchange_weak` עם הערך + 1 עד שמצליחים"
+      ],
+      "answer": [
+        1,
+        2,
+        4
+      ],
+      "notes": [
+        "שגוי: volatile לא הופך ++ לאטומי, וזה עדיין data race (UB).",
+        "נכון: בלי שיתוף אין race. הריפוד מונע false sharing, וה-join מבטיח שכל הכתיבות נראות לפני הסכימה.",
+        "נכון: fetch_add הוא read-modify-write אטומי. relaxed מספיק למונה שקוראים רק בסוף, אחרי join.",
+        "שגוי: הבדיקה והעדכון הם שתי פעולות נפרדות על משתנה משותף לא אטומי, וזה עדיין data race. וגם, כל thread יחכה לתור שלו: זה לא סופר אירועים כשהם קורים.",
+        "נכון: CAS הוא הבסיס לכל עדכון אטומי מורכב. למונה פשוט fetch_add עדיף, כי הוא פקודה אחת (lock xadd ב-x86)."
+      ],
+      "explanation": "אפשר לשתף נתונים בלי mutex בשתי דרכים: פעולות אטומיות (atomic RMW או CAS), או ביטול השיתוף (נתונים פרטיים לכל thread ואיחוד בסוף). הדרך השנייה היא בדרך כלל המהירה ביותר.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q42",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "8 threads קוראים ל-`rand()` כדי לייצר רעש לסימולציה. למה זה בעייתי, ולמה `rand_r(&seed)` פותר את הבעיה?",
+      "choices": [
+        "rand_r מבטלת את הצורך ב-seed",
+        "rand() שומרת את מצב המחולל במשתנה static משותף, ולכן היא לא thread-safe: גישה מקבילה היא data race לפי POSIX (ב-glibc יש נעילה פנימית, אבל אז ה-threads נאבקים עליה). rand_r מקבלת את המצב מהקורא, וכל thread מחזיק seed משלו",
+        "rand() איטית מדי לשימוש ב-threads",
+        "rand() מחזירה תמיד את אותו מספר ב-threads שונים"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: rand_r צריכה seed, והוא נשמר במשתנה שהקורא מחזיק.",
+        "נכון: זה המקרה הקלאסי של פונקציה עם מצב נסתר. הגרסה עם _r מעבירה את המצב לפרמטר, וכך פותרת גם את ה-race וגם את התחרות. (POSIX מגדיר את rand_r כמיושנת. ב-C++ משתמשים ב-std::mt19937 נפרד לכל thread.)",
+        "שגוי: rand() עצמה מהירה. הבעיה היא המצב המשותף, ובמימושים עם נעילה גם התחרות עליה.",
+        "שגוי: כל ה-threads מקדמים את אותו רצף, ולכן הם מקבלים מספרים שונים. גם כש-glibc מגינה עליו, הרצף של כל thread תלוי בתזמון, ולכן הסימולציה לא ניתנת לשחזור."
+      ],
+      "explanation": "פונקציה thread-safe ניתנת לקריאה מכמה threads במקביל. פונקציות עם מצב static (rand, strtok, localtime, strerror) אינן כאלה, ולכן יש להן גרסאות _r שמקבלות את המצב או את הבאפר מהקורא.",
       "tags": [
         "microsoft"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=338497"
+      ],
+      "problem": "Microsoft: thread-safe vs thread-unsafe functions, rand() vs rand_r()",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q43",
+      "level": 3,
+      "type": "bug",
+      "prompt": "שני threads מפרסרים במקביל שורות CSV שונות. לפעמים מתקבלים שדות של שורה אחת בתוצאה של השורה השנייה. איפה הבאג?",
+      "code": "std::vector<std::string> split(char* line) {\n    std::vector<std::string> out;\n    for (char* tok = std::strtok(line, \",\"); tok;\n         tok = std::strtok(nullptr, \",\")) {\n        out.emplace_back(tok);\n    }\n    return out;\n}",
+      "lang": "cpp",
+      "choices": [
+        "strtok שומרת את המיקום הנוכחי במשתנה static פנימי. כש-thread אחר קורא `strtok(line2, ...)`, הוא דורס את המיקום, וה-`strtok(nullptr, ...)` של ה-thread הראשון ממשיך בשורה של השני. צריך strtok_r עם מצב מקומי",
+        "emplace_back לא thread-safe",
+        "strtok משנה את line, ולכן אסור להעביר לה char*",
+        "הלולאה מפספסת את האסימון האחרון"
+      ],
+      "answer": 0,
+      "bugLine": 4,
+      "notes": [
+        "נכון: הקריאות עם nullptr מסתמכות על מצב שנשמר בין קריאות, והוא משותף לכל התוכנית. strtok_r (או strtok_s) מקבלת `char** saveptr` שכל קורא מחזיק.",
+        "שגוי: כל קריאה ל-split מחזיקה vector מקומי משלה. אין שיתוף.",
+        "שגוי: strtok אכן כותבת '\\0' לתוך line, ולכן צריך באפר שניתן לכתיבה. זה תקין כאן, וזה לא קשור לערבוב בין threads.",
+        "שגוי: הלולאה ממשיכה עד ש-strtok מחזירה nullptr, כלומר אחרי האסימון האחרון."
+      ],
+      "explanation": "strtok היא דוגמה לפונקציה שלא בטוחה ל-threads ולא reentrant: אפילו בתוך thread אחד, לולאה מקוננת עם strtok תשבור את החיצונית. ב-C++ אפשר להימנע ממנה לגמרי עם string_view ו-find.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q44",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "פונקציה שומרת באפר static, ומגינה עליו עם mutex גלובלי בכל קריאה. היא thread-safe. האם בטוח לקרוא לה מתוך signal handler?",
+      "choices": [
+        "לא, כי signal handler לא יכול לגשת למשתנים static",
+        "לא: היא thread-safe אבל לא reentrant. אם ה-signal מגיע בזמן שה-thread הזה כבר בתוך הפונקציה ומחזיק את ה-mutex, ה-handler ינסה לנעול אותו שוב על אותו thread: deadlock (או UB). מ-signal handler קוראים רק לפונקציות async-signal-safe",
+        "כן, כי היא thread-safe",
+        "כן, כי signal handler רץ ב-thread נפרד"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: handler יכול לגשת לכל משתנה. השאלה היא אם הגישה בטוחה.",
+        "נכון: reentrancy דורשת שאפשר להיכנס לפונקציה שוב לפני שהקריאה הקודמת הסתיימה, באותו thread. נעילה לא עוזרת כאן, היא בדיוק הבעיה. זה גם הסיבה ש-malloc ו-printf אסורים ב-signal handler.",
+        "שגוי: thread-safety מגינה מפני threads אחרים. signal handler קוטע את אותו thread באמצע, וזה מקרה אחר.",
+        "שגוי: signal handler רץ על thread קיים, וקוטע אותו."
+      ],
+      "explanation": "שתי תכונות שונות: thread-safe (בטוחה בקריאות מקבילות מ-threads שונים) ו-reentrant (בטוחה גם כשקריאה קוטעת קריאה אחרת באותו thread, כמו ב-ISR או ב-signal handler). פונקציה בלי מצב משותף בכלל היא שתיהן.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q45",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "thread 1 נועל את mutex A ואז את B. thread 2 נועל את B ואז את A. לפעמים התוכנית נתקעת. מה הפתרון הנכון?",
+      "choices": [
+        "להוסיף sleep קצר בין שתי הנעילות",
+        "לנעול כל mutex עם try_lock בלולאה בלי הפסקה",
+        "לקבוע סדר נעילה גלובלי (תמיד A לפני B) ולשמור עליו בכל מקום, או לנעול את שניהם יחד עם `std::scoped_lock(a, b)`, שמשתמש באלגוריתם שמונע deadlock",
+        "להחליף את שני ה-mutexes ב-recursive mutexes"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: sleep רק משנה את ההסתברות. ה-deadlock נשאר אפשרי.",
+        "שגוי: try_lock בלי שחרור של מה שכבר מוחזק לא פותר כלום, ועם שחרור צריך גם backoff, אחרת מתקבל livelock.",
+        "נכון: deadlock דורש המתנה מעגלית. סדר נעילה אחיד מבטל אותה. std::scoped_lock ו-std::lock נועלים כמה mutexes בלי deadlock (עם try ושחרור), גם כשהסדר בקוד שונה.",
+        "שגוי: recursive mutex מאפשר לאותו thread לנעול שוב. כאן כל thread מחכה ל-mutex שמחזיק thread אחר."
+      ],
+      "explanation": "race condition: התוצאה תלויה בתזמון. deadlock: threads מחכים זה לזה במעגל. הדרך המעשית למנוע deadlock היא סדר נעילה אחיד, או נעילה של כל מה שצריך בפעולה אחת.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-system-software-engineer-intern-on-campus-drive-experience/"
+      ],
+      "problem": "NVIDIA: what is a race condition, how to prevent deadlock",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q46",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ארבעת התנאים של Coffman לקיום deadlock הם mutual exclusion, hold and wait, no preemption ו-circular wait. איזה מהם מבוטל כשכל הקוד נועל mutexes לפי סדר גלובלי קבוע?",
+      "choices": [
+        "circular wait",
+        "no preemption",
+        "hold and wait",
+        "mutual exclusion"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: אם כולם נועלים בסדר עולה, thread שמחזיק נעילה מספר i מחכה רק לנעילה עם מספר גבוה יותר. מעגל היה דורש שמישהו יחכה לנעילה נמוכה יותר ממה שהוא מחזיק, וזה בלתי אפשרי.",
+        "שגוי: עדיין אי אפשר לקחת mutex מ-thread שמחזיק אותו.",
+        "שגוי: thread עדיין יכול להחזיק את A ולחכות ל-B. מה שהשתנה הוא שאף אחד לא יחזיק את B ויחכה ל-A.",
+        "שגוי: ה-mutexes עדיין בלעדיים. זו כל המטרה שלהם."
+      ],
+      "explanation": "כדי למנוע deadlock מספיק לשבור תנאי אחד. lock ordering שובר circular wait, נעילה של הכל מראש שוברת hold and wait, ו-try_lock עם שחרור שובר no preemption.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q47",
+      "level": 3,
+      "type": "bug",
+      "prompt": "העברת כסף בין חשבונות. כש-thread אחד מעביר מ-X ל-Y ובמקביל thread אחר מ-Y ל-X, לפעמים שניהם נתקעים. איפה הבאג?",
+      "code": "struct Account { std::mutex m; long balance; };\n\nvoid transfer(Account& from, Account& to, long amt) {\n    std::lock_guard<std::mutex> l1(from.m);\n    std::lock_guard<std::mutex> l2(to.m);\n    from.balance -= amt;\n    to.balance += amt;\n}",
+      "lang": "cpp",
+      "choices": [
+        "הסדר של הנעילות נקבע לפי סדר הארגומנטים. transfer(X, Y) נועל X ואז Y, ו-transfer(Y, X) נועל Y ואז X: המתנה מעגלית. צריך `std::scoped_lock lk(from.m, to.m);` או לנעול לפי סדר כתובות",
+        "צריך std::atomic<long> במקום mutex",
+        "lock_guard לא משחרר את הנעילה במקרה של exception",
+        "חסרה בדיקה שיש מספיק כסף"
+      ],
+      "answer": 0,
+      "bugLine": 5,
+      "notes": [
+        "נכון: כל קריאה בנפרד נראית תקינה, אבל הסדר תלוי בקלט, ולכן שתי קריאות הפוכות נועלות בסדרים שונים. scoped_lock נועל את שניהם בלי deadlock. גם צריך לטפל ב-from == to, כי נעילה כפולה של אותו mutex היא UB.",
+        "שגוי: שני atomics נפרדים לא היו נותנים עדכון אטומי של שני החשבונות יחד: אפשר היה לראות את הכסף 'באוויר' בין שתי הפעולות.",
+        "שגוי: lock_guard הוא RAII, ומשחרר גם כשנזרקת exception.",
+        "שגוי: זו דרישה עסקית חשובה, אבל היא לא מה שגורם ל-deadlock."
+      ],
+      "explanation": "deadlock בגלל סדר נעילה שתלוי בקלט הוא הגרסה הנפוצה בקוד אמיתי. הפתרון הכללי: נעילה של כמה mutexes עם std::lock או scoped_lock, או סדר נעילה לפי מזהה יציב (כתובת או ID).",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q48",
+      "level": 3,
+      "type": "multi",
+      "prompt": "בגרף wait-for (כל משאב בעותק יחיד) יש את הקשתות: P1 → P2, P2 → P3, P3 → P1, P4 → P1, P5 → P4. (קשת X → Y אומרת ש-X מחכה למשאב ש-Y מחזיק.) אילו processes נמצאים על המעגל של ה-deadlock?",
+      "choices": [
+        "P5",
+        "P2",
+        "P1",
+        "P3",
+        "P4"
+      ],
+      "answer": [
+        1,
+        2,
+        3
+      ],
+      "notes": [
+        "שגוי: P5 מחכה ל-P4, שמחכה למעגל. גם הוא תקוע, אבל הוא לא חלק מהמעגל.",
+        "נכון: חלק מאותו מעגל.",
+        "נכון: P1 → P2 → P3 → P1 הוא מעגל.",
+        "נכון: חלק מאותו מעגל.",
+        "שגוי: P4 תקוע לנצח, כי הוא מחכה ל-P1 שלעולם לא יתקדם. אבל הוא לא על המעגל: אם מבטלים את ה-deadlock, P4 ימשיך."
+      ],
+      "explanation": "כשכל משאב בעותק יחיד, deadlock קיים בדיוק כשיש מעגל בגרף ה-wait-for. מזהים אותו עם DFS שמחפש קשת חזרה לצומת שנמצא במחסנית (צבע אפור). processes שמחכים למעגל תקועים גם הם, אבל כדי לשבור את ה-deadlock מספיק לפגוע במעגל.",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/amazon-interview-experience-sde-i/"
+      ],
+      "problem": "Amazon: detect deadlock in a wait-for graph",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q49",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בגרף הקצאת משאבים יש מעגל, אבל לחלק מהמשאבים יש כמה עותקים (למשל 3 ערוצי DMA זהים). מה אפשר להסיק?",
+      "choices": [
+        "בהכרח אין deadlock",
+        "deadlock קיים רק אם המעגל באורך 2",
+        "מעגל הוא תנאי הכרחי אבל לא מספיק: ייתכן שעותק פנוי של המשאב, או process מחוץ למעגל שיסיים וישחרר עותק, יפרקו אותו. צריך אלגוריתם כמו זה של הבנקאי (detection עם וקטורי Available ו-Request) כדי להכריע",
+        "בהכרח יש deadlock"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: אם אף אחד לא יכול לקבל את מה שהוא מבקש, יש deadlock גם עם עותקים מרובים.",
+        "שגוי: אורך המעגל לא קובע. יש deadlocks עם מעגלים ארוכים מאוד.",
+        "נכון: עם עותקים מרובים, process על המעגל יכול לקבל עותק שמתפנה ממישהו אחר. אלגוריתם הזיהוי מדמה סיום של כל process שהבקשה שלו ניתנת לסיפוק, ומשחרר את המשאבים שלו, עד שלא נשאר מי שיכול להתקדם.",
+        "שגוי: זה נכון רק כשכל משאב בעותק יחיד."
+      ],
+      "explanation": "עם משאבים בעותק יחיד: מעגל = deadlock. עם עותקים מרובים: מעגל הכרחי אבל לא מספיק, וצריך לדמות את ההקצאה. בפועל, רוב הקוד מונע deadlocks בתכנון (סדר נעילה) ולא מזהה אותם בזמן ריצה.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q50",
+      "level": 4,
+      "type": "code",
+      "prompt": "ממש `bool hasDeadlock(int n, const std::vector<std::vector<int>>& waitsFor)`. יש n processes, ו-`waitsFor[u]` מכיל את כל ה-processes ש-u מחכה להם (כל משאב בעותק יחיד). החזר true אם יש deadlock. n יכול להגיע ל-10^5, ולכן בלי רקורסיה עמוקה.",
+      "lang": "cpp",
+      "starter": "bool hasDeadlock(int n, const std::vector<std::vector<int>>& waitsFor);",
+      "modelAnswer": "#include <utility>\n#include <vector>\n\n// Deadlock with single-instance resources == a cycle in the wait-for graph.\n// Iterative DFS with colors: 0 = unvisited, 1 = on the current path, 2 = done.\nbool hasDeadlock(int n, const std::vector<std::vector<int>>& waitsFor) {\n    std::vector<int> color(n, 0);\n    std::vector<std::pair<int, size_t>> st;   // (node, next edge index)\n    for (int s = 0; s < n; ++s) {\n        if (color[s]) continue;\n        color[s] = 1;\n        st.push_back({s, 0});\n        while (!st.empty()) {\n            auto& [u, i] = st.back();\n            if (i < waitsFor[u].size()) {\n                int v = waitsFor[u][i++];\n                if (color[v] == 1) return true;           // back edge: cycle\n                if (color[v] == 0) { color[v] = 1; st.push_back({v, 0}); }\n            } else {\n                color[u] = 2;\n                st.pop_back();\n            }\n        }\n    }\n    return false;\n}",
+      "rubric": [
+        "מזהה ש-deadlock עם משאבים בעותק יחיד הוא מעגל בגרף מכוון",
+        "DFS עם שלושה צבעים (או Kahn: topological sort שלא מכסה את כל הצמתים)",
+        "DFS איטרטיבי עם מחסנית מפורשת, כדי לא לגלוש מה-stack ב-10^5 צמתים",
+        "עובר על כל רכיבי הגרף, לא רק מצומת 0",
+        "סיבוכיות O(V + E) בזמן ו-O(V) בזיכרון"
+      ],
+      "explanation": "זיהוי מעגל בגרף מכוון. חלופה קצרה: אלגוריתם Kahn: מסירים שוב ושוב צמתים עם in-degree 0, ואם נשארו צמתים, יש מעגל. הקוד נבדק על גרף עם מעגל (0→1→2→0) ובלי מעגל.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q51",
+      "level": 3,
+      "type": "bug",
+      "prompt": "שני threads מדליקים ביטים ב-BitSet משותף: אחד את כל הביטים הזוגיים, והשני את כל האי-זוגיים. אף ביט לא נכתב על ידי שניהם, ובכל זאת בסוף חלק מהביטים כבויים. איפה הבאג?",
+      "code": "struct BitSet {\n    std::vector<uint64_t> words;\n    explicit BitSet(size_t n) : words((n + 63) / 64) {}\n    void set(size_t i) {\n        words[i / 64] |= (uint64_t{1} << (i % 64));\n    }\n};",
+      "lang": "cpp",
+      "choices": [
+        "החישוב `(n + 63) / 64` מקצה מילה אחת פחות מדי",
+        "`|=` הוא read-modify-write על מילה שלמה של 64 ביט. שני ה-threads כותבים לאותה מילה (ביטים שונים בתוכה), ולכן אחד יכול לקרוא את המילה, השני לכתוב את הביט שלו, והראשון לדרוס אותו בכתיבה שלו. זה data race על המילה",
+        "`uint64_t{1} << (i % 64)` הוא UB עבור i % 64 == 63",
+        "vector לא יכול להחזיק uint64_t"
+      ],
+      "answer": 1,
+      "bugLine": 5,
+      "notes": [
+        "שגוי: זה עיגול כלפי מעלה נכון. עבור n = 64 מתקבלת מילה אחת, ועבור n = 65 שתיים.",
+        "נכון: היחידה הקטנה ביותר שאפשר לכתוב היא memory location (כאן מילה של 64 ביט), לא ביט. ביטים שונים באותה מילה הם אותו משתנה מבחינת races. התיקון: `std::atomic<uint64_t>` עם fetch_or, או mutex.",
+        "שגוי: shift של uint64_t ב-63 מוגדר. UB היה רק עם shift של 64 ומעלה, או עם `1 << 63` על int.",
+        "שגוי: זה תקין לגמרי."
+      ],
+      "explanation": "race על ביטים הוא מקרה פרטי של lost update: גם כשה'נתונים הלוגיים' נפרדים, אם הם יושבים באותה יחידת כתיבה, צריך סנכרון. זה כולל גם bitfields ב-struct: שני bitfields סמוכים הם אותו memory location.",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/microsoft-interview-experience-set-111-1-5-years-experienced/"
+      ],
+      "problem": "Microsoft: make a BitSet thread-safe",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q52",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "איך מתקנים את ה-race ב-BitSet משותף, כך ש-set(i) מכמה threads יהיה נכון ומהיר?",
+      "choices": [
+        "להגדיר את words כ-`std::vector<volatile uint64_t>`",
+        "להגדיר את words כ-`std::vector<std::atomic<uint64_t>>` (או מערך), ו-set יבצע `words[i / 64].fetch_or(mask, std::memory_order_relaxed)`",
+        "להעתיק את המילה למשתנה מקומי, לשנות ולכתוב חזרה",
+        "לקרוא ל-std::this_thread::yield() לפני כל כתיבה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: volatile לא הופך את `|=` לאטומי. זה עדיין שלוש פעולות נפרדות.",
+        "נכון: fetch_or הוא RMW אטומי (lock or ב-x86), ולכן אף ביט לא הולך לאיבוד. relaxed מספיק אם אף אחד לא מסתמך על סדר בין ביטים שונים.",
+        "שגוי: זה בדיוק מה ש-`|=` עושה בפועל, ולכן זה אותו race.",
+        "שגוי: yield רק משנה את התזמון. ה-race נשאר."
+      ],
+      "explanation": "לעדכונים על ביטים במילה משותפת: fetch_or להדלקה, fetch_and עם מסכה הפוכה לכיבוי, fetch_xor להיפוך. כש-set ו-test צריכים להיות פעולה אחת (test-and-set), משתמשים בערך שהוחזר מ-fetch_or.",
+      "lesson": "bugs.races"
+    },
+    {
+      "id": "bugs.races.q53",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "BitSet ענק מחולק ל-1024 stripes, ולכל stripe יש mutex משלו. פעולה חדשה, `copyRange(src, dst, len)`, צריכה לנעול גם את ה-stripe של המקור וגם את זה של היעד. מה הסיכון, ואיך מטפלים בו?",
+      "choices": [
+        "צריך להחליף את כל ה-stripes ב-mutex אחד, כי striping לא עובד עם פעולות על שני מקומות",
+        "starvation של threads שקוראים רק stripe אחד",
+        "deadlock: copyRange(a, b) ו-copyRange(b, a) במקביל נועלים את שני ה-stripes בסדר הפוך. נועלים תמיד לפי סדר עולה של מספר ה-stripe (ונעילה אחת בלבד כששניהם באותו stripe), או משתמשים ב-std::scoped_lock",
+        "אין סיכון, כי כל stripe מוגן בנפרד"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: mutex אחד פותר את ה-deadlock אבל מבטל את המקביליות. סדר נעילה פותר את שניהם.",
+        "שגוי: אין כאן מנגנון שמעדיף מישהו באופן קבוע. הבעיה היא deadlock.",
+        "נכון: נעילה לפי סדר אינדקס היא הפתרון הסטנדרטי ב-lock striping. בטווח שחוצה כמה stripes נועלים את כולם בסדר עולה. מה שחשוב הוא שכל הקוד יכבד את אותו סדר.",
+        "שגוי: כל פעולה שמחזיקה שתי נעילות יוצרת סיכון ל-deadlock, אם אין סדר אחיד."
+      ],
+      "explanation": "lock striping נותן מקביליות עם הרבה נעילות קטנות, ומחייב סדר נעילה בכל פעולה שנוגעת ביותר מ-stripe אחד. זה בדיוק מה ש-two-phase locking עם סדר קבוע נותן: לנעול הכל בסדר, לבצע, ולשחרר.",
+      "lesson": "bugs.races"
     }
   ]
 }

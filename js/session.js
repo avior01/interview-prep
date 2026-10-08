@@ -275,6 +275,13 @@ function markBugLines() {
   });
 }
 
+// Where a company question was reported (links open outside the app; offline they just show the site name).
+function sourcesHtml(q) {
+  if (!q.sources?.length) return '';
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
+  return `<p class="small muted">מקור: ${q.sources.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener" dir="ltr">${esc(host(u))}</a>`).join(' · ')}</p>`;
+}
+
 function closedFeedback(q, ok, timedOut) {
   let answer = '';
   if (!ok) {
@@ -283,7 +290,7 @@ function closedFeedback(q, ok, timedOut) {
     if (q.type === 'bug' && ui.line !== q.bugLine) answer = `<p>הבאג בשורה ${q.bugLine}.</p>`;
   }
   return `<div class="feedback ${ok ? 'good' : 'bad'}">
-    <h3>${ok ? 'נכון' : timedOut ? 'נגמר הזמן' : 'לא נכון'}</h3>${answer}${md(q.explanation)}
+    <h3>${ok ? 'נכון' : timedOut ? 'נגמר הזמן' : 'לא נכון'}</h3>${answer}${md(q.explanation)}${sourcesHtml(q)}
   </div>${nextButtons(ok)}`;
 }
 
@@ -354,7 +361,7 @@ function openFeedback(q, ok, timedOut) {
 function modelAnswerHtml(q) {
   const isCode = q.type === 'code';
   return `<h3>תשובת דוגמה</h3>${isCode ? codeBlock(q.modelAnswer) : md(q.modelAnswer)}
-    <h3>מה בודקים</h3><ul>${q.rubric.map((r) => `<li>${inlineMd(r)}</li>`).join('')}</ul>${q.explanation ? md(q.explanation) : ''}`;
+    <h3>מה בודקים</h3><ul>${q.rubric.map((r) => `<li>${inlineMd(r)}</li>`).join('')}</ul>${q.explanation ? md(q.explanation) : ''}${sourcesHtml(q)}`;
 }
 
 function selfGradeHtml(note) {

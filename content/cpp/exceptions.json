@@ -184,6 +184,14 @@
         {
           "term": "vector::at מול operator[]",
           "def": "at בודק גבולות וזורק std::out_of_range. operator[] לא בודק, וגישה מחוץ לגבולות היא UB."
+        },
+        {
+          "term": "סדר handlers",
+          "def": "handlers נבדקים לפי הסדר, ונבחר הראשון שמתאים, לא המתאים ביותר. handler של base לפני derived מסתיר את ה-derived (GCC מזהיר עם -Wexceptions). לכן כותבים מהספציפי לכללי."
+        },
+        {
+          "term": "היררכיית std::logic_error",
+          "def": "out_of_range, length_error, invalid_argument ו-domain_error יורשים מ-std::logic_error (שגיאות שאפשר היה למנוע בבדיקה). range_error, overflow_error ו-system_error יורשים מ-std::runtime_error. שתיהן יורשות מ-std::exception."
         }
       ]
     }
@@ -468,9 +476,6 @@
       ],
       "explanation": "הנתיב התקין זול, אבל לא לגמרי חינמי: יש code size, ולפעמים קוד ה-cleanup מגביל אופטימיזציות. throw הוא סדר גודל של מיקרו-שניות, ולכן לא מתאים לנתיב שנכשל לעתים קרובות. עם -fno-exceptions, operator new הרגיל עדיין לא מחזיר nullptr. בדרך כלל הוא קורא ל-abort, וכדי לקבל nullptr משתמשים ב-new (std::nothrow).",
       "lesson": "cpp.exceptions",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: במודל table-based הנתיב התקין לא מבצע הוראות נוספות בגלל try. כל המידע נמצא בטבלאות נפרדות שנקראות רק בזמן throw.",
         "נכון: ב-Itanium ABI ה-exception object מוקצה עם __cxa_allocate_exception, שבדרך כלל קורא ל-malloc (עם emergency pool לשעת חירום).",
@@ -512,10 +517,7 @@
         "noexcept על פונקציות הנתיב החם ו-std::expected כחלופה"
       ],
       "explanation": "אין תשובה אחת נכונה. מראיין סניור מצפה למדיניות לפי שכבות של המערכת, ולא ל'תמיד' או 'אף פעם'.",
-      "lesson": "cpp.exceptions",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.exceptions"
     },
     {
       "id": "cpp.exceptions.q16",
@@ -580,9 +582,6 @@
       ],
       "explanation": "לכל thread יש stack ו-unwinding משלו, ו-exception לא חוצה גבולות של thread מעצמו. std::thread לא מספק מנגנון העברה, ולכן exception שבורח ממנו גורם ל-terminate. promise ו-future (וגם async) שומרים exception_ptr ב-shared state. ב-std::thread אפשר לעשות את זה ידנית עם current_exception ו-rethrow_exception.",
       "lesson": "cpp.exceptions",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: std::thread לא מעביר exceptions. exception שבורח מהפונקציה העליונה של ה-thread גורם ל-std::terminate.",
         "נכון: std::async שומר את ה-exception כ-exception_ptr ב-shared state, ו-future::get() זורק אותו מחדש ב-thread של הקורא.",
@@ -797,9 +796,6 @@
       "answer": 1,
       "explanation": "zero-cost מתייחס רק לנתיב שלא זורק. throw עולה הקצאה ושני מעברים על הטבלאות, ובקצב של אלפי חבילות זה משמעותי. expected מחזיק את הערך או את השגיאה בתוכו, בלי heap. optional לא מעביר את סיבת הכשל. אובייקט עם דגל valid עובד, אבל קל לשכוח לבדוק אותו.",
       "lesson": "cpp.exceptions",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: zero-cost מתייחס רק לנתיב שלא זורק. throw עולה הקצאה ומעבר על טבלאות, מיקרו-שניות לכל כשל, וב-5% מהחבילות זה משמעותי.",
         "נכון: הכשל צפוי ומטופל מיד על ידי הקורא הישיר, וזה בדיוק המקרה של std::expected: הערך או השגיאה נשמרים בתוך האובייקט, בלי heap ובלי unwinding.",
@@ -856,6 +852,80 @@
         "שגוי: התאמה של handler ל-base דורשת base ציבורי וחד-משמעי. עם ירושה private, catch (Base&) לא תופס Derived.",
         "נכון: exception_ptr מחזיק בעלות משותפת על ה-exception object, ולכן האובייקט חי כל עוד יש exception_ptr אליו, גם אחרי סוף ה-handler."
       ]
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (`at` זורק std::out_of_range כשהאינדקס לא קיים, ו-`push` זורק std::length_error כשה-buffer מלא. ב-c יש איבר אחד וקיבולת 1)",
+      "code": "for (int k = 0; k < 2; ++k) {\n  try {\n    if (k == 0) c.at(5);\n    else        c.push(2);\n  }\n  catch (const std::length_error&) { std::cout << 'L'; }\n  catch (const std::logic_error&)  { std::cout << 'G'; }\n  catch (const std::exception&)    { std::cout << 'E'; }\n}",
+      "choices": [
+        "GL",
+        "EE",
+        "LL",
+        "GG"
+      ],
+      "answer": 0,
+      "explanation": "out_of_range ו-length_error יורשים שניהם מ-std::logic_error. בניסיון הראשון ה-handler הראשון (length_error) לא מתאים, והשני (logic_error) מתאים: G. בניסיון השני length_error נתפס ב-handler הראשון: L. נבחר ה-handler הראשון שמתאים לפי הסדר, לא המתאים ביותר.",
+      "notes": [
+        "נכון: out_of_range לא מתאים ל-length_error, אבל מתאים ל-logic_error (G). length_error מתאים ל-handler הראשון (L).",
+        "שגוי: std::exception נבדק אחרון, ושני ה-exceptions נתפסים לפני כן.",
+        "שגוי: out_of_range אינו length_error. שניהם \"אחים\" תחת logic_error.",
+        "שגוי: length_error מתאים ל-handler הראשון, ולכן הוא נתפס שם."
+      ],
+      "tags": [
+        "apple"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/write-a-usage-example-for-a-resource-owning-cplusplus-class-and-explain-its-semantics"
+      ],
+      "problem": "Apple technical screen: demonstrate the failure paths of a resource-owning class",
+      "id": "cpp.exceptions.q31",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (GCC מזהיר על הקוד הזה)",
+      "code": "try { throw std::out_of_range(\"x\"); }\ncatch (const std::exception&)    { std::cout << 'E'; }\ncatch (const std::out_of_range&) { std::cout << 'O'; }\n\ntry { throw std::out_of_range(\"x\"); }\ncatch (const std::runtime_error&) { std::cout << 'R'; }\ncatch (const std::logic_error&)   { std::cout << 'G'; }",
+      "choices": [
+        "OG",
+        "EG",
+        "ER",
+        "OR"
+      ],
+      "answer": 1,
+      "explanation": "בניסיון הראשון handler של std::exception מופיע לפני out_of_range ותופס הכל: E. ה-handler של out_of_range לעולם לא ייבחר (מכאן האזהרה -Wexceptions). בניסיון השני out_of_range אינו runtime_error, ולכן ה-handler הראשון מדולג וה-handler של logic_error תופס: G.",
+      "notes": [
+        "שגוי: ה-handler הראשון שמתאים נבחר, ו-std::exception מתאים לכל exception סטנדרטי. ה-handler הספציפי מוסתר.",
+        "נכון: E בגלל סדר ה-handlers. G כי out_of_range יורש מ-logic_error ולא מ-runtime_error.",
+        "שגוי: out_of_range לא יורש מ-runtime_error. זו טעות נפוצה כי השם נשמע כמו שגיאת זמן ריצה.",
+        "שגוי: גם הסדר וגם ההיררכיה שגויים כאן."
+      ],
+      "id": "cpp.exceptions.q32",
+      "lesson": "cpp.exceptions"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "המתודה `void push(int v) { if (size_ == cap_) throw std::length_error(\"full\"); data_[size_++] = v; }`. איזו רמת exception safety היא מספקת?",
+      "choices": [
+        "nothrow, כי int לא זורק",
+        "strong: אם נזרק exception, המצב לא השתנה",
+        "basic בלבד",
+        "אין הבטחה, כי יש throw"
+      ],
+      "answer": 1,
+      "explanation": "הבדיקה והזריקה קורות לפני כל שינוי במצב, ולכן אם נזרק exception, ה-buffer בדיוק כמו שהיה: strong guarantee. העתקה של int לא זורקת. אילו הזריקה הייתה אחרי `size_++`, היה נשאר איבר לא מאותחל בתוך הגודל, והמחלקה הייתה מספקת לכל היותר basic.",
+      "notes": [
+        "שגוי: הפונקציה כן זורקת כשה-buffer מלא, ולכן היא לא nothrow.",
+        "נכון: \"בודקים, ואז משנים\": כל הכשלונות האפשריים קורים לפני כל שינוי של state.",
+        "שגוי: basic מבטיח רק invariants תקינים. כאן מובטח יותר: שום דבר לא השתנה.",
+        "שגוי: לזרוק זה בסדר. השאלה היא מה מצב האובייקט אחרי הזריקה, וכאן הוא לא השתנה."
+      ],
+      "id": "cpp.exceptions.q33",
+      "lesson": "cpp.exceptions"
     }
   ]
 }

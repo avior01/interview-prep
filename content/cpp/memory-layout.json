@@ -184,6 +184,46 @@
         {
           "term": "hugepages",
           "def": "דפים של 2MB (או 1GB) במקום 4KB. פחות כניסות ב-TLB ופחות TLB misses על buffers גדולים."
+        },
+        {
+          "term": "incomplete type",
+          "def": "טיפוס שהוצהר אבל עוד לא הוגדר במלואו, כמו struct בתוך ההגדרה של עצמו. מותר pointer או reference אליו, אבל לא member by value. מ-C++17, std::vector, std::list ו-std::forward_list מותרים עם incomplete type. std::array לא."
+        },
+        {
+          "term": "type punning דרך union",
+          "def": "כתיבה ל-member אחד של union וקריאה ממשנהו. ב-C זה מוגדר. ב-C++ רק ה-member הפעיל ניתן לקריאה, ולכן זה UB (GCC ו-Clang מתירים כהרחבה). הדרכים התקניות: memcpy, std::bit_cast, או קריאה דרך unsigned char*."
+        },
+        {
+          "term": "std::variant",
+          "def": "tagged union בטוח (C++17): שומר index של הטיפוס הפעיל, בונה והורס נכון, ו-std::get על טיפוס לא פעיל זורק std::bad_variant_access. גדול מעט מ-union גולמי בגלל ה-index."
+        },
+        {
+          "term": "align-up עם מסכה",
+          "def": "`(x + a - 1) & ~(a - 1)` מעגל את x למעלה לכפולה של a, רק כש-a חזקה של 2. מלכודות: a שאינו חזקה של 2 נותן תוצאה שגויה, ו-a מטיפוס צר מ-x (unsigned מול size_t) הופך את המסכה ל-zero-extended ומוחק את הביטים העליונים."
+        },
+        {
+          "term": "SSO layout",
+          "def": "small-string optimization שומר מחרוזות קצרות בתוך האובייקט. layout יעיל מכניס את ה-buffer הפנימי ואת ה-{pointer, capacity} לאותו union, כי המחרוזת או קצרה או ארוכה. כך std::string ב-libc++ הוא 24 בתים עם עד 22 תווים inline, וב-libstdc++ 32 בתים עם 15."
+        },
+        {
+          "term": "memcpy מול strncpy",
+          "def": "memcpy מעתיק בדיוק n בתים (כולל אפסים) ובדרך כלל מהיר יותר. strncpy עוצר ב-'\\0' וממלא את היתר באפסים, ולא מוסיף '\\0' אם לא נמצא כזה בטווח. בשניהם חפיפה היא UB."
+        },
+        {
+          "term": "set-associative cache ו-conflict misses",
+          "def": "כל כתובת ממופה ל-set אחד לפי ביטים באמצע הכתובת, ובכל set יש מעט ways (8–12 ב-L1). גישות ב-stride שהוא חזקה גדולה של 2 נופלות לאותו set ומפנות זו את זו, גם כשה-cache כמעט ריק. מתקנים עם padding של ה-leading dimension."
+        },
+        {
+          "term": "row-major",
+          "def": "סדר האחסון של מערך רב-ממדי ב-C/C++: איברי שורה רציפים בזיכרון. לולאה פנימית על האינדקס האחרון ניגשת ברצף. ב-Fortran וב-MATLAB הסדר column-major."
+        },
+        {
+          "term": "stack overflow ו-guard page",
+          "def": "ל-stack של כל thread יש גבול (ב-main thread בדרך כלל 8MB, לפי ulimit -s), ומתחתיו guard page לא ממופה. חציה שלו גורמת ל-SIGSEGV. זה לא exception ואי אפשר לתפוס אותו ב-try."
+        },
+        {
+          "term": "scoped enum ו-underlying type",
+          "def": "`enum class` לא מומר באופן מרומז ל-int ושמותיו בתוך scope. אפשר לקבוע underlying type (`: std::uint8_t`), שקובע את sizeof. ב-enum רגיל, enumerator בלי ערך מפורש הוא הקודם ועוד 1 (הראשון 0)."
         }
       ]
     }
@@ -344,9 +384,6 @@
       "answer": 0,
       "explanation": "פרוטוקול ה-coherence (MESI) עובד ברזולוציה של cache line. אין race לוגי, אבל ה-line עובר בין ה-cores בכל כתיבה. alignas(64) או std::hardware_destructive_interference_size מפרידים את המונים. פתרון נוסף: מונה מקומי לכל thread, וצבירה בסוף.",
       "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: ארבעת המונים תופסים 32 בתים באותו cache line. פרוטוקול MESI עובד ברזולוציה של line, וכל כתיבה מבטלת את העותק אצל ה-cores האחרים (false sharing). alignas(64) לכל מונה מפריד אותם.",
         "שגוי: atomic increment לא-מתחרה הוא זול יחסית, ו-mutex רק יוסיף עלות. הבעיה היא ה-cache line המשותף, לא האטומיות.",
@@ -409,9 +446,6 @@
       "answer": 3,
       "explanation": "x86 סובל גישה לא מיושרת (עם קנס ביצועים קטן), אבל הקומפיילר רשאי להניח יישור, למשל כשהוא מייצר הוראות SIMD מיושרות, ומעבדים אחרים זורקים alignment fault. memcpy בגודל קבוע מתקמפל ל-mov יחיד ב-x86, ולכן אין מחיר. לפורמט רשת צריך גם המרה מ-big-endian (ntohl או byteswap).",
       "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: reinterpret_cast בין pointers לטיפוסים שונים מתקמפל. הבעיה היא בגישה דרך ה-pointer שנוצר, לא בהמרה.",
         "שגוי: volatile נועד לגישות ל-MMIO ולא קשור ל-alignment או ל-aliasing. הוא לא מונע את ה-UB.",
@@ -456,9 +490,6 @@
       "answer": 1,
       "explanation": "הלולאה מוגבלת ברוחב פס של זיכרון. ב-AoS רק שליש מכל cache line שימושי, וה-i וה-q מפוזרים בקפיצות של 24 בתים, ולכן vectorization דורש gather. ב-SoA כל line מלא בנתונים רלוונטיים והטעינות רציפות. pack(1) חוסך רק 4 בתים ושובר alignment. יותר threads על בעיה של bandwidth עוזר מעט.",
       "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: pack(1) חוסך רק 4 בתים מתוך 24 ושובר alignment. הלולאה עדיין טוענת את כל השדות כשהיא צריכה רק 8 בתים.",
         "נכון: הלולאה מוגבלת ברוחב פס זיכרון. SoA קורא רק את 8 הבתים של i ו-q לכל sample, ברצף ובלי שדות מיותרים ב-cache line, וזה מאפשר טעינות SIMD רציפות.",
@@ -503,10 +534,7 @@
         "מזכיר שבפועל עדיף std::aligned_alloc (בו size חייב להיות כפולה של align) או aligned new"
       ],
       "explanation": "שאלת embedded ו-systems קלאסית. בודקים אריתמטיקה של pointers, עיגול עם bitmask, ומה צריך לשמור כדי לשחרר נכון.",
-      "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.memory-layout"
     },
     {
       "id": "cpp.memory-layout.q16",
@@ -524,9 +552,6 @@
       "answer": 3,
       "explanation": "ל-A1 ול-A2 יש sizeof 8 עם 3 בתים של tail padding. ה-Itanium ABI משתמש מחדש ב-tail padding של base רק כשה-base אינו POD לצורכי layout (לפי הגדרת POD של C++03). A1 הוא POD, ולכן d של B1 נכנס ב-offset 8 ו-sizeof הוא 12. ל-A2 יש constructor שהמשתמש סיפק, ולכן הוא non-POD, ו-d נכנס ב-offset 5 בתוך ה-padding, כך ש-sizeof הוא 8. ב-MSVC שניהם 12. זו אחת הסיבות שאסור לעשות memcpy לתוך base subobject.",
       "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: מניח שה-tail padding לא נוצל אף פעם. ב-Itanium ABI, base שאינו POD (כמו A2 עם constructor של המשתמש) מאפשר ל-d להיכנס לתוך ה-padding שלו.",
         "שגוי: מניח שה-tail padding מנוצל תמיד. A1 הוא POD לצורכי layout, וה-Itanium ABI לא משתמש מחדש ב-padding שלו, ולכן B1 הוא 12.",
@@ -590,10 +615,7 @@
         "acquire/release על האינדקסים, ו-layout של הנתונים לפי שלב העיבוד"
       ],
       "explanation": "השאלה מחברת layout, cache, מקביליות ומערכות. זה בדיוק התחום שבו הפרויקט של ה-SDR שלך נותן יתרון, אז כדאי לחבר את התשובה לניסיון שלך.",
-      "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.memory-layout"
     },
     {
       "id": "cpp.memory-layout.q20",
@@ -778,9 +800,6 @@
       "answer": 2,
       "explanation": "גודל ה-stack נקבע מראש ולא גדל לפי הצורך מעבר לגבול. 4M floats הם 16MB. הקומפיילר מזיז את ה-stack pointer בבת אחת, והגישה הראשונה (לפעמים probe שהקומפיילר הוסיף) נופלת. ב-Windows ה-stack הוא 1MB, כך שגם מערך של 2MB נופל. threads נוספים מקבלים stack לפי הגדרות ה-thread library.",
       "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: התקן לא מגביל גודל של מערך מקומי. המגבלה היא של מערכת ההפעלה: גודל ה-stack של ה-thread.",
         "שגוי: float מיושר ל-4, והקומפיילר מיישר את המערך כמו שצריך. אין כאן בעיית alignment.",
@@ -830,9 +849,6 @@
       ],
       "explanation": "הקצאה גדולה ב-glibc עוברת ל-mmap, והקרנל מקצה דף פיזי ב-page fault הראשון. first-touch שם אותו ליד מי שנגע. ה-memset של ה-main נגע בהכל, ולכן חצי מה-workers קוראים דרך ה-interconnect, עם latency גבוה יותר ורוחב פס נמוך יותר. הפתרון: כל worker מאתחל את החלק שלו. calloc גדול מקבל דפים מאופסים מה-mmap בלי לגעת בהם, ולכן הדפים היו מוקצים אצל ה-workers. hugepages מקטינים TLB misses.",
       "lesson": "cpp.memory-layout",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: glibc מקצה הקצאה גדולה דרך mmap, שרק שומר טווח כתובות. דף פיזי מוקצה ב-page fault הראשון.",
         "נכון: מדיניות ברירת המחדל ב-Linux היא first-touch: דף פיזי מוקצה על ה-NUMA node של ה-core שגרם ל-page fault.",
@@ -840,6 +856,701 @@
         "שגוי: calloc גדול מקבל דפים מאופסים מ-mmap ולא נוגע בהם. לכן הדפים היו מוקצים לפי ה-worker שנוגע ראשון, וזה דווקא משפר את המצב.",
         "שגוי: hugepages מכסים יותר זיכרון בכל כניסת TLB, ולכן מקטינים TLB misses."
       ]
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה קורה אם בהגדרה של רשימה מקושרת כותבים `Node next;` במקום `Node* next;`?\n```cpp\nstruct Node {\n  int data;\n  Node next;\n};\n```",
+      "choices": [
+        "שגיאת קומפילציה: field has incomplete type, כי Node עוד לא הוגדר במלואו (וגודלו היה אינסופי)",
+        "מתקמפל, ו-next הוא עותק של הצומת הבא במקום pointer אליו",
+        "מתקמפל, אבל sizeof(Node) יוצא 0",
+        "מתקמפל רק אם מוסיפים constructor"
+      ],
+      "answer": 0,
+      "explanation": "בתוך הגדרת Node הטיפוס עוד incomplete, ואי אפשר להגדיר member מטיפוס incomplete. גם לוגית זה בלתי אפשרי: Node היה מכיל Node שמכיל Node, כלומר גודל אינסופי. pointer לטיפוס incomplete מותר, כי גודלו ידוע (8 בתים ב-64 ביט), ולכן `Node* next` עובד.",
+      "notes": [
+        "נכון: struct לא יכול להכיל את עצמו by value. מותר להכיל pointer או reference לעצמו, או std::unique_ptr<Node>.",
+        "שגוי: זו הייתה רקורסיה אינסופית של גדלים, ולכן הקומפיילר דוחה את ההגדרה.",
+        "שגוי: לא קיים struct בגודל 0 ב-C++. ובכל מקרה הקוד לא מתקמפל.",
+        "שגוי: constructor לא פותר את הבעיה. הטיפוס עדיין incomplete במקום שבו מוגדר ה-member."
+      ],
+      "tags": [
+        "intel"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/intel-interview-experience-for-graduate-intern-on-campus/"
+      ],
+      "problem": "Intel interview: struct Node without the pointer, and its size",
+      "id": "cpp.memory-layout.q31",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "short",
+      "prompt": "על Linux x86-64, מה `sizeof` של `struct Node { int data; Node* next; };`? (מספר בבתים)",
+      "accept": [
+        "16",
+        "16 bytes",
+        "16 בתים"
+      ],
+      "explanation": "int תופס 4 בתים, ו-pointer תופס 8 בתים עם alignment של 8. לכן next מתחיל ב-offset 8 (4 בתים של padding אחרי data), והגודל הכולל 16. אם יש מערך גדול של צמתים, הסדר לא עוזר כאן: גם אם next ראשון, יש tail padding עד 16.",
+      "id": "cpp.memory-layout.q32",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "אילו מההגדרות מתקמפלות ב-C++17 ואילך?\n```cpp\nstruct A { int v; std::vector<A> kids; };   // (1)\nstruct B { int v; std::array<B, 2> kids; }; // (2)\n```",
+      "choices": [
+        "רק (1)",
+        "רק (2)",
+        "שתיהן",
+        "אף אחת"
+      ],
+      "answer": 0,
+      "explanation": "מאז C++17 התקן מאפשר להגדיר std::vector, std::list ו-std::forward_list של טיפוס incomplete, כל עוד הטיפוס מושלם לפני שמשתמשים באיברים. זה עובד כי vector מחזיק רק pointers לאיברים. std::array<B,2> מכיל את האיברים by value, ולכן הוא דורש טיפוס complete. זה בדיוק כמו `B kids[2]`, שהיה נותן גודל אינסופי.",
+      "notes": [
+        "נכון: vector<A> מחזיק pointer ל-buffer על ה-heap, ולכן לא צריך לדעת את sizeof(A) בזמן ההגדרה (מאושר בתקן מ-C++17).",
+        "שגוי: std::array מכיל את האיברים בתוכו, ולכן B היה מכיל את עצמו. זו שגיאת incomplete type.",
+        "שגוי: (2) נכשל, כי std::array דורש טיפוס complete.",
+        "שגוי: (1) תקין מ-C++17 עבור vector (ו-list, forward_list). זה דפוס נפוץ לעצים."
+      ],
+      "id": "cpp.memory-layout.q33",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט על x86-64?",
+      "code": "std::uint32_t v = 0x11223344;\nauto* b = reinterpret_cast<const unsigned char*>(&v);\nstd::cout << std::hex << int(b[0]) << ' ' << int(b[3]);",
+      "choices": [
+        "11 44",
+        "44 11",
+        "44 33",
+        "UB: אסור לקרוא uint32_t דרך pointer מטיפוס אחר"
+      ],
+      "answer": 1,
+      "explanation": "x86 הוא little-endian: הבית הפחות משמעותי (0x44) נשמר בכתובת הנמוכה. גישה לייצוג של אובייקט דרך `unsigned char*` מותרת בתקן (חריג ל-strict aliasing), ולכן זו דרך תקינה לבדוק endianness בזמן ריצה. מ-C++20 אפשר גם `std::endian::native == std::endian::little` בזמן קומפילציה.",
+      "notes": [
+        "שגוי: זה מה שהיה מודפס על מכונה big-endian, שם הבית המשמעותי ביותר נמצא בכתובת הנמוכה.",
+        "נכון: ב-little-endian, b[0] הוא הבית הנמוך (0x44) ו-b[3] הוא הגבוה (0x11).",
+        "שגוי: b[3] הוא הבית הרביעי, כלומר 0x11. 0x33 נמצא ב-b[1].",
+        "שגוי: char, unsigned char ו-std::byte הם החריג המפורש ל-strict aliasing. דרכם מותר לקרוא את הייצוג של כל אובייקט."
+      ],
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/4032849/nvidia-interview-off-campus-2023",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-fte-interview-experience-for-software-engineer-on-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-for-software-engineer-role-on-campus-placements/"
+      ],
+      "problem": "NVIDIA / Qualcomm interview: detect little vs big endian",
+      "id": "cpp.memory-layout.q34",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "short",
+      "prompt": "על מכונה little-endian, `std::uint32_t w = 0x12345678;` ו-`auto* c = reinterpret_cast<unsigned char*>(&w);`. מה הערך של `c[1]` בהקסה?",
+      "accept": [
+        "56",
+        "0x56"
+      ],
+      "explanation": "ב-little-endian הבתים מסודרים מהפחות משמעותי לכתובת הנמוכה: c[0]=0x78, c[1]=0x56, c[2]=0x34, c[3]=0x12.",
+      "id": "cpp.memory-layout.q35",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "רוצים לקרוא uint16_t ששמור ב-big-endian (network order) מתוך `const std::uint8_t* buf`, בלי לדעת מה ה-endianness של המכונה ובלי להניח alignment. איזו דרך נכונה ופורטבילית?",
+      "choices": [
+        "`std::uint16_t v = *reinterpret_cast<const std::uint16_t*>(buf);`",
+        "`std::uint16_t v = std::uint16_t((buf[0] << 8) | buf[1]);`",
+        "`std::uint16_t v; std::memcpy(&v, buf, 2);` בלי עיבוד נוסף",
+        "`union { std::uint8_t b[2]; std::uint16_t v; } u; u.b[0] = buf[0]; u.b[1] = buf[1];` ואז לקרוא `u.v`"
+      ],
+      "answer": 1,
+      "explanation": "חישוב עם shifts עובד על ערכים ולא על ייצוג בזיכרון, ולכן הוא זהה בכל ארכיטקטורה ולא תלוי ב-alignment. קריאה דרך `*(uint16_t*)buf` היא הפרה של strict aliasing (UB), ועלולה גם להיות unaligned (קריסה בחלק מה-ARM). memcpy בלי byte swap נותן ערך שגוי ב-little-endian.",
+      "notes": [
+        "שגוי: UB של strict aliasing, וגם לא פורטבילי: ב-little-endian מתקבל הסדר ההפוך, וגישה unaligned עלולה לקרוס.",
+        "נכון: buf[0] הוא הבית העליון ב-big-endian. shifts על ערכים הם בלתי תלויים ב-endianness של המכונה וב-alignment.",
+        "שגוי: memcpy חוקי וחוסך את ה-aliasing, אבל משאיר את הבתים בסדר הזיכרון. על x86 מתקבל ערך הפוך בלי byteswap או ntohs.",
+        "שגוי: ב-C++ קריאה של member לא פעיל ב-union היא UB, וגם כך התוצאה הייתה תלויה ב-endianness של המכונה."
+      ],
+      "id": "cpp.memory-layout.q36",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שאלה קלאסית מראיון: ב-union שמכיל int ו-char, האם ה-char \"רואה\" את ה-LSB או את ה-MSB? נתון קוד C++ על x86-64:\n```cpp\nunion U { std::uint32_t i; unsigned char c; };\nU u;\nu.i = 0x01020304;\nunsigned char x = u.c;\n```\nמה נכון?",
+      "choices": [
+        "תמיד 0x01: ה-char מקבל את הבית המשמעותי ביותר",
+        "בתקן C++ זו קריאה של member לא פעיל, ולכן UB. בפועל GCC ו-Clang מחזירים 0x04 (הבית הנמוך ב-little-endian). ב-C זה מוגדר",
+        "מוגדר היטב ב-C++ ותמיד 0x04, כי unsigned char רשאי לגשת לכל ייצוג",
+        "שגיאת קומפילציה: אסור union עם טיפוסים בגדלים שונים"
+      ],
+      "answer": 1,
+      "explanation": "ב-C קריאה מ-member אחר של union מוגדרת (type punning), ועל little-endian c יקבל את הבית הנמוך, 0x04. ב-C++ רק member אחד חי בכל רגע, וקריאה מ-member שאינו פעיל היא UB, גם כשמדובר ב-char. GCC ו-Clang מתעדים תמיכה בזה כהרחבה ומחזירים 4 בפועל. הדרך התקנית ב-C++: `reinterpret_cast<unsigned char*>(&u.i)[0]`, memcpy, או std::bit_cast.",
+      "notes": [
+        "שגוי: גם במכונה שבה זה עובד, x86 הוא little-endian, ולכן הבית בכתובת הנמוכה (שבה מתחיל c) הוא 0x04.",
+        "נכון: [class.union] מאפשר לקרוא רק את ה-member הפעיל. ה-aliasing exception של char חל על גישה דרך lvalue מטיפוס char לאובייקט, לא על קריאה של member אחר ב-union. C וההרחבה של GCC מתירים.",
+        "שגוי: החריג של unsigned char חל על גישה לייצוג של האובייקט u.i דרך pointer. u.c הוא member נפרד של ה-union שאין לו ערך, כי הוא לא פעיל.",
+        "שגוי: union יכול להכיל members בגדלים שונים, וגודלו הוא של ה-member הגדול (עם alignment)."
+      ],
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2020/"
+      ],
+      "problem": "Qualcomm interview: union of int and char, which byte is seen",
+      "id": "cpp.memory-layout.q37",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "short",
+      "prompt": "על x86-64, מה `sizeof` של `union U6 { int i; char c[6]; };`? (מספר בבתים)",
+      "accept": [
+        "8",
+        "8 bytes"
+      ],
+      "explanation": "גודל union הוא לפחות הגודל של ה-member הגדול (6), מעוגל למעלה לכפולה של ה-alignment המקסימלי (4, של int). לכן 8.",
+      "id": "cpp.memory-layout.q38",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "למה יש צורך ב-union גם כשאין מחסור בזיכרון, ומה מוסיף std::variant (C++17)? סמן את הטענות הנכונות.",
+      "choices": [
+        "union מבטא \"בדיוק אחד מכמה\" ומונע מצבים לא חוקיים, כמו שני payloads שונים בו-זמנית",
+        "union גולמי שומר אוטומטית איזה member פעיל",
+        "std::variant יודע איזה טיפוס פעיל וקורא ל-destructor הנכון",
+        "`std::get<float>(v)` כש-v מחזיק int זורק std::bad_variant_access",
+        "std::variant תמיד באותו גודל כמו union של אותם טיפוסים"
+      ],
+      "answer": [
+        0,
+        2,
+        3
+      ],
+      "explanation": "union משמש לייצוג \"אחד מכמה\", למשל הודעה עם payload שתלוי בסוג שלה, ול-layout שתואם פרוטוקולים או חומרה. union גולמי לא יודע איזה member פעיל, ולא קורא ל-constructors ול-destructors של members לא טריוויאליים. std::variant הוא tagged union בטוח: הוא שומר את האינדקס הפעיל, הורס נכון, ו-std::get על טיפוס לא פעיל זורק bad_variant_access.",
+      "notes": [
+        "נכון: זה שימוש בטיפוסים לבטא את המודל (sum type), לא רק חיסכון בבתים.",
+        "שגוי: union גולמי לא שומר tag. המתכנת צריך לנהל אותו בעצמו, ולכן struct עם enum ו-union הוא דפוס נפוץ ב-C.",
+        "נכון: variant מחזיק index, ובהריסה או בהשמה של טיפוס אחר הוא מפעיל את ה-destructor של הטיפוס שבאמת חי.",
+        "נכון: get על טיפוס לא פעיל זורק. get_if מחזיר nullptr במקום לזרוק.",
+        "שגוי: variant מוסיף את ה-index ואת ה-padding שלו, ולכן בדרך כלל הוא גדול יותר מה-union המקביל."
+      ],
+      "id": "cpp.memory-layout.q39",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "המראיין ביקש לממש offsetof בעצמך, ומישהו כתב:\n```cpp\n#define MY_OFFSETOF(T, m) ((std::size_t)&(((T*)0)->m))\n```\nמה נכון לגבי המאקרו הזה ב-C++?",
+      "choices": [
+        "תקין ומוגדר היטב, כי לא קוראים את הערך אלא רק לוקחים כתובת",
+        "בפועל זה עובד ברוב הקומפיילרים, אבל לפי התקן זו גישה דרך null pointer (UB). לכן std::offsetof ממומש עם builtin, ומובטח רק ל-standard-layout",
+        "לא מתקמפל: אסור להמיר 0 ל-pointer",
+        "תמיד מחזיר 0, כי הכתובת הבסיסית היא 0"
+      ],
+      "answer": 1,
+      "explanation": "זה המימוש ההיסטורי של offsetof ב-C. מבחינת התקן, `((T*)0)->m` הוא גישה ל-member דרך null pointer, וזה UB, גם בלי לקרוא את הערך. לכן הספריות הסטנדרטיות של GCC, Clang ו-MSVC מממשות offsetof עם builtin של הקומפיילר (`__builtin_offsetof`). התקן מבטיח offsetof רק ל-standard-layout types. ב-class עם virtual base ה-offset לא קבוע בכלל.",
+      "notes": [
+        "שגוי: לפי התקן, `p->m` כש-p הוא null pointer הוא UB, גם בלי lvalue-to-rvalue conversion. אופטימייזרים רשאים להסיק מזה ש-p לא null.",
+        "נכון: זה מסביר למה המאקרו \"עובד\" ולמה בכל זאת לא משתמשים בו. עם std::offsetof מקבלים את ההתנהגות המובטחת, ואזהרה (-Winvalid-offsetof) על טיפוסים שאינם standard-layout.",
+        "שגוי: `(T*)0` הוא cast תקין שיוצר null pointer. הבעיה היא ה-member access, לא ההמרה.",
+        "שגוי: הכתובת של m היא 0 ועוד ה-offset שלו, ולכן התוצאה בפועל היא ה-offset. אבל זה מתקבל דרך UB."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-sde-2/"
+      ],
+      "problem": "NVIDIA interview: structure padding and the offset operator",
+      "id": "cpp.memory-layout.q40",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט על x86-64?",
+      "code": "struct S {\n  char a;\n  alignas(8) char b;\n  int c;\n};\nstd::cout << offsetof(S, b) << ' ' << offsetof(S, c) << ' ' << sizeof(S);",
+      "choices": [
+        "1 4 8",
+        "8 12 16",
+        "8 9 16",
+        "8 12 24"
+      ],
+      "answer": 1,
+      "explanation": "a ב-offset 0. ל-b יש `alignas(8)`, ולכן הוא מתחיל ב-8 (7 בתים של padding). c הוא int עם alignment 4, ומתחיל ב-9 מעוגל ל-12. הגודל: 16 בתים, כפולה של ה-alignment המקסימלי (8).",
+      "notes": [
+        "שגוי: מתעלם מ-alignas(8), שמחייב את b לשבת בכתובת שהיא כפולה של 8.",
+        "נכון: b ב-8, c ב-12 (העיגול הבא ל-4 אחרי 9), וסך הכל 16, שהוא כפולה של 8.",
+        "שגוי: int צריך alignment של 4, ולכן לא יכול להתחיל ב-9.",
+        "שגוי: c נגמר ב-16, שהוא כבר כפולה של 8. אין צורך ב-tail padding נוסף."
+      ],
+      "id": "cpp.memory-layout.q41",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "לאילו טיפוסים התקן מבטיח ש-`offsetof(T, m)` מוגדר?",
+      "choices": [
+        "לכל class",
+        "ל-standard-layout types",
+        "רק ל-trivially copyable types",
+        "רק לטיפוסים בלי padding"
+      ],
+      "answer": 1,
+      "explanation": "התקן מבטיח offsetof ל-standard-layout classes (ב-C++17 ואילך, עבור טיפוסים אחרים זה conditionally-supported). ל-class עם virtual base ה-offset יכול להשתנות לפי הטיפוס הדינמי, ולכן אין לו ערך קבוע. בטיפוס עם virtual functions ה-offset קבוע בפועל, אבל התקן לא מבטיח אותו, ו-GCC מזהיר.",
+      "notes": [
+        "שגוי: עבור virtual inheritance, למשל, offset של member של ה-virtual base תלוי בטיפוס הנגזר ביותר ואינו קבוע.",
+        "נכון: standard-layout מבטיח layout צפוי (כולל member ראשון ב-offset 0), ולכן offsetof מוגדר.",
+        "שגוי: trivially copyable מתייחס להעתקה עם memcpy, וזה קריטריון אחר. למשל, טיפוס עם members ב-access שונה יכול להיות trivially copyable אבל לא standard-layout.",
+        "שגוי: padding לא מפריע ל-offsetof. בשביל זה הוא קיים: למדוד בדיוק איפה נמצא member, כולל ה-padding שלפניו."
+      ],
+      "id": "cpp.memory-layout.q42",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "short",
+      "prompt": "נתון `#define UP_ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))` (a חזקה של 2). מה הערך של `UP_ALIGN(37, 16)`?",
+      "accept": [
+        "48"
+      ],
+      "explanation": "37 + 15 = 52, ו-`& ~15` מנקה את 4 הביטים הנמוכים: 52 = 0b110100, ואחרי הניקוי 0b110000 = 48. זו הכפולה הקטנה ביותר של 16 שגדולה או שווה ל-37.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.aced.io/experiences/nvidia-software-engineer-interview-90647e",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-sde-2/"
+      ],
+      "problem": "NVIDIA phone screen: macro that aligns a size up to a power of 2",
+      "id": "cpp.memory-layout.q43",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה מדפיס `std::cout << UP_ALIGN(13, 12);` עם אותו מאקרו?",
+      "code": "#define UP_ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))\nstd::cout << UP_ALIGN(13, 12);",
+      "choices": [
+        "24",
+        "16",
+        "13",
+        "12"
+      ],
+      "answer": 1,
+      "explanation": "המאקרו מניח ש-a חזקה של 2, כך ש-a-1 היא מסכה של ביטים נמוכים. 12-1 = 11 = 0b1011, וזו לא מסכה רציפה. 13+11 = 24 = 0b11000, ו-`& ~0b1011` משאיר 0b10000 = 16, שאפילו לא כפולה של 12. לכפולה כללית צריך `((x + a - 1) / a) * a`.",
+      "notes": [
+        "שגוי: 24 היה נכון לכפולה של 12, אבל המסכה ~11 מנקה גם את ביט 3, ולא רק ביטים \"נמוכים\".",
+        "נכון: 24 & ~11 = 0b11000 & ...10100 = 0b10000 = 16. תוצאה שגויה, כי 12 אינו חזקה של 2.",
+        "שגוי: 13 היה יוצא רק אם המאקרו לא היה משנה את הערך. התוספת של a-1 והמסכה כן משנות.",
+        "שגוי: 12 קטן מ-13, וזה לא מה שמחושב: התוצאה היא 16, שגם היא שגויה."
+      ],
+      "id": "cpp.memory-layout.q44",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "על 64 ביט: `std::size_t x = 0x100000005;` ו-`unsigned a = 8;`. מה `UP_ALIGN(x, a)` עם `(((x) + (a) - 1) & ~((a) - 1))`?",
+      "choices": [
+        "0x100000008",
+        "0x8",
+        "0x100000005",
+        "UB: overflow ב-unsigned"
+      ],
+      "answer": 1,
+      "explanation": "`~((a) - 1)` מחושב בטיפוס של a, כלומר unsigned של 32 ביט: 0xFFFFFFF8. כשהוא מומר ל-size_t לצורך ה-&, הוא מקבל zero-extension, כלומר 0x00000000FFFFFFF8, והחלק העליון של x נמחק. x+7 = 0x10000000C, וה-& נותן 0x8. מנגנון כזה גרם לבאגים אמיתיים במנהלי זיכרון. התיקון: להמיר את a לטיפוס של x לפני ה-~, או פונקציה constexpr עם טיפוס אחיד.",
+      "notes": [
+        "שגוי: זו התשובה הרצויה, אבל המסכה של 32 ביט מאופסת בחלק העליון אחרי zero-extension ומוחקת את ביט 32.",
+        "נכון: ~7u = 0xFFFFFFF8 (32 ביט), שמורחב באפסים ל-64 ביט. 0x10000000C & 0xFFFFFFF8 = 0x8.",
+        "שגוי: המאקרו משנה את הערך בכל מקרה. אין סיבה שיחזיר את x כמו שהוא.",
+        "שגוי: חשבון unsigned מוגדר כ-modulo 2^N ואין בו UB. הבעיה היא שילוב של רוחבי טיפוסים, לא overflow."
+      ],
+      "id": "cpp.memory-layout.q45",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מחלקת מחרוזת עם small-string optimization מוגדרת כך (BUFF_SIZE = 1):\n```cpp\nclass MyString {\n  char buf[1];\n  std::size_t length;\n  char* ptr;\n};\n```\nמה `sizeof(MyString)` על x86-64 Linux ועל x86 של 32 ביט (ILP32)?",
+      "choices": [
+        "17 ב-64 ביט, 9 ב-32 ביט",
+        "24 ב-64 ביט, 12 ב-32 ביט",
+        "24 בשניהם",
+        "16 ב-64 ביט, 12 ב-32 ביט"
+      ],
+      "answer": 1,
+      "explanation": "ב-x86-64, size_t ו-pointer תופסים 8 בתים עם alignment של 8: buf ב-0, 7 בתים של padding, length ב-8, ptr ב-16, ובסך הכל 24. ב-32 ביט שניהם 4 בתים עם alignment של 4: buf, 3 בתים של padding, length ב-4, ptr ב-8, ובסך הכל 12. בית אחד של buffer עולה 8 בתים ב-64 ביט.",
+      "notes": [
+        "שגוי: זה סכום הגדלים בלי padding. size_t צריך alignment, ולכן אחרי buf מתווסף padding.",
+        "נכון: 1+7+8+8 = 24 ב-64 ביט, ו-1+3+4+4 = 12 ב-32 ביט.",
+        "שגוי: ב-ILP32 גם size_t וגם pointer הם 4 בתים, ולכן הגודל קטן.",
+        "שגוי: buf, length ו-ptr לא נכנסים ב-16 בתים: length ו-ptr לבד תופסים 16, ו-buf מוסיף עוד בית שמתעגל ל-8."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/optimize-a-small-string-cplusplus-class"
+      ],
+      "problem": "NVIDIA interview: optimize a small-string C++ class (sizeof, layout)",
+      "id": "cpp.memory-layout.q46",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "רוב המחרוזות באורך 10–15 תווים. ה-layout הנוכחי, `char buf[8]; std::size_t len; char* ptr;` (24 בתים), תמיד שולם על buffer וגם על pointer. איזה layout ב-24 בתים מחזיק inline עד 15 תווים?",
+      "choices": [
+        "`std::size_t len; union { char buf[16]; struct { char* ptr; std::size_t cap; } heap; };` עם מצב קצר או ארוך לפי len",
+        "`char buf[16]; std::size_t len; char* ptr;`",
+        "`char* ptr; std::size_t len;` ותמיד להקצות על ה-heap",
+        "`std::string_view sv; char buf[8];`"
+      ],
+      "answer": 0,
+      "explanation": "המחרוזת היא או קצרה או ארוכה, לעולם לא שתיהן. לכן ה-buffer הפנימי וה-pointer וה-capacity יכולים לחלוק זיכרון ב-union, ו-len נשאר מחוץ ל-union, יחד עם ביט או סימן שמבחין בין המצבים. ב-24 בתים: len (8) ועוד union של buf[16] או {ptr, cap}. זה הרעיון של libc++ (שאפילו דוחס את len לתוך ה-buffer ומגיע ל-22 תווים).",
+      "notes": [
+        "נכון: 8 + 16 = 24 בתים. 15 תווים ועוד '\\0' נכנסים ב-buf, ומחרוזת ארוכה משתמשת באותם 16 בתים בשביל ptr ו-cap.",
+        "שגוי: 16+8+8 = 32 בתים, כי שוב משלמים גם על buffer וגם על pointer.",
+        "שגוי: 16 בתים, אבל כל מחרוזת דורשת הקצאה. בדיוק את זה SSO נועד למנוע.",
+        "שגוי: string_view לא מחזיק את התווים, ולכן זה dangling כשהמקור נהרס. זה לא string."
+      ],
+      "id": "cpp.memory-layout.q47",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "בבנאי של מחרוזת כתוב `strncpy(buf, s, len); buf[len] = '\\0';`. מישהו מציע להחליף ב-`memcpy(buf, s, len)`. אילו טענות נכונות?",
+      "choices": [
+        "memcpy מעתיק בדיוק len בתים, גם אם יש '\\0' באמצע. strncpy עוצר ב-'\\0' וממלא את השאר באפסים",
+        "strncpy תמיד מוסיף '\\0' בסוף, ולכן השורה `buf[len] = '\\0'` מיותרת",
+        "כשהאורך ידוע מראש, memcpy בדרך כלל מהיר יותר, כי הוא לא בודק כל תו",
+        "memcpy בטוח גם כשהאזורים חופפים",
+        "גם אחרי memcpy צריך להוסיף '\\0' בעצמך"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "strncpy עוצר כשהוא פוגש '\\0' ב-s, וממלא את שאר ה-len באפסים. memcpy מעתיק בדיוק len בתים, כולל '\\0' באמצע, והוא בדרך כלל מהיר יותר (העתקה של בלוקים בלי בדיקה לכל תו). אף אחד מהם לא מוסיף '\\0' אם לא נמצא כזה בטווח, ולכן ה-`buf[len] = '\\0'` עדיין נדרש. אם האזורים חופפים, שניהם UB.",
+      "notes": [
+        "נכון: זה ההבדל ההתנהגותי. עם נתונים בינאריים (שיש בהם אפסים) רק memcpy נכון.",
+        "שגוי: אם אין '\\0' בתוך len התווים הראשונים, strncpy לא מוסיף '\\0'. זו מלכודת ידועה.",
+        "נכון: memcpy ממומש עם העתקות רחבות (SIMD) בלי חיפוש '\\0'. strncpy חייב לבדוק כל תו וגם למלא אפסים.",
+        "שגוי: חפיפה ב-memcpy היא UB. לחפיפה משתמשים ב-memmove.",
+        "נכון: memcpy לא יודע שמדובר במחרוזת, ולכן ה-terminator הוא באחריותך."
+      ],
+      "id": "cpp.memory-layout.q48",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "בקובץ הבא (Linux, ELF), אילו טענות על מיקום הנתונים נכונות?\n```cpp\nint g = 7;\nstatic int z;\nconst char* msg = \"hi\";\nvoid f() {\n  static int s = 1;\n  int loc = 0;\n  int* h = new int(5);\n}\n```",
+      "choices": [
+        "g נמצא ב-.data",
+        "z נמצא ב-.bss",
+        "המחרוזת \"hi\" נמצאת ב-.rodata",
+        "s נמצא על ה-stack של f",
+        "האובייקט *h נמצא על ה-heap",
+        "loc נמצא ב-.bss"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        4
+      ],
+      "explanation": "משתנים עם static storage duration ש-initializer שלהם שונה מאפס נמצאים ב-.data (g, s). משתנים מאותחלים לאפס או בלי initializer נמצאים ב-.bss (z). string literals נמצאים ב-.rodata. משתנים מקומיים רגילים נמצאים על ה-stack (loc, h עצמו), ו-new מקצה על ה-heap (*h).",
+      "notes": [
+        "נכון: global עם initializer קבוע ששונה מאפס נשמר בקובץ עצמו, בסקשן .data.",
+        "נכון: static בלי initializer מאותחל לאפס, ולכן הוא ב-.bss, שלא תופס מקום בקובץ.",
+        "נכון: string literal הוא מערך const עם static storage, ונשמר בקטע לקריאה בלבד.",
+        "שגוי: s הוא static local, ולכן הוא חי לאורך כל התוכנית ב-.data (עם initializer 1), לא על ה-stack.",
+        "נכון: new מקצה מה-heap (malloc או mmap מתחת), ו-h, ה-pointer המקומי, נמצא על ה-stack.",
+        "שגוי: loc הוא automatic variable על ה-stack, ונוצר מחדש בכל קריאה."
+      ],
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/",
+        "https://leetcode.com/discuss/post/4032849/nvidia-interview-off-campus-2023",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2/"
+      ],
+      "problem": "NVIDIA / Qualcomm interview: which variable goes where in memory",
+      "id": "cpp.memory-layout.q49",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בתוך פונקציה: `static Table t = build_table();`, כש-build_table לא constexpr. איפה t נמצא בקובץ ה-ELF, ומתי רץ build_table?",
+      "choices": [
+        "על ה-stack, ו-build_table רץ בכל קריאה",
+        "ב-.bss, ו-build_table רץ פעם אחת, בקריאה הראשונה לפונקציה",
+        "ב-.data, ו-build_table רץ לפני main",
+        "על ה-heap, ו-build_table רץ ב-static initialization של התוכנית"
+      ],
+      "answer": 1,
+      "explanation": "ל-t יש static storage duration. כי ה-initializer הוא דינמי, ה-storage שלו מוקצה ב-.bss (מאופס), ו-build_table רץ בפעם הראשונה שהבקרה מגיעה להגדרה (עם guard variable שמבטיח thread safety). אם האתחול היה constant initialization, t היה יכול לשבת ב-.data או ב-.rodata בלי שום קוד בזמן ריצה.",
+      "notes": [
+        "שגוי: static local לא נמצא על ה-stack ולא נבנה מחדש בכל קריאה.",
+        "נכון: הזיכרון מאופס (.bss), והאתחול הדינמי קורה בפעם הראשונה עם guard. בגלל זה זו גם הדרך ליצור singleton.",
+        "שגוי: ב-.data יושבים ערכים שהקומפיילר יודע בזמן קומפילציה. כאן הערך מחושב בזמן ריצה, ורק בקריאה הראשונה.",
+        "שגוי: t עצמו לא על ה-heap (רק אם Table מקצה בפנים). והאתחול עצל, לא לפני main."
+      ],
+      "id": "cpp.memory-layout.q50",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "שני globals: `int a[1 << 20];` (בלי initializer) ו-`int b[1 << 20] = {1};`. איך כל אחד משפיע על גודל קובץ ההרצה?",
+      "choices": [
+        "שניהם מוסיפים 4MB לקובץ",
+        "a לא מגדיל את הקובץ כמעט (.bss), ו-b מגדיל אותו בכ-4MB (.data)",
+        "אף אחד לא מגדיל את הקובץ, כי מערכים גלובליים מוקצים על ה-heap",
+        "b לא מגדיל את הקובץ, כי רק האיבר הראשון שונה מאפס"
+      ],
+      "answer": 1,
+      "explanation": ".bss מתועד בקובץ רק כגודל, ו-loader ממפה דפים מאופסים בזמן הטעינה. לכן a לא מוסיף כמעט כלום לקובץ. b מאותחל עם ערך ששונה מאפס, ולכן כל 4MB נשמרים ב-.data בקובץ, כולל האפסים שאחרי האיבר הראשון.",
+      "notes": [
+        "שגוי: מערך בלי initializer (או עם אפסים) יושב ב-.bss, שבקובץ נשמר רק כמספר בתים.",
+        "נכון: .bss לא נשמר בקובץ, ו-.data נשמר במלואו. initializer אחד ששונה מאפס מעביר את כל המערך ל-.data.",
+        "שגוי: globals נמצאים בסקשנים הסטטיים של התמונה (.data/.bss), לא על ה-heap.",
+        "שגוי: האובייקט כולו הולך לסקשן אחד. הקומפיילר לא מפצל מערך בין .data ל-.bss."
+      ],
+      "id": "cpp.memory-layout.q51",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "כדי לבדוק אם ה-stack גדל למטה, כתבו:\n```cpp\nbool grows_down(int* caller_local) {\n  int callee_local;\n  return &callee_local < caller_local;\n}\nint main() { int x; std::cout << grows_down(&x); }\n```\nמה הבעיה?",
+      "choices": [
+        "אין בעיה. זו דרך מובטחת לפי התקן",
+        "השוואת < בין pointers לא קשורים נותנת תוצאה unspecified, ו-inlining עלול לשים את שני המשתנים באותו frame בסדר שרירותי",
+        "callee_local לא מאותחל, ולכן לקיחת הכתובת שלו היא UB",
+        "אסור להעביר pointer ל-local לפונקציה אחרת"
+      ],
+      "answer": 1,
+      "explanation": "ההשוואה עם < בין pointers לאובייקטים שאינם באותו מערך נותנת תוצאה unspecified לפי התקן, וגם אם על x86 היא \"עובדת\", הקומפיילר רשאי לעשות inline ל-grows_down בתוך main, ואז שני המשתנים באותו frame בסדר שרירותי. אמין יותר: להשוות `std::uintptr_t` (או std::less) בין משתנים בקריאות לא inline (`[[gnu::noinline]]`), או לבדוק את ה-ABI, שבו כמעט כל הארכיטקטורות המודרניות (x86-64, ARM64) מגדלות את ה-stack כלפי מטה.",
+      "notes": [
+        "שגוי: התקן לא מגדיר את סדר ה-frames ולא מבטיח את התוצאה של < בין אובייקטים שונים.",
+        "נכון: שתי הבעיות. אחרי inlining התוצאה תלויה ב-stack slot allocation של הקומפיילר. std::less נותן סדר עקבי, אבל עדיין לא פותר את בעיית ה-inlining.",
+        "שגוי: מותר לקחת כתובת של משתנה לא מאותחל. אסור רק לקרוא את הערך שלו.",
+        "שגוי: מותר להעביר pointer למשתנה מקומי לפונקציה שנקראת, כי הוא חי לאורך כל הקריאה."
+      ],
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2020/"
+      ],
+      "problem": "NVIDIA / Qualcomm interview: does the stack grow up or down",
+      "id": "cpp.memory-layout.q52",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 1,
+      "type": "mcq",
+      "prompt": "על Linux x86-64, לאיזה כיוון גדל ה-stack של thread כשקוראים לפונקציות מקוננות?",
+      "choices": [
+        "לכתובות גבוהות יותר",
+        "לכתובות נמוכות יותר",
+        "תלוי בגודל המשתנים המקומיים",
+        "אקראי, בגלל ASLR"
+      ],
+      "answer": 1,
+      "explanation": "ב-x86-64 (וגם ב-ARM64) ה-stack גדל כלפי כתובות נמוכות: push ו-call מקטינים את rsp. כל frame חדש נמצא מתחת ל-frame של הקורא.",
+      "notes": [
+        "שגוי: יש ארכיטקטורות ישנות כאלה (למשל HP PA-RISC), אבל לא x86-64.",
+        "נכון: rsp קטן בכל push או call, ו-frames חדשים יושבים בכתובות נמוכות יותר.",
+        "שגוי: גודל המשתנים משפיע על כמה ה-stack גדל, לא על הכיוון.",
+        "שגוי: ASLR מזיז את כתובת הבסיס של ה-stack, אבל לא את כיוון הגדילה."
+      ],
+      "id": "cpp.memory-layout.q53",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "פונקציה רקורסיבית בלי תנאי עצירה רצה ב-main thread על Linux. מה קורה בדרך כלל, ולמה?",
+      "choices": [
+        "נזרק std::bad_alloc שאפשר לתפוס",
+        "התוכנית מקבלת SIGSEGV כשה-stack חוצה את הגבול (בדרך כלל 8MB) ונכנס ל-guard page",
+        "ה-stack ממשיך לגדול עד שכל ה-RAM מתמלא",
+        "הקומפיילר מזהה את זה ולא מקמפל"
+      ],
+      "answer": 1,
+      "explanation": "כל קריאה צורכת frame. ה-stack של ה-main thread מוגבל (ברירת מחדל `ulimit -s` של 8MB), ומתחתיו יש guard page לא ממופה. כשה-stack חוצה אותו, נוצר page fault שהקרנל לא יכול לטפל בו, ונשלח SIGSEGV. זה לא std::bad_alloc, כי ה-stack לא מוקצה דרך new.",
+      "notes": [
+        "שגוי: bad_alloc נזרק מ-operator new. ה-stack גדל עם הזזת rsp, בלי allocator.",
+        "נכון: stack overflow מסתיים ב-segfault. (תחת O2, tail recursion יכולה להפוך ללולאה ולרוץ לנצח.)",
+        "שגוי: יש גבול (RLIMIT_STACK) ו-guard page. ה-stack לא ממשיך מעבר להם.",
+        "שגוי: רקורסיה אינסופית היא לפעמים UB, אבל הקומפיילר לא חייב ולרוב לא יכול לזהות אותה, ולכן הקוד מתקמפל."
+      ],
+      "id": "cpp.memory-layout.q54",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מערך `float a[4096][4096]` מסוכם בשתי דרכים: (A) לולאה חיצונית על שורות ופנימית על עמודות (`a[i][j]`), ו-(B) הפוך (`a[j][i]`). איזו מהירה יותר, ולמה?",
+      "choices": [
+        "A, כי ב-row-major הלולאה הפנימית ניגשת לזיכרון רציף ומנצלת cache lines ו-prefetch",
+        "B, כי ניגשים לעמודה שלמה ברצף",
+        "אין הבדל, שתיהן O(n²)",
+        "B, כי הקומפיילר תמיד הופך את סדר הלולאות"
+      ],
+      "answer": 0,
+      "explanation": "ב-C++ מערך דו-ממדי שמור row-major: a[i][0..4095] רציפים. ב-A הלולאה הפנימית רצה על זיכרון רציף, ולכן כל cache line של 64 בתים מביא 16 floats, וה-prefetcher וה-vectorization עובדים. ב-B כל גישה מתקדמת ב-16KB, נוגעת ב-cache line חדש ומשתמשת בו לערך אחד, ולכן היא איטית פי כמה.",
+      "notes": [
+        "נכון: אותה סיבוכיות, אבל A מנצל כל cache line במלואו (16 floats), ו-B מנצל ממנו float אחד.",
+        "שגוי: עמודה ב-row-major אינה רציפה. בין a[j][i] ל-a[j+1][i] יש 16KB.",
+        "שגוי: big-O זהה, אבל הזמן בפועל שונה פי כמה בגלל ה-memory hierarchy.",
+        "שגוי: לפעמים קומפיילרים עושים loop interchange, אבל זה לא מובטח, במיוחד כשיש aliasing או floating-point שלא מותר לשנות את סדר החיבור שלו."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
+      ],
+      "problem": "NVIDIA interview: 2D array row-wise vs column-wise loop",
+      "id": "cpp.memory-layout.q55",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "short",
+      "prompt": "שורה אחת של `float a[1024][1024]`, שמתחילה בכתובת מיושרת ל-64, נקראת ברצף. בכמה cache lines של 64 בתים הלולאה נוגעת?",
+      "accept": [
+        "64"
+      ],
+      "explanation": "שורה היא 1024 × 4 = 4096 בתים, ו-4096 / 64 = 64 cache lines. אם קוראים עמודה, כל אחד מ-1024 האיברים נמצא ב-line אחר, כלומר 1024 lines בשביל אותה כמות נתונים.",
+      "id": "cpp.memory-layout.q56",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מטריצה של `float` עם 1024 עמודות (stride של 4096 בתים בין שורות) נקראת לפי עמודות בבלוקים, וזה איטי במיוחד גם כשהבלוק קטן מה-L1. הוספה של 16 floats ריקים לכל שורה (stride של 4160) מאיצה מאוד. למה?",
+      "choices": [
+        "padding מקטין את סך הזיכרון",
+        "stride שהוא חזקה של 2 ממפה את כל האיברים בעמודה לאותו cache set, ונוצרים conflict misses. padding מפזר אותם בין ה-sets",
+        "padding מאפשר לקומפיילר להשתמש ב-AVX-512",
+        "שורה של 4096 בתים לא נכנסת ב-TLB"
+      ],
+      "answer": 1,
+      "explanation": "ב-cache שהוא set-associative, ה-set נקבע לפי ביטים באמצע הכתובת. stride של חזקת 2 גדולה (4096) ממפה את כל האיברים בעמודה לאותו set (או למעט sets), כך שרק 8 עד 12 lines (ה-associativity) נשארים, והשאר מפנים זה את זה: conflict misses. padding שובר את החזקה של 2 ומפזר את השורות על כל ה-sets.",
+      "notes": [
+        "שגוי: padding מגדיל את הזיכרון (בכ-1.5%). השיפור לא בא מחיסכון.",
+        "נכון: זו בעיית associativity קלאסית ב-transpose וב-FFT. לכן ב-cuFFT, ב-BLAS ובקוד DSP בוחרים leading dimension שאינו חזקה של 2.",
+        "שגוי: vectorization תלויה ב-alignment ובלולאה, ו-4160 אפילו פחות נוח מ-4096. ההאצה היא מ-cache sets.",
+        "שגוי: גם 4160 בתים חוצים עמוד של 4KB, כך שמספר העמודים כמעט זהה. TLB לא מסביר את ההבדל."
+      ],
+      "id": "cpp.memory-layout.q57",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "enum Color { Red, Green = 5, Blue };\nstruct P { int x; Color c; int y; };\n\nint main() {\n  P p{3};\n  std::cout << p.x << ' ' << p.c << ' ' << p.y << ' ' << Blue;\n}",
+      "choices": [
+        "3 0 0 6",
+        "3 0 0 2",
+        "3 זבל זבל 6",
+        "שגיאת קומפילציה: אי אפשר להדפיס Color"
+      ],
+      "answer": 0,
+      "explanation": "ב-enum בלי ערכים מפורשים, הספירה מתחילה מ-0. Red=0, Green=5, ו-Blue הוא הבא אחרי Green, כלומר 6. `P p{3}` הוא aggregate initialization: x=3, ושאר ה-members מאותחלים מ-initializer ריק (value-initialized), כלומר c=0 (Red) ו-y=0. enum לא scoped מומר ל-int בהדפסה.",
+      "notes": [
+        "נכון: members שלא קיבלו initializer ב-aggregate initialization מאופסים. Blue = Green + 1 = 6.",
+        "שגוי: Blue לא נספר לפי המיקום שלו ברשימה. הוא הערך הקודם ועוד 1, כלומר 6.",
+        "שגוי: עם `{3}` כל ה-members שלא צוינו מקבלים value-initialization (אפס), ולכן אין ערכי זבל. זבל היה רק עם `P p;` כמשתנה מקומי.",
+        "שגוי: enum לא scoped מומר ל-int באופן מרומז, ולכן operator<< של int מדפיס אותו."
+      ],
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/explain-cplusplus-and-gpu-tradeoffs"
+      ],
+      "problem": "Qualcomm technical screen: reason about output of enum + struct program",
+      "id": "cpp.memory-layout.q58",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "נתון `enum class Mode { A, B = 4, C };`. מה קורה עם `std::cout << Mode::C;`?",
+      "choices": [
+        "מדפיס 5",
+        "מדפיס 2",
+        "שגיאת קומפילציה: enum class לא מומר אוטומטית ל-int",
+        "מדפיס C"
+      ],
+      "answer": 2,
+      "explanation": "scoped enum (enum class) לא מומר באופן מרומז ל-int, ואין operator<< עבורו, ולכן זו שגיאת קומפילציה. כדי להדפיס: `static_cast<int>(Mode::C)` (ערך 5), או std::to_underlying ב-C++23.",
+      "notes": [
+        "שגוי: הערך אכן 5, אבל צריך cast מפורש כדי להדפיס אותו.",
+        "שגוי: הערך לא נקבע לפי מיקום. C בא אחרי B=4 ולכן הוא 5. וגם כך זה לא מתקמפל.",
+        "נכון: זה בדיוק היתרון של enum class: אין המרות מרומזות שמובילות לבאגים. מדפיסים עם static_cast<int>.",
+        "שגוי: C++ לא מייצר שמות של enumerators בזמן ריצה. להדפסה של \"C\" צריך טבלה או reflection."
+      ],
+      "id": "cpp.memory-layout.q59",
+      "lesson": "cpp.memory-layout"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט על x86-64?",
+      "code": "enum class Small : std::uint8_t { A, B };\nstruct SS { Small s; int x; Small t; };\nstd::cout << sizeof(Small) << ' ' << sizeof(SS);",
+      "choices": [
+        "4 12",
+        "1 6",
+        "1 12",
+        "1 8"
+      ],
+      "answer": 2,
+      "explanation": "ל-Small יש underlying type של uint8_t, ולכן sizeof(Small) = 1 ו-alignment 1. ב-SS: s ב-0, 3 בתים של padding, x ב-4, t ב-8, ועוד 3 בתים של tail padding כדי שהגודל יהיה כפולה של 4. סך הכל 12. אם הסדר היה s, t, x, הגודל היה 8.",
+      "notes": [
+        "שגוי: בלי underlying type מפורש הגודל היה 4 (int), אבל `: std::uint8_t` קובע בית אחד.",
+        "שגוי: מתעלם מה-padding. int צריך להתחיל בכפולה של 4, והגודל הכולל חייב להיות כפולה של 4.",
+        "נכון: 1 + 3 (padding) + 4 + 1 + 3 (tail padding) = 12.",
+        "שגוי: 8 היה יוצא אם שני ה-Small היו צמודים לפני או אחרי x. בסדר הנוכחי t אחרי x, ולכן יש tail padding."
+      ],
+      "id": "cpp.memory-layout.q60",
+      "lesson": "cpp.memory-layout"
     }
   ]
 }

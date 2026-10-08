@@ -179,6 +179,38 @@
         {
           "term": "tracemalloc",
           "def": "מודול Python שעוקב אחרי הקצאות ה-interpreter לפי שורת קוד. take_snapshot ו-compare_to מראים מה גדל בין שני זמנים. לא רואה malloc ישיר של extensions."
+        },
+        {
+          "term": "aligned_malloc",
+          "def": "הקצאה מיושרת מעל malloc: מקצים size + align - 1 + sizeof(void*), מעגלים למעלה עם (addr + align - 1) & ~(align - 1), ושומרים את ה-pointer המקורי לפני הכתובת המיושרת כדי ש-aligned_free יעביר אותו ל-free."
+        },
+        {
+          "term": "posix_memalign / std::aligned_alloc",
+          "def": "הדרכים הסטנדרטיות להקצאה מיושרת. ב-aligned_alloc (C11/C++17) הגודל צריך להיות כפולה של ה-alignment. ב-C++17, new של טיפוס עם alignas גדול משתמש ב-std::align_val_t."
+        },
+        {
+          "term": "chunk header",
+          "def": "metadata שה-allocator שומר ממש לפני הכתובת שהוא מחזיר (גודל ודגלים). כך free יודע מה לשחרר מתוך ה-pointer בלבד, ולכן free חייב לקבל בדיוק את מה ש-malloc החזיר."
+        },
+        {
+          "term": "free lists / tcache / bins",
+          "def": "מבנים שבהם glibc שומרת chunks משוחררים לשימוש חוזר. free מחזיר את ה-chunk לשם, ולרוב לא לקרנל, ולכן RSS לא יורד מיד אחרי free."
+        },
+        {
+          "term": "malloc_trim",
+          "def": "פונקציה של glibc שמחזירה לקרנל זיכרון פנוי מה-heap, ככל שאפשר. שימושית אחרי שיא זמני של הקצאות."
+        },
+        {
+          "term": "malloc(0)",
+          "def": "מחזיר או nullptr או pointer ייחודי שאסור לגשת דרכו (implementation-defined). glibc מחזירה pointer תקף. בכל מקרה מותר ונכון לקרוא ל-free עליו."
+        },
+        {
+          "term": "goto cleanup",
+          "def": "דפוס ב-C לטיפול בשגיאות: כל כישלון קופץ לתווית בסוף הפונקציה שמשחררת את המשאבים בסדר הפוך להקצאה. מונע דליפות במסלולי שגיאה."
+        },
+        {
+          "term": "definitely lost (valgrind)",
+          "def": "בלוק שאין אליו אף pointer בסוף הריצה: דליפה ודאית. 'still reachable' הוא בלוק שעדיין יש אליו pointer, ובדרך כלל לא נחשב באג."
         }
       ]
     }
@@ -526,10 +558,7 @@
         "release מוותר על בעלות בלי לסגור"
       ],
       "explanation": "זה rule of five בגרסה הנפוצה למשאבים: בעלות בלעדית כמו unique_ptr. noexcept על ה-move חשוב כדי ש-std::vector<UniqueFd> יזיז ולא ינסה להעתיק בהקצאה מחדש.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q16",
@@ -553,10 +582,7 @@
         "נכון: Tuner מחזיק את timer_, ה-timer מחזיק את ה-callback, וה-callback מחזיק shared_ptr ל-Tuner: מעגל שה-refcount שלו לא מגיע ל-0. לוכדים weak_ptr ובודקים lock()."
       ],
       "explanation": "'self capture' נועד להבטיח שהאובייקט חי בזמן callback אסינכרוני, אבל כשה-callback נשמר בתוך האובייקט עצמו זה מעגל. LeakSanitizer ידווח עליו ביציאה (מעגל לא נגיש הוא leak), אבל בזמן ריצה האובייקט ממשיך 'לחיות' ולפעול. תיקון: `[w = weak_from_this()] { if (auto s = w.lock()) s->retune(); }`, או לבטל את ה-timer ב-stop מפורש. shared_from_this חוקי אחרי שהאובייקט כבר בבעלות shared_ptr.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q17",
@@ -580,10 +606,7 @@
         "שגוי: fds הם משאב של הקרנל ולא מגדילים את ה-RSS של התהליך באופן משמעותי."
       ],
       "explanation": "LSan מדווח רק על זיכרון שאין אליו מסלול מה-roots (globals, stacks, registers). cache שגדל נגיש, ולכן נחשב 'still reachable'. זיכרון שהוחזר ל-malloc אבל לא ל-OS (fragmentation, arenas, trimming) מגדיל RSS בלי leak בכלל; מאבחנים עם malloc_stats, heaptrack, או החלפה ל-jemalloc/tcmalloc. מעגל shared_ptr אינו נגיש מה-roots, ולכן LSan כן מדווח עליו. fds הם משאב של הקרנל ולא מגדילים את ה-RSS באופן משמעותי.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q18",
@@ -757,10 +780,7 @@
         "שגוי: delete[] מתאים רק ל-new[]; s הוקצה כאובייקט בודד."
       ],
       "explanation": "`delete` דרך מצביע לבסיס בוחר destructor לפי הטיפוס הסטטי, אלא אם ה-destructor וירטואלי. כאן נקרא רק `~Source`, ה-members של FileSource לא נהרסים: partial destruction. התיקון: `virtual ~Source() = default;`. GCC מזהיר עם `-Wdelete-non-virtual-dtor` (חלק מ-`-Wall`). vector משחרר את עצמו ב-destructor שלו, אם רק ירוץ; default member initializer מאתחל את buf גם בלי סוגריים; delete[] מתאים רק ל-new[].",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q26",
@@ -799,10 +819,7 @@
         "מעביר פרמטרים לא-בעלים כ-reference או raw pointer"
       ],
       "explanation": "תשובה טובה לא רק מגדירה את שלושת הטיפוסים, אלא מראה שיקול דעת: מתי לא להשתמש ב-shared_ptr, מה העלות, ואיך נוצרת דליפה למרות smart pointers.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q28",
@@ -826,10 +843,7 @@
         "נכון: בלי O_CLOEXEC הילד יורש את ה-fd ב-fork ו-exec משאיר אותו פתוח. כל helper מחזיק עותק, והקובץ שנמחק לא משתחרר עד שכולם נסגרים. O_CLOEXEC ב-open עצמו נמנע גם מ-race מול fork."
       ],
       "explanation": "קובץ שנמחק משתחרר רק כשה-fd האחרון אליו נסגר, וה-helpers מחזיקים fd שהם בכלל לא יודעים עליו. התיקון: `O_CLOEXEC` כבר ב-open (וכך גם `SOCK_CLOEXEC`, `accept4`, `pipe2`). `fcntl(FD_CLOEXEC)` אחרי open הוא race בתהליך multi-threaded: thread אחר יכול לעשות fork ביניהם. `_exit` הוא דווקא הנכון בילד אחרי fork, כדי לא לעשות flush כפול ל-buffers של stdio. zombie כבר שחרר את כל ה-fds שלו, ובכל מקרה ה-helper כאן חי ורץ.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q29",
@@ -846,10 +860,7 @@
         "מסביר איך מוודאים: destructors שמדפיסים, או LeakSanitizer/Valgrind בלי דיווח"
       ],
       "explanation": "מעגל parent/child הוא הדליפה הקלאסית של shared_ptr: כל צד מחזיק את השני עם count 1. בעלות זורמת בכיוון אחד, והכיוון ההפוך הוא weak_ptr. `lock()` נותן shared_ptr זמני שמבטיח שה-Parent חי לאורך הקריאה, גם אם thread אחר משחרר אותו במקביל. קריאה ל-shared_from_this בתוך constructor זורקת bad_weak_ptr (מ-C++17), כי עדיין אין shared_ptr בעלים.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q30",
@@ -891,10 +902,7 @@
         "שגוי: new לא תמיד רץ לפני computePrio; ומ-C++17, אם computePrio רץ ראשון, new עוד לא רץ, ואם new רץ ראשון ה-unique_ptr כבר נבנה."
       ],
       "explanation": "לפני C++17 הערכות של ארגומנטים שונים היו unsequenced, והקומפיילר יכול היה לשזור תת-ביטויים: להקצות את ה-Job, לקרוא ל-computePrio, ורק אז להריץ את ה-constructor של unique_ptr. מ-C++17 ארגומנטים הם indeterminately sequenced: כל אחד מוערך במלואו, אבל הסדר ביניהם עדיין לא מוגדר. C++17 קבע סדר רק לאופרטורים מסוימים (משמאל לימין ב-`<<`, `>>`, `[]` וגישה ל-member; בהשמה הצד הימני קודם), לא לארגומנטים. אם computePrio רץ קודם, new עוד לא רץ ואין מה לדלוף. `make_unique` עדיין מועדף: אין new גלוי, ובטוח גם ב-C++14.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q32",
@@ -918,10 +926,7 @@
         "שגוי: rule of three חסר באמת (העתקה תגרום ל-double free), אבל זו בעיה נפרדת שלא קשורה לזריקה ב-constructor."
       ],
       "explanation": "כש-constructor זורק, רק sub-objects שכבר נבנו במלואם נהרסים. a_ נבנה, אבל ה-'destructor' של int* לא עושה כלום, ו-`~Pair` עצמו לא רץ כי האובייקט מעולם לא הושלם. עם `std::unique_ptr<int[]>` ה-member הראשון היה משחרר את עצמו במהלך ה-unwinding. סדר האתחול הוא לפי סדר ההצהרה, ולכן a_ ראשון. rule of three חסר באמת (העתקה תגרום ל-double free), אבל זו בעיה נפרדת שלא קשורה לזריקה.",
-      "lesson": "bugs.leaks",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.leaks"
     },
     {
       "id": "bugs.leaks.q33",
@@ -944,6 +949,229 @@
         "נכון: saved מחזיק את ה-exception, שמחזיק __traceback__, שמחזיק את ה-frame של work ואת המשתנים המקומיים שלו, כולל buf. לכן buf חי ו-w() is None הוא False."
       ],
       "explanation": "השרשרת היא saved אל exception, אל traceback, אל frame, אל locals. כל עוד ה-exception שמור, buf חי, ובקוד אמיתי buf יכול להיות מערך NumPy ענק. Python אכן מוחק את השם `e` בסוף ה-except (כדי למנוע מעגל frame/traceback), אבל זה מוחק שם, לא את האובייקט שכבר ב-saved. ה-append רץ בתוך הבלוק, כש-e עוד מוגדר. תיקון: לשמור `str(e)` או `traceback.format_exc()`, או לקרוא `traceback.clear_frames(e.__traceback__)`.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q34",
+      "level": 4,
+      "type": "code",
+      "prompt": "ממש `void* aligned_malloc(size_t size, size_t align)` ו-`void aligned_free(void* p)` מעל malloc ו-free בלבד. align היא חזקה של 2 (למשל 16, 64 או 4096). הכתובת המוחזרת חייבת להתחלק ב-align, ו-aligned_free חייבת לשחרר בלי דליפה. החזר nullptr על קלט לא חוקי או כישלון.",
+      "lang": "cpp",
+      "starter": "void* aligned_malloc(size_t size, size_t align);\nvoid aligned_free(void* p);",
+      "modelAnswer": "#include <cstdint>\n#include <cstdlib>\n\nvoid* aligned_malloc(size_t size, size_t align) {\n    if (align == 0 || (align & (align - 1)) != 0) return nullptr;   // power of two only\n    if (size > SIZE_MAX - align - sizeof(void*)) return nullptr;     // size overflow\n    // Room for: the payload, worst-case padding, and the original pointer.\n    void* raw = std::malloc(size + align - 1 + sizeof(void*));\n    if (!raw) return nullptr;\n    uintptr_t start = reinterpret_cast<uintptr_t>(raw) + sizeof(void*);\n    uintptr_t aligned = (start + align - 1) & ~static_cast<uintptr_t>(align - 1);\n    reinterpret_cast<void**>(aligned)[-1] = raw;    // stash what free() needs\n    return reinterpret_cast<void*>(aligned);\n}\n\nvoid aligned_free(void* p) {\n    if (p) std::free(static_cast<void**>(p)[-1]);\n}",
+      "rubric": [
+        "מקצה size + align - 1 + sizeof(void*) ומעגל למעלה עם `(addr + align - 1) & ~(align - 1)`",
+        "שומר את ה-pointer המקורי מיד לפני הכתובת המיושרת, ו-aligned_free משחרר אותו (לא את הכתובת המיושרת)",
+        "בודק ש-align היא חזקה של 2 ושהחישוב של הגודל לא עובר overflow",
+        "מטפל ב-malloc שנכשל וב-aligned_free(nullptr)",
+        "מזכיר חלופות סטנדרטיות: std::aligned_alloc / posix_memalign, ו-operator new עם std::align_val_t"
+      ],
+      "explanation": "הרעיון: להקצות יותר, להזיז את ה-pointer קדימה עד הגבול הבא, ולשמור לפניו את הכתובת המקורית כדי ש-free יקבל בדיוק את מה ש-malloc החזיר. מכיוון ש-align הוא לפחות alignof(void*) בשימושים הרגילים, השדה שלפני הכתובת המיושרת מיושר גם הוא.",
+      "tags": [
+        "nvidia",
+        "apple"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/",
+        "https://www.glassdoor.co.uk/Interview/Apple-Interview-E1138-RVW99250603.htm"
+      ],
+      "problem": "NVIDIA / Apple: aligned malloc and free",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q35",
+      "level": 4,
+      "type": "bug",
+      "prompt": "מימוש של aligned_malloc ו-aligned_free. כשמשתמשים בהם, התוכנית קורסת בתוך free עם 'free(): invalid pointer'. איפה הבאג?",
+      "code": "void* aligned_malloc(size_t size, size_t align) {\n    void* raw = std::malloc(size + align - 1 + sizeof(void*));\n    if (!raw) return nullptr;\n    uintptr_t a = (reinterpret_cast<uintptr_t>(raw) + sizeof(void*) + align - 1)\n                  & ~static_cast<uintptr_t>(align - 1);\n    reinterpret_cast<void**>(a)[-1] = raw;\n    return reinterpret_cast<void*>(a);\n}\n\nvoid aligned_free(void* p) {\n    std::free(p);\n}",
+      "lang": "cpp",
+      "choices": [
+        "`reinterpret_cast<void**>(a)[-1]` כותב מחוץ לבלוק",
+        "חסר sizeof(void*) בגודל ההקצאה",
+        "החישוב של a לא מיישר נכון, כי צריך `| (align - 1)`",
+        "aligned_free מעביר ל-free את הכתובת המיושרת, ולא את מה ש-malloc החזיר. free מחפש את ה-header של ה-chunk לפני הכתובת שקיבל, ומוצא שם זבל. צריך `std::free(static_cast<void**>(p)[-1]);` (ובדיקה של nullptr)"
+      ],
+      "answer": 3,
+      "bugLine": 11,
+      "notes": [
+        "שגוי: a גדול לפחות ב-sizeof(void*) מ-raw, ולכן התא שלפניו נמצא בתוך הבלוק.",
+        "שגוי: sizeof(void*) נמצא בגודל ההקצאה, וגם בחישוב של a, כך שתמיד יש מקום ל-pointer לפני הכתובת המיושרת.",
+        "שגוי: `(x + align - 1) & ~(align - 1)` הוא העיגול הנכון למעלה לכפולה של align. OR היה מקבל כתובת אי-זוגית.",
+        "נכון: free חייב לקבל בדיוק pointer ש-malloc החזיר. כל כתובת אחרת היא UB, ו-glibc מזהה את רוב המקרים ומפילה את התוכנית. הכתובת המקורית נשמרה בדיוק בשביל השלב הזה."
+      ],
+      "explanation": "כל allocator שמזיז pointers צריך לשחזר את הכתובת המקורית בשחרור. אותו עיקרון מסביר למה אסור לקרוא ל-free על pointer לאמצע בלוק, ולמה delete[] צריך את ה-pointer שחזר מ-new[].",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q36",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-aligned_malloc שבנוי מעל malloc, למה שומרים את ה-pointer המקורי ממש לפני הכתובת המיושרת, ולא בטבלה גלובלית?",
+      "choices": [
+        "כי malloc דורש את זה",
+        "כי טבלה גלובלית לא יכולה להחזיק pointers",
+        "כי כך aligned_free מוצא אותו ב-O(1) מהכתובת שהוא קיבל, בלי חיפוש ובלי נעילה משותפת בין threads, והוא משתחרר יחד עם הבלוק. טבלה גלובלית הייתה דורשת סנכרון, חיפוש, וזיכרון נוסף",
+        "כי כך הכתובת המוחזרת מיושרת אוטומטית"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: malloc לא יודע כלום על השכבה שמעליו.",
+        "שגוי: טבלה גלובלית יכולה להחזיק pointers, אבל היא איטית ומסובכת יותר.",
+        "נכון: זו גם בדיוק הטכניקה של malloc עצמו, ששומר את גודל ה-chunk ב-header שלפני הכתובת שהוא מחזיר.",
+        "שגוי: היישור נקבע בחישוב העיגול. מיקום ה-pointer הוא רק מקום נוח לשמור אותו."
+      ],
+      "explanation": "metadata ליד הבלוק (header) הוא הדפוס הנפוץ ב-allocators: מוצאים אותו מתוך ה-pointer בפעולה אחת. החיסרון: דריסה של ה-header על ידי underflow של באפר הורסת את ה-allocator, ולכן כלים כמו ASan מוסיפים אזורי הגנה (redzones).",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q37",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "`free(p)` מקבל רק pointer, בלי גודל. איך glibc יודעת כמה זיכרון לשחרר, ומה קורה לזיכרון?",
+      "choices": [
+        "free לא יודע את הגודל, ולכן הוא משחרר דף שלם של 4KB",
+        "מערכת ההפעלה זוכרת את הגודל של כל הקצאה, ו-free הוא system call שמחזיר את הזיכרון אליה",
+        "free סורק את הזיכרון עד שהוא מוצא byte של 0",
+        "ה-allocator שומר header קטן ממש לפני הכתובת שהוחזרה, ובו גודל ה-chunk ודגלים. free קורא אותו ומחזיר את ה-chunk לרשימות הפנויים של ה-allocator (bins או tcache), ולרוב לא לקרנל. רק בלוקים גדולים שהוקצו עם mmap חוזרים מיד לקרנל עם munmap"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: הקצאות קטנות חולקות דפים. שחרור דף שלם היה הורס הקצאות אחרות.",
+        "שגוי: רוב ההקצאות לא מערבות את הקרנל בכלל. ה-allocator מנהל את ה-heap בעצמו, ופונה לקרנל רק כדי לגדול או להחזיר אזורים גדולים.",
+        "שגוי: זה התיאור של strlen, לא של free. בלוק זיכרון יכול להכיל אפסים בכל מקום.",
+        "נכון: לכן free חייב לקבל בדיוק את הכתובת ש-malloc החזיר, ולכן כתיבה לפני תחילת הבלוק (buffer underflow) משבשת את ה-allocator."
+      ],
+      "explanation": "malloc ו-free הם ניהול זיכרון ב-user space: ה-heap מחולק ל-chunks עם headers, ו-free מחזיר chunks לרשימות פנויות ומאחד שכנים. לכן RSS לא בהכרח יורד אחרי free, ולכן double free או free של כתובת לא נכונה משבשים את המבנים.",
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/",
+        "https://geeksforgeeks.org/qualcomm-interview-experience-off-campus-2021"
+      ],
+      "problem": "NVIDIA / Qualcomm: what happens when free() is called, how does it know the size",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q38",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "תוכנית מקצה מיליון בלוקים של 64 בתים, ואז משחררת את כולם. ה-RSS לפני השחרור הוא כ-80MB, ואחריו כמעט לא ירד. האם זו דליפה?",
+      "choices": [
+        "לא בהכרח: הבלוקים חזרו ל-allocator ומוכנים לשימוש חוזר, אבל הוא לא מחזיר דפים לקרנל כל עוד הם לא בראש ה-heap או לא ריקים לגמרי. הקצאות חדשות ישתמשו באותו זיכרון. (`malloc_trim(0)` יכול להחזיר חלק)",
+        "לא, אבל רק בגלל ש-RSS לא סופר heap",
+        "כן, free לא עבד",
+        "כן, כי כל free חייב להקטין את ה-RSS"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: heap מבוסס brk יכול להתכווץ רק מלמעלה, וחתיכות קטנות בדפים מעורבים לא חוזרות. כדי לזהות דליפה אמיתית בודקים אם ה-RSS עולה ללא הגבלה לאורך זמן, או מריצים LeakSanitizer.",
+        "שגוי: RSS כן סופר דפים של ה-heap שנמצאים ב-RAM.",
+        "שגוי: אם התוכנית חוזרת להקצות ולשחרר באותו היקף וה-RSS לא ממשיך לטפס, אין דליפה. דליפה היא זיכרון שאין לו בעלים ושאי אפשר לשחרר.",
+        "שגוי: free מחזיר זיכרון ל-allocator, לא בהכרח למערכת ההפעלה."
+      ],
+      "explanation": "צריך להבחין בין דליפה (זיכרון בלי בעלים) לבין זיכרון שה-allocator שומר לשימוש חוזר. fragmentation של ה-heap יכולה לגרום ל-RSS גבוה גם בלי דליפה. במקרה כזה בודקים allocator אחר (jemalloc, tcmalloc) או מאגרים של אובייקטים בגודל קבוע.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q39",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מחזיר `malloc(0)` ב-C?",
+      "choices": [
+        "זה undefined behavior",
+        "לפי התקן, או nullptr או pointer ייחודי שאסור לגשת דרכו לשום byte, אבל צריך להעביר אותו ל-free. glibc מחזירה pointer תקף לבלוק מינימלי",
+        "pointer לבלוק של byte אחד, שמותר לכתוב אליו",
+        "תמיד nullptr"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: הקריאה עצמה מוגדרת, וההתנהגות שלה implementation-defined. רק גישה דרך ה-pointer היא UB.",
+        "נכון: זו התנהגות implementation-defined. לכן קוד נייד לא מסתמך עליה: בודקים מראש אם size == 0, ותמיד קוראים ל-free על מה שחזר.",
+        "שגוי: גם אם המימוש מקצה בפועל כמה בתים, אסור לגשת אליהם. זה UB.",
+        "שגוי: זה מותר, אבל לא מחייב. קוד שמניח nullptr (למשל 'if (!p) out of memory') ייכשל כשהקריאה דווקא מצליחה, או יחשוב שיש שגיאה כשאין."
+      ],
+      "explanation": "malloc(0) הוא מקרה קצה שמראיינים אוהבים, כי הוא מבחין בין UB לבין implementation-defined. גם realloc(p, 0) מסובך, והוא אפילו הפך ל-UB ב-C23.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q40",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הפונקציה קוראת שורות מקובץ קונפיגורציה ומדלגת על הערות. על קבצים עם הרבה הערות הזיכרון של ה-process גדל. מה הבאג?",
+      "code": "char* read_line(FILE* f);   // returns malloc'ed line, or NULL at EOF\n\nvoid load(FILE* f) {\n    char* line;\n    while ((line = read_line(f)) != NULL) {\n        if (line[0] == '#') continue;\n        apply(line);\n        free(line);\n    }\n}",
+      "lang": "cpp",
+      "choices": [
+        "free צריך להיות אחרי הלולאה",
+        "צריך לבדוק `line[0]` רק אחרי ש-apply הצליח",
+        "continue מדלג על free, ולכן כל שורת הערה דולפת. צריך `{ free(line); continue; }`, או לשחרר בנקודה אחת בסוף כל איטרציה",
+        "read_line צריך להחזיר const char*"
+      ],
+      "answer": 2,
+      "bugLine": 6,
+      "notes": [
+        "שגוי: אחרי הלולאה line הוא NULL, וכל השורות הקודמות כבר אבדו.",
+        "שגוי: הסדר של הבדיקה לא קשור לדליפה.",
+        "נכון: כל שורה שהוקצתה צריכה להשתחרר בכל מסלול. continue הוא מסלול יציאה מהאיטרציה שעוקף את ה-free. ב-C++ פותרים את זה עם RAII (std::string או unique_ptr עם free).",
+        "שגוי: const היה מונע מהקורא לשנות את השורה, אבל הוא לא משחרר אותה."
+      ],
+      "explanation": "דליפות נוצרות כמעט תמיד במסלולים צדדיים: continue, return מוקדם, break, או exception. ב-C משתמשים בנקודת יציאה אחת (goto cleanup), ב-C++ ב-RAII, כך שהשחרור לא תלוי במסלול.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
+      ],
+      "problem": "NVIDIA: what is a memory leak, give an example",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q41",
+      "level": 2,
+      "type": "bug",
+      "prompt": "הפונקציה מגדילה באפר כשהקלט ארוך. valgrind מדווח על 'definitely lost' של 256 בתים בכל קריאה עם קלט ארוך. מה הבאג?",
+      "code": "void process(const char* msg, size_t len) {\n    char* buf = (char*)malloc(256);\n    if (len >= 256) {\n        buf = (char*)malloc(len + 1);\n    }\n    std::memcpy(buf, msg, len);\n    buf[len] = '\\0';\n    handle(buf);\n    free(buf);\n}",
+      "lang": "cpp",
+      "choices": [
+        "ההשמה דורסת את ה-pointer היחיד לבלוק של 256 הבתים בלי לשחרר אותו קודם: הבלוק נשאר מוקצה בלי שום דרך להגיע אליו. צריך free לפני, או להקצות פעם אחת לפי max(len + 1, 256)",
+        "צריך realloc, כי malloc לא יכול להקצות פעמיים לאותו משתנה",
+        "buf[len] כותב מחוץ לבאפר",
+        "free(buf) משחרר רק את הבלוק הראשון"
+      ],
+      "answer": 0,
+      "bugLine": 4,
+      "notes": [
+        "נכון: 'definitely lost' אומר ש-valgrind לא מוצא אף pointer לבלוק. זה בדיוק מה שקורה כשמחליפים את ה-pointer היחיד.",
+        "שגוי: אין שום מגבלה על השמה ל-pointer. realloc היה פתרון אחד, אבל גם הוא דורש זהירות (אם הוא נכשל, הבלוק המקורי עלול לדלוף).",
+        "שגוי: כשהאורך קטן, הבאפר הוא 256 ו-len < 256. כשהוא גדול, הבאפר הוא len + 1. בשני המקרים buf[len] בתוך הגבולות.",
+        "שגוי: free משחרר את הבלוק ש-buf מצביע אליו בזמן הקריאה, כלומר את השני. הבלוק הראשון כבר אבד קודם."
+      ],
+      "explanation": "דריסה של pointer שהוא הבעלים היחיד של בלוק היא דליפה מיידית. כלל אצבע: לפני כל השמה ל-pointer שהוא בעלים, לשאול מה קורה לבלוק הקודם. ב-C++, unique_ptr::reset משחרר את הקודם אוטומטית.",
+      "lesson": "bugs.leaks"
+    },
+    {
+      "id": "bugs.leaks.q42",
+      "level": 3,
+      "type": "bug",
+      "prompt": "פונקציית אתחול מקצה שני באפרים. כשההקצאה השנייה נכשלת, הפונקציה מחזירה שגיאה, ובטסט של כשל הקצאות מתגלה דליפה. איפה?",
+      "code": "int init(Dev* d, size_t n) {\n    d->rx = (int16_t*)malloc(n * sizeof(int16_t));\n    if (!d->rx) return -1;\n    d->tx = (int16_t*)malloc(n * sizeof(int16_t));\n    if (!d->tx) return -1;\n    d->n = n;\n    return 0;\n}",
+      "lang": "cpp",
+      "choices": [
+        "צריך לבדוק את rx ו-tx רק בסוף",
+        "malloc לא יכול להיכשל ב-Linux, ולכן הבדיקות מיותרות",
+        "n * sizeof(int16_t) צריך להיות n / sizeof(int16_t)",
+        "כשההקצאה של tx נכשלת, הפונקציה חוזרת בלי לשחרר את rx, והקורא, שרואה שגיאה, לא יקרא לפונקציית ניקוי. צריך `free(d->rx); d->rx = NULL;` לפני ה-return (או goto cleanup)"
+      ],
+      "answer": 3,
+      "bugLine": 5,
+      "notes": [
+        "שגוי: אם בודקים רק בסוף, memcpy או כתיבה ל-NULL עלולה לקרות קודם, והדליפה של rx עדיין קיימת.",
+        "שגוי: malloc יכול להיכשל (cgroup memory limit, RLIMIT_AS, overcommit = 2, גודל ענק). וב-embedded ודאי.",
+        "שגוי: מספר הבתים הנכון הוא n כפול גודל האיבר. (בדיקה של overflow בכפל הייתה תוספת טובה.)",
+        "נכון: פונקציה שנכשלת צריכה להשאיר את העולם כמו שקיבלה אותו. ב-C, נקודת ניקוי אחת עם goto שמשחררת בסדר הפוך היא הדפוס המקובל (גם בקרנל של Linux)."
+      ],
+      "explanation": "מסלולי שגיאה הם המקום הכי נפוץ לדליפות, כי הם כמעט לא נבדקים. בודקים אותם עם fault injection (malloc שנכשל בקריאה ה-k), וכותבים אותם עם ניקוי מרוכז או RAII.",
       "lesson": "bugs.leaks"
     }
   ]

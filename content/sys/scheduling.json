@@ -204,6 +204,26 @@
         {
           "term": "TASK_KILLABLE",
           "def": "מצב שינה בקרנל שבו רק SIGKILL מעיר את ה-task. מחליף בהרבה מקומות את D כדי שאפשר יהיה להרוג תהליכים תקועים."
+        },
+        {
+          "term": "preemption ו-timer interrupt",
+          "def": "ב-scheduler preemptive ה-timer interrupt מחזיר שליטה לקרנל, והוא יכול להחליף task שלא ויתר. בלי preemption (או בלי time slicing ב-RTOS), task שלא חוסם מרעיב את האחרים באותה עדיפות."
+        },
+        {
+          "term": "priority ceiling (PTHREAD_PRIO_PROTECT)",
+          "def": "פרוטוקול שבו מי שנועל את ה-mutex מקבל מיד עדיפות קבועה, הגבוהה מכל המשתמשים בו. מונע priority inversion מראש, אבל דורש לדעת את העדיפויות מראש."
+        },
+        {
+          "term": "PTHREAD_PRIO_INHERIT",
+          "def": "פרוטוקול של pthread mutex שמפעיל priority inheritance דרך PI futex. ברירת המחדל היא PTHREAD_PRIO_NONE, ו-std::mutex לא מאפשר לבחור."
+        },
+        {
+          "term": "SRTF",
+          "def": "Shortest Remaining Time First: הגרסה ה-preemptive של SJF. עבודה חדשה עם זמן ריצה קצר מהזמן שנותר לעבודה הנוכחית מקדימה אותה. ממזער זמן המתנה ממוצע, אבל דורש לדעת את זמני הריצה ועלול להרעיב עבודות ארוכות."
+        },
+        {
+          "term": "waiting time",
+          "def": "זמן ההמתנה של עבודה = זמן הסיום - זמן ההגעה - זמן הריצה. כלומר, כל הזמן שהעבודה הייתה מוכנה ולא רצה."
         }
       ]
     }
@@ -278,9 +298,6 @@
       "answer": 1,
       "explanation": "voluntary: ה-thread נחסם בעצמו (I/O, lock, sleep). nonvoluntary: ה-thread היה מוכן להמשיך אבל הוצא מה-CPU. ב-thread זמן-אמת מספר גבוה של nonvoluntary הוא סימן אזהרה לתחרות על ה-core.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון. sleep הוא חסימה יזומה של ה-thread, ולכן נספר כ-voluntary context switch, לא nonvoluntary.",
         "נכון. nonvoluntary פירושו שה-thread היה מוכן להמשיך אבל הוצא בכוח: נגמר ה-slice או ש-task אחר העדיף לרוץ (preemption). מספר גבוה מעיד על תחרות על ה-core.",
@@ -452,9 +469,6 @@
       "answer": 1,
       "explanation": "weight דומה ל-nice ברמת group. max (כמו CPU limit ב-Kubernetes) עוצר את ה-group כשהקוטה של ה-period נגמרה, וזה עלול להוסיף latency גם במכונה פנויה. לשירותים רגישים ל-latency עדיף weight, או cpusets ייעודיים.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "microsoft"
-      ],
       "notes": [
         "לא נכון. רק cpu.max מגביל; cpu.weight לא מגביל כלום כשאין תחרות. הבלבול נפוץ כי שניהם קבצים של אותו controller.",
         "נכון. cpu.weight הוא חלוקה יחסית שמופעלת רק כשיש תחרות (work-conserving). cpu.max הוא quota לכל period שעוצר את ה-group כשהקוטה נגמרת, גם כשיש cores פנויים.",
@@ -475,10 +489,7 @@
         "מזכיר משאבים משותפים שאינם CPU: cache, זיכרון, I/O"
       ],
       "explanation": "מועמד חזק לא קופץ ישר ל-SCHED_FIFO 99, ומבין שבידוד CPU לא פותר תחרות על cache ו-memory bandwidth.",
-      "lesson": "sys.scheduling",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "sys.scheduling"
     },
     {
       "id": "sys.scheduling.q14",
@@ -515,9 +526,6 @@
       "answer": 2,
       "explanation": "הקוטה נמדדת בזמן CPU מצטבר של כל ה-threads, לא בזמן שעון. מספר threads גדול מהקוטה מאפשר לשרוף אותה מהר ואז לחכות. רואים את זה ב-cpu.stat (nr_throttled, throttled_usec). פתרונות: להגדיל את cpu.max או לבטל אותו, לצמצם threads ל-ceil של הקוטה, להשתמש ב-cpu.weight, או period קצר יותר.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "microsoft"
-      ],
       "notes": [
         "לא נכון. גישה ל-NUMA node רחוק מוסיפה עשרות אחוזים לזמני זיכרון, לא השהיות של כ-90ms. היא לא מסבירה p99 בגודל ה-period.",
         "לא נכון. cpu.max מגביל זמן CPU מצטבר, לא מספר threads מקבילים. 8 threads יכולים לרוץ במקביל על 8 cores, וזה בדיוק מה שגורם לקוטה להיגמר מהר.",
@@ -689,9 +697,6 @@
       "answer": 1,
       "explanation": "אין כאן מעגל, ולכן זה לא deadlock: ברגע שהבינוני יסיים, הכול ישתחרר. אבל ההמתנה של ה-thread החשוב תלויה ב-thread שלא קשור ל-mutex בכלל. עם PI, ה-thread הנמוך רץ בעדיפות 90 עד שהוא משחרר, וה-50ms נעלמים. זה הבאג של Mars Pathfinder.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון. אין כאן מעגל המתנה: ה-thread הבינוני לא מחכה לאף אחד, וכשיסיים הכול ישתחרר. לכן זה לא deadlock, וסדר נעילה לא עוזר.",
         "נכון. זה priority inversion: ה-thread הבינוני מונע מהנמוך לרוץ ולשחרר, והגבוה מחכה בעקיפין לבינוני. priority inheritance (PTHREAD_PRIO_INHERIT) מעלה את מחזיק ה-mutex לעדיפות 90 עד השחרור.",
@@ -740,9 +745,6 @@
       "answer": 3,
       "explanation": "SCHED_DEADLINE מתזמן לפי EDF, מגביל כל task ל-runtime שהוצהר (כך שחריגה לא פוגעת באחרים), ומבצע admission control: אם סכום runtime/period של כל ה-tasks עובר את הקיבולת, sched_setattr נכשל. FIFO 99 נותן עדיפות, אבל לא חסם על הזמן ולא בדיקת קיבולת, ובאג בו יכול להרעיב את כולם.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון. FIFO 99 נותן עדיפות גבוהה, אבל לא מבטא runtime, deadline או period, לא מגביל חריגה ולא עושה admission control. באג בו יכול להרעיב את כל ה-core.",
         "לא נכון. quantum ב-RR קובע רק החלפה בין threads באותה עדיפות, והוא גלובלי ולא per-task. אין בו deadline ואין בדיקת קיבולת.",
@@ -764,9 +766,6 @@
       "answer": 0,
       "explanation": "בהגדרות ברירת המחדל הקלאסיות, sched_rt_runtime_us = 950000 ו-sched_rt_period_us = 1000000. כשיש tasks רגילים שמחכים לאותו core, ה-RT נעצר ל-50ms. אפשרויות: לוודא שאין tasks רגילים על ה-core המבודד, להגדיר sched_rt_runtime_us = -1 בזהירות, או להשתמש ב-busy-poll ב-SCHED_OTHER על core שלם עם nohz_full. בקרנלים חדשים המנגנון ממומש כ-deadline server, אבל העיקרון זהה.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ברירת המחדל sched_rt_runtime_us = 950000 מתוך sched_rt_period_us = 1000000 משאירה 50ms בכל שנייה ל-tasks רגילים, וזה בדיוק העצירה וההודעה ב-dmesg. אפשר לשנות (עד -1), במחיר אובדן רשת הביטחון.",
         "לא נכון. thread שעושה busy-poll לא משאיר את ה-core idle, ולכן ה-core לא נכנס ל-C-state. וגם לא הייתה הודעת RT throttling.",
@@ -809,9 +808,6 @@
       "answer": 3,
       "explanation": "ב-SCHED_FIFO thread רץ עד שהוא נחסם, מוותר או נדחק על ידי עדיפות גבוהה יותר. busy-wait לא עושה אף אחד מהם. affinity מונע מ-load balancing להעביר את B. ב-SCHED_RR, A היה מוותר כל quantum (100ms), עדיין בזבוז עצום. busy-wait ב-RT מתאים רק כשהצד השני רץ על core אחר. אחרת צריך futex, atomic::wait או condition variable.",
       "lesson": "sys.scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון. quantum קיים ב-SCHED_RR, לא ב-SCHED_FIFO. ב-FIFO אין חלוקת זמן בין threads באותה עדיפות, ולכן A לא יוותר אחרי quantum.",
         "לא נכון. cache miss לא חוסם את ה-thread מבחינת ה-scheduler; ה-CPU פשוט מחכה לזיכרון וה-thread נשאר רץ. רק חסימה בקרנל (syscall, page fault שדורש I/O) משחררת את ה-core.",
@@ -833,10 +829,191 @@
         "חומרה וקרנל: C-states, SMT, SMI, ושקילת PREEMPT_RT"
       ],
       "explanation": "השאלה בודקת שיטה ולא רשימת טריקים: למדוד, לזהות את סוג החריגה (תקופתית, תלוית עומס), ולסגור את מקורות ה-latency אחד אחד.",
-      "lesson": "sys.scheduling",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q31",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "על desktop של Linux עם 4 cores, process רגיל (SCHED_OTHER, nice 0) נכנס ללולאה `while (1) {}`. מה קורה למערכת?",
+      "choices": [
+        "core אחד עובד ב-100% בשביל ה-process, אבל המערכת נשארת רספונסיבית: ה-timer interrupt מאפשר ל-scheduler להחליף אותו (preemption), ו-processes אחרים רצים גם על ה-core הזה וגם על שאר ה-cores",
+        "ה-process מקבל את כל 4 ה-cores",
+        "המערכת קופאת, כי ה-process לא מוותר על ה-CPU אף פעם",
+        "הקרנל מזהה לולאה אינסופית והורג את ה-process"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: ה-scheduler מחליף אותו לפי vruntime, ו-tasks שישנו הרבה (כמו העורך או ה-shell) מקבלים עדיפות כשהם מתעוררים. thread אחד משתמש לכל היותר ב-core אחד.",
+        "שגוי: thread יחיד רץ בכל רגע על core אחד בלבד.",
+        "שגוי: זה היה נכון ב-scheduling שיתופי (cooperative). Linux הוא preemptive.",
+        "שגוי: אין בקרנל שום זיהוי של לולאות אינסופיות, ואי אפשר לזהות כזה באופן כללי. רק מגבלות כמו RLIMIT_CPU הורגות לפי זמן CPU."
+      ],
+      "explanation": "preemption מבוססת על interrupt של timer: ה-scheduler מקבל שליטה גם אם ה-task לא מוותר. מצב אחר לגמרי הוא task ב-SCHED_FIFO עם while(1): הוא לא מוחלף לטובת tasks רגילים, ורק RT throttling (ברירת מחדל 95%) משאיר להם מעט זמן.",
       "tags": [
-        "nvidia"
-      ]
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=338497"
+      ],
+      "problem": "Microsoft: what happens when a process runs while(1) forever",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q32",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-RTOS עם scheduling לפי עדיפויות ובלי time slicing, שני tasks באותה עדיפות. task A נכנס ללולאה `while (1) { poll_sensor(); }` בלי שום קריאה שחוסמת או מוותרת. מה קורה ל-task B?",
+      "choices": [
+        "B לא רץ לעולם (starvation), כי A לא חוסם ולא עושה yield, ובלי time slicing אין מה שיחליף אותו. רק task בעדיפות גבוהה יותר או interrupt יקבלו CPU",
+        "B רץ חצי מהזמן, כי ה-RTOS מחלק זמן בין tasks באותה עדיפות",
+        "B רץ מיד, כי הוא נוצר אחרון",
+        "ה-RTOS מזהה את המצב ומעביר את A לעדיפות נמוכה"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: בלי time slicing, task רץ עד שהוא חוסם, מוותר, או ש-task בעדיפות גבוהה יותר מוכן. A לא עושה אף אחד מאלה.",
+        "שגוי: זה נכון רק אם time slicing מופעל (למשל configUSE_TIME_SLICING ב-FreeRTOS). כאן הוא כבוי.",
+        "שגוי: סדר היצירה לא קובע מי רץ כשה-task הנוכחי לא מוותר.",
+        "שגוי: RTOS לא משנה עדיפויות בעצמו. זה התפקיד של ה-designer (או של priority inheritance על mutex, שלא רלוונטי כאן)."
+      ],
+      "explanation": "ב-RTOS, לולאת polling בלי חסימה מרעיבה את כל ה-tasks באותה עדיפות ומתחתיה. הפתרון: לחכות על אירוע (semaphore מתוך ISR), או vTaskDelay בין דגימות.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q33",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "על מכונה עם 2 cores רצים 3 processes של `while (1) {}`, ושום דבר אחר. מה ה-load average (של דקה) אחרי כמה דקות?",
+      "choices": [
+        "בערך 3",
+        "בערך 1",
+        "בערך 2",
+        "בערך 1.5"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: שלושה tasks תמיד במצב R (רץ או מוכן), ולכן הממוצע מתכנס ל-3. load של 3 על 2 cores אומר שבממוצע task אחד מחכה ל-CPU.",
+        "שגוי: load average סופר tasks שרצים או מוכנים לרוץ, לא cores תפוסים.",
+        "שגוי: זה מספר ה-tasks שרצים בכל רגע. ה-task השלישי מחכה ב-runqueue, וגם הוא נספר.",
+        "שגוי: load average לא מחולק במספר ה-cores. מנרמלים אותו ידנית אם רוצים."
+      ],
+      "explanation": "load average ב-Linux הוא ממוצע נע של מספר ה-tasks במצב R ובמצב D. משווים אותו למספר ה-cores: מעליו יש תור, ואם הוא גבוה וה-CPU פנוי, כנראה יש הרבה tasks במצב D (I/O).",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q34",
+      "level": 3,
+      "type": "multi",
+      "prompt": "thread בעדיפות גבוהה H מחכה ל-mutex שמחזיק thread בעדיפות נמוכה L, ו-thread בעדיפות בינונית M, שלא צריך את ה-mutex, מונע מ-L לרוץ. אילו מנגנונים חוסמים את משך ה-inversion?",
+      "choices": [
+        "להעלות את העדיפות של M, כדי שיסיים מהר יותר",
+        "priority ceiling: כל מי שנועל את ה-mutex מקבל מיד עדיפות של ה-ceiling, הגבוהה מכל מי שמשתמש בו (`PTHREAD_PRIO_PROTECT`)",
+        "priority inheritance: כל עוד H מחכה, L רץ בעדיפות של H (`PTHREAD_PRIO_INHERIT`)",
+        "לבטל preemption (או interrupts) לזמן ה-critical section הקצר, כך ש-M לא יכול להפריע ל-L",
+        "להחליף את ה-mutex ב-spinlock על אותו core"
+      ],
+      "answer": [
+        1,
+        2,
+        3
+      ],
+      "notes": [
+        "שגוי: M הוא הבעיה ולא הפתרון. העלאת העדיפות שלו רק מאריכה את הזמן ש-L ממתין, ו-H ממתין יחד איתו.",
+        "נכון: ה-ceiling מונע את ה-inversion מראש וגם מונע deadlocks מסוימים, אבל צריך לדעת מראש את העדיפות המקסימלית של המשתמשים.",
+        "נכון: L מקבל את העדיפות של H כל זמן ש-H חסום עליו, ולכן M לא יכול להקדים אותו. זה התיקון הקלאסי (Mars Pathfinder).",
+        "נכון: אם ה-critical section קצר מאוד, ביטול preemption בזמנו מבטיח ש-L יסיים בלי הפרעה. זה מה שספינלוק בקרנל עושה, אבל זה פוגע ב-latency של כל השאר.",
+        "שגוי: על core אחד, H שמסתובב על spinlock שמחזיק L לא נותן ל-L לרוץ בכלל: מתקבל livelock."
+      ],
+      "explanation": "priority inversion לא חסומה קורית כש-M רץ בזמן ש-L מחזיק נעילה ש-H צריך. priority inheritance ו-priority ceiling חוסמים אותה. ב-Linux, futex מסוג PI ממש priority inheritance, והוא חובה ב-PREEMPT_RT.",
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/",
+        "https://www.glassdoor.ie/Interview/NVIDIA-Interview-E7633-RVW21888329.htm",
+        "https://www.geeksforgeeks.org/?p=334558"
+      ],
+      "problem": "NVIDIA / Qualcomm: priority inversion and how to fix it",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q35",
+      "level": 4,
+      "type": "short",
+      "prompt": "core יחיד, scheduling קפדני לפי עדיפויות. ב-t=0, thread L (נמוך) נועל mutex, ויש לו 3ms של עבודה בתוך ה-critical section. ב-t=1, thread H (גבוה) מתעורר ומבקש את ה-mutex. ב-t=2, thread M (בינוני) מתעורר עם 50ms של חישוב, בלי mutex. ה-mutex תומך ב-**priority inheritance**. באיזה זמן (ms) H מקבל את ה-mutex?",
+      "accept": [
+        "3",
+        "3ms",
+        "t=3"
+      ],
+      "explanation": "ב-t=1 H חוסם על ה-mutex, ו-L יורש את העדיפות שלו. ב-t=2 M מתעורר, אבל L רץ עכשיו בעדיפות של H, ולכן M לא מקדים אותו. ל-L נשארו 2ms (רץ 0-1 ו-1-3), הוא משחרר ב-t=3, ו-H מקבל את ה-mutex. בלי inheritance, M היה רץ מ-t=2 עד t=52, ו-H היה מקבל את ה-mutex רק ב-t=53.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q36",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-Linux, איך מגדירים pthread mutex כך שה-thread שמחזיק אותו יירש את העדיפות של thread בעדיפות גבוהה שמחכה לו?",
+      "choices": [
+        "`pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE)`",
+        "`pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT)` לפני `pthread_mutex_init`",
+        "`pthread_setschedprio` על כל thread שנועל את ה-mutex",
+        "אין צורך: כל mutex ב-Linux תומך ב-priority inheritance כברירת מחדל"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: recursive מאפשר לאותו thread לנעול כמה פעמים. זה לא קשור לעדיפויות.",
+        "נכון: הפרוטוקול PTHREAD_PRIO_INHERIT הופך את ה-mutex ל-PI futex. הקרנל מנהל את שרשרת ההמתנה ומעלה את העדיפות של מי שמחזיק.",
+        "שגוי: שינוי ידני של עדיפויות לפני כל נעילה הוא מסורבל, איטי, ולא מטפל בשרשראות נעילה.",
+        "שגוי: ברירת המחדל היא PTHREAD_PRIO_NONE. std::mutex ב-C++ לא מאפשר לבחור פרוטוקול, ולכן ב-RT משתמשים ב-pthread ישירות או בעטיפה."
+      ],
+      "explanation": "priority inheritance צריך לבקש במפורש. בקוד real-time ב-C++ זה אומר עטיפה של pthread_mutex_t עם PTHREAD_PRIO_INHERIT, כי ל-std::mutex אין ממשק לזה.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q37",
+      "level": 3,
+      "type": "short",
+      "prompt": "ארבע עבודות (זמן הגעה, זמן ריצה ב-ms): P1 (0, 8), P2 (1, 4), P3 (2, 9), P4 (3, 5). מה זמן ההמתנה הממוצע ב-SRTF (Shortest Remaining Time First, preemptive)?",
+      "accept": [
+        "6.5",
+        "6.50"
+      ],
+      "explanation": "P1 רץ 0-1. ב-t=1 מגיע P2 (4 < 7 שנותרו ל-P1) ומקדים אותו: P2 רץ 1-5. אחר כך הקצר ביותר מבין P1 (7), P3 (9), P4 (5) הוא P4: 5-10. אז P1: 10-17, ו-P3: 17-26. המתנה = סיום - הגעה - ריצה: P1 = 9, P2 = 0, P3 = 15, P4 = 2. סכום 26, ממוצע 6.5.",
+      "tags": [
+        "intel",
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=136164",
+        "https://www.geeksforgeeks.org/interview-experiences/amazon-interview-experience-399-campus-full-time/"
+      ],
+      "problem": "Intel / Amazon: CPU scheduling algorithms",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q38",
+      "level": 3,
+      "type": "short",
+      "prompt": "ארבע עבודות (זמן הגעה, זמן ריצה ב-ms): P1 (0, 8), P2 (1, 4), P3 (2, 9), P4 (3, 5). מה זמן ההמתנה הממוצע ב-SJF **לא preemptive**?",
+      "accept": [
+        "7.75"
+      ],
+      "explanation": "ב-t=0 רק P1 זמין, והוא רץ עד הסוף: 0-8. ב-t=8 כולם זמינים: P2 (4) רץ 8-12, P4 (5) רץ 12-17, P3 (9) רץ 17-26. המתנה: P1 = 0, P2 = 7, P4 = 9, P3 = 15. סכום 31, ממוצע 7.75. עם SRTF (הגרסה ה-preemptive) אותן עבודות נותנות ממוצע של 6.5: P2 מקדים את P1 ב-t=1.",
+      "lesson": "sys.scheduling"
+    },
+    {
+      "id": "sys.scheduling.q39",
+      "level": 3,
+      "type": "short",
+      "prompt": "ארבע עבודות (זמן הגעה, זמן ריצה ב-ms): P1 (0, 8), P2 (1, 4), P3 (2, 9), P4 (3, 5), עם Round Robin ו-quantum של 4ms. עבודה שמגיעה בזמן שעבודה אחרת רצה נכנסת לתור לפני שהעבודה שה-quantum שלה נגמר חוזרת לסוף התור. מה זמן ההמתנה הממוצע?",
+      "accept": [
+        "11.75"
+      ],
+      "explanation": "P1: 0-4 (נשארו 4). התור: P2, P3, P4, P1. P2: 4-8 (סיים). P3: 8-12 (נשארו 5). P4: 12-16 (נשאר 1). P1: 16-20 (סיים). P3: 20-24 (נשאר 1). P4: 24-25 (סיים). P3: 25-26 (סיים). המתנה: P1 = 20-0-8 = 12, P2 = 8-1-4 = 3, P3 = 26-2-9 = 15, P4 = 25-3-5 = 17. ממוצע 47/4 = 11.75. RR גרוע בזמן המתנה ממוצע, אבל נותן response time טוב.",
+      "lesson": "sys.scheduling"
     }
   ]
 }

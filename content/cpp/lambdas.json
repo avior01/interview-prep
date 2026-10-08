@@ -176,6 +176,18 @@
         {
           "term": "running sum ו-drift",
           "def": "ממוצע נע שמחסיר את הישן ומוסיף את החדש צובר שגיאת עיגול ב-floating point לאורך זמן. מתקנים בחישוב מחדש תקופתי או ב-Kahan summation."
+        },
+        {
+          "term": "trampoline ל-C callback",
+          "def": "C API מקבל function pointer ו-`void* user`. מעבירים lambda בלי captures (שמומרת ל-function pointer) שממירה את user בחזרה לטיפוס האמיתי ומפעילה אותו. ה-callable צריך לחיות לאורך כל הרישום."
+        },
+        {
+          "term": "unary + על lambda",
+          "def": "`+[](int x){...}` מפעיל את ההמרה של closure בלי captures ל-function pointer. שימושי כשרוצים ש-auto יקבל טיפוס של pointer, או כדי לפתור עמימות ב-overloads."
+        },
+        {
+          "term": "capture by value של pointer",
+          "def": "לכידה by value מעתיקה את ה-pointer, לא את מה שהוא מצביע עליו. ה-closure רואה שינויים ביעד, ו-dangling אם היעד נהרס. std::vector שנלכד by value מועתק במלואו (deep copy)."
         }
       ]
     }
@@ -415,9 +427,6 @@
       "answer": 3,
       "explanation": "thread יכול להתחיל לרוץ אחרי ש-i כבר התקדם, או אחרי שהלולאה נגמרה ו-i יצא מה-scope. גם כשהוא רץ מיד, ++i במקביל לקריאה הוא data race. לכידה by value נותנת לכל thread עותק משלו.",
       "lesson": "cpp.lambdas",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: emplace_back מעביר את ה-lambda ל-constructor של std::thread, שמקבל כל callable. זה תקין.",
         "שגוי: work היא פונקציה חופשית ונקראת בתוך ה-lambda. אין שום דרישה שתהיה static.",
@@ -444,9 +453,6 @@
       ],
       "explanation": "std::function עושה type erasure: הוא שומר את ה-callable מאחורי מצביע לפונקציות manager ו-invoker. closure שגדול מה-small buffer (16 בתים ב-libstdc++) מוקצה ב-heap. בגלל דרישת ה-copy, closure עם unique_ptr לא מתקמפל. ב-template, הטיפוס המדויק ידוע ולכן הקריאה עוברת inlining.",
       "lesson": "cpp.lambdas",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: std::function עצמו copyable, ולכן דורש שה-callable שמאוחסן בו יהיה CopyConstructible.",
         "נכון: type erasure מסתיר את הטיפוס מאחורי invoker עקיף, ולכן הקומפיילר בדרך כלל לא יודע מה נקרא ולא עושה inlining.",
@@ -515,10 +521,7 @@
         "מזכיר צבירה של שגיאת floating point ופתרון (חישוב מחדש או Kahan)"
       ],
       "explanation": "closure עם state כחלופה ל-class קטן. הנקודה העדינה שמראיין עם רקע DSP יחפש: running sum ב-floating point מצטבר עם drift לאורך זמן.",
-      "lesson": "cpp.lambdas",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.lambdas"
     },
     {
       "id": "cpp.lambdas.q16",
@@ -599,10 +602,7 @@
         "handle מסוג RAII להסרה בטוחה, או weak_ptr, עם הבנת המחיר"
       ],
       "explanation": "שאלה שמחברת lambdas, lifetime ומקביליות. התשובה החזקה מטפלת קודם ב-correctness (race ו-lifetime) ורק אחר כך בביצועים.",
-      "lesson": "cpp.lambdas",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.lambdas"
     },
     {
       "id": "cpp.lambdas.q20",
@@ -762,9 +762,6 @@
       "answer": 3,
       "explanation": "ה-init capture מוערך פעם אחת, ברגע יצירת ה-closure: j מאותחל מ-i++ ולכן מקבל 0, ו-i הופך ל-1. אחר כך i גדל ב-10 ל-11. f() מחזיר את j שנשמר, 0. הביטוי ב-init capture רץ ביצירה, לא בקריאה.",
       "lesson": "cpp.lambdas",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: מניח ש-j מקבל את הערך אחרי ה-++. i++ מחזיר את הערך הקודם, ולכן j הוא 0.",
         "שגוי: שוכח שגם i++ ב-init capture מקדם את i. i הוא 1 אחרי יצירת ה-closure ו-11 אחרי ה-+= 10.",
@@ -842,6 +839,162 @@
         "שגוי: מותר ללכוד פרמטר שהוא reference, גם by value וגם by reference.",
         "נכון: c הוא שם נוסף ל-counter, והלכידה [&c] מתייחסת ל-counter עצמו. counter חי לאורך כל התוכנית, ושתי הקריאות מעלות אותו ל-2."
       ]
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד מדפיס זבל או קורס כשהמשימה רצה. מה הבאג?",
+      "code": "std::vector<std::function<void()>> tasks;\n\nvoid schedule(const std::string& name) {\n  tasks.push_back([&name] { std::cout << name << '\\n'; });\n}\n\nint main() {\n  schedule(\"calibrate\");\n  for (auto& t : tasks) t();\n}",
+      "bugLine": 4,
+      "choices": [
+        "ה-lambda לוכדת reference ל-string זמני שנהרס לפני שהמשימה רצה",
+        "std::function לא יכול להחזיק lambda שלוכדת משהו",
+        "צריך `mutable` כדי להדפיס את name",
+        "אסור להעביר string literal לפרמטר `const std::string&`"
+      ],
+      "answer": 0,
+      "explanation": "ה-lambda לוכדת את name by reference. ב-main, הארגומנט \"calibrate\" יוצר std::string זמני, שנהרס בסוף ה-statement של schedule. המשימה רצה אחר כך, וניגשת ל-reference ל-string שכבר נהרס (dangling). כשה-closure חי מעבר לקריאה, צריך ללכוד by value: `[name]` או `[name = std::move(...)]`.",
+      "notes": [
+        "נכון: ה-temporary חי רק עד סוף ה-full-expression בקריאה ל-schedule. callback שנשמר לשימוש מאוחר צריך ללכוד by value.",
+        "שגוי: std::function מחזיק כל callable שניתן להעתקה, כולל lambdas עם captures.",
+        "שגוי: mutable נדרש רק כדי לשנות משתנים שנלכדו by value. קריאה לא דורשת אותו.",
+        "שגוי: זה חוקי ויוצר temporary std::string. בדיוק זה מה שמוביל ל-dangling כשלוכדים אותו by reference."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.glassdoor.com.au/Interview/NVIDIA-Interview-E7633-RVW84770937.htm"
+      ],
+      "problem": "NVIDIA interview: memory safety of closures capturing references",
+      "id": "cpp.lambdas.q31",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "std::vector<int> v{1};\nint x = 1;\nint* p = &x;\nauto f = [v, p] { return v[0] * 10 + *p; };\nv[0] = 7;\nx = 3;\nstd::cout << f();",
+      "choices": [
+        "11",
+        "13",
+        "71",
+        "73"
+      ],
+      "answer": 1,
+      "explanation": "capture by value מעתיק את המשתנים ברגע יצירת ה-lambda. v הוא std::vector, ולכן העותק הוא deep copy ונשאר {1} למרות `v[0] = 7`. p הוא pointer, וההעתקה שלו מעתיקה רק את הכתובת: הוא עדיין מצביע ל-x, ולכן *p קורא את הערך החדש 3. 1*10 + 3 = 13.",
+      "notes": [
+        "שגוי: p נלכד by value, אבל הוא pointer. הוא קורא את x בזמן הקריאה, כשהוא כבר 3.",
+        "נכון: העותק של ה-vector לא רואה את השינוי, אבל ה-pointer המועתק מצביע לאותו x.",
+        "שגוי: v הועתק ל-closure לפני ההשמה, ולכן השינוי לא נראה בתוכו.",
+        "שגוי: v נלכד by value (deep copy), ולכן v[0] בתוך ה-lambda נשאר 1."
+      ],
+      "id": "cpp.lambdas.q32",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו מה-factories מחזירות lambda שבטוח לקרוא לה אחרי שה-factory חזרה? (כל אחת בנפרד)",
+      "choices": [
+        "`auto make(int n) { return [n](int x) { return x + n; }; }`",
+        "`auto make(int n) { return [&n](int x) { return x + n; }; }`",
+        "`auto make(int n) { return [=](int x) { return x + n; }; }`",
+        "`auto make(int n) { return [&](int x) { return x + n; }; }`",
+        "`auto make(int n) { return [k = n * 2](int x) { return x + k; }; }`"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "n הוא פרמטר, כלומר משתנה מקומי של ה-factory, ונהרס כשהיא חוזרת. לכידה by value (`[n]`, `[=]` או init capture) מעתיקה אותו לתוך ה-closure ולכן בטוחה. לכידה by reference (`[&n]` או `[&]`) משאירה reference ל-n שכבר לא קיים.",
+      "notes": [
+        "נכון: n מועתק לתוך ה-closure.",
+        "שגוי: reference לפרמטר שנהרס בסיום make. הקריאה היא UB.",
+        "נכון: [=] לוכד by value את מה שבשימוש, כלומר עותק של n.",
+        "שגוי: [&] לוכד by reference, ולכן dangling בדיוק כמו [&n].",
+        "נכון: init capture יוצר member חדש בתוך ה-closure עם הערך המחושב."
+      ],
+      "id": "cpp.lambdas.q33",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "`register_cb` הוא C API שמקבל function pointer. איזו שורה לא מתקמפלת, ולמה?",
+      "code": "extern \"C\" void register_cb(void (*cb)(int));\n\nint main() {\n  int gain = 3;\n  register_cb([](int v) { std::printf(\"%d\\n\", v); });\n  register_cb([gain](int v) { std::printf(\"%d\\n\", v * gain); });\n}",
+      "bugLine": 6,
+      "choices": [
+        "lambda עם captures לא ניתנת להמרה ל-function pointer",
+        "אסור להעביר lambda לפונקציה עם `extern \"C\"`",
+        "חסר `mutable` בשתי ה-lambdas",
+        "lambda ללא captures לא ניתנת להמרה ל-function pointer בלי `+` לפניה"
+      ],
+      "answer": 0,
+      "explanation": "lambda בלי captures ניתנת להמרה מרומזת ל-function pointer עם אותה חתימה. lambda עם captures היא אובייקט עם state, ולא קיימת פונקציה חופשית שיכולה לייצג אותה, ולכן אין המרה. ב-C API מעבירים state דרך פרמטר `void* user_data` ו-lambda בלי captures שמשמשת כ-trampoline.",
+      "notes": [
+        "נכון: function pointer לא יכול לשאת state. רק closure בלי captures מספקת conversion function ל-pointer.",
+        "שגוי: ההמרה מתבצעת בצד הקורא, וה-lambda בשורה הראשונה מתקמפלת עם אותו API.",
+        "שגוי: mutable רלוונטי רק לשינוי ערכים שנלכדו by value. כאן לא משנים אותם.",
+        "שגוי: ההמרה מרומזת. `+` רק מכריח אותה במפורש, למשל כשרוצים ש-auto יקבל טיפוס של pointer."
+      ],
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-set-20-on-campus-iiitd/"
+      ],
+      "problem": "Qualcomm interview: function pointers vs direct calls (and C++11 lambdas)",
+      "id": "cpp.lambdas.q34",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "auto fp = +[](int x) { return x * 2; };\nstd::cout << std::is_same_v<decltype(fp), int (*)(int)> << fp(4);",
+      "choices": [
+        "18",
+        "08",
+        "שגיאת קומפילציה: אי אפשר להפעיל + על lambda",
+        "14"
+      ],
+      "answer": 0,
+      "explanation": "`+` אונרי על lambda בלי captures מכריח את ההמרה ל-function pointer, ולכן fp הוא `int(*)(int)`, ו-is_same מחזיר true (מודפס 1). fp(4) = 8. ההדפסה צמודה: \"18\".",
+      "notes": [
+        "נכון: + מפעיל את ה-conversion function של ה-closure, ו-auto מנכה int(*)(int).",
+        "שגוי: בלי ה-+, fp היה closure type, ו-is_same היה מחזיר 0. כאן יש +.",
+        "שגוי: operator+ אונרי מוגדר ל-pointers, והקומפיילר ממיר את ה-closure ל-pointer כדי להפעיל אותו.",
+        "שגוי: fp(4) מכפילה ב-2, כלומר 8."
+      ],
+      "id": "cpp.lambdas.q35",
+      "lesson": "cpp.lambdas"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "C API: `void set_handler(void (*fn)(int, void*), void* user);`, והספרייה תקרא ל-`fn(value, user)`. רוצים שה-handler יפעיל lambda עם captures, `auto h = [&stats](int v) { stats.add(v); };`, ש-h חי כל עוד ה-handler רשום. מה הדרך הנכונה?",
+      "choices": [
+        "`set_handler(h, nullptr);`",
+        "`set_handler([](int v, void* u) { (*static_cast<decltype(h)*>(u))(v); }, &h);`",
+        "`set_handler(reinterpret_cast<void(*)(int, void*)>(&h), nullptr);`",
+        "`set_handler(std::function<void(int, void*)>(h), nullptr);`"
+      ],
+      "answer": 1,
+      "explanation": "trampoline: lambda בלי captures (שניתנת להמרה ל-function pointer) שמקבלת את ה-void*, ממירה אותו בחזרה ל-pointer לטיפוס של h, ומפעילה אותו. את הכתובת של h מעבירים כ-user. צריך לוודא ש-h חי לאורך כל הרישום.",
+      "notes": [
+        "שגוי: h לוכדת state, ולכן היא לא ניתנת להמרה ל-function pointer. לא מתקמפל.",
+        "נכון: ה-trampoline בלי captures, ולכן הוא מומר ל-pointer. ה-state עובר דרך user.",
+        "שגוי: &h היא כתובת של אובייקט, לא של קוד. קריאה דרכה תקפוץ לנתונים, וזה UB וקריסה.",
+        "שגוי: std::function הוא אובייקט, לא function pointer. אין המרה ממנו ל-pointer של C."
+      ],
+      "id": "cpp.lambdas.q36",
+      "lesson": "cpp.lambdas"
     }
   ]
 }

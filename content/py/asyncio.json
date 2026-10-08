@@ -242,6 +242,30 @@
         {
           "term": "GIL switch interval",
           "def": "ב-threads של CPython, ה-GIL מוחלף בין threads כל 5 ms כברירת מחדל (`sys.getswitchinterval`). זה preemption בין threads, ואין לו קשר להחלפה בין coroutines."
+        },
+        {
+          "term": "קריאה חוסמת ב-event loop",
+          "def": "פונקציה סינכרונית שמחכה (`time.sleep`, `requests.get`, קריאת קובץ) בתוך coroutine עוצרת את ה-thread של ה-loop, ולכן גם את כל שאר ה-coroutines."
+        },
+        {
+          "term": "asyncio.to_thread",
+          "def": "מריץ פונקציה חוסמת ב-thread pool ומחזיר awaitable (3.9+). מתאים ל-I/O חוסם בלי גרסה אסינכרונית; לא מאיץ CPU-bound בגלל ה-GIL."
+        },
+        {
+          "term": "coroutine object",
+          "def": "מה שמוחזר מקריאה ל-`async def`. הגוף לא רץ עד שעושים לו await או עוטפים ב-Task. אם הוא נזרק בלי ריצה מופיעה האזהרה 'coroutine ... was never awaited'."
+        },
+        {
+          "term": "asyncio.create_task",
+          "def": "מתזמן coroutine כ-Task שירוץ כשה-loop יקבל שליטה, בלי לחכות לו. כדאי לשמור הפניה ל-task כדי שלא ייאסף באמצע."
+        },
+        {
+          "term": "race condition ב-asyncio",
+          "def": "למרות שיש thread אחד, כל `await` בין קריאה לכתיבה של state משותף מאפשר ל-coroutine אחרת להתערב. קוד בין שני awaits רץ בלי הפרעה."
+        },
+        {
+          "term": "aiohttp / httpx.AsyncClient",
+          "def": "clients של HTTP שמממשים את ה-I/O באופן אסינכרוני, כך שההמתנה לרשת מחזירה שליטה ל-loop. משתמשים ב-session אחת משותפת ובהגבלת מקביליות."
         }
       ]
     }
@@ -611,10 +635,7 @@
         "graceful shutdown וניטור של loop lag"
       ],
       "explanation": "השאלה בודקת שילוב של asyncio עם עקרונות design: backpressure מקצה לקצה, בידוד בין clients, ומחזור חיים מסודר.",
-      "lesson": "py.asyncio",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "py.asyncio"
     },
     {
       "id": "py.asyncio.q18",
@@ -866,9 +887,6 @@
         "זה היה קורה בלי shield: wait_for היה מבטל את t עצמו, ו-`await t` היה זורק CancelledError.",
         "`print(await t)` מחכה ש-job תסתיים, ו-job מדפיסה `job done` לפני שהיא מחזירה 42."
       ],
-      "tags": [
-        "nvidia"
-      ],
       "lesson": "py.asyncio"
     },
     {
@@ -899,9 +917,6 @@
         "נכון: hashlib משחרר את ה-GIL, אבל זה עוזר רק ל-threads אחרים; ה-loop thread עצמו תקוע בקריאה עד שהיא חוזרת.",
         "נכון: `requests.get` הוא I/O סינכרוני שחוסם את ה-thread עד שהתשובה מגיעה."
       ],
-      "tags": [
-        "nvidia"
-      ],
       "lesson": "py.asyncio"
     },
     {
@@ -920,9 +935,6 @@
         "שמירת סדר לפי אינדקס; סיבוכיות O(len(items)) וזיכרון O(n + maxsize) בנוסף לתוצאות"
       ],
       "explanation": "ה-workers תקועים לנצח ב-q.get() כשהתור מתרוקן, ולכן join לבד לא מספיק: חייבים לבטל אותם, אחרת asyncio.run יבטל אותם בסוף או שהם ידלפו. task_done חייב לרוץ גם בכשל, אחרת join לא יחזור. מ-3.13 אפשר גם `q.shutdown()` שגורם ל-get לזרוק QueueShutDown.",
-      "tags": [
-        "microsoft"
-      ],
       "lesson": "py.asyncio"
     },
     {
@@ -943,9 +955,6 @@
         "`loop.create_task` מ-thread זר הוא race על מבני הנתונים הלא thread-safe של ה-loop, וה-loop גם עלול לא להתעורר מה-selector עד אירוע אחר.",
         "`asyncio.run` יוצר loop חדש ב-thread של ה-driver וחוסם אותו עד הסיום; אובייקטים של ה-loop הראשי לא עובדים בו, וה-callback יאט את קבלת ה-buffers.",
         "נכון: `run_coroutine_threadsafe` ו-`call_soon_threadsafe` הם ה-API ה-thread-safe היחיד להגשת עבודה ל-loop מ-thread אחר; הם גם מעירים את ה-loop."
-      ],
-      "tags": [
-        "nvidia"
       ],
       "lesson": "py.asyncio"
     },
@@ -993,9 +1002,6 @@
         "`await fast()` לא נותן ל-ticker לרוץ, כי fast לא מגיעה לשום Future ממתין. await על coroutine לא אומר אוטומטית החלפה.",
         "`await t` כן מוותר על השליטה, כי t עוד לא הסתיים, ולכן ticker רצה ומדפיסה tick בסוף."
       ],
-      "tags": [
-        "nvidia"
-      ],
       "lesson": "py.asyncio"
     },
     {
@@ -1017,9 +1023,231 @@
         "wait_for ממיר את הביטול שהוא עצמו יזם ל-TimeoutError; ה-CancelledError של הילדים לא יוצא החוצה כפי שהוא.",
         "נכון: wait_for מבטל את ה-gather, שמבטל את a ו-b; wait_for מחכה שהביטול יסתיים בפועל (כחצי שנייה של ניקוי), ורק אז מרים TimeoutError, אחרי כ-1.5 שניות."
       ],
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
       "tags": [
         "nvidia"
       ],
+      "sources": [
+        "https://prachub.com/interview-questions/analyze-and-debug-python-utilities"
+      ],
+      "problem": "NVIDIA onsite: debug an async URL fetcher (blocking call in the event loop)",
+      "prompt": "מה מודפס (בקירוב)?",
+      "code": "import asyncio, time\n\nasync def fetch(i):\n    time.sleep(1)  # stands in for a blocking HTTP call\n    return i\n\nasync def main():\n    t = time.perf_counter()\n    await asyncio.gather(*(fetch(i) for i in range(5)))\n    print(round(time.perf_counter() - t))\n\nasyncio.run(main())",
+      "choices": [
+        "5",
+        "0",
+        "2",
+        "1"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. `time.sleep` חוסם את ה-thread היחיד של ה-event loop. אף coroutine אחרת לא יכולה לרוץ בזמן הזה, ולכן חמש הקריאות רצות בטור: 5 × 1 שנייה.",
+        "`gather` מחכה שכל ה-coroutines יסתיימו, וכל אחת ישנה שנייה בפועל.",
+        "אין כאן שום מקביליות חלקית; כל קריאה חוסמת את כל ה-loop.",
+        "זה היה נכון אם ההמתנה הייתה `await asyncio.sleep(1)`, שמחזירה שליטה ל-event loop."
+      ],
+      "explanation": "asyncio הוא cooperative: coroutine מוותרת על השליטה רק ב-`await` על משהו שבאמת ממתין. קריאה חוסמת (`time.sleep`, `requests.get`, קריאת קובץ סינכרונית) עוצרת את כל ה-event loop. תיקון: ספרייה אסינכרונית (aiohttp/httpx) או `asyncio.to_thread`.",
+      "id": "py.asyncio.q36",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "אותה קריאה חוסמת, הפעם דרך `asyncio.to_thread`. מה מודפס (בקירוב)?",
+      "code": "import asyncio, time\n\nasync def fetch(i):\n    await asyncio.to_thread(time.sleep, 1)\n    return i\n\nasync def main():\n    t = time.perf_counter()\n    await asyncio.gather(*(fetch(i) for i in range(5)))\n    print(round(time.perf_counter() - t))\n\nasyncio.run(main())",
+      "choices": [
+        "0",
+        "תלוי במספר הליבות: 5 על ליבה אחת",
+        "5",
+        "1"
+      ],
+      "answer": 3,
+      "notes": [
+        "`await` מחכה לסיום ה-thread, ולכן כל קריאה עדיין לוקחת שנייה.",
+        "sleep משחרר את ה-GIL ולא צורך CPU, ולכן גם על ליבה אחת השינות חופפות.",
+        "זה היה נכון עם `time.sleep` ישירות בתוך ה-coroutine.",
+        "נכון. `to_thread` מריץ את הקריאה החוסמת ב-thread pool ומחזיר awaitable. ה-loop ממשיך להריץ את ה-coroutines האחרות, וחמש השינות חופפות (ה-pool כולל יותר מ-5 threads)."
+      ],
+      "explanation": "`asyncio.to_thread` הוא הגשר לקוד חוסם שאין לו גרסה אסינכרונית. הוא מתאים ל-I/O חוסם; לקוד CPU-bound ב-Python טהור הוא לא יעזור בגלל ה-GIL, ושם צריך ProcessPoolExecutor.",
+      "id": "py.asyncio.q37",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בקוד async יש `resp = requests.get(url)` בתוך coroutine שנקראת מ-`gather` על 100 URLs. מה התיקון הנכון?",
+      "choices": [
+        "להריץ כל קריאה ב-`asyncio.run` נפרד",
+        "להוסיף `await` לפני `requests.get(url)`",
+        "להחליף ל-client אסינכרוני (למשל `aiohttp` או `httpx.AsyncClient`) עם session משותפת ו-Semaphore להגבלת מקביליות, או לפחות לעטוף את הקריאה ב-`asyncio.to_thread`",
+        "להגדיל את ה-timeout של requests"
+      ],
+      "answer": 2,
+      "notes": [
+        "`asyncio.run` יוצר event loop חדש ונכשל אם כבר רץ loop ב-thread הנוכחי.",
+        "`requests.get` מחזירה Response, לא awaitable. `await` עליה זורק TypeError, והקריאה עצמה כבר חסמה לפני כן.",
+        "נכון. client אסינכרוני מחזיר שליטה ל-loop בזמן ההמתנה לרשת. Semaphore מגן על השרת ועל מספר החיבורים. `to_thread` הוא פתרון ביניים כשאין גרסה אסינכרונית.",
+        "timeout לא משנה את העובדה שהקריאה חוסמת את ה-loop."
+      ],
+      "explanation": "בשאלות debug של קוד async, הדבר הראשון לחפש הוא קריאות חוסמות בתוך coroutines. התיקון הנכון הוא ספרייה אסינכרונית; `to_thread` או `run_in_executor` כשאין ברירה.",
+      "id": "py.asyncio.q38",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/analyze-and-debug-python-utilities"
+      ],
+      "problem": "NVIDIA onsite: debug an async URL fetcher (coroutine never awaited)",
+      "prompt": "מה מודפס ב-stdout?",
+      "code": "import asyncio\n\nresults = []\n\nasync def save(x):\n    results.append(x)\n\nasync def main():\n    for i in range(3):\n        save(i)\n    await asyncio.sleep(0)\n    print(results)\n\nasyncio.run(main())",
+      "choices": [
+        "[0, 1, 2]",
+        "[]",
+        "TypeError",
+        "[2]"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה היה נכון עם `await save(i)` או `asyncio.create_task(save(i))`.",
+        "נכון. קריאה ל-coroutine function רק יוצרת coroutine object; הגוף לא רץ. בלי await או task הוא לא מתוזמן, ונזרק ל-GC עם RuntimeWarning: coroutine 'save' was never awaited (ב-stderr).",
+        "יצירת coroutine object בלי await חוקית; Python רק מזהיר.",
+        "אף אחת מהקריאות לא רצה, גם לא האחרונה."
+      ],
+      "explanation": "באג קלאסי: שכחת `await`. הקוד לא נכשל, רק לא עושה כלום, ויש אזהרה ב-stderr. כדאי להריץ בדיקות עם `PYTHONASYNCIODEBUG=1` או `-W error::RuntimeWarning` כדי לתפוס את זה.",
+      "id": "py.asyncio.q39",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "מה מודפס?",
+      "code": "import asyncio\n\nresults = []\n\nasync def save(x):\n    results.append(x)\n\nasync def main():\n    tasks = [asyncio.create_task(save(i)) for i in range(3)]\n    print(results)\n    await asyncio.sleep(0)\n    print(results)\n\nasyncio.run(main())",
+      "choices": [
+        "[]\n[0, 1, 2]",
+        "[]\n[]",
+        "[]\n[0]",
+        "[0, 1, 2]\n[0, 1, 2]"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. ה-tasks נכנסים לתור של ה-loop. `await asyncio.sleep(0)` מוותר על השליטה, ה-loop מריץ את שלושת ה-tasks (כל אחד מסתיים בלי await פנימי), ואז main ממשיכה.",
+        "`sleep(0)` מספיק כדי לתת ל-tasks שמוכנים לרוץ; הם לא צריכים יותר מסבב אחד.",
+        "כל ה-tasks שמוכנים רצים באותו סבב של ה-loop, לפי סדר יצירתם.",
+        "`create_task` רק מתזמן את ה-task; הוא לא מריץ אותו מיד. ה-print הראשון רץ לפני שה-loop קיבל שליטה."
+      ],
+      "explanation": "ההבדל בין coroutine object (לא רץ עד await) לבין Task (מתוזמן מיד, רץ כשה-loop מקבל שליטה). שמירת ה-tasks ברשימה חשובה גם כדי שה-GC לא יאסוף אותם באמצע.",
+      "id": "py.asyncio.q40",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "python",
+      "prompt": "`main` אמורה להחזיר את אורכי ה-URLs אחרי שכולם הורדו, אבל מודפס אובייקט במקום רשימה. איפה הבאג?",
+      "code": "import asyncio\n\nasync def fetch(u):\n    await asyncio.sleep(0.1)\n    return len(u)\n\nasync def main(urls):\n    results = asyncio.gather(*(fetch(u) for u in urls))\n    return results\n\nprint(asyncio.run(main([\"a\", \"bb\"])))",
+      "bugLine": 8,
+      "choices": [
+        "`asyncio.run` לא מחזיר את ערך ההחזרה של main",
+        "`fetch` צריכה להחזיר awaitable ולא int",
+        "חסר `await` לפני `asyncio.gather`. בלעדיו `results` הוא future שעוד לא הסתיים, ו-main חוזרת מיד; `asyncio.run` מבטל את ה-tasks שנשארו כש-main מסתיימת",
+        "`gather` לא מקבל generator expression; צריך רשימה"
+      ],
+      "answer": 2,
+      "notes": [
+        "`asyncio.run` כן מחזיר את מה ש-main מחזירה; כאן היא מחזירה את ה-future.",
+        "coroutine מחזירה ערך רגיל; ה-awaitable הוא ה-coroutine object עצמו.",
+        "נכון. `gather` מחזיר awaitable (future) שמתמלא כשכל הילדים מסיימים. רק `await` עליו נותן את רשימת התוצאות.",
+        "`gather(*...)` מקבל ארגומנטים פוזיציוניים; ה-`*` פורש את ה-generator. זה תקין."
+      ],
+      "explanation": "בלי `await` coroutine לא מחכה לכלום. כאן main מסתיימת לפני ההורדות, ו-`asyncio.run` מבטל את מה שנשאר. בקוד אמיתי זה מתבטא בעבודה שנעלמת בשקט.",
+      "id": "py.asyncio.q41",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://prachub.com/interview-questions/analyze-and-debug-python-utilities"
+      ],
+      "problem": "NVIDIA onsite: debug an async URL fetcher (race condition between coroutines)",
+      "prompt": "מה מודפס?",
+      "code": "import asyncio\n\ncount = 0\n\nasync def inc():\n    global count\n    v = count\n    await asyncio.sleep(0)\n    count = v + 1\n\nasync def main():\n    await asyncio.gather(*(inc() for _ in range(5)))\n    print(count)\n\nasyncio.run(main())",
+      "choices": [
+        "תוצאה אקראית בין 1 ל-5",
+        "5",
+        "1",
+        "0"
+      ],
+      "answer": 2,
+      "notes": [
+        "ב-asyncio הסדר דטרמיניסטי: ה-loop מריץ את ה-tasks לפי סדר, ולכן התוצאה תמיד 1.",
+        "זה היה נכון בלי `await` בין הקריאה לכתיבה. כאן כל coroutine מוותרת על השליטה אחרי שקראה.",
+        "נכון. כל חמש ה-coroutines קוראות `count = 0` לפני שמישהי כותבת, כי כל אחת עוצרת ב-`await asyncio.sleep(0)`. אחר כך כל אחת כותבת 0 + 1.",
+        "כל אחת כן כותבת `v + 1`, כלומר 1."
+      ],
+      "explanation": "asyncio רץ ב-thread אחד, אבל race conditions עדיין קיימים: כל `await` בין קריאה לכתיבה של state משותף הוא נקודה שבה coroutine אחרת יכולה להתערב. התיקון: `asyncio.Lock` סביב הקטע, או לא לפצל read-modify-write סביב await.",
+      "id": "py.asyncio.q42",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "python",
+      "prompt": "אותו מונה, בלי await בין הקריאה לכתיבה. מה מודפס?",
+      "code": "import asyncio\n\ncount = 0\n\nasync def inc():\n    global count\n    await asyncio.sleep(0)\n    v = count\n    count = v + 1\n\nasync def main():\n    await asyncio.gather(*(inc() for _ in range(5)))\n    print(count)\n\nasyncio.run(main())",
+      "choices": [
+        "1",
+        "5",
+        "0",
+        "תוצאה אקראית בין 1 ל-5"
+      ],
+      "answer": 1,
+      "notes": [
+        "זה היה נכון אם ה-await היה בין הקריאה לכתיבה.",
+        "נכון. ה-await נמצא לפני הקטע הקריטי. מרגע ש-`v = count` רץ ועד הכתיבה אין נקודת ויתור, ולכן אף coroutine אחרת לא יכולה להתערב. כל אחת מוסיפה 1.",
+        "כל חמש ה-coroutines מגיעות לכתיבה.",
+        "ב-asyncio על thread אחד, קוד בין שני awaits רץ בלי הפרעה; אין כאן אקראיות."
+      ],
+      "explanation": "ב-asyncio, קטע בלי `await` הוא אטומי ביחס ל-coroutines אחרות (בשונה מ-threads, שם ה-GIL יכול לעבור בכל bytecode). זה כלי עיצוב חשוב: לשמור read-modify-write בלי await באמצע.",
+      "id": "py.asyncio.q43",
+      "lesson": "py.asyncio"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "צריך להגן על read-modify-write של state משותף בין coroutines, כשבאמצע חייב להיות `await` (למשל קריאה לרשת). מה הפתרון הנכון?",
+      "choices": [
+        "`lock = asyncio.Lock()` אחד משותף ו-`async with lock:` סביב הקטע",
+        "ליצור `asyncio.Lock()` חדש בתוך הפונקציה בכל קריאה",
+        "להוסיף `await asyncio.sleep(0)` לפני הקטע",
+        "`lock = threading.Lock()` גלובלי ו-`with lock:` סביב הקטע"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון. `asyncio.Lock` משהה רק את ה-coroutine שמחכה ומחזיר שליטה ל-loop, כך שבעלת ה-lock יכולה להמשיך ולשחרר.",
+        "lock חדש בכל קריאה לא מגן על כלום: כל coroutine נועלת lock אחר.",
+        "ויתור על השליטה לפני הקטע לא מונע התערבות ב-await שבתוכו.",
+        "`threading.Lock` חוסם את ה-thread. coroutine שנייה שמנסה לקחת אותו בזמן שהראשונה מחכה ב-await תחסום את ה-loop כולו, והראשונה לעולם לא תמשיך: deadlock."
+      ],
+      "explanation": "ב-asyncio משתמשים ב-primitives של asyncio (Lock, Semaphore, Event, Queue), שנוצרים פעם אחת ומשותפים. primitives של threading בתוך coroutines הם מתכון ל-deadlock.",
+      "id": "py.asyncio.q44",
       "lesson": "py.asyncio"
     }
   ]

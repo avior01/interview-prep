@@ -199,6 +199,30 @@
         {
           "term": "false sharing",
           "def": "threads שכותבים למשתנים שונים באותה cache line. ב-parallel sum צוברים במשתנה מקומי וכותבים פעם אחת."
+        },
+        {
+          "term": "user-level threads / M:1 / M:N",
+          "def": "threads שה-scheduler שלהם רץ בתוך ה-process. ב-M:1 כולם על kernel thread אחד: החלפה זולה מאוד, אבל אין מקביליות ו-syscall חוסם עוצר את כולם. ב-M:N (למשל goroutines) ה-runtime מפזר אותם על כמה kernel threads ומעביר את התור ל-kernel thread אחר כשאחד נחסם."
+        },
+        {
+          "term": "kernel thread / מודל 1:1",
+          "def": "כל thread של האפליקציה הוא ישות תזמון של ה-kernel (כמו std::thread ב-Linux NPTL). ה-kernel מתזמן אותו על כל core, ו-syscall חוסם עוצר רק אותו. המחיר: יצירה ו-context switch דרך ה-kernel."
+        },
+        {
+          "term": "stack לכל thread",
+          "def": "לכל thread stack נפרד, אבל כולם באותו address space. pointer למשתנה מקומי של thread אחר תקף כל עוד המשתנה חי, ולכן הבעיה הנפוצה היא lifetime (lambda שלוכדת reference למשתנה מקומי שיוצא מ-scope), לא הפרדת זיכרון."
+        },
+        {
+          "term": "join פעם אחת",
+          "def": "כל thread חוץ מה-thread עצמו רשאי לקרוא join, אבל רק פעם אחת: אחרי join מוצלח האובייקט לא joinable, וקריאה נוספת זורקת std::system_error. קריאות מקבילות על אותו std::thread הן data race."
+        },
+        {
+          "term": "packaged_task",
+          "def": "עוטף callable ומחבר אותו ל-std::future: כשהוא רץ, ערך ההחזרה או ה-exception נשמרים במצב המשותף. הוא move-only, ולכן thread pools שומרים אותו ב-shared_ptr כדי להכניס אותו ל-std::function."
+        },
+        {
+          "term": "drain בכיבוי thread pool",
+          "def": "מדיניות שבה ה-workers ממשיכים לשלוף משימות אחרי בקשת עצירה עד שהתור ריק, ורק אז יוצאים. החלופה היא לבטל את המשימות שבתור ולהחזיר שגיאה ל-futures שלהן."
         }
       ]
     }
@@ -218,9 +242,6 @@
       "answer": 2,
       "explanation": "התקן מגדיר שה-destructor של `std::thread` קורא ל-`std::terminate` אם ה-thread joinable. זו החלטה מכוונת: join מרומז עלול לתקוע, ו-detach מרומז עלול להשאיר dangling references. את ה-join האוטומטי מקבלים רק ב-`std::jthread` מ-C++20.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: ההתנהגות מוגדרת היטב בתקן ואינה UB. מי שבוחר בזה מניח שאם לא קראו ל-join/detach פשוט \"לא קורה כלום\", אבל התוכנית תסתיים.",
         "לא נכון: join אוטומטי ב-destructor קיים רק ב-`std::jthread` (C++20). ב-`std::thread` התקן בחר במכוון לא לעשות join מרומז כי הוא עלול לתקוע את ההריסה.",
@@ -279,9 +300,6 @@
       "answer": 3,
       "explanation": "הבנאי של `std::thread` מעתיק את הארגומנטים ומעביר אותם לפונקציה כ-rvalues. `int&` לא יכול להיקשר ל-rvalue, ולכן הקוד לא מתקמפל. כדי להעביר reference צריך `std::thread t(inc, std::ref(v));` ואז יודפס 1. התשובה 0 הייתה נכונה אילו הפונקציה הייתה מקבלת `const int&`.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: אין כאן UB בזמן ריצה, כי הקוד בכלל לא מגיע לשלב ריצה. מי שבוחר בזה חושב על dangling reference, אבל הבנאי לא מעביר reference בכלל.",
         "לא נכון: 1 היה מודפס רק עם `std::ref(v)`. בלי זה הבנאי עושה decay-copy ולא יכול להעביר את `v` עצמו לפונקציה.",
@@ -398,10 +416,7 @@
         "בונוס: להזכיר std::reduce עם std::execution::par או thread pool במקום יצירת threads בכל קריאה"
       ],
       "explanation": "הנקודות שבודקים: חלוקה נכונה, אין data race (כל thread כותב לתא שלו, וה-join מבטיח happens-before), וצבירה למשתנה מקומי. כתיבה חוזרת ל-`partial[i]` בתוך הלולאה יוצרת false sharing, כי כמה תאים יושבים באותו cache line של 64 בתים.",
-      "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.threads"
     },
     {
       "id": "conc.threads.q10",
@@ -417,9 +432,6 @@
       "answer": 0,
       "explanation": "יצירת thread עולה עשרות מיקרו-שניות, באותו סדר גודל כמו המשימה עצמה, ו-10,000 threads פעילים גורמים ל-oversubscription ולהרבה context switches. thread pool בגודל מספר ה-cores מחלק את העלות פעם אחת. thread יחיד מוותר על פי 8 בלי סיבה, כי המשימות בלתי תלויות.",
       "lesson": "conc.threads",
-      "tags": [
-        "microsoft"
-      ],
       "notes": [
         "נכון: pool בגודל מספר ה-cores משלם את עלות יצירת ה-threads פעם אחת, ותור משותף מחלק את 10,000 המשימות בלי oversubscription. כך מנצלים את 8 ה-cores עם overhead מינימלי.",
         "לא נכון: יצירת thread עולה עשרות מיקרו-שניות, באותו סדר גודל כמו המשימה עצמה, כך שחלק גדול מהזמן הולך על overhead. מקביליות מעבר למספר ה-cores לא מוסיפה throughput.",
@@ -441,9 +453,6 @@
       "answer": 1,
       "explanation": "busy-poll עובד רק כשלכל thread שמסתובב יש core משלו. עם 6 threads שרצים כל הזמן על 4 cores, ה-scheduler מחלק זמן, וצרכן שמסתובב יכול לתפוס את ה-core בזמן שהיצרן מחכה בתור ה-runqueue, כך שה-latency הופך לגודל של time slice. תור גדול יותר לא משנה את ה-latency של פריט בודד. הפתרונות: מספר threads קטן או שווה למספר ה-cores המבודדים, pinning, או blocking/backoff בשלבים שלא קריטיים.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: תור גדול יותר עוזר לספוג bursts ולמנוע אובדן, אבל לא מקצר את הזמן שפריט בודד מחכה עד שהצרכן שלו מתוזמן. ה-latency נקבע כאן ע״י ה-scheduler.",
         "נכון: 6 threads שמסתובבים על 4 cores גורמים ל-time sharing: צרכן שמסתובב תופס core בזמן שהיצרן שהוא מחכה לו יושב ב-runqueue. ה-latency קופץ לסדר גודל של time slice של CFS, כלומר מילי-שניות.",
@@ -488,10 +497,7 @@
         "מדידה: cyclictest, היסטוגרמה, worst-case ולא ממוצע"
       ],
       "explanation": "מראיין סניור מחפש תמונה מלאה: affinity לבדו לא מספיק אם interrupts, ticks, page faults או C-states עדיין נוחתים על ה-core הקריטי.",
-      "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.threads"
     },
     {
       "id": "conc.threads.q14",
@@ -533,9 +539,6 @@
       ],
       "explanation": "סוף הבנאי של std::thread הוא synchronizes-with תחילת הפונקציה, וסיום ה-thread הוא synchronizes-with החזרה מ-join, ולכן תרחישי הבנאי וה-join בטוחים. sleep אינו פעולת סנכרון במודל הזיכרון, ולכן תרחיש ה-detach עם sleep הוא data race ו-UB גם אם בפועל זה כמעט תמיד עובד. ב-relaxed אין synchronizes-with, ולכן גם הוא race, ורק זוג release/acquire יוצר happens-before.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: סיום הבנאי של std::thread הוא synchronizes-with תחילת הפונקציה של ה-thread, ולכן הכתיבה של main ל-x לפני היצירה happens-before הקריאה ב-thread.",
         "לא נכון: sleep אינו פעולת סנכרון במודל הזיכרון של C++, ולכן אין happens-before בין הכתיבה לקריאה. זה data race ו-UB, גם אם בפועל זה כמעט תמיד \"עובד\".",
@@ -579,9 +582,6 @@
       "answer": 0,
       "explanation": "זו מלכודת מוכרת: בלי PTHREAD_EXPLICIT_SCHED, ערכי ה-policy וה-priority ב-attr לא נלקחים בחשבון. בלי הרשאות מתאימות (CAP_SYS_NICE או RLIMIT_RTPRIO), pthread_create עם EXPLICIT_SCHED נכשל עם EPERM ולא מוריד את ה-thread בשקט. הטווח של SCHED_FIFO ב-Linux הוא 1–99, אז 80 תקין.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: ברירת המחדל ב-glibc היא PTHREAD_INHERIT_SCHED, ולכן ה-policy וה-priority שב-attr מתעלמים וה-thread יורש SCHED_OTHER מהיוצר. צריך `pthread_attr_setinheritsched(&a, PTHREAD_EXPLICIT_SCHED)`.",
         "לא נכון: מדיניות תזמון נכנסת לתוקף מיד כשה-thread נוצר; אין שום תלות ב-sleep ראשון.",
@@ -814,9 +814,6 @@
       "answer": 1,
       "explanation": "exit לא עוצר את שאר ה-threads לפני ניקוי סטטי, וזה מקור ידוע לקריסות ב-shutdown. החלופות: להודיע ל-main ולבצע shutdown מסודר עם join, או quick_exit או _exit כשרוצים לצאת מיד בלי destructors סטטיים (ואז צריך לדאוג ל-flush של מה שחשוב). exit מותר מכל thread.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: מותר לקרוא ל-exit מכל thread; הוא מסיים את כל ה-process. ההגבלה הזו לא קיימת.",
         "נכון: exit מריץ את ה-destructors של האובייקטים הסטטיים (ו-atexit handlers) ב-thread הקורא, בזמן ש-threads אחרים עדיין רצים ומשתמשים בהם, למשל בלוגר. התוצאה: use-after-destruction וקריסות.",
@@ -838,9 +835,6 @@
       "answer": 0,
       "explanation": "התקן לא חושף גודל stack ב-std::thread. pthread_setattr_default_np הוא הרחבה לא ניידת של glibc. RLIMIT_STACK נקרא ב-glibc בעיקר בתחילת התוכנית, ולכן שינוי שלו בזמן ריצה לא מובטח להשפיע. stack קטן מדי מסתיים ב-SIGSEGV על ה-guard page, ולכן צריך לוודא שאין רקורסיה עמוקה או מערכים גדולים על ה-stack.",
       "lesson": "conc.threads",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: התקן לא חושף גודל stack ב-std::thread. ב-Linux משתמשים ב-pthread_create עם `pthread_attr_setstacksize`, או ב-`pthread_setattr_default_np` (הרחבה של glibc) שמשנה את ברירת המחדל גם ל-std::thread שייווצרו אחר כך.",
         "לא נכון: לבנאי של std::thread אין פרמטר כזה; ארגומנט נוסף מועבר כארגומנט לפונקציה של ה-thread.",
@@ -861,10 +855,293 @@
         "shutdown מוגדר: drain מול abort, stop תחת mutex, notify_all, join, ואזהרה מ-join מתוך worker"
       ],
       "explanation": "שאלת design קלאסית. מועמד חזק מגדיר במפורש את המקרים הקשים: exceptions, תור מלא, משימה שמחכה למשימה, וסדר ה-shutdown.",
-      "lesson": "conc.threads",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "צריך להריץ שני threads, A ו-B, כך ש-B יתחיל את העבודה שלו רק אחרי ש-A **סיים** לגמרי. איזה מימוש מבטיח את זה?",
+      "choices": [
+        "A מבצע `detach()`, ו-B מחכה בלולאה עד ש-`a.joinable()` מחזיר false",
+        "B קורא ל-`std::this_thread::yield()` כמה פעמים לפני שהוא מתחיל, כדי לתת ל-A לסיים",
+        "main יוצר את A, קורא `a.join()`, ורק אחר כך יוצר את B",
+        "main יוצר את A לפני B, ולכן A תמיד ירוץ ויסיים ראשון"
+      ],
+      "answer": 2,
+      "explanation": "`join()` חוסם עד שה-thread מסתיים, וסיום ה-thread מסתנכרן עם החזרה מ-join, כך שכל מה ש-A כתב גלוי למי שבא אחרי ה-join. סדר יצירה, yield ו-joinable לא אומרים כלום על סיום העבודה.",
+      "notes": [
+        "שגוי: אחרי detach האובייקט כבר לא joinable מיד, בלי קשר לשאלה אם ה-thread סיים. וגם אין יותר דרך לחכות לו דרך האובייקט.",
+        "שגוי: yield הוא רק רמז ל-scheduler. הוא לא מבטיח ש-A ירוץ, ובטח לא שיסיים.",
+        "נכון: join מחכה לסיום A, וכל הכתיבות של A מסונכרנות (happens-before) עם הקוד שאחרי ה-join. רק אז B בכלל נוצר.",
+        "שגוי: סדר היצירה לא קובע סדר ריצה. ה-scheduler יכול להריץ את B ראשון, ו-A יכול להיות מופסק באמצע לזמן ארוך."
+      ],
+      "problem": "Qualcomm interview: create two threads and make one wait for the other",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1939505/qualcomm-senior-engineer-hyderabad-april-ffzb/"
+      ],
+      "id": "conc.threads.q31",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "thread A מחשב ערך `int` ו-thread B צריך לחכות לו ולהשתמש בו. איזה מנגנון גם מחכה נכון וגם מעביר את הערך בלי data race?",
+      "choices": [
+        "`std::promise<int>` ש-A קורא לו `set_value`, ו-B קורא `get()` על ה-`std::future<int>` המתאים",
+        "`volatile int result` גלובלי ש-A כותב, ו-B קורא אחרי `sleep_for(100ms)`",
+        "`int result` גלובלי, ו-B בודק בלולאה `while (result == 0) {}`",
+        "`int result` גלובלי ו-`std::atomic<bool> ready`, כש-A כותב `ready.store(true, std::memory_order_relaxed)` ו-B מחכה ל-`ready.load(std::memory_order_relaxed)`"
+      ],
+      "answer": 0,
+      "explanation": "promise/future הוא ערוץ חד-פעמי: get() חוסם עד set_value, ו-set_value מסתנכרן עם get(), כך שהערך גלוי בבטחה. דגל relaxed, volatile או sleep לא יוצרים happens-before.",
+      "notes": [
+        "נכון: set_value מאחסן את הערך במצב המשותף ומסתנכרן עם get(). B חוסם בלי busy-wait עד שהערך מוכן.",
+        "שגוי: volatile לא נותן סנכרון בין threads, ו-sleep רק מקטין את הסיכוי לבעיה. זה עדיין data race.",
+        "שגוי: קריאה וכתיבה לא מסונכרנות של int הן data race (UB). הקומפיילר רשאי להוציא את הקריאה מהלולאה ולהיתקע לנצח, ו-0 עשוי להיות ערך חוקי של התוצאה.",
+        "שגוי: relaxed לא יוצר synchronizes-with. B יכול לראות ready == true ועדיין לקרוא ערך ישן של result, וזה גם data race על int רגיל. צריך release ב-store ו-acquire ב-load."
+      ],
+      "id": "conc.threads.q32",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "main יוצר `std::thread a(work)` ומעביר reference אליו ל-thread B. B קורא `a.join()` ומסיים. אחרי ש-B הסתיים (main עשה לו join), main קורא שוב `a.join()`. מה קורה?",
+      "choices": [
+        "deadlock: main מחכה ל-B ו-B מחכה ל-A",
+        "הקריאה של main חוזרת מיד, כי ה-thread כבר הסתיים",
+        "הקריאה של B ל-join כבר לא חוקית: רק ה-thread שיצר את A רשאי לעשות לו join, ולכן std::terminate נקרא",
+        "`a.join()` של main זורק `std::system_error`, כי אחרי join מוצלח האובייקט כבר לא joinable"
+      ],
+      "answer": 3,
+      "explanation": "כל thread (חוץ מ-A עצמו) רשאי לקרוא join, אבל רק פעם אחת: אחרי join מוצלח `joinable()` הוא false, וקריאה נוספת ל-join זורקת std::system_error. אם שתי הקריאות היו מתבצעות במקביל על אותו אובייקט, זה היה data race.",
+      "notes": [
+        "שגוי: B כבר סיים (main עשה לו join), ו-A הסתיים לפני ש-B חזר מה-join שלו. אין כאן אף אחד שמחכה למישהו אחר.",
+        "שגוי: join על אובייקט שכבר לא joinable לא חוזר בשקט. התקן דורש לזרוק std::system_error (invalid_argument).",
+        "שגוי: אין דרישה שה-thread היוצר יבצע את ה-join. כל thread אחר מ-A רשאי, כל עוד הקריאות לא מתבצעות במקביל על אותו אובייקט.",
+        "נכון: ה-join של B הפך את האובייקט ל-not joinable. ה-join השני מפר את התנאי המקדים וזורק std::system_error."
+      ],
+      "id": "conc.threads.q33",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "prompt": "הפונקציה מפעילה worker שמשתמש בקונפיגורציה. ה-worker קורא לפעמים ערכים מוזרים או קורס. איפה הבאג?",
+      "lang": "cpp",
+      "code": "std::thread start_worker() {\n  Config cfg = load_config();\n  return std::thread([&cfg] {\n    for (;;) {\n      use(cfg);\n    }\n  });\n}",
+      "bugLine": 3,
+      "choices": [
+        "אי אפשר להחזיר std::thread מפונקציה לפי ערך, כי הוא לא copyable",
+        "ה-lambda לוכדת reference ל-cfg שחי על ה-stack של start_worker. הפונקציה חוזרת, ה-frame נעלם, וה-worker ניגש ל-dangling reference",
+        "כל ה-threads של process חולקים stack אחד, ולכן ה-worker דורס את cfg של ה-thread הקורא",
+        "ה-lambda צריכה להיות `mutable`, אחרת אסור לקרוא ל-use"
+      ],
+      "answer": 1,
+      "explanation": "לכל thread יש stack משלו, אבל כולם באותו address space, ולכן pointer או reference למשתנה מקומי עובר בין threads בלי בעיה, כל עוד המשתנה חי. כאן start_worker חוזרת מיד ו-cfg מת. התיקון: ללכוד לפי ערך (`[cfg]`) או להעביר ownership.",
+      "notes": [
+        "שגוי: std::thread הוא move-only, והחזרה לפי ערך היא move (או copy elision). זה חוקי לגמרי.",
+        "נכון: lifetime של cfg מסתיים כש-start_worker חוזרת, וה-thread החדש ממשיך לקרוא מזיכרון שה-stack של ה-thread הקורא כבר ממחזר. זה use-after-scope.",
+        "שגוי: לכל thread stack נפרד. הבעיה היא לא שיתוף stack אלא אורך החיים של המשתנה על ה-stack של ה-thread הקורא.",
+        "שגוי: mutable נדרש רק כדי לשנות משתנים שנלכדו לפי ערך. use(cfg) עם reference לא דורש אותו, וזה לא קשור לקריסה."
+      ],
+      "problem": "Qualcomm interview: how the stack behaves in a multi-threaded program",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1341747/qualcomm-by-monty4597-ys8n/"
+      ],
+      "id": "conc.threads.q34",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "thread A מעביר ל-thread B pointer למשתנה מקומי שנמצא על ה-stack של A. מתי מותר ל-B להשתמש ב-pointer?",
+      "choices": [
+        "רק אם המשתנה מוגדר `thread_local`",
+        "כל עוד המשתנה עדיין חי (למשל A עושה join ל-B לפני שהפונקציה שלו חוזרת) והגישות מסונכרנות",
+        "רק אם A ו-B רצים על אותו core",
+        "אף פעם: ה-MMU מפריד בין ה-stacks של threads שונים, ו-B יקבל segmentation fault"
+      ],
+      "answer": 1,
+      "explanation": "threads של אותו process חולקים address space אחד, וה-stack של A הוא סתם אזור זיכרון שגלוי לכולם. מה שקובע הוא lifetime (המשתנה חייב להתקיים לאורך כל השימוש) וסנכרון (אם מישהו כותב).",
+      "notes": [
+        "שגוי: thread_local נותן לכל thread עותק משלו. ה-pointer של A יצביע על העותק של A, וזה לא מה שהופך את השימוש לחוקי.",
+        "נכון: אם A מחכה (join) ל-B לפני שהמשתנה יוצא מ-scope, ה-pointer תקף, ו-join גם מסנכרן. זה דפוס נפוץ ב-fork-join.",
+        "שגוי: ה-core לא משנה דבר. הזיכרון משותף בין כל ה-cores, והשאלה היא רק lifetime וסנכרון.",
+        "שגוי: אין הפרדת MMU בין threads של אותו process. כולם רואים את אותו מרחב כתובות, כולל ה-stacks של האחרים."
+      ],
+      "id": "conc.threads.q35",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "thread_local int counter = 0;\n\nvoid work() {\n  for (int i = 0; i < 1000; ++i) ++counter;\n  std::printf(\"%d \", counter);\n}\n\nint main() {\n  std::thread a(work), b(work);\n  a.join();\n  b.join();\n  std::printf(\"%d\\n\", counter);\n}",
+      "choices": [
+        "לא מוגדר: data race על counter",
+        "`1000 2000 2000`",
+        "`1000 1000 2000`",
+        "`1000 1000 0`"
+      ],
+      "answer": 3,
+      "explanation": "thread_local נותן לכל thread עותק נפרד, שמאותחל ל-0 כשה-thread מתחיל. כל worker מגדיל את העותק שלו ל-1000, ו-main מדפיס את העותק של עצמו, שאף אחד לא נגע בו.",
+      "notes": [
+        "שגוי: אין race, כי כל thread ניגש רק לעותק שלו. thread_local הוא בדיוק הדרך לבטל שיתוף.",
+        "שגוי: זה היה נכון למשתנה גלובלי רגיל עם סנכרון. כאן לכל thread עותק נפרד, ואף thread לא רואה את ההגדלות של אחר.",
+        "שגוי: שני ה-workers מדפיסים 1000 כל אחד, אבל main ניגש לעותק שלו, לא לסכום של העותקים.",
+        "נכון: שני עותקים של workers מגיעים ל-1000, והעותק של main נשאר 0."
+      ],
+      "id": "conc.threads.q36",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ספריית threads ממומשת כולה ב-user space במודל M:1: כל ה-threads של ה-process ממופים ל-kernel thread אחד, וה-scheduler של הספרייה מחליף ביניהם. אחד ה-threads קורא ל-`read()` חוסם על socket שאין בו נתונים. מה קורה?",
+      "choices": [
+        "כל ה-threads של ה-process נחסמים, כי ה-kernel רואה ישות תזמון אחת והיא ישנה",
+        "ה-kernel מפזר את שאר ה-threads ל-cores אחרים כדי שימשיכו לרוץ",
+        "read מחזיר מיד EAGAIN, כי threads ב-user space תמיד עובדים במצב non-blocking",
+        "רק ה-thread הזה נחסם, וה-scheduler של הספרייה מעביר את ה-CPU ל-thread אחר"
+      ],
+      "answer": 0,
+      "explanation": "במודל M:1 ה-kernel לא יודע שיש כמה threads. syscall חוסם מרדים את ה-kernel thread היחיד, וה-scheduler של הספרייה לא מקבל הזדמנות לרוץ. זה, יחד עם חוסר היכולת לנצל כמה cores, החיסרון המרכזי. היתרון: יצירה והחלפה זולות מאוד בלי syscall.",
+      "notes": [
+        "נכון: ה-kernel רואה thread אחד, והוא חסום. אף user thread אחר לא ירוץ עד ש-read יחזור.",
+        "שגוי: ה-kernel לא יודע על קיום ה-user threads, ולכן לא יכול לתזמן אותם על cores אחרים. זה גם הסיבה שמודל M:1 לא מנצל מקביליות.",
+        "שגוי: ה-socket עצמו לא הופך ל-non-blocking רק כי הספרייה רצה ב-user space. read על socket חוסם יחסום.",
+        "שגוי למודל M:1 טהור: זה קורה רק אם הספרייה עוטפת את כל ה-I/O בקריאות non-blocking ובאירועים (כמו ב-runtimes מודרניים), או במודל M:N."
+      ],
+      "problem": "Qualcomm interview: user-level vs kernel-level threads",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/5966607/qualcomm-offcampus-by-anonymous_user-cmcm/"
+      ],
+      "id": "conc.threads.q37",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה היתרון המרכזי של user-level threads (מודל M:1) על פני kernel threads?",
+      "choices": [
+        "ה-kernel מתזמן אותם לפי עדיפויות real-time",
+        "הם מנצלים כמה cores במקביל טוב יותר",
+        "יצירה ו-context switch זולים מאוד, בלי syscall ובלי מעבר ל-kernel",
+        "syscall חוסם של thread אחד לא משפיע על האחרים"
+      ],
+      "answer": 2,
+      "explanation": "ההחלפה בין user threads היא שמירה ושחזור של רגיסטרים בתוך ה-process, בסדר גודל של עשרות ns, לעומת context switch של kernel. המחיר: אין מקביליות אמיתית ו-syscall חוסם עוצר את כולם.",
+      "notes": [
+        "שגוי: ה-kernel לא מכיר אותם בכלל, ולכן לא יכול לתזמן אותם לפי שום מדיניות.",
+        "שגוי: ההפך. ב-M:1 יש kernel thread אחד, ולכן הכול רץ על core אחד בכל רגע.",
+        "נכון: זה היתרון שבגללו קיימים green threads, coroutines ו-fibers: אלפים או מיליונים מהם, והחלפה בלי kernel.",
+        "שגוי: זה בדיוק החיסרון של M:1. syscall חוסם מרדים את ה-kernel thread היחיד."
+      ],
+      "id": "conc.threads.q38",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "runtime במודל M:N (כמו goroutines ב-Go) מריץ אלפי user threads מעל מספר קטן של kernel threads. אחד ה-user threads נכנס ל-syscall חוסם שלא ניתן להפוך ל-non-blocking (למשל קריאת קובץ מדיסק). מה ה-runtime עושה כדי שהשאר ימשיכו לרוץ?",
+      "choices": [
+        "כלום: כל ה-user threads שממופים לאותו kernel thread נחסמים עד שה-syscall חוזר",
+        "הוא שולח signal ל-kernel thread החסום כדי לבטל את ה-syscall ולנסות שוב מאוחר יותר",
+        "הוא מנתק את ה-kernel thread החסום מה-run queue של ה-user threads, ומעביר את התור ל-kernel thread אחר (חדש או רדום) שממשיך להריץ אותם",
+        "הוא מעביר את ה-syscall ל-kernel thread ייעודי ב-SCHED_FIFO כדי שיסתיים מהר יותר"
+      ],
+      "answer": 2,
+      "explanation": "ב-M:N ה-runtime יודע מתי user thread נכנס ל-syscall. הוא משאיר את ה-kernel thread חסום עם ה-user thread הזה, ונותן את ההקשר של התזמון (התור) ל-kernel thread אחר. זה הפתרון לחיסרון הקלאסי של M:1, במחיר של מימוש מורכב.",
+      "notes": [
+        "שגוי: זה המצב ב-M:1 טהור. כל הטעם של M:N הוא שאפשר לנתק את שאר ה-user threads מה-kernel thread שנחסם.",
+        "שגוי: ביטול syscall באמצע עם signal לא אמין ולא מחזיר את העבודה. read מדיסק בדרך כלל אפילו לא interruptible.",
+        "נכון: זה ה-handoff: ה-kernel thread החסום נשאר עם ה-syscall, ו-kernel thread אחר לוקח את התור וממשיך להריץ את שאר ה-user threads.",
+        "שגוי: עדיפות לא מקצרת המתנה ל-I/O, ואין קשר בין זה לבין המשך הריצה של שאר ה-user threads."
+      ],
+      "id": "conc.threads.q39",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 4,
+      "type": "code",
+      "prompt": "ממש `ThreadPool` עם מספר workers קבוע שנקבע בבנאי, ומתודה `submit(f)` שמקבלת callable בלי ארגומנטים ומחזירה `std::future` לתוצאה שלו. exception בתוך משימה צריך להגיע למי שקורא `get()`. ה-destructor מחכה שכל המשימות שכבר בתור יסתיימו, ואז מסיים את ה-workers. בלי busy-waiting.",
+      "lang": "cpp",
+      "starter": "class ThreadPool {\npublic:\n  explicit ThreadPool(unsigned n);\n  template <class F> auto submit(F f) -> std::future<decltype(f())>;\n  ~ThreadPool();\n};",
+      "modelAnswer": "#include <condition_variable>\n#include <functional>\n#include <future>\n#include <memory>\n#include <mutex>\n#include <queue>\n#include <stdexcept>\n#include <thread>\n#include <vector>\n\nclass ThreadPool {\n  std::vector<std::thread> workers_;\n  std::queue<std::function<void()>> tasks_;   // guarded by m_\n  std::mutex m_;\n  std::condition_variable cv_;\n  bool stop_ = false;                          // guarded by m_\n\n  void loop() {\n    for (;;) {\n      std::function<void()> task;\n      {\n        std::unique_lock lk(m_);\n        cv_.wait(lk, [this] { return stop_ || !tasks_.empty(); });\n        if (stop_ && tasks_.empty()) return;   // drain queued work, then exit\n        task = std::move(tasks_.front());\n        tasks_.pop();\n      }                                        // run the task WITHOUT the lock\n      task();\n    }\n  }\n\npublic:\n  explicit ThreadPool(unsigned n) {\n    if (n == 0) n = 1;\n    for (unsigned i = 0; i < n; ++i) workers_.emplace_back([this] { loop(); });\n  }\n\n  template <class F>\n  auto submit(F f) -> std::future<decltype(f())> {\n    using R = decltype(f());\n    // packaged_task is move-only; std::function needs copyable, so wrap in shared_ptr\n    auto pt = std::make_shared<std::packaged_task<R()>>(std::move(f));\n    std::future<R> fut = pt->get_future();\n    {\n      std::lock_guard lk(m_);\n      if (stop_) throw std::runtime_error(\"submit after shutdown\");\n      tasks_.emplace([pt] { (*pt)(); });     // exceptions are stored in the future\n    }\n    cv_.notify_one();\n    return fut;\n  }\n\n  ~ThreadPool() {\n    {\n      std::lock_guard lk(m_);\n      stop_ = true;                            // set under the lock: no lost wakeup\n    }\n    cv_.notify_all();\n    for (auto& t : workers_) t.join();\n  }\n};",
+      "rubric": [
+        "תור משימות ו-stop מוגנים ב-mutex אחד, ו-worker מחכה על condition variable עם predicate (בלי busy-wait)",
+        "המשימה רצה **מחוץ** ל-lock, אחרת ה-workers מסודרים בטור ומשימה שקוראת ל-submit נתקעת",
+        "exception מגיע ל-future (packaged_task או promise עם set_exception), ולא הורג את ה-worker",
+        "כיבוי: stop נקבע תחת ה-lock, notify_all, join לכל ה-workers, והתור מתרוקן לפני יציאה (או מדיניות מוצהרת אחרת)",
+        "דיון: מספר workers (hardware_concurrency מול משימות I/O), תור חסום ו-backpressure, work stealing"
+      ],
+      "explanation": "הליבה היא תור מוגן + condition variable עם predicate. שתי הטעויות הנפוצות: להריץ את המשימה כשה-lock מוחזק, ולשנות את stop בלי ה-lock (lost wakeup בכיבוי).",
+      "problem": "Microsoft interview: implement your own thread pool",
       "tags": [
         "microsoft"
-      ]
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/5020134/microsoft-sde-2-hyderabad-by-anonymous_u-vaqf/",
+        "https://leetcode.com/discuss/post/6526940/microsoft-interview-experience-sde-2-hyd-mcj3/"
+      ],
+      "id": "conc.threads.q40",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 4,
+      "type": "bug",
+      "prompt": "worker של thread pool. ה-pool עם 8 workers מתנהג כאילו יש לו worker אחד, ומשימה שמגישה תת-משימה ל-pool נתקעת. איפה הבאג?",
+      "lang": "cpp",
+      "code": "void ThreadPool::worker() {\n  for (;;) {\n    std::unique_lock lk(m_);\n    cv_.wait(lk, [&] { return stop_ || !tasks_.empty(); });\n    if (stop_ && tasks_.empty()) return;\n    auto task = std::move(tasks_.front());\n    tasks_.pop();\n    task();\n  }\n}",
+      "bugLine": 8,
+      "choices": [
+        "המשימה רצה כש-lk עדיין מחזיק את m_: רק worker אחד מריץ משימה בכל רגע, ו-submit מתוך משימה מנסה לנעול את m_ שכבר נעול על ידי אותו thread",
+        "`std::move` על `tasks_.front()` משאיר את התור במצב לא תקין",
+        "תנאי היציאה צריך להיות `stop_` לבד, אחרת ה-worker לא יוצא לעולם",
+        "צריך `if` במקום predicate ב-wait, כדי לא לבדוק את התור פעמיים"
+      ],
+      "answer": 0,
+      "explanation": "ה-unique_lock חי עד סוף איטרציית הלולאה, ולכן task() רצה תחת ה-mutex. כל שאר ה-workers חסומים על ה-mutex, ו-submit מתוך משימה נועל mutex לא-רקורסיבי שכבר מוחזק על ידי אותו thread (UB, בפועל deadlock). התיקון: לשחרר (`lk.unlock()` או scope נפרד) לפני task().",
+      "notes": [
+        "נכון: lk נהרס רק בסוף האיטרציה. task() מחזיקה את m_ לאורך כל הריצה, וזה גם מסדר בטור את כל ה-workers וגם יוצר self-deadlock כשמשימה מגישה משימה.",
+        "שגוי: move מ-front ואחריו pop תקין לגמרי. האובייקט שנשאר אחרי move נהרס ב-pop.",
+        "שגוי: התנאי `stop_ && tasks_.empty()` מכוון: ה-workers מרוקנים את התור לפני יציאה. הם כן יוצאים כשהתור ריק.",
+        "שגוי: ה-predicate הוא בדיוק מה שמגן מפני spurious wakeups. if היה מוסיף באג, לא מתקן אחד."
+      ],
+      "id": "conc.threads.q41",
+      "lesson": "conc.threads"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-thread pool, ה-worker מחכה עם `cv.wait(lk, [&]{ return stop || !tasks.empty(); })` ויוצא רק כש-`stop && tasks.empty()`. ה-destructor קובע `stop = true` תחת ה-lock, קורא `notify_all()` ועושה join לכולם. ברגע ההריסה יש 500 משימות בתור. מה קורה להן?",
+      "choices": [
+        "רק משימה אחת לכל worker מתבצעת, ואז הם יוצאים",
+        "ה-destructor נתקע לנצח, כי notify_all נשלח לפני שה-workers מסיימים את המשימות",
+        "הן נזרקות: ה-workers רואים stop ויוצאים מיד",
+        "הן מתבצעות כולן: ה-workers ממשיכים לשלוף כל עוד התור לא ריק, ויוצאים רק כשהוא מתרוקן"
+      ],
+      "answer": 3,
+      "explanation": "תנאי היציאה דורש גם stop וגם תור ריק, ולכן זו מדיניות \"drain\": הכיבוי מחכה לכל העבודה שכבר נשלחה. מדיניות אחרת (לזרוק משימות ולהחזיר exception ל-futures שלהן) צריכה לוגיקה מפורשת.",
+      "notes": [
+        "שגוי: אין שום מונה שמגביל משימה אחת. כל worker חוזר ללולאה ושולף שוב.",
+        "שגוי: notify_all רק מעיר את מי שישן. worker שעסוק במשימה בודק את ה-predicate כשהוא חוזר ל-wait, ו-stop כבר true, כך שאין המתנה אינסופית.",
+        "שגוי: זה היה נכון אם תנאי היציאה היה `if (stop) return;`. כאן התור חייב להיות ריק.",
+        "נכון: ה-predicate מתקיים כל עוד יש משימות, ותנאי היציאה לא מתקיים עד שהתור ריק. ה-join מחכה לכל ה-500."
+      ],
+      "id": "conc.threads.q42",
+      "lesson": "conc.threads"
     }
   ]
 }

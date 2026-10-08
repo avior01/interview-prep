@@ -180,6 +180,50 @@
         {
           "term": "Serial-number arithmetic",
           "def": "השוואת מונים שעוטפים: מחסרים ב-unsigned ומפרשים את ההפרש כ-signed (RFC 1982, Linux `time_after`). תקף כשההפרש האמיתי קטן מחצי הטווח."
+        },
+        {
+          "term": "usual arithmetic conversions (signed מול unsigned)",
+          "def": "כשמשווים או מחברים signed ו-unsigned מאותו רוחב או רחב יותר, ה-signed מומר ל-unsigned, ו-1- הופך לערך המקסימלי. std::cmp_less ודומיו (C++20) משווים נכון."
+        },
+        {
+          "term": "חיסור unsigned",
+          "def": "תוצאה של חיסור unsigned לעולם לא שלילית: כשהמחסר גדול יותר, היא עוטפת לערך ענק. לכן `a - b > 0` עם size_t שקול ל-`a != b`, ומשווים ישירות `a > b`."
+        },
+        {
+          "term": "בדיקת overflow בכפל",
+          "def": "ל-signed בודקים לפני הכפל (`a > INT_MAX / b` לחיוביים), או עם טיפוס רחב יותר, או עם __builtin_mul_overflow / ckd_mul. ל-unsigned אפשר לכפול ואז לבדוק `p / b != a`."
+        },
+        {
+          "term": "LP64 / LLP64",
+          "def": "מודלי נתונים של 64 ביט: ב-Linux (LP64) long הוא 64 ביט, ב-Windows (LLP64) long הוא 32 ביט. לכן קוד נייד משתמש ב-int64_t ולא ב-long."
+        },
+        {
+          "term": "כפל ארוך בבסיס 2^16",
+          "def": "a·b = aH·bH·2^32 + (aH·bL + aL·bH)·2^16 + aL·bL. ל-32 ביטים נמוכים מספיקים 3 כפלים, למכפלה מלאה 4. הסכום האמצעי יכול לעבור 32 ביט ולכן מחושב ברוחב 64."
+        },
+        {
+          "term": "טיפוס של shift",
+          "def": "הטיפוס של `a << k` נקבע לפי a אחרי promotion. `1 << k` הוא int גם אם התוצאה מושמת ל-uint64_t. shift בכמות ≥ רוחב הטיפוס הוא UB. לרגיסטרים רחבים משתמשים ב-1ULL או uint64_t{1}."
+        },
+        {
+          "term": "sign extension",
+          "def": "המרה של ערך signed שלילי לטיפוס רחב יותר משכפלת את ביט הסימן: int של 0x80000000 הופך ל-0xFFFFFFFF80000000 ב-64 ביט."
+        },
+        {
+          "term": "arithmetic shift",
+          "def": "shift ימינה של signed שלילי ממלא בביטי 1 מלמעלה (מוגדר כך מאז C++20). לולאה שמזיזה עד שהערך 0 לעולם לא מסתיימת על מספר שלילי."
+        },
+        {
+          "term": "Kernighan popcount",
+          "def": "`x &= x - 1` מנקה את הביט הדלוק הנמוך ביותר, ולכן מספר האיטרציות שווה למספר הביטים הדלוקים. על signed, INT_MIN - 1 הוא UB. ב-C++20 יש std::popcount."
+        },
+        {
+          "term": "רצף אחדות ארוך ביותר",
+          "def": "`x &= x << 1` מקצר כל רצף ב-1, ומספר הצעדים עד 0 הוא אורך הרצף הארוך. בטבלת lookup לפי byte שומרים לכל byte גם את האחדות בקצוות כדי לחבר רצפים בין bytes."
+        },
+        {
+          "term": "קדימות אופרטורים במאקרו ביטים",
+          "def": "~ קודם ל-<<, ו-& קודם ל-|, אבל שניהם חלשים מ-==. מאקרו צריך סוגריים סביב כל פרמטר וסביב כל הביטוי."
         }
       ]
     }
@@ -454,10 +498,7 @@
         "שגוי: b == 0 אף פעם לא גולש, וההחזרה true עבורו נכונה."
       ],
       "explanation": "מאחר ש-signed overflow 'לא יכול לקרות', `a + b < a` שקול מתמטית ל-`b < 0`, ו-GCC/Clang עושים את הפישוט הזה. בדיקה נכונה לפני הפעולה: `if (b > 0 && a > INT_MAX - b)` ו-`if (b < 0 && a < INT_MIN - b)`, או `__builtin_add_overflow`. b==0 אף פעם לא גולש.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q13",
@@ -481,10 +522,7 @@
         "שגוי: חוסר rounding יוצר הטיה של עד LSB, לא שגיאה 'תמיד', ובוודאי לא את קפיצת הסימן שהשאלה מתארת."
       ],
       "explanation": "המכפלה המקסימלית בערך מוחלט היא 2^30, שנכנסת ב-int32. אבל +1 לא ייצוגי ב-Q15, ולכן המקרה היחיד 1- כפול 1- עוטף ל-1-. תיקון: saturation לפני ההמרה. גם הוראות SIMD נבדלות כאן: `SQRDMULH` ב-ARM עושה saturation ל-0x7FFF, ואילו `_mm_mulhrs_epi16` ב-x86 מחזיר 0x8000 בדיוק באותו מקרה. shift ימינה של שלילי הוא implementation-defined לפני C++20 ומוגדר כ-arithmetic מ-C++20. חוסר rounding הוא הטיה של חצי LSB, לא באג נכונות.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q14",
@@ -550,10 +588,7 @@
         "שגוי: start שלילי (או 0) נכשל בתנאי כבר בכניסה, והפונקציה מחזירה 0 מיד."
       ],
       "explanation": "הלוגיקה של הפונקציה כולה נשענת על wrap שהתקן מגדיר כ-UB. אחרי ש-i>0 ומוסיפים לו חיובי, 'ידוע' ש-i נשאר חיובי, והתנאי מתקפל ל-true. ב-`-O0` אין את הניתוח הזה ולכן מתקבל wrap בחומרה. start שלילי פשוט מחזיר 0. תיקון: לחשב ב-unsigned או ב-int64_t ולבדוק מול INT_MAX במפורש.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q17",
@@ -576,10 +611,7 @@
         "שגוי: narrowing נבדק רק ב-brace-initialization; השמה רגילה מתקמפלת."
       ],
       "explanation": "integer promotion ממיר uint16_t ל-int (כי int מכיל את כל הערכים של uint16_t), ולא ל-unsigned. הכפל הוא int*int וגולש: signed overflow, UB. בפועל כנראה יודפס 4294836225, אבל UBSan ידווח, והקומפיילר רשאי לנצל את זה. תיקון: `uint32_t(a) * b`. השמה רגילה (לא brace-init) לא בודקת narrowing.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q18",
@@ -600,10 +632,7 @@
         "נכון: t1 − t0 ב-unsigned נותן את ההפרש מודולו 2^32, וההמרה ל-int32_t (מודולו מ-C++20) מפרשת הפרש קטן מ-2^31 ticks (כ-10.7 שניות) כחיובי. זה serial-number arithmetic."
       ],
       "explanation": "המונה עוטף כל 2^32/200e6 ≈ 21.5 שניות. `t1 - t0` ב-unsigned נותן את ההפרש הנכון מודולו 2^32, והמרה ל-int32_t (מוגדרת כמודולו מ-C++20) מפרשת אותו כחיובי אם הוא קטן מ-2^31 ticks, בערך 10.7 שניות. זה serial-number arithmetic (RFC 1982), ואותו טריק משמש ב-Linux `time_after`. `t1 > t0` ו-int64 נכשלים כשהמונה עוטף בין האירועים, ו-`t1 - t0 > 0` ב-unsigned נכון לכל t1 != t0.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q19",
@@ -751,10 +780,7 @@
         "שגוי: hi = −1 הוא מצב עצירה רגיל: lo <= hi נכשל והלולאה יוצאת לפני גישה."
       ],
       "explanation": "כשהמטרה בחצי העליון, lo ו-hi שניהם מעל 750 מיליון, והסכום עובר את 2147483647. זה הבאג שחי שנים ב-`Arrays.binarySearch` של Java. `lo + (hi - lo) / 2` לא גולש כי ההפרש אי-שלילי וקטן מ-hi. 1.5 מיליארד עדיין נכנס ב-int, כך שה-cast תקין כאן. hi=-1 הוא מצב עצירה רגיל של closed range: הלולאה יוצאת לפני גישה.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q26",
@@ -804,10 +830,7 @@
         "נכון: std::midpoint מוגדר ללא overflow ומעגל לכיוון הארגומנט הראשון, כלומר למטה כש-lo <= hi."
       ],
       "explanation": "`hi - lo` אי-שלילי ולא גדול מ-INT_MAX, ולכן `lo + (hi - lo) / 2` בטוח. הסכום ב-unsigned הוא לכל היותר 2^32-2, שנכנס ב-unsigned של 32 ביט, והחצי שלו קטן מ-INT_MAX. `std::midpoint` מוגדר ללא overflow ומעגל לכיוון הארגומנט הראשון, כלומר למטה כש-lo<=hi. שתי הגרסאות עם `lo + hi` ב-int גולשות (UB) כשהסכום עובר את INT_MAX; ה-shift לא עוזר כי הגלישה קורית בחיבור.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q28",
@@ -847,10 +870,7 @@
         "מציין UBSan ב-CI עם בדיקות ערכי קצה ואזהרות קומפיילר"
       ],
       "explanation": "תשובה חזקה מפרידה בין 'איך המספר מיוצג' ל'מה מותר לקומפיילר להניח', ומראה שהפתרון הוא תכנון טיפוסים ובדיקות, לא דגל שמכבה את הבעיה.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q30",
@@ -874,10 +894,7 @@
         "שגוי: std::abs(int) מחזיר int; הגרסה שמחזירה double היא std::fabs או abs על double."
       ],
       "explanation": "הטווח של int32 אסימטרי, ולערך המינימלי אין נגדי. `std::abs(INT32_MIN)` הוא UB, ובפועל לרוב מחזיר INT32_MIN עצמו, שלילי, ולכן השיא האמיתי לא נספר. תיקון: להחזיר `uint32_t` ולחשב `x < 0 ? 0u - uint32_t(x) : uint32_t(x)`, שמוגדר ונותן 2147483648. peak=0 תקין לערך מוחלט, size_t הוא האינדקס הנכון, ו-`std::abs(int)` מחזיר int.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q31",
@@ -901,10 +918,7 @@
         "שגוי: static_cast מ-const void* ל-const Det* חוקי כשהמצביע באמת מצביע על Det."
       ],
       "explanation": "comparator בחיסור עובד רק כשההפרש תמיד נכנס ב-int. עם sentinel של INT_MIN כל השוואה מול ערך אי-שלילי גולשת, והסימן ההפוך שובר את הסדר ואף את העקביות שהמיון מניח. תיקון: `return (pa > pb) - (pa < pb);`. qsort דורש רק את הסימן של התוצאה, אי-יציבות לא משנה את הסדר לפי power, וה-static_cast מ-`const void*` שמצביע על Det חוקי.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "microsoft"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q32",
@@ -934,10 +948,7 @@
         "נכון: |INT_MIN| = 2^31 לא ייצוגי ב-int, ולכן std::abs(INT_MIN) הוא UB."
       ],
       "explanation": "המנה INT_MIN/-1 היא 2^31, לא ייצוגית, ולכן UB (ב-x86 ההוראה idiv זורקת SIGFPE). התקן קובע במפורש שאם המנה לא ייצוגית, גם `a % b` הוא UB, למרות שהשארית המתמטית היא 0. `-INT_MIN` ו-`std::abs(INT_MIN)` הם signed overflow. `UINT_MAX + 1u` הוא אריתמטיקה unsigned ומוגדר כ-0. `static_cast<int16_t>(40000)` הוא conversion ולא אריתמטיקה: מ-C++20 מוגדר כמודולו 2^16 ונותן 25536- (לפני C++20 implementation-defined, אבל אף פעם לא UB).",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q33",
@@ -960,10 +971,7 @@
         "שגוי: ההשוואה האחרונה לא ממירה ל-unsigned: long long מכיל את כל ערכי unsigned int, ולכן ההשוואה signed ו-−1 < 0 true."
       ],
       "explanation": "`-1 < 0u`: int מול unsigned באותו rank, ה-int מומר ל-unsigned (4294967295) והתוצאה false. `-1 < us`: integer promotion הופך את unsigned short ל-int, כי int מכיל את כל ערכיו, וההשוואה היא 1- < 0, true. `ll < 0u`: ל-long long rank גבוה יותר והוא מכיל את כל ערכי unsigned int, ולכן ה-unsigned מומר ל-long long, ו-1- < 0 הוא true. 'unsigned תמיד מנצח' נכון רק כשה-rank שלו לא נמוך יותר.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q34",
@@ -981,10 +989,7 @@
         "O(1), ומציין ש-`__builtin_add_overflow` או intrinsics saturating הם החלופה כשמותר"
       ],
       "explanation": "הטריק הוא להעביר את b לצד השני של אי-השוויון: `a + b > INT32_MAX` שקול ל-`a > INT32_MAX - b`, והביטוי הימני לא גולש כש-b>0. באותו אופן לצד השלילי. כש-b ו-a בסימנים מנוגדים אין גלישה, והבדיקות לא מופעלות.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q35",
@@ -1000,10 +1005,7 @@
         "מחשב או מעריך טווחים: 21.5 שניות ל-32 ביט, אלפי שנים ל-64 ביט ב-200 MHz"
       ],
       "explanation": "השאלה בודקת אם המועמד יודע להפוך מונה עוטף לזמן מוחלט באופן בטוח, לנסח את ההנחה שבלעדיה האלגוריתם לא מוגדר, ולהכליל לבעיות מוכרות כמו Y2038 ו-GetTickCount.",
-      "lesson": "bugs.overflow",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "bugs.overflow"
     },
     {
       "id": "bugs.overflow.q36",
@@ -1050,6 +1052,390 @@
         "שגוי: כפל ב-Python float מעביר את התוצאה ל-float64 לפני החישוב, ולכן אין עטיפה: 200."
       ],
       "explanation": "int8 כפול Python int נשאר int8: 200 לא נכנס (מקסימום 127), ו-200-256 = 56-, בשקט. כפל ב-Python float מעביר את התוצאה ל-float64, ושם 200.0 מיוצג בלי בעיה. OverflowError נזרק רק כשה-Python int עצמו לא נכנס ב-dtype (למשל `a * 300`), לא כשהתוצאה גולשת.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q38",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס? (64 ביט, size_t הוא unsigned long)",
+      "code": "int a[] = {1, 2, 3, 4};\n\nint main() {\n    if (sizeof(a) / sizeof(a[0]) > -1)\n        std::printf(\"yes\\n\");\n    else\n        std::printf(\"no\\n\");\n}",
+      "lang": "cpp",
+      "choices": [
+        "`yes`",
+        "`no`",
+        "undefined behavior",
+        "שגיאת קומפילציה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: מתמטית 4 > -1, אבל ההשוואה לא מתבצעת על המספרים המתמטיים אלא אחרי המרה לטיפוס משותף.",
+        "נכון: הצד השמאלי הוא size_t (unsigned). לפי ה-usual arithmetic conversions, -1 מומר ל-size_t ונהיה SIZE_MAX, ולכן 4 > SIZE_MAX הוא false.",
+        "שגוי: ההמרה של -1 ל-unsigned מוגדרת היטב (modulo 2^N). אין כאן UB, רק תוצאה מפתיעה.",
+        "שגוי: זה מתקמפל. GCC מזהיר רק עם -Wsign-compare (שנכלל ב-Wall ב-C++)."
+      ],
+      "explanation": "כשמשווים signed ל-unsigned מאותו רוחב או רחב יותר, ה-signed מומר ל-unsigned, ומספר שלילי הופך לערך ענק. sizeof, size(), strlen ו-vector::size מחזירים unsigned, ולכן השוואה שלהם לערך שלילי היא מלכודת קלאסית. ב-C++20 יש std::cmp_greater ודומיה שמשווים נכון.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
+      ],
+      "problem": "NVIDIA: output of a signed vs unsigned int comparison",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q39",
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס? (int הוא 32 ביט)",
+      "code": "int i = -1;\nunsigned char c = 255;\nstd::printf(\"%d %d\\n\", i == c, (unsigned char)i == c);",
+      "lang": "cpp",
+      "choices": [
+        "`1 1`",
+        "`0 1`",
+        "`0 0`",
+        "`1 0`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: בהשוואה הראשונה c עובר integer promotion ל-int ושומר על הערך 255, ו-i נשאר -1. הם לא שווים.",
+        "נכון: `i == c` משווה -1 ל-255 כ-int: false. `(unsigned char)i` חותך את -1 ל-255, ואז שני הצדדים עוברים promotion ל-int עם הערך 255: true.",
+        "שגוי: ההמרה המפורשת ל-unsigned char הופכת את -1 ל-255, ולכן ההשוואה השנייה מצליחה.",
+        "שגוי: זה ההפך מהתוצאה, כי טיפוסים צרים מ-int עוברים קודם promotion ל-int ולא ל-unsigned."
+      ],
+      "explanation": "טיפוסים צרים מ-int (char, short, וגם ה-unsigned שלהם) עוברים promotion ל-int לפני כל פעולה, ושומרים על הערך. רק unsigned int ומעלה גורמים ל-signed להפוך ל-unsigned. זה ההבדל בין השאלה הזו לבין השוואה של int ל-unsigned.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q40",
+      "level": 3,
+      "type": "bug",
+      "prompt": "הפונקציה אמורה להחזיר true אם המחרוזת a ארוכה מ-b. היא מחזירה true כמעט תמיד. איפה הבאג?",
+      "code": "bool longer(const char* a, const char* b) {\n    return std::strlen(a) - std::strlen(b) > 0;\n}",
+      "lang": "cpp",
+      "choices": [
+        "strlen מחזיר size_t (unsigned). כש-a קצרה מ-b, החיסור עוטף לערך ענק שגדול מ-0. הביטוי false רק כשהאורכים שווים. צריך `std::strlen(a) > std::strlen(b)`",
+        "strlen לא סופר את ה-'\\0', ולכן ההשוואה יוצאת באחד",
+        "החיסור הוא signed overflow כשהמחרוזות ארוכות מאוד",
+        "צריך להמיר את התוצאה ל-bool במפורש"
+      ],
+      "answer": 0,
+      "bugLine": 2,
+      "notes": [
+        "נכון: חיסור של unsigned לעולם לא שלילי. תמיד משווים את שני הערכים ישירות, במקום לבדוק את סימן ההפרש.",
+        "שגוי: strlen עקבי בשני הצדדים, ולכן ה-'\\0' לא משפיע על ההשוואה.",
+        "שגוי: size_t הוא unsigned, ולכן החיסור עוטף באופן מוגדר. אין signed overflow.",
+        "שגוי: התוצאה של `>` כבר bool. הבעיה היא בחיסור."
+      ],
+      "explanation": "`x - y > 0` שקול ל-`x > y` רק בטיפוסים signed בלי overflow. עם unsigned הוא שקול ל-`x != y`. זה באג נפוץ גם עם `v.size() - 1` כשהווקטור ריק.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q41",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "a ו-b הם int חיוביים (int של 32 ביט). איזו בדיקה מזהה נכון, **לפני** הכפל, ש-`a * b` יגלוש?",
+      "choices": [
+        "`if ((long)a * b > INT_MAX)`",
+        "`if (a > INT_MAX / b)`",
+        "`if (a * b / b != a)`",
+        "`if (a * b < 0)`"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: long הוא 32 ביט ב-Windows (LLP64), ואז הכפל עדיין גולש. עם `(int64_t)a * b` הבדיקה הייתה נכונה.",
+        "נכון: INT_MAX / b מחושב בלי גלישה. אם a גדול ממנו, אז a * b > INT_MAX. לחיוביים זה מדויק, כי עיגול כלפי מטה בחילוק לא מפספס אף מקרה.",
+        "שגוי: אותה בעיה: a * b מחושב קודם, וזה UB אם יש גלישה. (עם unsigned זו בדיקה תקינה.)",
+        "שגוי: הכפל כבר בוצע, ו-signed overflow הוא UB. הקומפיילר רשאי להניח שמכפלה של חיוביים חיובית, ולמחוק את הבדיקה כולה."
+      ],
+      "explanation": "בדיקת overflow חייבת להתבצע בלי לבצע את הפעולה הגולשת: עם חילוק מראש, עם טיפוס רחב יותר שמובטח שמספיק (int64_t), או עם __builtin_mul_overflow, שמחזיר את התוצאה ודגל גלישה. ב-C23 יש ckd_mul.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=477855"
+      ],
+      "problem": "Qualcomm: detect overflow when multiplying two integers",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q42",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "a ו-b הם `uint32_t`, ו-b אינו 0. מחשבים `uint32_t p = a * b;` ובודקים `if (p / b != a) overflow();`. מה נכון?",
+      "choices": [
+        "זה נכון רק אם a < b",
+        "זה מזהה רק חלק מהגלישות, כי לפעמים p / b יוצא שווה ל-a למרות העטיפה",
+        "זה נכון ומוגדר: כפל unsigned עוטף modulo 2^32, ואם הייתה עטיפה, p / b שונה מ-a. (בדיקה זו לא עובדת עם signed, כי שם הכפל הגולש הוא UB)",
+        "זה UB, בדיוק כמו עם int"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: הבדיקה לא תלויה בסדר בין a ל-b.",
+        "שגוי: p = a·b - k·2^32 עם k ≥ 1, ולכן p < a·b ו-p / b < a. אין מקרה שבו העטיפה עוברת בלי זיהוי.",
+        "נכון: אם a * b < 2^32 אז p / b == a בדיוק. אם הייתה עטיפה, p קטן מהמכפלה האמיתית ב-k·2^32 לפחות, ולכן p / b קטן מ-a. הבדיקה מדויקת לכל b שאינו 0.",
+        "שגוי: unsigned overflow מוגדר בתקן כ-wraparound. רק signed overflow הוא UB."
+      ],
+      "explanation": "עם unsigned אפשר לבצע את הפעולה ואז לבדוק, כי העטיפה מוגדרת. עם signed חייבים לבדוק מראש. זו אחת הסיבות שקוד שמחשב גדלים (n * sizeof(T)) עובד עם size_t.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q43",
+      "level": 3,
+      "type": "short",
+      "prompt": "מה ה-n החיובי הגדול ביותר כך ש-`n * n` לא גולש ב-int של 32 ביט (INT_MAX = 2147483647)?",
+      "accept": [
+        "46340"
+      ],
+      "explanation": "√2147483647 ≈ 46340.95. 46340² = 2,147,395,600 ≤ INT_MAX, אבל 46341² = 2,147,488,281 > INT_MAX. זה מקרה קצה נפוץ בלולאות כמו `for (i = 2; i * i <= n; ++i)`: כש-n קרוב ל-INT_MAX, i * i גולש לפני שהתנאי נכשל. כותבים `i <= n / i`.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q44",
+      "level": 4,
+      "type": "short",
+      "prompt": "ל-ALU יש רק כפל של 16×16 ביט שמחזיר 32 ביט. צריך את **32 הביטים הנמוכים** של מכפלת שני מספרים unsigned של 32 ביט. a = aH·2^16 + aL ו-b = bH·2^16 + bL. כמה כפלי 16×16 צריך?",
+      "accept": [
+        "3"
+      ],
+      "explanation": "a·b = aH·bH·2^32 + (aH·bL + aL·bH)·2^16 + aL·bL. האיבר aH·bH·2^32 משפיע רק על ביטים 32 ומעלה, ולכן אפשר לוותר עליו. צריך aL·bL, aH·bL ו-aL·bH, כלומר 3 כפלים. מהאיברים האמצעיים צריך רק את 16 הביטים הנמוכים, כי הם מוזזים ב-16.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-off-campus/"
+      ],
+      "problem": "NVIDIA: 32-bit multiplication on an ALU with only 16-bit multiply",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q45",
+      "level": 4,
+      "type": "short",
+      "prompt": "ל-ALU יש רק כפל של 16×16 ביט שמחזיר 32 ביט. צריך את המכפלה **המלאה** של 64 ביט של שני מספרים unsigned של 32 ביט, בשיטה הישירה (בלי Karatsuba). כמה כפלי 16×16 צריך?",
+      "accept": [
+        "4"
+      ],
+      "explanation": "המכפלה המלאה צריכה את כל ארבעת האיברים: aL·bL, aL·bH, aH·bL ו-aH·bH. (Karatsuba מוריד ל-3 כפלים, אבל אחד מהם הוא של מספרים של 17 ביט, ולכן הוא לא מתאים ל-ALU של 16×16 בלי טיפול נוסף.) בחיבור האיברים האמצעיים צריך להיזהר: lh + hl יכול לעבור 32 ביט, ולכן מחברים אותם ברוחב 64.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q46",
+      "level": 4,
+      "type": "code",
+      "prompt": "נתונה פונקציה `uint32_t mul16(uint16_t a, uint16_t b)` שמחזירה מכפלה מלאה של 32 ביט. ממש `uint64_t mul32x32(uint32_t a, uint32_t b)` שמחזירה את המכפלה המלאה, ומשתמשת בכפל רק דרך mul16.",
+      "lang": "cpp",
+      "starter": "uint32_t mul16(uint16_t a, uint16_t b);\nuint64_t mul32x32(uint32_t a, uint32_t b);",
+      "modelAnswer": "#include <cstdint>\n\nuint32_t mul16(uint16_t a, uint16_t b) { return static_cast<uint32_t>(a) * b; }\n\nuint64_t mul32x32(uint32_t a, uint32_t b) {\n    uint16_t al = static_cast<uint16_t>(a), ah = static_cast<uint16_t>(a >> 16);\n    uint16_t bl = static_cast<uint16_t>(b), bh = static_cast<uint16_t>(b >> 16);\n    uint64_t ll = mul16(al, bl);\n    uint64_t lh = mul16(al, bh);\n    uint64_t hl = mul16(ah, bl);\n    uint64_t hh = mul16(ah, bh);\n    // lh + hl can exceed 32 bits, so add them in 64-bit before shifting.\n    return (hh << 32) + ((lh + hl) << 16) + ll;\n}",
+      "rubric": [
+        "מפרק כל קלט לחצי עליון ותחתון עם shift ו-cast (או מסכה), ב-unsigned",
+        "ארבעה כפלים: ll, lh, hl, hh, ומרכיב לפי a·b = hh·2^32 + (lh + hl)·2^16 + ll",
+        "מחבר את האיברים האמצעיים ברוחב 64 ביט, כי הסכום יכול לעבור 2^32 (carry)",
+        "בודק מקרי קצה: 0, 0xFFFFFFFF × 0xFFFFFFFF, וחזקות של 2^16",
+        "מזכיר שאם צריך רק 32 ביט נמוכים, מספיקים שלושה כפלים"
+      ],
+      "explanation": "זה כפל ארוך בבסיס 2^16. המלכודת העיקרית היא ה-carry: עבור a = b = 0xFFFFFFFF, lh + hl = 2 × 0xFFFE0001, שגדול מ-2^32. המימוש נבדק מול כפל ישיר של 64 ביט על ערכים כמו 0, 1, 0xFFFF, 0x10000, 0x80000000 ו-0xFFFFFFFF.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q47",
+      "level": 3,
+      "type": "bug",
+      "prompt": "C++20. הפונקציה מדליקה ביט k ברגיסטר של 64 ביט (k בין 0 ל-63). עבור k = 3 היא עובדת. עבור k = 31 היא מדליקה גם את כל 32 הביטים העליונים, ועבור k ≥ 32 התוצאה שגויה. איפה הבאג?",
+      "code": "uint64_t set_bit(uint64_t reg, unsigned k) {\n    return reg | (1 << k);\n}",
+      "lang": "cpp",
+      "choices": [
+        "reg צריך להיות מועבר by reference",
+        "`|` צריך להיות `&`",
+        "k צריך להיות int ולא unsigned",
+        "`1` הוא int של 32 ביט, ולכן `1 << k` מחושב ב-32 ביט. עבור k = 31 מתקבל INT_MIN, שעובר sign extension ל-0xFFFFFFFF80000000 בהמרה ל-uint64_t. עבור k ≥ 32 ה-shift הוא UB. צריך `1ULL << k` (או `uint64_t{1} << k`)"
+      ],
+      "answer": 3,
+      "bugLine": 2,
+      "notes": [
+        "שגוי: הפונקציה מחזירה את הערך החדש, וזה תקין. זה לא קשור לביטים השגויים.",
+        "שגוי: OR מדליק ביטים, וזה מה שרוצים. AND היה מכבה את כל השאר.",
+        "שגוי: הסוג של k לא משפיע על רוחב החישוב. מה שקובע הוא הסוג של 1.",
+        "נכון: הטיפוס של הביטוי נקבע לפי האופרנד השמאלי, לא לפי הטיפוס שהתוצאה תושם אליו. shift בכמות שגדולה או שווה לרוחב הטיפוס הוא UB. ב-x86, בפועל, החומרה לוקחת את k mod 32, ולכן `1 << 35` נותן 8."
+      ],
+      "explanation": "כל פעולת ביטים על רגיסטר רחב צריכה קבוע ברוחב הנכון: 1ULL, 1u, או uint64_t{1}. אותו באג קיים במאקרו `#define BIT(n) (1 << (n))`, שבקרנל של Linux מוגדר כ-`(1UL << (n))`, ו-BIT_ULL לרגיסטרים של 64 ביט.",
+      "tags": [
+        "nvidia",
+        "qualcomm",
+        "apple"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internshipon-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer/",
+        "https://www.geeksforgeeks.org/?p=334558",
+        "https://www.teamblind.com/post/apple-emdedded-swe-interview-7ewyjstw"
+      ],
+      "problem": "NVIDIA / Qualcomm / Apple: set, clear and toggle a bit",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q48",
+      "level": 3,
+      "type": "output",
+      "prompt": "C++20, int הוא 32 ביט. מה מודפס?",
+      "code": "uint64_t m = 1 << 31;\nstd::printf(\"%llx\\n\", (unsigned long long)m);",
+      "lang": "cpp",
+      "choices": [
+        "undefined behavior ב-C++20",
+        "`0`",
+        "`ffffffff80000000`",
+        "`80000000`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: לפני C++20 זה היה תלוי בגרסה (ב-C זה UB). ב-C++20 shift שמאלה של signed מוגדר כחשבון modulo.",
+        "שגוי: 1 << 31 לא מאבד את הביט. הוא נוחת בביט הסימן של int.",
+        "נכון: מאז C++20, `1 << 31` מוגדר ונותן INT_MIN (0x80000000 כ-int שלילי). בהמרה ל-uint64_t ערך שלילי מומר modulo 2^64, כלומר sign extension: 0xFFFFFFFF80000000.",
+        "שגוי: זה מה שיתקבל עם `1u << 31`: unsigned מורחב עם אפסים."
+      ],
+      "explanation": "הבעיה היא לא רק UB: גם כשהתוצאה מוגדרת, sign extension של int שלילי למשתנה רחב מדליק את כל הביטים העליונים. כשבונים מסכות לרגיסטרים, תמיד מתחילים מקבוע unsigned ברוחב היעד.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q49",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "ב-header של firmware מופיע: `#define CLEAR_BIT(x, k) x &= ~1 << k`. הקריאה `CLEAR_BIT(reg, 4)` על `uint32_t reg = 0xFF` נותנת 0xE0 במקום 0xEF. מה הבעיה?",
+      "choices": [
+        "k צריך להיות קבוע בזמן קומפילציה",
+        "`&=` לא עובד במאקרו",
+        "`~` קודם ל-`<<`, ולכן הביטוי הוא `(~1) << k`: 0xFFFFFFFE מוזז שמאלה ב-4 נותן 0xFFFFFFE0, שמנקה את ביטים 0-4. צריך `((x) &= ~(1u << (k)))`",
+        "צריך `|=` במקום `&=`"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: shift בכמות משתנה תקין לגמרי.",
+        "שגוי: מאקרו הוא החלפת טקסט, וכל אופרטור עובד בו כמו בקוד רגיל.",
+        "נכון: אופרטורים אונריים כמו ~ קודמים לכל האופרטורים הבינאריים. בנוסף, מאקרו בלי סוגריים סביב הפרמטרים נשבר כשמעבירים ביטוי כמו `k + 1`.",
+        "שגוי: `|=` מדליק ביטים, וכאן רוצים לנקות."
+      ],
+      "explanation": "מאקרו של ביטים צריך סוגריים סביב כל פרמטר וסביב כל הביטוי, וקבוע unsigned ברוחב הנכון. ב-C++ עדיף פונקציה constexpr עם טיפוסים, שלא סובלת מבעיות קדימות.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q50",
+      "level": 3,
+      "type": "bug",
+      "prompt": "C++20. ספירת ביטים דלוקים. עבור 5 התוצאה 2, ועבור 255 התוצאה 8. עבור -1 הפונקציה לא חוזרת לעולם. איפה הבאג?",
+      "code": "int popcount(int n) {\n    int c = 0;\n    while (n != 0) {\n        c += n & 1;\n        n >>= 1;\n    }\n    return c;\n}",
+      "lang": "cpp",
+      "choices": [
+        "shift ימינה של int שלילי הוא אריתמטי: הוא מכניס ביט 1 מלמעלה, ולכן -1 נשאר -1 לנצח. צריך לעבוד עם unsigned (`uint32_t u = n;`)",
+        "`n & 1` שלילי עבור מספר שלילי, ולכן c יורד",
+        "c צריך להיות unsigned",
+        "התנאי צריך להיות `n > 0`"
+      ],
+      "answer": 0,
+      "bugLine": 5,
+      "notes": [
+        "נכון: ב-C++20 shift ימינה של signed מוגדר כ-arithmetic shift (שמשכפל את ביט הסימן). כל מספר שלילי מתכנס ל-1-, שלא שווה 0. עם unsigned נכנסים אפסים, והלולאה מסתיימת אחרי 32 צעדים לכל היותר.",
+        "שגוי: `n & 1` הוא 0 או 1 גם למספר שלילי, כי מסכה של ביט אחד לא יכולה לתת ערך שלילי.",
+        "שגוי: c סופר עד 32 לכל היותר, ולכן int מתאים.",
+        "שגוי: עם `n > 0` הלולאה פשוט לא הייתה רצה על מספרים שליליים, והפונקציה הייתה מחזירה 0 במקום 32 עבור -1."
+      ],
+      "explanation": "ספירת ביטים, היפוך ביטים וכל לולאה שמזיזה עד שמגיעים ל-0 צריכות unsigned. ב-C++20 יש std::popcount (רק על unsigned), ו-GCC מתרגם אותו לפקודה popcnt.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/"
+      ],
+      "problem": "NVIDIA: count the set bits in a number, two ways",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q51",
+      "level": 2,
+      "type": "short",
+      "prompt": "שיטת Kernighan סופרת ביטים כך: `while (x) { x &= x - 1; ++count; }` (x הוא unsigned). כמה איטרציות מבצעת הלולאה עבור `x = 0xF0F0`?",
+      "accept": [
+        "8"
+      ],
+      "explanation": "כל איטרציה מנקה את הביט הדלוק הנמוך ביותר, ולכן מספר האיטרציות שווה למספר הביטים הדלוקים. ב-0xF0F0 יש 4 + 4 = 8. היתרון על פני לולאת shift: איטרציות לפי מספר הביטים הדלוקים, לא לפי רוחב המילה.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q52",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "מישהו מימש את Kernighan על int: `int c = 0; while (n) { n &= n - 1; ++c; }`. מה קורה עבור `n = INT_MIN`?",
+      "choices": [
+        "לולאה אינסופית",
+        "undefined behavior: `n - 1` עבור INT_MIN הוא signed overflow. בפועל זה כנראה יעבוד ויחזיר 1, אבל הקומפיילר רשאי להניח שזה לא קורה. עם unsigned זה מוגדר",
+        "מוחזר 1, כי ב-INT_MIN דלוק רק ביט אחד",
+        "מוחזר 32"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: אם החיסור עוטף כמו בחומרה, n הופך ל-0 אחרי איטרציה אחת, ולא נשאר לנצח.",
+        "נכון: INT_MIN - 1 לא ניתן לייצוג ב-int, ולכן זה UB. UBSan (-fsanitize=signed-integer-overflow) מדווח עליו. עם uint32_t, 0x80000000 - 1 = 0x7FFFFFFF באופן מוגדר, והתוצאה 1.",
+        "שגוי: הספירה הייתה נכונה לו החיסור היה מוגדר, אבל הוא לא. התשובה המצופה מסניור היא לזהות את ה-UB.",
+        "שגוי: ב-INT_MIN דלוק רק ביט הסימן."
+      ],
+      "explanation": "כל טריק ביטים שכולל חיסור או הוספה (x - 1, x + 1, -x) צריך unsigned כדי להיות מוגדר בכל הערכים. גם `x & -x` (הביט הנמוך) הוא UB עבור INT_MIN ב-signed.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q53",
+      "level": 4,
+      "type": "mcq",
+      "prompt": "רוצים למצוא את הרצף הארוך ביותר של ביטים 1 ב-uint32_t בעזרת טבלת lookup של 256 כניסות, אחת לכל byte, ולעבור על 4 ה-bytes. איזה מידע כל כניסה בטבלה חייבת להכיל כדי לחבר נכון רצפים שחוצים גבול בין bytes?",
+      "choices": [
+        "רק את מספר הביטים הדלוקים ב-byte",
+        "את הרצף הארוך ביותר בתוך ה-byte, מספר האחדות הרצופות מהקצה העליון (leading), ומספר האחדות הרצופות מהקצה התחתון (trailing). byte של 0xFF מעביר את הרצף הלאה כולו",
+        "רק את הרצף הארוך ביותר בתוך ה-byte",
+        "את המיקום של הביט הדלוק הראשון"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: popcount לא אומר כלום על רצפים. ל-0xAA ול-0x0F יש 4 ביטים דלוקים, ורצפים של 1 ושל 4.",
+        "נכון: עוברים על ה-bytes מהנמוך לגבוה ושומרים 'רצף פתוח' שמגיע לקצה העליון. byte חדש מוסיף ל-רצף הפתוח את ה-trailing שלו, ומעדכן את המקסימום עם הפנימי שלו. אם ה-byte כולו 1, הרצף הפתוח ממשיך הלאה.",
+        "שגוי: רצף שחוצה גבול, למשל byte תחתון 0xC0 ו-byte עליון 0x03 (ביטים 6 עד 9 דלוקים), מתפצל לשני רצפים של 2. בלי מידע על הקצוות אי אפשר לחבר אותם לרצף של 4.",
+        "שגוי: מיקום הביט הראשון לבדו לא נותן את אורך הרצף."
+      ],
+      "explanation": "טבלאות lookup לבעיות ביטים צריכות לסכם כל chunk כך שאפשר לחבר chunks שכנים: ערך פנימי וערכי קצה. זה אותו רעיון כמו ב-segment tree לרצף מקסימלי. חלופה בלי טבלה: `x &= x << 1` עד שמגיעים ל-0, ומספר האיטרציות הוא אורך הרצף.",
+      "tags": [
+        "meta"
+      ],
+      "sources": [
+        "https://www.teamblind.com/post/firmware-interview-full-loop-at-meta-reality-labs-uqmfofhd"
+      ],
+      "problem": "Meta firmware screen: bit manipulation with a lookup table (longest run of 1 bits)",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q54",
+      "level": 3,
+      "type": "short",
+      "prompt": "הלולאה `while (x) { x &= x << 1; ++k; }` (x הוא unsigned, k מתחיל ב-0). מה ערכו של k בסוף עבור `x = 0b1110111011`?",
+      "accept": [
+        "3"
+      ],
+      "explanation": "כל איטרציה מקצרת כל רצף של אחדות ב-1 (ביט נשאר דלוק רק אם גם השכן הנמוך שלו דלוק). הרצפים כאן באורכים 3, 3 ו-2, ולכן אחרי 3 איטרציות לא נשאר אף ביט. k שווה לאורך הרצף הארוך ביותר.",
+      "lesson": "bugs.overflow"
+    },
+    {
+      "id": "bugs.overflow.q55",
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש `int longestOnes(uint32_t x)` שמחזירה את אורך הרצף הארוך ביותר של ביטים 1 ב-x, בלי לולאה על כל 32 הביטים אחד אחד.",
+      "lang": "cpp",
+      "starter": "int longestOnes(uint32_t x);",
+      "modelAnswer": "#include <cstdint>\n\n// Each step shortens every run of 1s by one bit; the number of steps\n// until x becomes 0 is the length of the longest run.\nint longestOnes(uint32_t x) {\n    int k = 0;\n    while (x) {\n        x &= x << 1;\n        ++k;\n    }\n    return k;\n}",
+      "rubric": [
+        "משתמש ב-`x &= x << 1` (או בניסוח שקול) ומסביר למה כל צעד מקצר כל רצף ב-1",
+        "unsigned, כך שה-shift מוגדר ולא מתערב ביט סימן",
+        "מקרי קצה: 0 מחזיר 0, ו-0xFFFFFFFF מחזיר 32",
+        "סיבוכיות: O(L), כאשר L הוא אורך הרצף הארוך ביותר (לכל היותר 32)",
+        "מזכיר חלופה עם טבלת lookup לפי byte, ששומרת גם את ערכי הקצוות"
+      ],
+      "explanation": "הטריק נבדק על 0 (0), 0xF7 (4), 0xFFFFFFFF (32) ו-0b1110111011 (3). אפשר גם לולאה על הביטים עם מונה רצף נוכחי, אבל היא תמיד 32 איטרציות.",
       "lesson": "bugs.overflow"
     }
   ]

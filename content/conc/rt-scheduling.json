@@ -188,6 +188,42 @@
         {
           "term": "cyclictest / rtla / ftrace",
           "def": "כלי מדידה: cyclictest ל-latency היסטוגרמה, rtla timerlat/osnoise לרעש פר-core, ftrace ו-trace-cmd ל-sched_switch ו-sched_wakeup."
+        },
+        {
+          "term": "bounded / unbounded priority inversion",
+          "def": "inversion חסומה: H מחכה רק למשך ה-critical section של L. לא חסומה: משימות בינוניות מפסיקות את L, ו-H מחכה גם להן. priority inheritance או ceiling הופכים אותה לחסומה."
+        },
+        {
+          "term": "ביטול interrupts כ-ceiling",
+          "def": "critical section קצר עם interrupts כבויים (או scheduler נעול) לא יכול להיקטע, ולכן אין inversion. זה ceiling בעדיפות הגבוהה ביותר, במחיר של latency לכל המערכת. על multi-core צריך גם lock."
+        },
+        {
+          "term": "deadline-monotonic",
+          "def": "הקצאת עדיפויות קבועות לפי deadline יחסי (קצר יותר = גבוה יותר). זהה ל-rate-monotonic כש-deadline = period, ואופטימלי בין העדיפויות הקבועות כש-deadline קטן מה-period."
+        },
+        {
+          "term": "RTOS",
+          "def": "מערכת הפעלה שמתוכננת לזמני תגובה חסומים וצפויים (דטרמיניזם), עם scheduler מבוסס עדיפויות ו-preemption מיידי, ולא ל-throughput או הוגנות."
+        },
+        {
+          "term": "ready queue עם bitmap",
+          "def": "מערך של רשימות FIFO, אחת לכל עדיפות, ו-bitmap של עדיפויות שיש בהן משימות מוכנות. בחירת הבאה היא clz אחד, ו-O(1) בלי תלות במספר המשימות."
+        },
+        {
+          "term": "count leading zeros (clz)",
+          "def": "פקודת מעבד שסופרת אפסים מובילים במילה. `31 - clz(x)` נותן את מיקום הביט הדולק הגבוה ביותר במילה של 32 ביט."
+        },
+        {
+          "term": "EDF ready queue",
+          "def": "ב-EDF העדיפות היא deadline מוחלט שמשתנה בכל job, ולכן צריך מבנה ממוין (heap או red-black tree, O(log n)). SCHED_DEADLINE ב-Linux משתמש ב-red-black tree."
+        },
+        {
+          "term": "software watchdog",
+          "def": "כל משימה מנוטרת מדווחת התקדמות, ומשימת watchdog בועטת ב-hardware watchdog רק אם כולן דיווחו. בעיטה מ-ISR של טיימר לא מזהה משימות תקועות."
+        },
+        {
+          "term": "windowed watchdog",
+          "def": "watchdog שדורש שהבעיטה תיפול בחלון זמן: מאוחר מדי או מוקדם מדי גורמים ל-reset. מזהה גם לולאה שבועטת שוב ושוב."
         }
       ]
     }
@@ -207,9 +243,6 @@
       "answer": 1,
       "explanation": "ה-H חסום על lock של L, ו-M שלא קשור ל-lock רץ כי הוא גבוה מ-L. כך H מחכה בפועל ל-M, לזמן שאינו חסום. אין כאן deadlock: בסוף M יסיים, אבל ה-deadline של H כבר עבר.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ב-deadlock יש מעגל המתנה ואף אחד לא מתקדם לעולם. ב-priority inversion אין מעגל: M בסוף מסיים, L משחרר את ה-lock ו-H ממשיך, רק מאוחר מדי.",
         "נכון: זו ההגדרה הקלאסית. H חסום על lock של L, ו-M שלא קשור ל-lock דוחק את L, כך ש-H מחכה בפועל ל-M לזמן לא חסום.",
@@ -329,9 +362,6 @@
       "answer": 0,
       "explanation": "על core אחד, FIFO שמסתובב מונע כל thread לא-RT. ברירת המחדל sched_rt_runtime_us=950000 מתוך sched_rt_period_us=1000000 שומרת 5% לשאר. במערכות זמן-אמת מכבים לפעמים את ה-throttling (ערך -1), ואז באג כזה תוקע את ה-core לגמרי. הלקח: thread RT לא מחכה ב-busy-wait למשהו שתלוי ב-thread נמוך ממנו על אותו core.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: על core אחד ה-FIFO שמסתובב מרעיב את ה-SCHED_OTHER. ברירת המחדל sched_rt_runtime_us=950000 מתוך 1000000 עוצרת את משימות ה-RT אחרי 950ms, ה-thread הרגיל רץ, מדליק את flag, וה-FIFO ממשיך. התקיעה היא בערך שנייה.",
         "שגוי: זה היה נכון רק אם RT throttling כבוי (sched_rt_runtime_us = -1). בהגדרות ברירת המחדל ה-throttling משאיר כ-5% ל-threads לא-RT.",
@@ -380,9 +410,6 @@
       "answer": 2,
       "explanation": "U = 0.2 + 0.333 + 0.2 ≈ 0.733. החסם תלוי במספר המשימות: 0.828 לשתיים, 0.780 לשלוש, ו-ln 2 רק בגבול של אינסוף משימות. U < 1 מספיק ל-EDF, לא ל-RM. אם U היה מעל החסם, עדיין ייתכן שהמערכת schedulable, ואז בודקים עם response time analysis.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ln 2 ≈ 0.693 הוא החסם רק בגבול של אינסוף משימות. לשלוש משימות החסם הוא 3(2^(1/3)-1) ≈ 0.780, ו-0.733 מתחתיו.",
         "שגוי: מבחן Liu-Layland הוא בדיוק כלי אנליטי שעונה בלי סימולציה, כשה-U מתחת לחסם. סימולציה או response time analysis נדרשים רק כשהמבחן לא מכריע.",
@@ -427,10 +454,7 @@
         "בונוס: mlockall לפני, affinity, והגדרת RLIMIT_RTPRIO או CAP_SYS_NICE"
       ],
       "explanation": "שתי המלכודות: PTHREAD_EXPLICIT_SCHED שנשכח, והנחה ש-pthread_create מחזיר -1 ו-errno, בעוד שהוא מחזיר את קוד השגיאה ישירות.",
-      "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.rt-scheduling"
     },
     {
       "id": "conc.rt-scheduling.q12",
@@ -446,9 +470,6 @@
       "answer": 2,
       "explanation": "PREEMPT_RT הופך כמעט את כל הקרנל ל-preemptible: locks ישנים עם PI במקום spin עם preemption כבוי, ו-interrupt handlers הופכים ל-threads שה-scheduler מתזמן לפי עדיפות. raw_spinlock_t נשאר spin אמיתי לקוד הקריטי ביותר. ה-policy של אפליקציות לא משתנה, צריך לבקש אותה במפורש. מאז 6.12 PREEMPT_RT הוא חלק מהקרנל הראשי.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי, זה כן שינוי של PREEMPT_RT: softirqs רצים בהקשר thread (ksoftirqd או ה-thread שהעלה אותם) ולכן הם preemptible ומתוזמנים לפי עדיפות.",
         "שגוי, זה כן שינוי של PREEMPT_RT: spinlock_t ממומש כ-rt_mutex (sleeping lock עם PI). רק raw_spinlock_t נשאר spin אמיתי.",
@@ -490,10 +511,7 @@
         "affinity ובידוד cores, RT throttling"
       ],
       "explanation": "הטעות הנפוצה: לתת לכל ה-threads FIFO 99 ולשכוח שה-IRQ thread של ה-NIC צריך לרוץ כדי שהדגימות בכלל יגיעו.",
-      "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.rt-scheduling"
     },
     {
       "id": "conc.rt-scheduling.q15",
@@ -509,9 +527,6 @@
       "answer": 1,
       "explanation": "ב-mainline ה-hard IRQ רץ מיד ומקדים כל thread, אבל ב-PREEMPT_RT רוב ה-handler הוא thread רגיל עם עדיפות FIFO, וגם עיבוד ה-RX ברשת (NAPI, softirq) רץ בהקשר thread. thread בעדיפות גבוהה יותר שלא נחסם לעולם מרעיב אותו. תיקונים: IRQ affinity ל-core אחר, העלאת עדיפות ה-IRQ thread (chrt על irq/NN-eth) מעל ה-RX, או קריאה חוסמת במקום spin.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: busy-poll על socket עובד גם ב-PREEMPT_RT. הבעיה היא מי עוד צריך לרוץ על core 3 כדי שהחבילות יגיעו ל-socket.",
         "נכון: ב-PREEMPT_RT ה-IRQ של ה-NIC הוא thread (irq/NN-eth, ברירת מחדל FIFO 50), וגם NAPI/softirq רצים בהקשר thread. ה-RX ב-FIFO 90 שלא נחסם לעולם מרעיב אותם על אותו core, והעיבוד מתקדם רק בחלון של RT throttling.",
@@ -554,9 +569,6 @@
       "answer": 3,
       "explanation": "חסם Liu-Layland הוא תנאי מספיק בלבד, והמקרה הגרוע שלו נובע מ-periods לא הרמוניים. כשה-periods הרמוניים, ה-critical instant לא יוצר זמן מבוזבז, ו-RM מגיע לניצול מלא. בפועל זה טיעון לבחור periods הרמוניים במערכות זמן-אמת (למשל בלוקי FFT בכפולות של 2). EDF היה עובד גם כאן, אבל הוא לא נדרש.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: EDF היה עובד (U <= 1), אבל הוא לא נדרש. עם periods הרמוניים גם RM מגיע לניצול מלא.",
         "שגוי: חסם Liu-Layland הוא תנאי מספיק בלבד, לא הכרחי. חריגה ממנו לא אומרת שהמערכת לא schedulable, במיוחד כשה-periods הרמוניים.",
@@ -731,9 +743,6 @@
       "answer": 3,
       "explanation": "התקרה חייבת להיות לפחות העדיפות של כל מי שנועל, כדי שבזמן החזקה אף משתמש אחר של ה-lock לא ידחק את המחזיק. 99 עובד אבל מעלה את המחזיק מעל threads לא קשורים בעדיפות 71–99 ופוגע בהם. ההוספה של thread 85 דורשת לעדכן את התקרה, וזה החיסרון של ceiling: צריך לדעת מראש מי משתמש ב-lock.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: תקרה בעדיפות הנמוכה ביותר לא מגינה על המחזיק. thread בעדיפות 40 או 70 יכול לדחוק את המחזיק, וזה בדיוק ה-inversion שרצינו למנוע.",
         "שגוי: 99 בטוח מבחינת ה-lock, אבל מעלה את המחזיק מעל threads לא קשורים בעדיפויות 71–99 ופוגע בזמני התגובה שלהם בלי צורך.",
@@ -755,9 +764,6 @@
       "answer": 1,
       "explanation": "ה-rt_mutex של Linux עוקב אחרי שרשרת ההמתנה ומעלה את כל המחזיקים לאורכה. בלי טרנזיטיביות, X היה דוחק את L, ו-H היה מחכה גם ל-X. זה לא deadlock כי אין מעגל. עדיין זה chained blocking: זמן החסימה של H כולל את שני ה-critical sections.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: זה היה נכון אם PI היה מעלה רק את המחזיק הישיר. ב-Linux ה-rt_mutex עובר על כל שרשרת ההמתנה, ולכן גם L עולה.",
         "נכון: PI ב-Linux טרנזיטיבי. M1 יורש 80, וכיוון ש-M1 חסום על m2, L יורש גם הוא 80. X ב-60 לא יכול לדחוק את L, ו-L משחרר את m2 מהר.",
@@ -779,9 +785,6 @@
       "answer": 0,
       "explanation": "yield לא מוריד עדיפות ולא מוותר לטובת מחלקה נמוכה יותר. thread RT שרוצה לתת ל-SCHED_OTHER לרוץ חייב באמת להיחסם (המתנה על אירוע, nanosleep) או לרוץ על core אחר. nice לא משנה כלום מול thread RT. הלקח: sched_yield כמעט אף פעם לא כלי סנכרון נכון.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: sched_yield ב-FIFO מעביר את ה-thread לסוף התור של אותה עדיפות בלבד. כשאין עוד thread ב-FIFO 70 על ה-core, הוא נבחר שוב מיד, וה-SCHED_OTHER רץ רק בחלון של RT throttling.",
         "שגוי: sched_yield עובד גם ב-PREEMPT_RT ובאותה סמנטיקה. הבעיה היא הסמנטיקה עצמה, שלא מוותרת למחלקה נמוכה יותר.",
@@ -803,9 +806,6 @@
       "answer": 2,
       "explanation": "ב-EDF משימה שה-deadline שלה עבר או קרוב מקבלת עדיפות עליונה, וכך מאחרת גוררת את כולן. בעדיפויות קבועות ברור מראש מי ייפגע. זו סיבה שמערכות קריטיות מעדיפות לפעמים RM, או EDF עם בידוד (CBS, כמו ב-SCHED_DEADLINE) שעוצר את החורגת. אף אחת מהן לא עוצרת משימה בלי מנגנון כזה.",
       "lesson": "conc.rt-scheduling",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי: ההבדל בין המדיניויות הוא בדיוק מה שקובע מי ייפגע בעומס יתר. ב-RM הפגיעה ממוקדת בעדיפויות הנמוכות, וב-EDF היא יכולה להתפשט.",
         "שגוי: זה הפוך. EDF טהור לא מבודד משימות, ומשימה מאחרת עם deadline מוקדם דוחקת את כולן. בידוד מגיע רק עם CBS, כמו ב-SCHED_DEADLINE.",
@@ -827,10 +827,356 @@
         "כלים: ftrace/trace-cmd, rtla timerlat/osnoise, cyclictest, ותפיסת אירוע נדיר עם trigger"
       ],
       "explanation": "מועמד חזק נותן מתודולוגיה עם כלי מדידה לכל השערה, ולא רק רשימת סיבות. תשובה חלשה: 'אעלה ל-FIFO 99'.",
-      "lesson": "conc.rt-scheduling",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "במערכת RTOS: L (עדיפות נמוכה) מחזיק mutex, ו-H (גבוהה) נחסם עליו. מה הופך את ה-priority inversion מ\"חסומה בזמן\" (bounded) ל\"לא חסומה\" (unbounded)?",
+      "choices": [
+        "זה שיש יותר מ-mutex אחד במערכת",
+        "זה שה-critical section של L ארוך",
+        "משימות בעדיפות בינונית (M) שלא צריכות את ה-mutex: הן מפסיקות את L, ולכן H מחכה גם לכל העבודה שלהן, בלי חסם",
+        "זה ש-H מחכה ב-busy-wait ולא ישן"
+      ],
+      "answer": 2,
+      "explanation": "בלי M, H מחכה לכל היותר את משך ה-critical section של L, וזה חסם שאפשר לתכנן לפיו. M מכניס המתנה שתלויה במשימות שאין להן קשר ל-lock. priority inheritance מעלה את L לעדיפות של H כל עוד H מחכה, ולכן M לא יכול להפסיק אותו.",
+      "notes": [
+        "שגוי: גם עם mutex יחיד יש inversion לא חסומה, אם יש משימות בינוניות.",
+        "שגוי: critical section ארוך מגדיל את החסם, אבל עדיין יש חסם ידוע. זו inversion מוגבלת.",
+        "נכון: M שמפסיק את L הוא מה שהפך את Mars Pathfinder לבעיה. ההמתנה של H כבר לא תלויה רק ב-L.",
+        "שגוי: busy-wait של H היה מחמיר (על core יחיד L לא היה רץ בכלל), אבל זה לא מה שמגדיר inversion לא חסומה."
+      ],
+      "problem": "Qualcomm / NVIDIA interview: priority inversion, why it happens and how to solve it",
+      "tags": [
+        "qualcomm",
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=334558",
+        "https://www.geeksforgeeks.org/?p=123669",
+        "https://www.geeksforgeeks.org/?p=140440",
+        "https://geeksforgeeks.org/qualcomm-interview-experience-off-campus-2021",
+        "https://leetcode.com/discuss/post/5966607/qualcomm-offcampus-by-anonymous_user-cmcm/",
+        "https://www.geeksforgeeks.org/?p=131187"
+      ],
+      "id": "conc.rt-scheduling.q31",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "core יחיד, mutex עם priority inheritance, ו-L הוא המשימה היחידה שמחזיקה אותו. H נחסם על ה-mutex. מה הזמן המקסימלי ש-H יחכה בגלל L?",
+      "choices": [
+        "עד שה-time slice של L נגמר",
+        "אין חסם, כי משימות בינוניות עדיין יכולות לרוץ",
+        "בערך משך ה-critical section של L (מה שנשאר ממנו), כי L רץ בעדיפות של H עד שהוא משחרר, ואף משימה בינונית לא מפסיקה אותו",
+        "אפס, כי priority inheritance מעביר את ה-mutex ל-H מיד"
+      ],
+      "answer": 2,
+      "explanation": "PI לא מבטל את ההמתנה, אלא מחסם אותה. L ממשיך ב-critical section בעדיפות גבוהה וחוזר לעדיפותו בשחרור. לכן ב-response time analysis מוסיפים blocking term של ה-critical section הארוך ביותר שמשותף עם משימות נמוכות.",
+      "notes": [
+        "שגוי: ב-RTOS עם priority scheduling (או SCHED_FIFO) אין time slice בין עדיפויות שונות.",
+        "שגוי: זה המצב בלי PI. עם PI ה-L המורשה עוקף את כל המשימות הבינוניות.",
+        "נכון: ההמתנה חסומה במשך הנותר של ה-critical section.",
+        "שגוי: PI לא לוקח mutex מהבעלים. אי אפשר להפסיק critical section באמצע."
+      ],
+      "id": "conc.rt-scheduling.q32",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "ב-firmware של מיקרו-בקר, critical sections קצרים מאוד (כמה הוראות) מוגנים בביטול interrupts (או בנעילת ה-scheduler) במקום mutex. למה זה מבטל priority inversion, ומה המחיר?",
+      "choices": [
+        "כל עוד ה-section רץ אף משימה ואף interrupt לא מפסיקים אותו, כלומר זה כמו immediate priority ceiling בעדיפות הגבוהה ביותר. המחיר: latency של כל המשימות וה-interrupts עולה במשך ה-section, ולכן זה מתאים רק ל-sections קצרים וחסומים",
+        "זה עובד גם ל-sections ארוכים בלי מחיר",
+        "זה עובד רק על מעבדים עם כמה cores",
+        "זה לא מבטל inversion, רק מאיץ"
+      ],
+      "answer": 0,
+      "explanation": "אם אף אחד לא יכול להפסיק את מי שבתוך ה-section, אף אחד גם לא יכול להיחסם עליו באמצע: ה-section מסתיים לפני שמישהו אחר רץ. זה הקצה הקיצוני של priority ceiling. על multi-core זה לא מספיק, כי core אחר עדיין ניגש לנתונים, ולכן משלבים עם spinlock (spin_lock_irqsave).",
+      "notes": [
+        "נכון: ceiling בעדיפות מקסימלית, במחיר של jitter לכולם.",
+        "שגוי: section ארוך עם interrupts כבויים מפספס interrupts ופוגע ב-latency של כל המערכת.",
+        "שגוי: ההפך. על core יחיד זה מספיק, ועל כמה cores צריך גם lock בין cores.",
+        "שגוי: אם אף משימה לא רצה באמצע, אף משימה לא נחסמת על ה-section, ואין inversion."
+      ],
+      "id": "conc.rt-scheduling.q33",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "במחשב של רכב אוטונומי רצות משימות מחזוריות עם deadlines (בקרת בלמים כל 1ms, עיבוד מצלמה כל 33ms, תכנון מסלול כל 100ms) לצד משימות רקע. איזו גישת תזמון מתאימה למשימות הקריטיות?",
+      "choices": [
+        "FIFO פשוט לפי סדר ההגעה, בלי preemption",
+        "round-robin עם time slice שווה לכולם, כדי שכל משימה תקבל CPU",
+        "scheduler הוגן כמו CFS, שמחלק CPU לפי משקלות",
+        "preemptive fixed-priority (למשל rate-monotonic או deadline-monotonic) או EDF, עם ניתוח WCET ובדיקת schedulability, והפרדה של משימות הרקע"
+      ],
+      "answer": 3,
+      "explanation": "משימות עם deadlines צריכות תזמון שמאפשר להוכיח מראש שכולן יעמדו בזמנים: עדיפויות קבועות לפי תדירות או deadline (RM/DM), או EDF, יחד עם WCET. הוגנות או round-robin לא נותנים חסם על response time.",
+      "notes": [
+        "שגוי: בלי preemption משימה ארוכה (תכנון מסלול) חוסמת את הבלמים לכל משך הריצה שלה.",
+        "שגוי: round-robin נותן לכל משימה תור, אבל משימת הבלמים יכולה לחכות לכל ה-slices של האחרות ולפספס את ה-1ms.",
+        "שגוי: CFS מתוכנן להוגנות ו-throughput, לא לעמידה מוכחת ב-deadlines.",
+        "נכון: preemptive priority או EDF עם ניתוח schedulability הם הבסיס למערכות hard real-time."
+      ],
+      "problem": "NVIDIA interview: which scheduling algorithm for autonomous vehicles, and why",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/4026331/nvidia-system-software-engineer-intervie-u1st/",
+        "https://leetcode.com/discuss/post/5396353/nvidia-off-campus-interview-experience-b-edj2/"
+      ],
+      "id": "conc.rt-scheduling.q34",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שלוש משימות מחזוריות: בלמים (period 1ms), מצלמה (33ms), תכנון (100ms). לפי rate-monotonic, לאיזו משימה העדיפות הגבוהה ביותר?",
+      "choices": [
+        "תכנון, כי היא החשובה ביותר",
+        "בלמים, כי ה-period שלה הקצר ביותר",
+        "מצלמה, כי היא באמצע",
+        "זו שה-WCET שלה הארוך ביותר"
+      ],
+      "answer": 1,
+      "explanation": "rate-monotonic נותן עדיפות לפי קצב: period קצר יותר מקבל עדיפות גבוהה יותר. זו ההקצאה האופטימלית בין עדיפויות קבועות כש-deadline = period.",
+      "notes": [
+        "שגוי: RM לא מתחשב ב\"חשיבות\", רק בקצב. ה-period של התכנון הארוך ביותר, ולכן העדיפות שלה הנמוכה ביותר.",
+        "נכון: 1ms הוא ה-period הקצר ביותר, ולכן העדיפות הגבוהה ביותר.",
+        "שגוי: 33ms באמצע, ולכן גם העדיפות באמצע.",
+        "שגוי: WCET לא קובע עדיפות ב-RM. הוא משמש רק לבדיקת ה-schedulability."
+      ],
+      "id": "conc.rt-scheduling.q35",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שתי משימות על core אחד: A עם period 10ms ו-deadline יחסי 3ms, ו-B עם period 5ms ו-deadline 5ms. לפי deadline-monotonic, למי העדיפות הגבוהה, ובמה זה שונה מ-rate-monotonic?",
+      "choices": [
+        "B בשתי השיטות",
+        "A ב-DM (deadline קצר יותר), בזמן ש-RM היה נותן ל-B (period קצר יותר). כש-deadline קטן מה-period, DM היא ההקצאה האופטימלית בין העדיפויות הקבועות",
+        "A בשתי השיטות",
+        "DM לא מוגדר כש-deadline שונה מה-period"
+      ],
+      "answer": 1,
+      "explanation": "DM מדרג לפי deadline יחסי. כש-D = T הוא זהה ל-RM. כשיש D < T (למשל משימה שחייבת להגיב תוך 3ms אבל מופעלת כל 10ms), RM עלול לפספס deadlines ש-DM היה עומד בהם.",
+      "notes": [
+        "שגוי: B מקבלת עדיפות גבוהה רק ב-RM. ב-DM ה-deadline של A קצר יותר.",
+        "נכון: DM לפי deadline, RM לפי period. השיטות נבדלות רק כש-D ו-T לא שווים.",
+        "שגוי: ב-RM ה-period של B (5ms) קצר יותר, ולכן B מקבלת עדיפות גבוהה.",
+        "שגוי: DM מוגדר בדיוק בשביל המקרה הזה."
+      ],
+      "id": "conc.rt-scheduling.q36",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 1,
+      "type": "mcq",
+      "prompt": "מה התכונה המרכזית שמבדילה RTOS ממערכת הפעלה כללית (general-purpose OS)?",
+      "choices": [
+        "הוא הוגן יותר בחלוקת ה-CPU בין משימות",
+        "הוא תומך ביותר threads",
+        "הוא מריץ קוד מהר יותר",
+        "דטרמיניזם: זמני תגובה חסומים וצפויים (למשל latency מקסימלי מ-interrupt עד שהמשימה הנכונה רצה), לא throughput ממוצע גבוה"
+      ],
+      "answer": 3,
+      "explanation": "real-time פירושו נכון בזמן, לא מהיר. RTOS מתוכנן כך שה-worst case חסום: scheduler מבוסס עדיפויות עם preemption מיידי, מעט מאוד קטעים לא-preemptible, ובלי page faults בלתי צפויים. GPOS מתוכנן ל-throughput ולהוגנות.",
+      "notes": [
+        "שגוי: הוגנות היא מטרה של GPOS. RTOS נותן עדיפות קפדנית, ומשימה נמוכה יכולה לא לרוץ בכלל.",
+        "שגוי: מספר ה-threads לא קשור ל-real-time.",
+        "שגוי: RTOS לא מאיץ קוד. לעיתים ה-throughput שלו אפילו נמוך יותר.",
+        "נכון: חסם ידוע על ה-latency הגרוע ביותר הוא מה שמאפשר לעמוד ב-deadlines."
+      ],
+      "problem": "Qualcomm interview: what is a real-time OS, RTOS vs general-purpose OS",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/8365964/qualcomm-senior-engineer-by-anonymous_us-zu9g/",
+        "https://leetcode.com/discuss/post/297323/qualcomm-swe-new-grad-new-jersey-may-201-a1ii/"
+      ],
+      "id": "conc.rt-scheduling.q37",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "למה Linux בתצורה הרגילה לא נחשב מערכת hard real-time?",
+      "choices": [
+        "כי יש בו קטעים ארוכים שאי אפשר להפסיק (spinlocks, interrupt handlers ו-softirqs), page faults ו-demand paging, וגורמים נוספים שהופכים את ה-worst case לגדול ולא חסום היטב. PREEMPT_RT מקטין את רובם",
+        "כי אין בו עדיפויות",
+        "כי הוא לא תומך ב-SMP",
+        "כי הוא כתוב ב-C"
+      ],
+      "answer": 0,
+      "explanation": "Linux כן מספק SCHED_FIFO ועדיפויות real-time, אבל ה-latency הגרוע ביותר נקבע גם על ידי קטעי קרנל שלא ניתן להפסיק, interrupts ו-softirqs, ניהול זיכרון וחומרה. PREEMPT_RT הופך את רובם ל-preemptible (threaded IRQs, sleeping spinlocks).",
+      "notes": [
+        "נכון: ה-worst case הוא הבעיה, לא העדיפויות.",
+        "שגוי: יש SCHED_FIFO ו-SCHED_RR עם 99 עדיפויות.",
+        "שגוי: Linux תומך ב-SMP מזמן, ו-SMP דווקא מסבך עוד יותר את ה-worst case.",
+        "שגוי: רוב ה-RTOS כתובים ב-C."
+      ],
+      "id": "conc.rt-scheduling.q38",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מדיניות התזמון הטיפוסית ב-RTOS כמו FreeRTOS?",
+      "choices": [
+        "אקראי, כדי למנוע starvation",
+        "הוגנות לפי זמן CPU שנצבר",
+        "preemptive לפי עדיפות קבועה: המשימה המוכנה בעדיפות הגבוהה ביותר רצה תמיד, ובין משימות באותה עדיפות אפשר round-robin",
+        "FIFO לפי סדר ההגעה, בלי preemption"
+      ],
+      "answer": 2,
+      "explanation": "ברגע שמשימה בעדיפות גבוהה יותר הופכת למוכנה (interrupt, semaphore), היא מפסיקה את הרצה. time slicing (אם מופעל) חל רק בין משימות באותה עדיפות.",
+      "notes": [
+        "שגוי: תזמון אקראי לא נותן חסמים, והוא ההפך מדטרמיניזם.",
+        "שגוי: זה CFS ב-Linux. RTOS לא מחשב הוגנות.",
+        "נכון: preemptive priority scheduling, עם round-robin אופציונלי בתוך אותה עדיפות.",
+        "שגוי: בלי preemption, משימה דחופה תחכה למשימה ארוכה."
+      ],
+      "id": "conc.rt-scheduling.q39",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "איזה מבנה נתונים מתאים ביותר ל-ready queue של scheduler בעדיפויות קבועות (למשל 32 או 256 עדיפויות) ב-RTOS?",
+      "choices": [
+        "red-black tree לפי זמן ריצה מצטבר",
+        "רשימה מקושרת אחת ממוינת לפי עדיפות",
+        "מערך של רשימות FIFO, אחת לכל עדיפות, ו-bitmap של העדיפויות שיש בהן משימות מוכנות. מציאת העדיפות הגבוהה ביותר היא פקודת count-leading-zeros אחת, ו-O(1)",
+        "binary heap לפי עדיפות"
+      ],
+      "answer": 2,
+      "explanation": "הוספה והוצאה ב-O(1), בחירת המשימה הבאה ב-O(1) בזמן קבוע שלא תלוי במספר המשימות, ו-FIFO בתוך כל עדיפות (נדרש לסמנטיקה של SCHED_FIFO). כך ממומשים FreeRTOS וה-RT class של Linux.",
+      "notes": [
+        "שגוי: זה המבנה של CFS, שמטרתו הוגנות, לא עדיפויות קבועות.",
+        "שגוי: הכנסה ממוינת היא O(n), כלומר זמן תלוי בעומס, וזה פוגע בדטרמיניזם.",
+        "נכון: bitmap ו-clz נותנים זמן קבוע, והרשימות שומרות סדר FIFO בכל עדיפות.",
+        "שגוי: heap הוא O(log n) ולא יציב, כלומר לא שומר FIFO בין משימות באותה עדיפות."
+      ],
+      "problem": "Qualcomm interview: best data structure for real-time scheduling",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=140440"
+      ],
+      "id": "conc.rt-scheduling.q40",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 4,
+      "type": "short",
+      "prompt": "ready-queue bitmap של 32 עדיפויות, שבו ביט i דולק אם יש משימה מוכנה בעדיפות i, ועדיפות גבוהה יותר = מספר גדול יותר. ה-bitmap הוא `0x00480000`. איזו עדיפות תרוץ? (מספר)",
+      "accept": [
+        "22"
+      ],
+      "explanation": "0x00480000 = 0x00400000 + 0x00080000, כלומר ביטים 22 ו-19. הגבוה הוא 22, ובקוד מחשבים אותו כ-`31 - clz(bitmap)` בפקודה אחת.",
+      "id": "conc.rt-scheduling.q41",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "ב-scheduler של EDF (earliest deadline first), למה לא מספיק מערך רשימות לפי עדיפות עם bitmap, ומה משתמשים במקומו?",
+      "choices": [
+        "ב-EDF העדיפות היא ה-deadline המוחלט של כל job, שמשתנה בכל מחזור ומקבל אינסוף ערכים. לכן צריך מבנה ממוין כמו heap או red-black tree (O(log n)), ו-Linux SCHED_DEADLINE משתמש ב-red-black tree",
+        "EDF לא צריך ready queue",
+        "משתמשים ב-hash table לפי deadline",
+        "זה מספיק גם ל-EDF"
+      ],
+      "answer": 0,
+      "explanation": "bitmap עובד כשיש מספר קטן וקבוע של עדיפויות. ב-EDF כל job נכנס עם deadline אחר, ולכן צריך מבנה שמחזיר את המינימום ומאפשר הכנסה במקום שרירותי. זה חלק מהמחיר של EDF לעומת עדיפויות קבועות.",
+      "notes": [
+        "נכון: מבנה ממוין לפי deadline מוחלט, עם O(log n) להכנסה ולהוצאה.",
+        "שגוי: כמו כל scheduler, צריך לדעת מי מוכן ומה ה-deadline הקרוב ביותר.",
+        "שגוי: hash לא נותן מינימום ביעילות.",
+        "שגוי: אין מספר קטן של \"רמות\". כל deadline הוא ערך זמן שונה."
+      ],
+      "id": "conc.rt-scheduling.q42",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "במערכת עם RTOS ו-hardware watchdog: למה לא מספיק \"לבעוט\" (kick) ב-watchdog מתוך ISR של טיימר מחזורי, ומה עושים במקום?",
+      "choices": [
+        "כי ISR לא יכול לגשת לרגיסטרים של ה-watchdog",
+        "כי watchdog צריך להיבעט בדיוק פעם בשנייה",
+        "זה מספיק תמיד",
+        "ISR של טיימר ממשיך לרוץ גם כשמשימות נתקעו (deadlock, לולאה אינסופית במשימה), כך שה-watchdog לא יגלה כלום. במקום זה, כל משימה מנוטרת מדווחת על התקדמות (check-in), ומשימת watchdog בועטת בחומרה רק אם כל המשימות דיווחו בזמן"
+      ],
+      "answer": 3,
+      "explanation": "watchdog אמור לזהות שהמערכת לא עושה את עבודתה. ISR מוכיח רק שה-interrupts עובדים. software watchdog מצרף את כל המשימות החשובות: אם אחת מהן לא דיווחה, לא בועטים, והחומרה מאתחלת (או שמבצעים התאוששות ממוקדת).",
+      "notes": [
+        "שגוי: אין מגבלה כזו. דווקא בגלל שזה קל, זו טעות נפוצה.",
+        "שגוי: הזמן נבחר לפי המערכת. השאלה היא ממה בועטים, לא באיזו תדירות.",
+        "שגוי: ISR שרץ תמיד יבעט גם כשהמשימות העיקריות תקועות.",
+        "נכון: check-ins של המשימות הם מה שמוכיח שהמערכת מתקדמת."
+      ],
+      "problem": "Qualcomm interview: software watchdog timers",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=123669",
+        "https://www.geeksforgeeks.org/?p=140440"
+      ],
+      "id": "conc.rt-scheduling.q43",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "איך בוחרים את ה-timeout של watchdog במערכת real-time?",
+      "choices": [
+        "קצר ככל האפשר, כדי לזהות מהר",
+        "ארוך מהמרווח הגרוע ביותר **החוקי** בין שני דיווחים (כולל blocking, עומס ו-WCET), אבל קצר מספיק כדי שהמערכת תגיב לתקלה לפני שנגרם נזק",
+        "שעה, כדי שלא יהיו אתחולים מיותרים",
+        "זהה ל-period של המשימה המהירה ביותר"
+      ],
+      "answer": 1,
+      "explanation": "timeout קצר מדי גורם לאתחולים מיותרים תחת עומס חוקי (false positives). ארוך מדי משאיר את המערכת תקועה יותר מדי. החסם התחתון מגיע מניתוח של worst case, והעליון מדרישות הבטיחות.",
+      "notes": [
+        "שגוי: תחת עומס חוקי (למשל burst של interrupts) דיווח יכול להתאחר, והמערכת תאתחל בלי סיבה.",
+        "נכון: בין ה-worst case החוקי לבין הזמן המקסימלי שמותר להיות תקוע.",
+        "שגוי: ארוך מדי, המערכת תקועה שעה לפני שמשהו קורה.",
+        "שגוי: ה-period של משימה מהירה לא מתחשב בעיכובים חוקיים של משימות אחרות שגם הן מדווחות."
+      ],
+      "id": "conc.rt-scheduling.q44",
+      "lesson": "conc.rt-scheduling"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה מזהה windowed watchdog שרגיל לא מזהה?",
+      "choices": [
+        "כלום, זה רק שם אחר",
+        "גם בעיטה **מוקדמת** מדי גורמת ל-reset. כך הוא מזהה תקלה שבה הקוד נתקע בלולאה שבועטת שוב ושוב, או זרימה ששדילגה על עבודה",
+        "הוא מזהה רק תקלות חומרה",
+        "הוא לא דורש בעיטות בכלל"
+      ],
+      "answer": 1,
+      "explanation": "watchdog רגיל בודק רק \"לא מאוחר מדי\". windowed בודק שהבעיטה נופלת בחלון זמן מוגדר, ולכן תופס גם תקלה שבה קוד הבעיטה רץ מהר מדי. זה נפוץ בתקני בטיחות (למשל ברכב).",
+      "notes": [
+        "שגוי: יש הבדל מהותי בסוג התקלות שמזוהות.",
+        "נכון: חלון זמן עם גבול תחתון ועליון.",
+        "שגוי: הוא מזהה בעיות בזרימה של התוכנה, לא רק בחומרה.",
+        "שגוי: הוא דורש בעיטה, ובזמן מדויק יותר."
+      ],
+      "id": "conc.rt-scheduling.q45",
+      "lesson": "conc.rt-scheduling"
     }
   ]
 }

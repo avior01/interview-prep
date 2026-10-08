@@ -188,6 +188,38 @@
         {
           "term": "std::call_once / once_flag",
           "def": "מנגנון שמבטיח שפונקציה תרוץ פעם אחת בדיוק גם כשכמה threads מגיעים במקביל. once_flag לא ניתן להעתקה או להעברה."
+        },
+        {
+          "term": "Meyers singleton",
+          "def": "singleton שממומש עם static local: `static T& get() { static T inst; return inst; }`. מאז C++11 האתחול thread-safe (magic statics) ועצל (בקריאה הראשונה), וזה גם פותר את ה-static initialization order fiasco. מוחקים copy ו-assignment, אחרת `auto x = T::get();` יוצר עותק."
+        },
+        {
+          "term": "volatile",
+          "def": "מסמן שכל גישה למשתנה היא observable: הקומפיילר חייב לבצע כל קריאה וכתיבה ולא לשנות סדר בין גישות volatile. מיועד ל-memory-mapped I/O ולמשתנים שמשנה ISR. volatile לא אטומי, לא מוסיף fences ולא מונע data race. לסנכרון בין threads משתמשים ב-std::atomic."
+        },
+        {
+          "term": "function-like macro",
+          "def": "החלפת טקסט של ה-preprocessor לפני הקומפילציה. אין בדיקת טיפוסים, ארגומנט יכול להיות מחושב יותר מפעם אחת (`MAX(i++, j)`), חסרים סוגריים משבשים קדימויות, ואין scope. לכן מעדיפים inline או constexpr function או template."
+        },
+        {
+          "term": "inline function",
+          "def": "מאפשר להגדיר את אותה פונקציה בכמה TUs (חריג ל-ODR), ולכן מתאים להגדרות ב-header. ההחלטה אם באמת לבצע inlining היא של הקומפיילר. ארגומנטים מחושבים פעם אחת כמו בכל פונקציה."
+        },
+        {
+          "term": "internal linkage (static ב-namespace scope)",
+          "def": "פונקציה או משתנה static ב-namespace scope (או בתוך unnamed namespace) נראים רק בתוך ה-TU. static ב-header יוצר עותק נפרד בכל קובץ שכולל אותו. למשתנה גלובלי משותף משתמשים ב-`inline` (C++17) או ב-`extern` עם הגדרה יחידה."
+        },
+        {
+          "term": "static member",
+          "def": "data member סטטי משותף לכל המופעים של ה-class ומוגדר פעם אחת (או `static inline` מ-C++17). ל-static member function אין this, ולכן היא לא ניגשת ל-members לא סטטיים בלי אובייקט."
+        },
+        {
+          "term": "member initializer list וסדר אתחול",
+          "def": "const members ו-references חייבים להיות מאותחלים ברשימת האתחול, כי בגוף ה-constructor אפשר רק להשים. members מאותחלים לפי סדר ההצהרה במחלקה, לא לפי הסדר ברשימה (-Wreorder מזהיר)."
+        },
+        {
+          "term": "const member ו-assignment",
+          "def": "non-static const member (או reference member) גורם לכך שה-copy assignment וה-move assignment שהקומפיילר מייצר מוגדרים כ-deleted. לכן אי אפשר להשתמש בטיפוס כזה עם std::sort, עם erase באמצע vector וכדומה."
         }
       ]
     }
@@ -483,9 +515,6 @@
       "answer": 0,
       "explanation": "התקן קובע שפעולה עם undefined behavior (בהגדרה של core language) לא יכולה להופיע ב-constant expression. a חייב להיות constant expression, ולכן הקומפיילר חייב להוציא diagnostic. בזכות זה static_assert על חישובי constexpr משמש לבדיקת UB.",
       "lesson": "cpp.const-constexpr",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ביטוי שמבצע core-language UB, כמו signed overflow, אינו constant expression ([expr.const]). a הוא constexpr, ולכן הקומפיילר חייב להוציא diagnostic.",
         "שגוי. a הוא constexpr ולכן מחושב בקומפילציה; אין כאן שלב של זמן ריצה. ובחישוב קבוע UB נתפס כשגיאה.",
@@ -509,10 +538,7 @@
         "crc32 רץ ב-O(n) עם lookup אחד לכל בית, אתחול ו-xor סופי 0xFFFFFFFF"
       ],
       "explanation": "זה שימוש מעשי ב-constexpr: טבלת lookup בלי עלות בזמן ריצה ובלי קוד אתחול. בגלל ה-static_assert, כל טעות בחישוב נתפסת כבר בזמן הבנייה.",
-      "lesson": "cpp.const-constexpr",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.const-constexpr"
     },
     {
       "id": "cpp.const-constexpr.q16",
@@ -530,9 +556,6 @@
       "answer": 3,
       "explanation": "is_constant_evaluated מחזיר true רק כשההקשר מחייב חישוב בזמן קומפילציה (manifestly constant-evaluated). a הוא constexpr, ולכן 1. b הוא int רגיל, ולכן false ו-2, גם אם האופטימייזר בפועל מקפל את החישוב. c הוא const int ממספר שלם: האתחול שלו נבדק קודם כ-constant initialization, וזה מצליח, ולכן 1. טעות קלאסית היא לכתוב if constexpr (std::is_constant_evaluated()): התנאי של if constexpr תמיד מחושב בזמן קומפילציה, ולכן הוא תמיד true.",
       "lesson": "cpp.const-constexpr",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. b הוא int רגיל שאינו constexpr או const, ולכן האתחול שלו אינו manifestly constant-evaluated ו-f מחזירה 2, גם אם האופטימייזר מקפל אותו בפועל.",
         "שגוי. c הוא const int שמאותחל מ-f(): האתחול שלו נבדק קודם כ-constant initialization, ושם is_constant_evaluated מחזיר true, ולכן הוא 1 ולא 2.",
@@ -603,10 +626,7 @@
         "מבחין בין constness לוגית ל-bitwise"
       ],
       "explanation": "השאלה בודקת אם אתה מבין ש-const הוא חלק מחוזה ה-thread safety בפועל, ולא רק מגבלה של הקומפיילר.",
-      "lesson": "cpp.const-constexpr",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.const-constexpr"
     },
     {
       "id": "cpp.const-constexpr.q20",
@@ -768,9 +788,6 @@
         "(2) מתקמפלת ו-(1) לא, כי לולאת range-for אסורה בפונקציה constexpr"
       ],
       "answer": 1,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "C++20 מתיר transient allocation: בתוך sum ה-vector מקצה ומשחרר, והתוצאה היא int רגיל. ב-(2) ההקצאה הייתה צריכה לשרוד לזמן ריצה, וזה אסור; GCC מדווח שהביטוי מתייחס לתוצאה של operator new. לטבלה קבועה בזמן ריצה משתמשים ב-std::array.",
       "lesson": "cpp.const-constexpr",
       "notes": [
@@ -813,9 +830,6 @@
         "B לא חוקי, כי static local בפונקציה לא-constexpr לא יכול להיות constexpr עד C++23"
       ],
       "answer": 0,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "magic statics: static local עם dynamic initialization מאותחל בקריאה הראשונה, והקומפיילר מוסיף guard. המסלול המהיר הוא טעינת acquire ו-branch בכל קריאה, ורק בקריאה הראשונה נלקח lock (__cxa_guard_acquire ב-Itanium ABI). ב-B אין קוד אתחול בכלל. ההגבלה של C++23 נוגעת ל-static בתוך פונקציה constexpr, לא ל-static constexpr בפונקציה רגילה.",
       "lesson": "cpp.const-constexpr",
       "notes": [
@@ -837,9 +851,6 @@
         "לא. const& אוסר שינוי רק דרך r; g עשויה לשנות את האובייקט המקורי דרך alias אחר, ולכן צריך לטעון את r מחדש"
       ],
       "answer": 3,
-      "tags": [
-        "nvidia"
-      ],
       "explanation": "r יכול להיות קשור למשתנה גלובלי רגיל ש-g משנה. const על reference הוא הבטחה על הגישה דרך השם, לא על האובייקט. רק אם הקומפיילר יודע שהאובייקט עצמו הוגדר const, או רואה את הגוף של g, מותר לו להניח שהערך לא השתנה. אין כאן memory barrier, וזה לא קשור ל-noexcept.",
       "lesson": "cpp.const-constexpr",
       "notes": [
@@ -848,6 +859,493 @@
         "שגוי. אין כאן memory barrier; זו בעיית aliasing של קומפיילר בתוך thread אחד. הקומפיילר רק צריך לטעון את r מחדש מהזיכרון.",
         "נכון. g עשויה לשנות את האובייקט המקורי דרך alias אחר (למשל גלובלי), ולכן הקומפיילר חייב לטעון את r מחדש אחרי הקריאה. רק אם ידוע שהאובייקט עצמו הוגדר const מותר להניח שלא השתנה."
       ]
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מימוש singleton:\n```cpp\nclass Logger {\n  Logger() { /* opens file */ }\npublic:\n  Logger(const Logger&) = delete;\n  Logger& operator=(const Logger&) = delete;\n  static Logger& get() {\n    static Logger inst;\n    return inst;\n  }\n};\n```\nשמונה threads קוראים ל-`Logger::get()` לראשונה באותו זמן. מה נכון לפי C++11 ואילך?",
+      "choices": [
+        "יש race: כמה threads עלולים להריץ את ה-constructor, ולכן צריך double-checked locking ידני",
+        "האתחול מובטח thread-safe: ה-constructor רץ פעם אחת, ו-threads אחרים ממתינים עד שהוא מסתיים",
+        "inst נבנה לפני main, ולכן אין שאלה של threads",
+        "ה-constructor רץ פעם אחת, אבל threads אחרים עלולים לקבל reference לאובייקט שעוד לא סיים להיבנות"
+      ],
+      "answer": 1,
+      "explanation": "זה Meyers singleton. מאז C++11 אתחול של static local הוא thread-safe ([stmt.dcl]/4, \"magic statics\"): thread אחד מריץ את ה-constructor, השאר ממתינים, והמופע נוצר פעם אחת בדיוק. אחרי האתחול הבדיקה זולה (guard variable שנקרא עם acquire). ה-destructor ירוץ ביציאה מהתוכנית, בסדר הפוך לסדר הבנייה של אובייקטים סטטיים.",
+      "notes": [
+        "שגוי: זה היה נכון לפני C++11. היום הקומפיילר מייצר guard עם נעילה, ו-DCLP ידני מיותר וקל לטעות בו.",
+        "נכון: [stmt.dcl] מבטיח שאם כמה threads נכנסים במקביל להגדרה של static local, אחד מאתחל והשאר חוסמים עד הסוף. זה גם פותר את ה-static initialization order fiasco.",
+        "שגוי: static local מאותחל בפעם הראשונה שהבקרה עוברת בהגדרה שלו, כלומר בקריאה הראשונה ל-get() ולא לפני main.",
+        "שגוי: התקן מחייב שה-threads הממתינים ימשיכו רק אחרי שהאתחול הסתיים. גישה לאובייקט שבנייתו לא הושלמה לא תקרה."
+      ],
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-fte-interview-experience-for-software-engineer-on-campus/"
+      ],
+      "problem": "NVIDIA / Qualcomm interview: implement a Singleton class",
+      "id": "cpp.const-constexpr.q31",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "בקובץ a.cpp: `Registry g_registry;` (global). בקובץ b.cpp: `Plugin g_plugin;`, וה-constructor של Plugin קורא ל-`g_registry.add(this)`. לפעמים התוכנית קורסת עוד לפני main. מה הסיבה, ומה התיקון המקובל?",
+      "choices": [
+        "סדר האתחול בין קבצים לא מוגדר. התיקון: לגשת ל-Registry דרך פונקציה שמחזירה static local",
+        "ה-linker תמיד מאתחל לפי סדר אלפביתי של שמות הקבצים, ולכן צריך לשנות את שם a.cpp",
+        "globals מאותחלים רק אחרי main, ולכן השימוש לפני main הוא UB",
+        "צריך להפוך את g_registry ל-constexpr, וזה תמיד אפשרי"
+      ],
+      "answer": 0,
+      "explanation": "סדר האתחול הדינמי של globals בין translation units שונים לא מוגדר (static initialization order fiasco). אם b.cpp מאותחל ראשון, Plugin משתמש ב-Registry שעוד לא נבנה. התיקון המקובל: גישה דרך פונקציה עם static local (`Registry& registry() { static Registry r; return r; }`), שמבטיחה בנייה בשימוש הראשון.",
+      "notes": [
+        "נכון: בתוך TU אחד הסדר הוא סדר ההגדרות, אבל בין TUs הוא unspecified. static local נבנה בקריאה הראשונה, ולכן Registry קיים כשה-Plugin צריך אותו.",
+        "שגוי: התקן לא מגדיר שום סדר בין TUs. בפועל הסדר תלוי בסדר ב-command line של ה-link ובמימוש, ואסור להסתמך עליו.",
+        "שגוי: אתחול דינמי של globals מתבצע בדרך כלל לפני main. הבעיה היא הסדר ביניהם, לא התזמון ביחס ל-main.",
+        "שגוי: constexpr (או constinit) פותר את הבעיה רק אם ל-Registry יש constexpr constructor. registry שמבצע הקצאות דינמיות לרוב לא עומד בזה."
+      ],
+      "id": "cpp.const-constexpr.q32",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ה-rate ש-`main` קובע לא מגיע ל-`worker`, שתמיד רואה 0. איפה הבאג?",
+      "code": "class Config {\n  Config() { load_file(); }\npublic:\n  static Config& get() {\n    static Config c;\n    return c;\n  }\n  int rate = 0;\n};\n\nvoid worker() { use(Config::get().rate); }\n\nint main() {\n  auto cfg = Config::get();\n  cfg.rate = 48000;\n  worker();\n}",
+      "bugLine": 14,
+      "choices": [
+        "`auto cfg` מנכה Config ולא Config&, ולכן נוצר עותק של ה-singleton. השינוי הולך לעותק",
+        "static local בתוך get() נבנה מחדש בכל קריאה",
+        "ה-constructor הפרטי מונע מ-get() ליצור את האובייקט",
+        "rate צריך להיות static, אחרת כל קריאה ל-get() מחזירה ערך אחר"
+      ],
+      "answer": 0,
+      "explanation": "ל-Config אין copy constructor מחוק, ולכן `auto cfg = Config::get();` מעתיק את ה-singleton ל-cfg (auto מנכה טיפוס בלי reference). השינויים הולכים לעותק המקומי. בנוסף, constructor פרטי לא מונע העתקה, כי ה-copy constructor שהקומפיילר מייצר הוא public. התיקון: `auto& cfg = Config::get();`, ומחיקה של ה-copy constructor וה-copy assignment כדי שהטעות לא תתקמפל.",
+      "notes": [
+        "נכון: auto מוריד reference ו-const. נקרא ה-copy constructor הציבורי שנוצר אוטומטית, ו-cfg הוא אובייקט נפרד. התיקון: `auto&`, ו-`Config(const Config&) = delete;` כדי שזה לא יתקמפל.",
+        "שגוי: static local מאותחל פעם אחת בלבד, ו-worker מקבל את אותו c. הוא פשוט לא רואה את השינוי שנעשה בעותק.",
+        "שגוי: get() היא member של Config ולכן יש לה גישה ל-constructor הפרטי.",
+        "שגוי: get() מחזירה reference לאותו c בכל קריאה. הבעיה היא שה-reference מועתק לאובייקט חדש בצד הקורא."
+      ],
+      "id": "cpp.const-constexpr.q33",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "#define MAX(a, b) ((a) > (b) ? (a) : (b))\ninline int max_f(int a, int b) { return a > b ? a : b; }\n\nint main() {\n  int i = 5, j = 3;\n  int m = MAX(i++, j);\n  std::cout << m << ' ' << i << ' ';\n  i = 5;\n  int n = max_f(i++, j);\n  std::cout << n << ' ' << i;\n}",
+      "choices": [
+        "5 6 5 6",
+        "6 7 5 6",
+        "6 7 6 7",
+        "UB: i משתנה פעמיים באותו ביטוי"
+      ],
+      "answer": 1,
+      "explanation": "המאקרו הוא החלפת טקסט: `MAX(i++, j)` הופך ל-`((i++) > (j) ? (i++) : (j))`. התנאי מקדם את i ל-6 ומחזיר 5>3, ואז הענף שנבחר מריץ i++ שוב: מחזיר 6, ו-i נהיה 7. זה מוגדר היטב, כי ב-?: יש sequence point אחרי התנאי. הפונקציה מקבלת את הארגומנט פעם אחת: max_f(5,3)=5 ו-i=6.",
+      "notes": [
+        "שגוי: מניח שהמאקרו מחשב את הארגומנט פעם אחת כמו פונקציה. בפועל `i++` מופיע פעמיים בטקסט המורחב, ושניהם רצים.",
+        "נכון: התנאי מריץ i++ (5>3, i=6), והענף שנבחר מריץ i++ שוב (ערך 6, i=7). הפונקציה מקבלת 5 ו-i=6.",
+        "שגוי: inline הוא רמז לקומפיילר ולא משנה את הסמנטיקה. הארגומנט מחושב פעם אחת בדיוק, ולכן max_f מחזירה 5.",
+        "שגוי: באופרטור ?: התנאי sequenced לפני הענף שנבחר, ולכן שני ה-i++ מסודרים ואין UB."
+      ],
+      "tags": [
+        "qualcomm",
+        "nvidia",
+        "intel"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2020/",
+        "https://prachub.com/interview-questions/explain-cplusplus-and-gpu-tradeoffs",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-1/",
+        "https://www.geeksforgeeks.org/interview-experiences/intel-graphics-software-engineer-interview-experience/"
+      ],
+      "problem": "Qualcomm / NVIDIA / Intel interview: macro vs inline function",
+      "id": "cpp.const-constexpr.q34",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "#define SQUARE(x) x * x\n\nint main() {\n  std::cout << SQUARE(1 + 2) << ' ' << 100 / SQUARE(5);\n}",
+      "choices": [
+        "9 4",
+        "5 100",
+        "9 100",
+        "5 4"
+      ],
+      "answer": 1,
+      "explanation": "מאקרו בלי סוגריים הוא החלפת טקסט נאיבית. `SQUARE(1 + 2)` הופך ל-`1 + 2 * 1 + 2` = 5. `100 / SQUARE(5)` הופך ל-`100 / 5 * 5` = 100, כי / ו-* מחושבים משמאל לימין. פונקציה (או `constexpr int sq(int x)`) לא סובלת מזה.",
+      "notes": [
+        "שגוי: זה מה שפונקציה הייתה מחזירה. המאקרו לא מקבץ את הארגומנט ולא את התוצאה בסוגריים.",
+        "נכון: 1 + 2*1 + 2 = 5, ו-100/5*5 = 100. הפתרון: `((x) * (x))`, או עדיף פונקציה constexpr.",
+        "שגוי: החלק הראשון שגוי, כי בלי סוגריים סביב x נוצר `1 + 2 * 1 + 2`.",
+        "שגוי: החלק השני שגוי. בלי סוגריים חיצוניים `100 / 5 * 5` מחושב משמאל לימין ונותן 100."
+      ],
+      "id": "cpp.const-constexpr.q35",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו יתרונות יש לפונקציה inline (או constexpr) על פני function-like macro?",
+      "choices": [
+        "בדיקת טיפוסים על הארגומנטים וערך ההחזרה",
+        "כל ארגומנט מחושב פעם אחת בדיוק, ולכן `f(i++)` בטוח",
+        "מכבדת namespaces ו-scopes, ולא \"דורסת\" שמות בכל הקוד שאחרי ה-#define",
+        "inline מבטיח שהקומפיילר יכניס את הגוף בכל מקום קריאה",
+        "אפשר לעשות לה breakpoint ו-step ב-debugger (לפחות בבנייה בלי אופטימיזציות)"
+      ],
+      "answer": [
+        0,
+        1,
+        2,
+        4
+      ],
+      "explanation": "פונקציה עוברת בדיקת טיפוסים, מחשבת כל ארגומנט פעם אחת, מכבדת scopes ו-namespaces, וניתן לשים עליה breakpoint ולראות אותה ב-debugger (לפחות ב-O0). inline לא מחייב את הקומפיילר להכניס את הגוף בפועל. המשמעות העיקרית שלו היום היא היתר ל-ODR להגדיר את הפונקציה ב-header. מאקרו לא יכול לעשות overloading לפי טיפוס.",
+      "notes": [
+        "נכון: `max_f(\"a\", 3)` לא יתקמפל, בעוד מאקרו פשוט ידביק טקסט ויפיק שגיאה מוזרה או התנהגות שגויה.",
+        "נכון: הארגומנטים מחושבים לפני הקריאה ונקשרים לפרמטרים, ולכן אין חישוב כפול של side effects.",
+        "נכון: מאקרו הוא טקסט ברמת ה-preprocessor ומתעלם מ-namespaces. #define min בכותרות של Windows, שמתנגש עם std::min, הוא דוגמה מפורסמת.",
+        "שגוי: inline הוא רמז בלבד. הקומפיילר מחליט לפי heuristics, ו-inline מחייב בעיקר את חוקי ה-ODR (מותר להגדיר את הפונקציה בכמה TUs).",
+        "נכון: לפונקציה יש סמל ושורות מקור, ולכן ה-debugger מכיר אותה. מאקרו נעלם לפני הקומפילציה."
+      ],
+      "id": "cpp.const-constexpr.q36",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו טענות על `volatile` ב-C++ נכונות?",
+      "choices": [
+        "הקומפיילר חייב לבצע כל קריאה וכתיבה למשתנה volatile, ולא לשמור אותו ב-register בין גישות",
+        "`++v` על `volatile int v` הוא פעולה אטומית",
+        "volatile מונע data race בין שני threads שכותבים לאותו משתנה",
+        "`const volatile` הגיוני: למשל register חומרה לקריאה בלבד שערכו משתנה מעצמו",
+        "הקומפיילר לא משנה את הסדר של שתי גישות volatile באותו thread ביחס זו לזו"
+      ],
+      "answer": [
+        0,
+        3,
+        4
+      ],
+      "explanation": "volatile אומר לקומפיילר שכל קריאה וכתיבה היא observable: אסור לו למחוק, לאחד או לשנות סדר של גישות volatile ביחס זו לזו. זה מתאים ל-memory-mapped registers ולמשתנים שמשתנים ב-ISR באותה ליבה. volatile לא הופך פעולה לאטומית, לא מוסיף memory fences ולא מונע data race בין threads. לזה צריך std::atomic.",
+      "notes": [
+        "נכון: זו ההגדרה. לולאה `while (*status_reg & BUSY)` באמת קוראת מהזיכרון בכל איטרציה.",
+        "שגוי: `++v` נשאר קריאה, הוספה וכתיבה נפרדות. interrupt או thread אחר יכולים להיכנס באמצע.",
+        "שגוי: לפי התקן, גישה לא מסונכרנת מכמה threads היא data race, ולכן UB, גם עם volatile. צריך std::atomic או mutex.",
+        "נכון: const אומר שהקוד שלך לא כותב, ו-volatile אומר שהערך יכול להשתנות מבחוץ. זה בדיוק status register.",
+        "נכון: גישות volatile הן observable behavior, וסדרן בתוך ה-thread נשמר בקוד שנוצר. החומרה (CPU או bus) עדיין יכולה לסדר אחרת בלי fences, ולכן volatile לא מספיק לסנכרון בין ליבות."
+      ],
+      "tags": [
+        "qualcomm",
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2020/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-for-wifi-sw-developer-2-years-exp/",
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-off-campus-2021/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/"
+      ],
+      "problem": "Qualcomm / NVIDIA interview: the volatile keyword",
+      "id": "cpp.const-constexpr.q37",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "thread A מבצע `while (!ready) {}` ואחר כך קורא data. thread B כותב data ואז `ready = true`. ב-O2 thread A נתקע לנצח. מה התיקון הנכון ב-C++?",
+      "choices": [
+        "להגדיר `volatile bool ready`",
+        "להגדיר `std::atomic<bool> ready`: B עושה `store(true, release)` ו-A עושה `load(acquire)`",
+        "להוסיף `std::this_thread::yield()` בתוך הלולאה",
+        "לקמפל עם -O0"
+      ],
+      "answer": 1,
+      "explanation": "ב-O2 הקומפיילר רשאי להניח שאין data race, ולכן מעלה את הקריאה של ready מחוץ ללולאה. volatile היה מכריח קריאה בכל איטרציה, אבל זה עדיין data race (UB) ואין הבטחה ש-data נראה מעודכן. std::atomic<bool> עם store(release) ו-load(acquire) נותן גם visibility וגם סדר: מי שראה ready=true רואה גם את data.",
+      "notes": [
+        "שגוי: הלולאה כבר לא תיתקע, אבל הגישה עדיין data race לפי התקן, ואין happens-before שמבטיח ש-A רואה את data המעודכן (במיוחד ב-ARM).",
+        "נכון: atomic מבטל את ה-data race, וזוג release/acquire יוצר synchronizes-with: כל מה ש-B כתב לפני ה-store גלוי ל-A אחרי ה-load.",
+        "שגוי: yield לא יוצר סנכרון ולא מונע מהקומפיילר להחזיק את ready ב-register.",
+        "שגוי: זה מסתיר את הבאג ולא מתקן אותו. הקוד עדיין UB לפי התקן, ויכול להישבר בכל קומפיילר או מעבד."
+      ],
+      "id": "cpp.const-constexpr.q38",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "נתון `const volatile std::uint32_t* reg = reinterpret_cast<const volatile std::uint32_t*>(0x40001000);`. אילו שורות מתקמפלות? (כל שורה בנפרד)",
+      "choices": [
+        "`std::uint32_t x = *reg;`",
+        "`*reg = 1;`",
+        "`++reg;`",
+        "`volatile std::uint32_t* p = reg;`",
+        "`const std::uint32_t* q = reg;`"
+      ],
+      "answer": [
+        0,
+        2
+      ],
+      "explanation": "reg הוא pointer שאינו const בעצמו, ל-uint32_t שהוא const volatile. קריאה דרכו מותרת, וכל קריאה באמת מתבצעת. כתיבה דרכו אסורה בגלל const. המרה שמורידה const או volatile מהיעד דורשת const_cast. את ה-pointer עצמו מותר להזיז, כי ה-const חל על היעד ולא על ה-pointer.",
+      "notes": [
+        "נכון: קריאה מותרת. ה-volatile מבטיח שהיא באמת תתבצע מהכתובת.",
+        "שגוי: היעד const, ולכן אסור לכתוב דרך reg.",
+        "נכון: ה-const וה-volatile חלים על ה-uint32_t שאליו מצביעים, לא על reg. מותר לקדם את ה-pointer לרגיסטר הבא.",
+        "שגוי: ההמרה מורידה const מהיעד, ולכן צריך const_cast.",
+        "שגוי: ההמרה מורידה volatile מהיעד, וגם זה דורש const_cast. אחרי ההמרה הקומפיילר היה רשאי לאחד קריאות."
+      ],
+      "id": "cpp.const-constexpr.q39",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו טענות על המילה `static` נכונות?",
+      "choices": [
+        "`static void helper();` בקובץ cpp: השם נראה רק ב-translation unit הזה",
+        "משתנה `static int n = 0;` בתוך פונקציה מאותחל פעם אחת ושומר את ערכו בין קריאות",
+        "משתנה static מקומי יושב על ה-stack של הפונקציה",
+        "`static int count;` כ-member של class משותף לכל המופעים",
+        "`static int g;` ב-namespace scope אפשר לגשת אליו מקובץ אחר בעזרת `extern int g;`"
+      ],
+      "answer": [
+        0,
+        1,
+        3
+      ],
+      "explanation": "ל-static יש כמה משמעויות לפי ההקשר. בפונקציה או משתנה ב-namespace scope הוא נותן internal linkage, כלומר השם נראה רק ב-TU הזה. במשתנה מקומי הוא נותן static storage duration: אתחול פעם אחת, וחיים עד סוף התוכנית (ב-.data או ב-.bss, לא על ה-stack). ב-member של class הוא אומר שה-member משותף לכל המופעים, ול-static member function אין this.",
+      "notes": [
+        "נכון: internal linkage. אפשר להגדיר helper בשם זהה בכמה קבצים בלי התנגשות ב-link. החלופה המודרנית היא unnamed namespace.",
+        "נכון: static storage duration. האתחול קורה כשהבקרה עוברת בהגדרה בפעם הראשונה, ומאז הערך נשמר.",
+        "שגוי: אילו ישב על ה-stack, הוא היה נעלם עם ה-frame. הוא יושב ב-.data או ב-.bss.",
+        "נכון: יש עותק אחד לכל ה-class, ולא אחד לכל אובייקט.",
+        "שגוי: static ב-namespace scope נותן internal linkage, ולכן `extern int g;` בקובץ אחר לא יימצא ב-link (undefined reference)."
+      ],
+      "tags": [
+        "qualcomm",
+        "intel",
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-for-wifi-sw-developer-2-years-exp/",
+        "https://www.geeksforgeeks.org/interview-experiences/intel-interview-experience-for-internship-on-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer/"
+      ],
+      "problem": "Qualcomm / Intel / NVIDIA interview: meanings of static",
+      "id": "cpp.const-constexpr.q40",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "ב-stats.h מוגדר מונה, ו-a.cpp ו-b.cpp עושים include ל-stats.h. a.cpp מגדיל את המונה ב-`on_packet()`, ו-b.cpp מדפיס אותו ב-`report()`. ההדפסה תמיד 0. למה?",
+      "code": "// stats.h\n#pragma once\nstatic int g_packets = 0;\n\n// a.cpp\n#include \"stats.h\"\nvoid on_packet() { ++g_packets; }\n\n// b.cpp\n#include \"stats.h\"\nvoid report() { std::printf(\"%d\\n\", g_packets); }",
+      "bugLine": 3,
+      "choices": [
+        "static נותן internal linkage, ולכן לכל cpp יש עותק נפרד של g_packets",
+        "חסר volatile, ולכן הקומפיילר מחזיק את הערך ב-register",
+        "#pragma once מונע מ-b.cpp לראות את ההגדרה",
+        "צריך להגדיר את g_packets כ-const"
+      ],
+      "answer": 0,
+      "explanation": "static ב-namespace scope נותן internal linkage, ולכן כל TU שכולל את ה-header מקבל משתנה פרטי משלו. a.cpp מגדיל את העותק שלו, ו-b.cpp קורא עותק אחר. התיקון: `inline int g_packets = 0;` (C++17), שהוא משתנה אחד משותף לכל ה-TUs, או `extern int g_packets;` ב-header והגדרה אחת בקובץ cpp.",
+      "notes": [
+        "נכון: כל include יוצר משתנה נפרד עם internal linkage. התיקון: `inline int g_packets = 0;` או extern עם הגדרה יחידה.",
+        "שגוי: volatile לא משנה linkage. גם עם volatile יהיו שני משתנים נפרדים.",
+        "שגוי: #pragma once מונע include כפול בתוך אותו TU. כל cpp עדיין רואה את ה-header.",
+        "שגוי: const היה מונע את ההגדלה (שגיאת קומפילציה), וגם const ב-namespace scope הוא internal linkage כברירת מחדל."
+      ],
+      "id": "cpp.const-constexpr.q41",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "למה הקוד לא מתקמפל?",
+      "code": "class Counter {\n  int count_ = 0;\npublic:\n  void hit() { ++count_; }\n  static int total() { return count_; }\n};",
+      "bugLine": 5,
+      "choices": [
+        "static member function לא מקבלת this, ולכן אין לה count_ של אובייקט מסוים",
+        "אסור להגדיר static member function בתוך גוף ה-class",
+        "count_ חייב להיות public כדי ש-total תיגש אליו",
+        "hit() חייבת להיות static כמו total()"
+      ],
+      "answer": 0,
+      "explanation": "ל-static member function אין this, ולכן היא לא יכולה לגשת ל-members לא סטטיים כמו count_ בלי אובייקט. הפתרון: להפוך את count_ ל-static (אם הוא באמת משותף), או להפוך את total() למתודה רגילה.",
+      "notes": [
+        "נכון: total() נקראת כ-`Counter::total()` בלי אובייקט, ולכן אין count_ לקרוא ממנו. הקומפיילר מתלונן על שימוש ב-member לא סטטי.",
+        "שגוי: הגדרה inline בגוף ה-class מותרת גם ל-static member functions.",
+        "שגוי: לכל member function, כולל static, יש גישה ל-private של המחלקה. הבעיה היא היעדר אובייקט ולא access.",
+        "שגוי: hit() היא מתודה רגילה תקינה. היא לא קשורה לשגיאה בשורה של total."
+      ],
+      "id": "cpp.const-constexpr.q42",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט? (C++17)",
+      "code": "int f(int n) {\n  static int calls = 0;\n  ++calls;\n  if (n <= 1) return calls;\n  int r = f(n - 1);\n  return r + calls;\n}\n\nint main() { std::cout << f(3) << ' ' << f(1); }",
+      "choices": [
+        "6 1",
+        "9 4",
+        "6 4",
+        "9 1"
+      ],
+      "answer": 1,
+      "explanation": "calls הוא static ולכן משותף לכל הקריאות. f(3): calls=1, f(2): calls=2, f(1): calls=3 ומחזירה 3. f(2) מחזירה r + calls = 3+3 = 6, ו-f(3) מחזירה 6+3 = 9. מ-C++17, `<<` מחשב משמאל לימין, ולכן f(1) רצה אחרי f(3): calls=4, והיא מחזירה 4.",
+      "notes": [
+        "שגוי: מחשב כאילו calls מקומי ומאותחל לכל קריאה, ולא משותף לכולן.",
+        "נכון: בתחתית הרקורסיה calls=3, ולכן 3, ואז 3+3=6 ו-6+3=9. f(1) שאחריה מגדילה ל-4 ומחזירה 4.",
+        "שגוי: בזמן שהקריאות החיצוניות קוראות את calls, הוא כבר 3 (הקריאה הפנימית הגדילה אותו), ולכן f(2) מחזירה 6 ו-f(3) מחזירה 9.",
+        "שגוי: calls לא מתאפס בין קריאות ל-f מ-main. f(1) מגדילה אותו מ-3 ל-4."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-3-campus/"
+      ],
+      "problem": "NVIDIA interview: output of static variable in recursion",
+      "id": "cpp.const-constexpr.q43",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "int main() {\n  for (int i = 0; i < 3; ++i) {\n    static int s = i * 10;\n    s += i;\n    std::cout << s;\n  }\n}",
+      "choices": [
+        "01122",
+        "013",
+        "012",
+        "שגיאת קומפילציה: אסור לאתחל static מתוך משתנה לא קבוע"
+      ],
+      "answer": 1,
+      "explanation": "static local מאותחל פעם אחת, בפעם הראשונה שהבקרה עוברת בהגדרה. אז i=0 ולכן s=0. בהמשך שורת האתחול לא רצה שוב. s מצטבר: 0+0=0, 0+1=1, 1+2=3.",
+      "notes": [
+        "שגוי: מניח שהאתחול `i * 10` רץ בכל איטרציה. static local מאותחל פעם אחת בלבד.",
+        "נכון: s=0 מהאתחול היחיד (i=0), ואז 0, 1, 3 אחרי ההוספות.",
+        "שגוי: s לא מתאפס בכל איטרציה. הוא מצטבר: 0, 0+1, 1+2.",
+        "שגוי: static local יכול לקבל אתחול דינמי מכל ביטוי. זה dynamic initialization שקורה במעבר הראשון."
+      ],
+      "id": "cpp.const-constexpr.q44",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct T {\n  static int n;\n  T() { ++n; }\n  T(const T&) { ++n; }\n  ~T() { --n; }\n};\nint T::n = 0;\n\nint main() {\n  T a;\n  { T b = a; T c; std::cout << T::n; }\n  std::cout << T::n;\n}",
+      "choices": [
+        "31",
+        "21",
+        "33",
+        "11"
+      ],
+      "answer": 0,
+      "explanation": "n הוא static member שסופר אובייקטים חיים. a: n=1. b (copy): 2. c: 3, ומודפס 3. בסוף ה-block c ו-b נהרסים (n=1), ומודפס 1.",
+      "notes": [
+        "נכון: שלושה אובייקטים חיים בתוך ה-block, ואחרי שהוא נסגר נשאר רק a.",
+        "שגוי: שוכח שגם ה-copy constructor מגדיל את n (b נבנה כעותק).",
+        "שגוי: b ו-c נהרסים בסוף ה-block הפנימי, ולכן ה-destructors מקטינים את n לפני ההדפסה השנייה.",
+        "שגוי: בתוך ה-block שלושת האובייקטים קיימים במקביל, ו-n הוא static ומשותף לכולם."
+      ],
+      "id": "cpp.const-constexpr.q45",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 2,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "באיזו שורה שגיאת הקומפילציה, ולמה?",
+      "code": "class Sensor {\n  const int id_;\n  int value_ = 0;\npublic:\n  Sensor(int id) {\n    id_ = id;\n  }\n  int id() const { return id_; }\n};",
+      "bugLine": 6,
+      "choices": [
+        "`id_ = id;` היא השמה ל-const member אחרי שאותחל. צריך לאתחל ב-member initializer list",
+        "אסור default member initializer (`value_ = 0`) כשיש const member",
+        "מתודה const לא יכולה להחזיר const member",
+        "ל-class עם const member אסור constructor שמקבל פרמטר"
+      ],
+      "answer": 0,
+      "explanation": "const member חייב לקבל ערך באתחול. בגוף ה-constructor כל ה-members כבר אותחלו, ולכן `id_ = id;` היא השמה ל-const, וזה אסור. התיקון: member initializer list, `Sensor(int id) : id_(id) {}`.",
+      "notes": [
+        "נכון: בגוף ה-constructor id_ כבר default-initialized, ושם זו השמה. (בנוסף, const int בלי אתחול הוא שגיאה בפני עצמה.) התיקון: `: id_(id)`.",
+        "שגוי: NSDMI ל-value_ תקין לגמרי ולא קשור ל-id_.",
+        "שגוי: id() מחזירה int לפי ערך. קריאה של const member בתוך מתודה const תקינה.",
+        "שגוי: constructor עם פרמטרים תקין. רק צריך לאתחל את ה-const ברשימת האתחול."
+      ],
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/qualcomm-interview-experience-for-software-engineer-role-on-campus-placements/"
+      ],
+      "problem": "Qualcomm written test: find the error (const member initialization)",
+      "id": "cpp.const-constexpr.q46",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד לא מתקמפל: \"use of deleted function 'Sensor& Sensor::operator=(Sensor&&)'\". למה?",
+      "code": "class Sensor {\n  const int id_;\npublic:\n  explicit Sensor(int id) : id_(id) {}\n  bool operator<(const Sensor& o) const { return id_ < o.id_; }\n};\n\nint main() {\n  std::vector<Sensor> v{Sensor(2), Sensor(1)};\n  std::sort(v.begin(), v.end());\n}",
+      "bugLine": 2,
+      "choices": [
+        "const member מוחק את ה-copy/move assignment, ו-std::sort צריך assignment כדי להחליף איברים",
+        "std::sort דורש operator> ולא operator<",
+        "אי אפשר לבנות std::vector מ-initializer list של אובייקטים עם explicit constructor",
+        "operator< חייב להיות פונקציה חופשית"
+      ],
+      "answer": 0,
+      "explanation": "const member מבטל את ה-copy assignment וה-move assignment שהקומפיילר מייצר, כי אי אפשר להשים ל-id_. std::sort מחליף איברים בעזרת move assignment, ולכן לא מתקמפל. פתרונות: להפוך את id_ ל-private לא const (ולשמור על ה-invariant דרך ה-interface), או למיין vector של pointers או indices.",
+      "notes": [
+        "נכון: ה-assignment שנוצר אוטומטית מוגדר כ-deleted כשיש non-static const member. sort ו-erase באמצע ה-vector צריכים move assignment.",
+        "שגוי: std::sort משתמש ב-operator< כברירת מחדל, וזה בדיוק מה שהוגדר.",
+        "שגוי: האיברים ברשימה נבנים במפורש (`Sensor(2)`), וה-vector מעתיק אותם. explicit לא מפריע כאן.",
+        "שגוי: member operator< תקין לגמרי עבור sort."
+      ],
+      "id": "cpp.const-constexpr.q47",
+      "lesson": "cpp.const-constexpr"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "`Range r(10);` אמור לתת lo_=20 ו-hi_=10, אבל lo_ יוצא זבל. למה?",
+      "code": "struct Range {\n  int lo_;\n  int hi_;\n  Range(int x) : hi_(x), lo_(hi_ * 2) {}\n};",
+      "bugLine": 4,
+      "choices": [
+        "lo_ מאותחל ראשון (לפי סדר ההצהרה), ולכן הוא קורא hi_ שעוד לא אותחל",
+        "אסור להשתמש ב-member אחד באתחול של member אחר",
+        "רשימת האתחול חייבת לכלול את כל ה-members בדיוק לפי הסדר, אחרת זו שגיאת קומפילציה",
+        "hi_ * 2 גולש (overflow)"
+      ],
+      "answer": 0,
+      "explanation": "members מאותחלים לפי סדר ההצהרה במחלקה, לא לפי הסדר ברשימת האתחול. lo_ מוצהר ראשון, ולכן `lo_(hi_ * 2)` רץ כש-hi_ עוד לא אותחל, וזו קריאה של ערך indeterminate (UB). GCC ו-Clang מזהירים עם -Wreorder. התיקון: לסדר את ההצהרות, או לחשב מהפרמטר: `lo_(x * 2)`.",
+      "notes": [
+        "נכון: [class.base.init] קובע אתחול בסדר ההצהרה. הסדר שכתוב ברשימה מתעלם ממנו (עם אזהרת -Wreorder).",
+        "שגוי: מותר להשתמש ב-member שכבר אותחל. כאן הבעיה היא ש-hi_ עוד לא אותחל.",
+        "שגוי: סדר שונה ברשימה מותר ונותן רק אזהרה. וגם members שלא מופיעים ברשימה מותרים.",
+        "שגוי: עם x=10 אין overflow. הזבל נובע מקריאה של hi_ לפני האתחול שלו."
+      ],
+      "id": "cpp.const-constexpr.q48",
+      "lesson": "cpp.const-constexpr"
     }
   ]
 }

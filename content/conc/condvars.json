@@ -182,6 +182,46 @@
         {
           "term": "std::binary_semaphore",
           "def": "semaphore עם ערך 0 או 1 (C++20). release מגדיל ו-acquire מחכה עד שאפשר להקטין. release מסנכרן עם ה-acquire שאחריו. מתאים להעברת 'תור' בין threads."
+        },
+        {
+          "term": "poison pill / close",
+          "def": "שתי דרכים לסיים צרכנים של תור חוסם. pill הוא פריט מיוחד שנצרך פעם אחת, ולכן צריך אחד לכל צרכן. close הוא דגל תחת ה-lock שנבדק ב-predicate, יחד עם notify_all, וכל הצרכנים רואים אותו."
+        },
+        {
+          "term": "notification מותנה במעבר מצב",
+          "def": "אופטימיזציה שבה מעירים רק במעבר (למשל ממלא ללא-מלא). עם כמה ממתינים היא מאבדת התעוררויות, כי כמה פעולות יוצרות כמה מקומות פנויים אבל רק מעבר אחד."
+        },
+        {
+          "term": "bounded buffer עם semaphores",
+          "def": "empty (מקומות פנויים, מתחיל ב-N), full (פריטים, מתחיל ב-0) ו-mutex (מתחיל ב-1). הכלל: קודם wait על semaphore של המשאב, ורק אחר כך mutex. ההפך יוצר deadlock. ב-SPSC אפשר לוותר על ה-mutex."
+        },
+        {
+          "term": "sem_wait / sem_post",
+          "def": "פעולות של POSIX semaphore: wait מוריד את המונה וחוסם אם הוא 0, post מעלה ומעיר ממתין. POSIX מגדיר אותן כפונקציות שמסנכרנות זיכרון בין threads."
+        },
+        {
+          "term": "std::counting_semaphore / binary_semaphore",
+          "def": "semaphores של C++20. acquire חוסם ב-0, release(n) מעלה. ל-release יש תנאי מקדים שהמונה לא יעבור את max(), שב-binary_semaphore הוא 1. try_acquire לא חוסם (ומותר לו להיכשל לפעמים גם כשהמונה חיובי)."
+        },
+        {
+          "term": "טבעת semaphores",
+          "def": "דפוס להעברת תור בין N threads: לכל thread semaphore משלו, רק של הראשון מתחיל ב-1, וכל thread משחרר את של הבא. כל מעבר מעיר בדיוק thread אחד."
+        },
+        {
+          "term": "oversubscription ו-busy-wait",
+          "def": "כשיש יותר threads מסתובבים מ-cores, ה-thread שיכול להתקדם עלול לא לרוץ עד סוף time slice של אחרים. busy-wait מתאים רק כשלכל thread יש core משלו."
+        },
+        {
+          "term": "std::latch מול std::barrier",
+          "def": "latch הוא מונה חד-פעמי: ברגע שהגיע ל-0 כל wait חוזר מיד, והורדה מתחת ל-0 היא UB. barrier מחזורי: אחרי שכל המשתתפים מגיעים הוא מתחיל phase חדש, ולכן מתאים לסיבובים חוזרים."
+        },
+        {
+          "term": "heap אינו יציב",
+          "def": "priority_queue לא מבטיח סדר בין איברים בעלי עדיפות שווה. מוסיפים מספר רץ כמפתח שני כדי לקבל FIFO בתוך כל רמה."
+        },
+        {
+          "term": "aging",
+          "def": "שיפור הדרגתי של העדיפות האפקטיבית של מי שמחכה זמן רב, כדי למנוע starvation במדיניות של עדיפויות קפדניות."
         }
       ]
     }
@@ -399,11 +439,7 @@
         "בונוס: מנגנון close/shutdown, ו-try_push או push עם timeout עבור backpressure"
       ],
       "explanation": "עם cv אחד משותף ו-notify_one, יצרן יכול להעיר יצרן אחר במקום צרכן, וכולם נרדמים. שני cvs פותרים את זה בלי לשלם על notify_all.",
-      "lesson": "conc.condvars",
-      "tags": [
-        "nvidia",
-        "microsoft"
-      ]
+      "lesson": "conc.condvars"
     },
     {
       "id": "conc.condvars.q11",
@@ -422,9 +458,6 @@
       "answer": 2,
       "explanation": "ה-mutex הוא שמבטיח שבין בדיקת ה-predicate לבין ההירדמות לא יכולים לשנות את ה-predicate ולשלוח notify. אם היצרן לא נועל, הוא יכול לכתוב ולשלוח notify בחלון הזה, והצרכן נרדם על תנאי שכבר מתקיים. atomic פותר רק data race, לא את האטומיות של בדיקה ושינה. מספיק לעשות `{ std::lock_guard g(m); ready = true; }` ואז notify.",
       "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "notify_all לא פותר את החלון: אם ה-notify נשלח לפני שהצרכן נרדם, אין אף אחד שיתעורר, לא משנה כמה מעירים.",
         "זה שיפור ביצועים לגיטימי, אבל לא קשור לתקיעה. הצרכן בכלל לא מגיע ל-process() כשהוא נתקע.",
@@ -467,9 +500,6 @@
       "answer": 3,
       "explanation": "notify_one מעיר מחכה שרירותי. כשמחכים לתנאים שונים על אותו cv, המתעורר עלול להיות מהסוג הלא נכון: הוא בודק את ה-predicate שלו, מוצא שקר וחוזר לישון בלי להעביר את ה-notify הלאה. התיקון: שני cvs נפרדים, או notify_all (נכון, אבל יקר).",
       "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "spurious wakeups הם תכונה של המימוש ואינם תלויים במספר ה-cvs או בסוג ה-notify. הם ממשיכים לקרות בכל מקרה.",
         "כל הגישה לתור נעשית תחת ה-mutex, ולכן אין data race. הבעיה היא לוגית: איזה thread מתעורר.",
@@ -490,10 +520,7 @@
         "מדידה: היסטוגרמה, tail latency, ftrace או perf sched"
       ],
       "explanation": "מראיין רוצה לשמוע שההבנה עוברת מ-API לרמת ה-scheduler והחומרה, ושיש trade-off ברור בין CPU שנשרף ב-polling לבין latency דטרמיניסטי.",
-      "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.condvars"
     },
     {
       "id": "conc.condvars.q15",
@@ -530,9 +557,6 @@
       "answer": 0,
       "explanation": "זה בדיוק התפקיד של הארגומנט expected ב-futex_wait: הבדיקה וההכנסה לתור ההמתנה אטומיות ביחס ל-futex_wake על אותה כתובת. notify שקרה אחרי ה-unlock שינה את seq, ולכן ה-wait לא נרדם. ה-kernel לא שומר wakes, ו-futex_wake מעיר רק מי שכבר בתור. (seq יכול בתיאוריה לעשות wrap-around בדיוק לערך s, מקרה ABA תיאורטי שמימושים אמיתיים מטפלים בו.)",
       "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. futex_wait משווה את הערך בכתובת ל-expected בתוך ה-kernel תחת ה-lock של ה-hash bucket, אטומית ביחס ל-futex_wake. אם seq++ כבר קרה, הערכים שונים וה-wait חוזר מיד עם EAGAIN.",
         "ה-kernel לא שומר wakes: futex_wake מעיר רק מי שכבר בתור ההמתנה, ואם אין כזה ה-wake נעלם. ההגנה היא דווקא בהשוואת הערך.",
@@ -792,9 +816,6 @@
       "answer": 1,
       "explanation": "הנראות בין היצרן לצרכן מגיעה רק מזוג unlock ו-lock על m. הכתיבה ל-data לא sequenced-before ה-unlock, ולכן היא לא happens-before הקריאה. בנוסף, הצרכן לא חייב לישון בכלל: אם הגיע אחרי ה-unlock, הוא רואה ready = true וקורא data מיד. התיקון: לכתוב את data לפני ה-unlock (בתוך הבלוק או לפניו).",
       "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "notify לא יוצר happens-before. בנוסף, הצרכן לא חייב לישון: אם הוא נועל אחרי ה-unlock, הוא רואה ready = true וקורא data מיד, אולי לפני הכתיבה.",
         "נכון. הסנכרון היחיד הוא זוג unlock/lock על m, והכתיבה ל-data קורית אחרי ה-unlock, ולכן היא לא happens-before הקריאה. כתיבה וקריאה לא מסונכרנות של int הן data race, כלומר UB.",
@@ -821,9 +842,6 @@
       ],
       "explanation": "האיחור העקבי והקבוע הוא החתימה של timer slack, מנגנון ספציפי ל-Linux לחיסכון בחשמל. ל-steady_clock יש רזולוציה של ננו-שניות (CLOCK_MONOTONIC), ושעון אחר לא משנה את מנגנון היקיצה. ל-thread זמן-אמת ה-kernel לא מוסיף slack, וזו עוד סיבה להריץ threads קריטיים ב-SCHED_FIFO.",
       "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון. ב-Linux ל-threads רגילים יש timer_slack_ns של 50 מיקרו-שניות כברירת מחדל, וה-kernel רשאי לאחר יקיצה עד הסף הזה כדי לאחד timers. איחור קבוע של כ-50us הוא החתימה שלו.",
         "נכון. prctl(PR_SET_TIMERSLACK, ns) קובע את ה-slack של ה-thread הנוכחי, ואפשר להוריד אותו עד ננו-שנייה אחת.",
@@ -845,10 +863,7 @@
         "המסקנה: cv הוא רמז, ה-predicate הוא האמת, ולכן לולאה תמיד"
       ],
       "explanation": "תשובה חלשה אומרת 'כי ה-OS לפעמים מעיר'. תשובה חזקה מסבירה את ה-trade-off בתכנון ה-API ומראה שהלולאה נחוצה מסיבות שאינן spurious בכלל.",
-      "lesson": "conc.condvars",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "conc.condvars"
     },
     {
       "id": "conc.condvars.q31",
@@ -873,7 +888,11 @@
       "tags": [
         "nvidia"
       ],
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "sources": [
+        "https://www.geeksforgeeks.org/dsa/nvidia-coding-interview-questions/",
+        "https://interviewsolver.com/interview-questions/nvidia"
+      ]
     },
     {
       "id": "conc.condvars.q32",
@@ -895,7 +914,11 @@
       "tags": [
         "nvidia"
       ],
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "sources": [
+        "https://www.geeksforgeeks.org/dsa/nvidia-coding-interview-questions/",
+        "https://interviewsolver.com/interview-questions/nvidia"
+      ]
     },
     {
       "id": "conc.condvars.q33",
@@ -926,7 +949,11 @@
       "tags": [
         "microsoft"
       ],
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "sources": [
+        "https://leetcode.com/problem-list/55vr69d7/",
+        "https://interviewsolver.com/interview-questions/microsoft"
+      ]
     },
     {
       "id": "conc.condvars.q34",
@@ -947,6 +974,572 @@
       "tags": [
         "microsoft"
       ],
+      "lesson": "conc.condvars",
+      "sources": [
+        "https://leetcode.com/problem-list/55vr69d7/",
+        "https://interviewsolver.com/interview-questions/microsoft"
+      ]
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "תור חוסם עם יצרן אחד ו-4 צרכנים. כדי לסיים, היצרן דוחף לתור ערך מיוחד אחד (poison pill), וצרכן שמקבל אותו יוצא מהלולאה. main עושה join לכל הצרכנים ולא חוזר. למה?",
+      "choices": [
+        "join חייב להתבצע בסדר הפוך לסדר היצירה",
+        "צרכן שמקבל את ה-pill צריך גם לקרוא notify_all, אחרת אף אחד לא מתעורר",
+        "רק צרכן אחד מקבל את ה-pill היחיד ויוצא. שלושת האחרים חוסמים ב-pop על תור ריק לנצח. צריך pill לכל צרכן, או דגל closed שנבדק ב-predicate יחד עם notify_all",
+        "ה-pill צריך להיות דחוף לראש התור ולא לסופו"
+      ],
+      "answer": 2,
+      "explanation": "כל פריט בתור נצרך פעם אחת בדיוק, כולל ה-pill. עם N צרכנים צריך N pills, או מנגנון סגירה: `closed = true` תחת ה-lock, notify_all, וה-predicate של pop הוא `!q.empty() || closed`, ו-pop מחזיר \"נגמר\" כשהתור ריק וסגור.",
+      "notes": [
+        "שגוי: סדר ה-join לא משנה. צרכן שחסום לנצח ייתקע בכל סדר.",
+        "שגוי: notify_all מעיר את כולם, אבל אחרי ההתעוררות הם רואים תור ריק וחוזרים לישון. אין להם סיבה לצאת.",
+        "נכון: pill אחד נצרך פעם אחת. עם כמה צרכנים צריך pill לכל אחד, או close שכל הצרכנים רואים.",
+        "שגוי: מיקום ה-pill קובע רק מתי הוא ייצרך, לא כמה צרכנים יקבלו אותו."
+      ],
+      "problem": "Microsoft interview: producer-consumer extended to multiple producers and consumers",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/6931412/microsoft-l61-interview-process-by-nikhi-rut5/",
+        "https://leetcode.com/discuss/post/6034209/microsoft-sde-2-hyderabad-passed-novembe-qmws/",
+        "https://leetcode.com/discuss/post/1338962/microsoft-senior-software-engineer-hyder-702m/"
+      ],
+      "id": "conc.condvars.q35",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "prompt": "תור חוסם עם `close()`. ארבעה צרכנים מחכים ב-pop על תור ריק, ו-close נקראת. צרכן אחד יוצא, והשלושה האחרים נשארים חסומים. איפה הבאג?",
+      "lang": "cpp",
+      "code": "void close() {\n  std::lock_guard g(m_);\n  closed_ = true;\n  cv_.notify_one();\n}\nstd::optional<T> pop() {\n  std::unique_lock lk(m_);\n  cv_.wait(lk, [&] { return closed_ || !q_.empty(); });\n  if (q_.empty()) return std::nullopt;   // closed and drained\n  T v = std::move(q_.front()); q_.pop();\n  return v;\n}",
+      "bugLine": 4,
+      "choices": [
+        "closed_ צריך להיות atomic",
+        "ה-predicate צריך לבדוק רק את closed_",
+        "notify_one מעיר צרכן אחד בלבד, אבל השינוי ב-closed_ רלוונטי לכל הממתינים. צריך notify_all",
+        "אסור להחזיר std::nullopt מתוך pop"
+      ],
+      "answer": 2,
+      "explanation": "סגירה היא שינוי מצב שמשפיע על כל הממתינים, ולכן notify_all. ה-predicate וה-lock כבר נכונים: ממתין שיתעורר יראה closed_ וייצא.",
+      "notes": [
+        "שגוי: closed_ נכתב ונקרא רק תחת m_, ולכן אין race. atomic לא יעיר אף אחד.",
+        "שגוי: אז pop היה יוצא מיד גם כשיש עדיין פריטים, ולא היה נותן לצרכנים לרוקן את התור.",
+        "נכון: כל ממתין צריך לראות את closed_. notify_one מעיר אחד, והשאר ישנים עד notify שלא יגיע.",
+        "שגוי: optional ריק הוא דרך מקובלת לסמן \"נגמר\"."
+      ],
+      "id": "conc.condvars.q36",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "תור חסום בקיבולת cap, עם כמה יצרנים וכמה צרכנים. כדי לחסוך notifications, הצרכן קורא ל-`not_full.notify_one()` רק אם התור היה מלא לפני ה-pop שלו. יצרנים P1 ו-P2 מחכים על תור מלא. מה עלול לקרות?",
+      "choices": [
+        "שני צרכנים עושים pop מהר אחד אחרי השני. רק הראשון (מתור מלא) מעיר יצרן. P2 נשאר ישן למרות שיש מקום, ואם הצרכנים מרוקנים את התור ו-P1 מסיים, P2 עלול להישאר ישן לנצח",
+        "deadlock מיידי, כי notify_one נקרא תחת ה-lock",
+        "שני היצרנים מתעוררים ומכניסים יחד, והתור עובר את cap",
+        "שום בעיה: כל pop מתור מלא מעיר יצרן אחד, וזה מספיק"
+      ],
+      "answer": 0,
+      "explanation": "notification מותנה במעבר מצב (מלא ללא-מלא) עובד רק כשיש ממתין אחד. עם כמה ממתינים, כל pop משחרר מקום, ולכן כל pop צריך notify_one (או notify_all במעבר). זו אופטימיזציה שמייצרת lost wakeup.",
+      "notes": [
+        "נכון: מעבר המצב קרה פעם אחת, אבל נוצרו שני מקומות פנויים. אחד הממתינים לא מקבל הודעה.",
+        "שגוי: notify תחת lock תקין. ה-thread שמתעורר פשוט מחכה ל-lock.",
+        "שגוי: ה-predicate נבדק תחת ה-lock, ולכן אף יצרן לא מכניס כשהתור מלא.",
+        "שגוי: ה-pop השני פינה מקום נוסף, אבל אף אחד לא הודיע עליו. יצרן ממתין לא יודע שיש מקום."
+      ],
+      "id": "conc.condvars.q37",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "prompt": "bounded buffer עם שלושה POSIX semaphores: `empty` (מקומות פנויים, מאותחל ל-N), `full` (פריטים, מאותחל ל-0), ו-`mutex` (מאותחל ל-1). אחרי זמן מה כל ה-threads נתקעים. איפה הבאג?",
+      "lang": "cpp",
+      "code": "void put(int item) {\n  sem_wait(&mutex);\n  sem_wait(&empty);\n  buf[in] = item; in = (in + 1) % N;\n  sem_post(&mutex);\n  sem_post(&full);\n}\nint get() {\n  sem_wait(&full);\n  sem_wait(&mutex);\n  int item = buf[out]; out = (out + 1) % N;\n  sem_post(&mutex);\n  sem_post(&empty);\n  return item;\n}",
+      "bugLine": 2,
+      "choices": [
+        "ב-get צריך לקחת את mutex לפני full",
+        "צריך sem_post(&full) לפני sem_post(&mutex)",
+        "mutex צריך להיות מאותחל ל-0",
+        "ב-put הסדר הפוך: היצרן לוקח את mutex ואז מחכה ל-empty. כשה-buffer מלא הוא ישן כשהוא מחזיק את mutex, והצרכן לא יכול להיכנס ולפנות מקום"
+      ],
+      "answer": 3,
+      "explanation": "הכלל: קודם מחכים למשאב (empty או full), ורק אחר כך לוקחים את ה-lock הקצר. מי שישן על semaphore של משאב בזמן שהוא מחזיק את ה-mutex חוסם את מי שאמור לשחרר את המשאב. זה deadlock קלאסי של hold-and-wait.",
+      "notes": [
+        "שגוי: זה היה יוצר את אותו deadlock בצד הצרכן (מחזיק mutex וישן על full כשה-buffer ריק). הסדר ב-get נכון.",
+        "שגוי: סדר שני ה-post לא משנה את הנכונות. הבעיה היא סדר ה-wait.",
+        "שגוי: mutex ב-0 היה חוסם את הכניסה הראשונה לגמרי. 1 הוא הערך הנכון.",
+        "נכון: buffer מלא, היצרן מחזיק mutex וישן על empty. הצרכן עבר את full ונחסם על mutex. אף אחד לא יתקדם."
+      ],
+      "problem": "Qualcomm interview: code a bounded buffer with semaphores",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/4842838/qualcomm-interview-experiance-by-anonymo-0hg4/"
+      ],
+      "id": "conc.condvars.q38",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "bounded buffer בגודל N עם שלושה semaphores: `empty` סופר מקומות פנויים, `full` סופר פריטים, ו-`mutex` מגן על האינדקסים. מה ערכי האתחול הנכונים?",
+      "choices": [
+        "empty = 0, full = N, mutex = 1",
+        "empty = N, full = 0, mutex = 1",
+        "empty = N, full = N, mutex = 0",
+        "empty = 1, full = 0, mutex = N"
+      ],
+      "answer": 1,
+      "explanation": "בהתחלה ה-buffer ריק: יש N מקומות פנויים (empty = N) ו-0 פריטים (full = 0). ה-mutex פתוח (1). היצרן מחכה על empty ומשחרר full, והצרכן להפך.",
+      "notes": [
+        "שגוי: זה מצב של buffer מלא. הצרכן היה מנסה לקרוא N פריטים שלא קיימים.",
+        "נכון: N מקומות פנויים, אפס פריטים, ו-lock פתוח.",
+        "שגוי: mutex ב-0 חוסם את כולם מההתחלה, ו-full = N מתיר לצרכן לקרוא זבל.",
+        "שגוי: mutex = N מאפשר ל-N threads לגשת לאינדקסים יחד, ו-empty = 1 מגביל את ה-buffer לפריט אחד."
+      ],
+      "id": "conc.condvars.q39",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "bounded buffer עם שלושה POSIX semaphores: empty, full ו-mutex (שמגן על האינדקסים in ו-out). יש בדיוק יצרן **אחד** וצרכן **אחד**. רק היצרן כותב ל-`in`, ורק הצרכן כותב ל-`out`. אפשר לוותר על ה-semaphore בשם mutex?",
+      "choices": [
+        "לא, תמיד צריך mutex על buffer משותף",
+        "כן: empty ו-full כבר מבטיחים שהיצרן והצרכן לא ניגשים לאותו תא באותו זמן, כל אינדקס נכתב רק על ידי thread אחד, ו-sem_post / sem_wait מסנכרנים את הזיכרון ביניהם",
+        "כן, אבל רק אם buf מוגדר volatile",
+        "לא, כי sem_post לא נותן שום סנכרון זיכרון"
+      ],
+      "answer": 1,
+      "explanation": "mutex נדרש כשכמה יצרנים מתחרים על in (או כמה צרכנים על out). ב-SPSC לכל אינדקס כותב יחיד, וה-semaphores של המשאבים מונעים חפיפה בתאים. POSIX מגדיר את sem_post ו-sem_wait כפונקציות שמסנכרנות זיכרון. זה אותו רעיון כמו SPSC ring buffer עם atomics.",
+      "notes": [
+        "שגוי: ה-mutex מגן על אינדקסים שכמה threads כותבים. ב-SPSC אין כזה.",
+        "נכון: empty ו-full הם גם בקרת הזרימה וגם נקודות הסנכרון, וכל אינדקס פרטי לכותב אחד.",
+        "שגוי: volatile לא נותן סנכרון בין threads. מה שנותן אותו כאן הם ה-semaphores.",
+        "שגוי: POSIX מחייב ש-sem_post ו-sem_wait יסנכרנו זיכרון, כמו lock ו-unlock."
+      ],
+      "id": "conc.condvars.q40",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 1,
+      "type": "mcq",
+      "prompt": "counting semaphore שהערך שלו כרגע 0. thread קורא ל-wait (P / acquire). מה קורה?",
+      "choices": [
+        "ה-semaphore מתאפס לערך ההתחלתי שלו",
+        "הערך יורד ל-1- וה-thread ממשיך לרוץ",
+        "wait מחזיר שגיאה מיד",
+        "ה-thread נחסם עד ש-thread אחר יבצע post (V / release), ואז ממשיך והערך נשאר 0"
+      ],
+      "answer": 3,
+      "explanation": "ערך 0 אומר שאין משאבים פנויים. wait חוסם עד ש-post יגדיל את הערך, ואז ה-thread שמתעורר מוריד אותו בחזרה. יש מימושים (בספרי לימוד) שבהם הערך יורד לשלילי כדי לספור ממתינים, אבל גם בהם ה-thread נחסם.",
+      "notes": [
+        "שגוי: semaphore לא מתאפס לבד. הערך משתנה רק דרך wait ו-post.",
+        "שגוי: גם במימוש שבו הערך יורד לשלילי, ה-thread נחסם. הערך השלילי רק סופר כמה מחכים.",
+        "שגוי: זו התנהגות של try_wait / try_acquire, לא של wait.",
+        "נכון: wait על 0 חוסם, ו-post משחרר ממתין אחד."
+      ],
+      "problem": "Microsoft interview: what happens when a counting semaphore reaches 0",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/335125/microsoft-india-interview-questions-by-b-wkfq/"
+      ],
+      "id": "conc.condvars.q41",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 1,
+      "type": "short",
+      "prompt": "`std::counting_semaphore<10> sem(3);`. חמישה threads קוראים ל-`sem.acquire()` כמעט יחד, ואף אחד לא קורא ל-release. כמה מהם ממשיכים בלי להיחסם? (מספר)",
+      "accept": [
+        "3"
+      ],
+      "explanation": "המונה מתחיל ב-3. שלושה acquire מורידים אותו ל-0, והשניים האחרים חוסמים עד release. ה-10 בתבנית הוא רק הערך המקסימלי האפשרי של המונה.",
+      "id": "conc.condvars.q42",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "`std::binary_semaphore s{1};` (הערך 1). thread קורא `s.release()` בלי acquire לפני כן. מה קורה?",
+      "choices": [
+        "undefined behavior: release מותר רק אם הערך אחרי ההגדלה לא עובר את max(), שהוא 1 ב-binary_semaphore",
+        "release נכשל בשקט, והערך נשאר 1",
+        "release זורק std::system_error",
+        "המונה עולה ל-2, ושני threads יוכלו לעשות acquire"
+      ],
+      "answer": 0,
+      "explanation": "ל-std::counting_semaphore יש תנאי מקדים: `update <= max() - counter`. ב-binary_semaphore max() הוא 1, ולכן release כשהמונה כבר 1 מפר את התנאי. ב-POSIX זה שונה: sem_post רק מגדיל את המונה, ו-\"binary\" הוא רק מוסכמה של השימוש.",
+      "notes": [
+        "נכון: הפרת precondition של release היא UB. אין מנגנון שבודק את זה בזמן ריצה.",
+        "שגוי: אין התנהגות מוגדרת של \"התעלמות\". התקן לא מגדיר מה קורה.",
+        "שגוי: release לא מוגדר כזורק במקרה הזה. זה UB, לא exception.",
+        "שגוי: זו ההתנהגות של POSIX sem_post על semaphore שמשמש כבינארי. ב-std::binary_semaphore זה מפר תנאי מקדים."
+      ],
+      "id": "conc.condvars.q43",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "N threads צריכים להדפיס במחזוריות 1, 2, ..., N, 1, 2, ... (thread i מדפיס את i). אילו טענות על מימושים אפשריים נכונה?",
+      "choices": [
+        "N semaphores שכולם מאותחלים ל-1, כדי שאף thread לא ייחסם בהתחלה",
+        "mutex, cv אחד ומשתנה `turn`, עם notify_one: נכון ויעיל, כי רק thread אחד יכול להתקדם בכל שלב",
+        "טבעת של N binary semaphores (thread i עושה acquire על sem[i], מדפיס, ועושה release ל-sem[(i+1) % N], ורק sem[0] מתחיל ב-1): כל מעבר מעיר בדיוק את ה-thread הבא. cv אחד עם notify_all נכון גם הוא, אבל מעיר את כל N ה-threads בכל מעבר",
+        "counting semaphore יחיד שמאותחל ל-1: כל thread עושה acquire, ואם זה לא התור שלו עושה release ומנסה שוב. זה נכון ויעיל כמו טבעת ה-semaphores"
+      ],
+      "answer": 2,
+      "explanation": "הבעיה היא \"להעיר את ה-thread הנכון\". semaphore לכל thread מכוון את ההתעוררות בדיוק אליו. cv משותף לא יודע את מי להעיר, ולכן notify_all (נכון אבל O(N) התעוררויות לכל מספר). semaphore יחיד לא מכוון בכלל, ולכן thread שקיבל אותו שלא בתורו חייב לנסות שוב, וזו בעצם המתנה פעילה.",
+      "notes": [
+        "שגוי: אז כולם מדפיסים מיד בסדר אקראי. רק ה-semaphore של ה-thread הראשון צריך להתחיל ב-1.",
+        "שגוי: notify_one עלול להעיר thread שזה לא התור שלו. הוא רואה predicate שקרי וחוזר לישון, וה-thread הנכון לא קיבל הודעה. כולם ישנים, והתוכנית נתקעת.",
+        "נכון: semaphore פרטי לכל thread הופך כל מעבר להתעוררות אחת מכוונת. notify_all תקין אבל יוצר thundering herd.",
+        "שגוי: זה busy retry: threads תופסים ומשחררים את ה-semaphore שוב ושוב בלי התקדמות, ואין הבטחה שה-thread הנכון יקבל אותו בזמן סביר."
+      ],
+      "problem": "NVIDIA interview: print 1..N with N threads in order, using N semaphores and then one",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/4032849/nvidia-interview-off-campus-2023/"
+      ],
+      "id": "conc.condvars.q44",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "constexpr int N = 3;\nstd::binary_semaphore s[N] = {std::binary_semaphore{1},\n    std::binary_semaphore{0}, std::binary_semaphore{0}};\n\nvoid run(int id) {\n  for (int r = 0; r < 2; ++r) {\n    s[id].acquire();\n    std::printf(\"%d \", id);\n    s[(id + 1) % N].release();\n  }\n}\n\nint main() {\n  std::vector<std::thread> v;\n  for (int i = N - 1; i >= 0; --i) v.emplace_back(run, i);\n  for (auto& t : v) t.join();\n}",
+      "choices": [
+        "הסדר לא דטרמיניסטי, כי ה-threads נוצרים בסדר הפוך",
+        "`2 1 0 2 1 0`",
+        "`0 1 2 0 1 2`",
+        "`0 0 1 1 2 2`"
+      ],
+      "answer": 2,
+      "explanation": "רק s[0] מתחיל ב-1, ולכן thread 0 מדפיס ראשון, משחרר את s[1], וכן הלאה בטבעת. סדר היצירה לא משנה: כל thread חוסם על ה-semaphore שלו עד שהקודם לו משחרר.",
+      "notes": [
+        "שגוי: סדר היצירה משפיע רק על מי מגיע ראשון ל-acquire. ה-semaphores קובעים את סדר ההדפסה לגמרי.",
+        "שגוי: זה סדר היצירה, אבל threads 2 ו-1 חוסמים על semaphores שמתחילים ב-0.",
+        "נכון: הטבעת קובעת סדר מלא, 0, 1, 2, ושוב מ-0.",
+        "שגוי: אחרי ההדפסה thread 0 משחרר את s[1], לא את s[0]. הוא חוסם בסיבוב השני עד ש-thread 2 ישחרר את s[0]."
+      ],
+      "id": "conc.condvars.q45",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "16 threads על מכונה עם 4 cores מדפיסים במחזוריות לפי `std::atomic<int> turn`, כשכל thread מחכה עם `while (turn.load() != id) {}` ואז מדפיס ומעדכן את turn. בבדיקה עם 4 threads זה היה מהיר. עם 16 זה איטי פי אלפים. למה?",
+      "choices": [
+        "כל thread מסתובב על core כל עוד הוא לא בתורו. עם 16 threads ו-4 cores, ה-thread שזה התור שלו בדרך כלל לא רץ בכלל, והוא מחכה שה-scheduler יפנה לו core על חשבון אלה שמסתובבים, כלומר עד סוף time slice",
+        "turn.load() ברירת מחדל seq_cst, וזה איטי פי אלפים מ-relaxed",
+        "ה-printf הופך את כל ה-threads לסדרתיים",
+        "atomic<int> לא lock-free על המכונה הזו"
+      ],
+      "answer": 0,
+      "explanation": "busy-wait עובד רק כשלכל thread יש core משלו. עם oversubscription, ה-threads שמסתובבים תופסים את ה-cores, וה-thread היחיד שיכול להתקדם מחכה ל-time slice (מילי-שניות). הפתרון: המתנה חוסמת (semaphores לכל thread, או C++20 `turn.wait(old)` עם notify_all).",
+      "notes": [
+        "נכון: בכל רגע 4 threads רצים, וסיכוי טוב שאף אחד מהם הוא זה שבתורו. כל מעבר עולה time slice.",
+        "שגוי: ב-x86 load עם seq_cst הוא mov רגיל, בדיוק כמו relaxed.",
+        "שגוי: printf אכן מסודר בטור, אבל זה היה נכון גם עם 4 threads. מה שהשתנה הוא היחס בין threads ל-cores.",
+        "שגוי: atomic<int> הוא lock-free בכל פלטפורמה רלוונטית, וגם אם לא, זה לא היה מסביר פי אלפים."
+      ],
+      "id": "conc.condvars.q46",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "code",
+      "prompt": "ממש `void print_alternately(int max)` שמפעילה שני threads: אחד מדפיס את המספרים האי-זוגיים ואחד את הזוגיים, כך שהפלט הוא 1, 2, 3, ..., max בסדר הזה (שורה לכל מספר). בלי busy-waiting ובלי sleep. הפונקציה חוזרת אחרי ששני ה-threads סיימו, גם כש-max הוא 0 או 1.",
+      "lang": "cpp",
+      "starter": "void print_alternately(int max);",
+      "modelAnswer": "#include <condition_variable>\n#include <cstdio>\n#include <mutex>\n#include <thread>\n\n// Two threads print 1..max alternately: odd thread prints odd numbers, even thread even.\nvoid print_alternately(int max) {\n  std::mutex m;\n  std::condition_variable cv;\n  int next = 1;                                   // next number to print; guarded by m\n\n  auto worker = [&](int parity) {                 // parity: 1 = odd, 0 = even\n    std::unique_lock lk(m);\n    for (;;) {\n      cv.wait(lk, [&] { return next > max || next % 2 == parity; });\n      if (next > max) return;                     // checked after wait, under the lock\n      std::printf(\"%d\\n\", next);\n      ++next;\n      cv.notify_one();                            // exactly one other waiter exists\n    }\n  };\n  std::thread odd(worker, 1), even(worker, 0);\n  odd.join();\n  even.join();\n}",
+      "rubric": [
+        "מצב משותף אחד (next) מוגן ב-mutex, וכל thread מחכה עם predicate שכולל גם את תנאי הסיום",
+        "תנאי הסיום נבדק אחרי ה-wait ותחת ה-lock, ולכן אין הדפסה של max + 1 ואין thread שנשאר ישן",
+        "notify אחרי כל עדכון. notify_one מספיק כי יש בדיוק ממתין אחד אחר",
+        "עובד בכל סדר הפעלה של ה-threads ובמקרי הקצה max = 0 ו-max = 1",
+        "מזכיר חלופה עם שני binary semaphores (odd מתחיל ב-1, even ב-0)"
+      ],
+      "explanation": "הבעיה הקלאסית של \"פינג-פונג\" בין שני threads. החלק שבו טועים הוא הסיום: בדיקה של התנאי מחוץ ל-lock או לפני ה-wait מובילה להדפסה עודפת או ל-thread שנשאר ישן.",
+      "problem": "Microsoft interview: print odd and even numbers alternately with two threads",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/4089181/microsoft-sde-iii-bangalore-by-anonymous-f9yj/"
+      ],
+      "id": "conc.condvars.q47",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "prompt": "שני threads מדפיסים 1 עד MAX = 10 לסירוגין: run(1) מדפיס אי-זוגיים ו-run(0) זוגיים. n הוא int גלובלי שמתחיל ב-1. הפלט הוא `1 2 3 4 5 6 7 8 9 10 11`. איפה הבאג?",
+      "lang": "cpp",
+      "code": "void run(int parity) {\n  while (n <= MAX) {\n    std::unique_lock lk(m);\n    cv.wait(lk, [&] { return n % 2 == parity; });\n    std::printf(\"%d \", n++);\n    cv.notify_one();\n  }\n}",
+      "bugLine": 2,
+      "choices": [
+        "צריך `if` במקום predicate ב-wait",
+        "n++ בתוך printf הוא UB",
+        "notify_one צריך להיות notify_all",
+        "התנאי `n <= MAX` נבדק לפני ה-wait ובלי ה-lock: ה-thread האי-זוגי עובר את הבדיקה כש-n = 10, מחכה, ומתעורר כש-n = 11 ומדפיס אותו. בנוסף, קריאה של n בלי lock היא data race"
+      ],
+      "answer": 3,
+      "explanation": "הבדיקה של תנאי הסיום חייבת לקרות אחרי ההמתנה, תחת ה-lock, וגם להיות חלק מה-predicate. אחרת ה-thread מתעורר כשהמצב כבר השתנה ופועל לפי בדיקה ישנה. התיקון: `cv.wait(lk, [&]{ return n > MAX || n % 2 == parity; }); if (n > MAX) break;`.",
+      "notes": [
+        "שגוי: predicate מגן מפני spurious wakeup. החלפה ל-if רק תוסיף באג.",
+        "שגוי: n++ כארגומנט ל-printf מוגדר היטב: הערך הקודם מועבר, ו-n גדל.",
+        "שגוי: יש רק ממתין אחד אחר, ולכן notify_one מספיק. הבעיה היא בדיקה ישנה של התנאי.",
+        "נכון: check-then-act. אחרי שהדפיס 9 ה-thread האי-זוגי חוזר ללולאה, בודק n = 10 (עובר), מחכה, ומתעורר עם 11. וגם זה data race על n."
+      ],
+      "id": "conc.condvars.q48",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "פתרון אחר לזוגי-אי-זוגי: כל thread רץ בלולאה, נועל mutex, ואם `n % 2` מתאים לו (ו-n לא עבר את MAX) הוא מדפיס ומגדיל את n, ואז משחרר. אין condition variable. מה נכון?",
+      "choices": [
+        "הפלט שגוי, כי בלי condition variable אין סנכרון",
+        "הפלט נכון, אבל זה polling: כל thread נועל ומשחרר שוב ושוב גם כשזה לא התור שלו, ושורף CPU",
+        "התוכנית תיתקע, כי thread אחד ינעל את ה-mutex לנצח",
+        "זה הפתרון היעיל ביותר, כי אין context switches"
+      ],
+      "answer": 1,
+      "explanation": "ה-mutex מבטיח שהבדיקה וההדפסה קורות יחד, ולכן הסדר נכון. אבל thread שזה לא התור שלו לא ישן, אלא מסתובב על נעילות. condition variable או semaphores נותנים אותה נכונות בלי לשרוף CPU.",
+      "notes": [
+        "שגוי: ה-mutex מספק גם mutual exclusion וגם סנכרון זיכרון. הבדיקה ב-n תחת ה-lock תמיד רואה את הערך העדכני.",
+        "נכון: נכון אבל בזבזני. זו המתנה פעילה שמסתתרת מאחורי lock ו-unlock.",
+        "שגוי: כל thread משחרר את ה-mutex בסוף כל איטרציה, כך שהשני מקבל הזדמנות.",
+        "שגוי: יש מעט context switches, אבל בתמורה שני cores שרופים כמעט כל הזמן. עם יותר threads מ-cores זה גם איטי."
+      ],
+      "id": "conc.condvars.q49",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "שלושה threads מדפיסים יחד `Aa1Bb2Cc3...`: אחד אותיות גדולות, אחד קטנות ואחד ספרות. כולם חולקים mutex, condition variable אחד ו-`int turn` (0, 1, 2). כל אחד מחכה עם `cv.wait(lk, [&]{ return turn == me; })`, מדפיס, קובע `turn = (turn + 1) % 3` וקורא `cv.notify_one()`. מה קורה?",
+      "choices": [
+        "עובד תמיד: ה-predicate מבטיח את הסדר",
+        "הסדר נשמר, אבל התוכנית יכולה להיתקע: notify_one עלול להעיר את ה-thread שזה לא התור שלו. הוא חוזר לישון, וה-thread הנכון לא קיבל הודעה",
+        "הסדר עלול להתבלבל בגלל spurious wakeups",
+        "ה-thread שהדפיס עלול להתעורר מה-notify של עצמו ולהדפיס פעמיים"
+      ],
+      "answer": 1,
+      "explanation": "עם cv משותף ותנאים שונים לכל ממתין, notify_one לא יודע את מי להעיר. אם התעורר הלא-נכון, ההודעה \"נבלעה\". תיקון: notify_all, או cv נפרד לכל thread שבו מעירים את הבא בתור.",
+      "notes": [
+        "שגוי: ה-predicate מגן על הסדר, אבל לא מבטיח שה-thread הנכון יתעורר בכלל.",
+        "נכון: זה stolen או lost wakeup: ההודעה הגיעה ל-thread שלא יכול להתקדם.",
+        "שגוי: spurious wakeup גורם רק לבדיקה חוזרת של ה-predicate. הסדר לא יתבלבל.",
+        "שגוי: ה-thread שקרא ל-notify לא נמצא ב-wait באותו רגע, ולכן לא יכול להתעורר ממנו. וגם אם היה, ה-predicate שלו שקרי."
+      ],
+      "problem": "Qualcomm interview: three threads print Aa1Bb2Cc3 in order",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1939505/qualcomm-senior-engineer-hyderabad-april-ffzb/"
+      ],
+      "id": "conc.condvars.q50",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "multi",
+      "prompt": "שלושה threads עם mutex אחד, `turn`, ו-condition variable אחד, ועם notify_one, נתקעים לפעמים. אילו תיקונים פותרים את הבעיה?",
+      "choices": [
+        "להפוך את turn ל-`std::atomic<int>`",
+        "להחליף את notify_one ב-notify_all",
+        "להוסיף `sleep_for(1ms)` אחרי notify_one",
+        "להשתמש ב-condition variable נפרד לכל thread, ולקרוא notify_one על ה-cv של ה-thread הבא בתור"
+      ],
+      "answer": [
+        1,
+        3
+      ],
+      "explanation": "הבעיה היא שההודעה לא מגיעה ל-thread הנכון. notify_all מעיר את כולם (וכל אחד בודק את התור). cv לכל thread מכוון את ההודעה בדיוק אליו. atomic או sleep לא משנים את מי שמתעורר.",
+      "notes": [
+        "שגוי: turn כבר מוגן ב-mutex. atomic לא משנה את מי ש-notify_one מעיר.",
+        "נכון: כל הממתינים מתעוררים ובודקים את ה-predicate. רק הנכון ממשיך. מחיר: התעוררויות מיותרות.",
+        "שגוי: sleep לא שולח אף הודעה. ה-thread הנכון ממשיך לישון.",
+        "נכון: עם cv פרטי אין ספק את מי מעירים. זה גם היעיל ביותר."
+      ],
+      "id": "conc.condvars.q51",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 2,
+      "type": "order",
+      "prompt": "שלושה threads מדפיסים `Aa1` לפי turn, עם mutex, cv אחד ו-notify_all. turn = 0 וה-thread של האותיות הגדולות (me = 0) מחכה. סדר את מה שקורה לו מרגע שמגיעה ההודעה ועד שהוא חוזר לחכות:",
+      "items": [
+        "מתעורר מה-wait ונועל מחדש את ה-mutex",
+        "בודק את ה-predicate `turn == 0` ומוצא אותו נכון",
+        "מדפיס את האות הבאה",
+        "קובע `turn = 1`",
+        "קורא notify_all",
+        "חוזר ל-wait, שמשחרר את ה-mutex באופן אטומי ונרדם"
+      ],
+      "explanation": "wait חוזר רק אחרי שה-mutex נעול מחדש, ולכן הבדיקה, ההדפסה והעדכון קורים כולם תחת lock. הקריאה הבאה ל-wait משחררת את ה-mutex ונרדמת כפעולה אחת, וכך אין חלון ל-lost wakeup.",
+      "id": "conc.condvars.q52",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 2,
+      "type": "mcq",
+      "prompt": "שני threads צריכים לרוץ לסירוגין k פעמים: A, B, A, B... thread A: `semA.acquire(); print(\"A\"); semB.release();`. thread B: `semB.acquire(); print(\"B\"); semA.release();`. מה צריכים להיות ערכי ההתחלה?",
+      "choices": [
+        "semA = 1, semB = 0",
+        "semA = 1, semB = 1",
+        "semA = 0, semB = 1",
+        "semA = 0, semB = 0"
+      ],
+      "answer": 0,
+      "explanation": "A צריך להתחיל, ולכן ה-semaphore שלו פתוח, ושל B סגור. מכאן כל thread פותח את השני בסוף כל סיבוב, והסירוגין נשמר בלי שום תלות בסדר היצירה.",
+      "notes": [
+        "נכון: A עובר ראשון ופותח את B. B פותח את A, וכן הלאה.",
+        "שגוי: שניהם יכולים לרוץ מיד, וההדפסה הראשונה עלולה להיות B. עם counting semaphore הערכים גם יכולים להגיע ל-2, ואז אותו thread מדפיס פעמיים ברצף.",
+        "שגוי: זה נותן סירוגין, אבל מתחיל ב-B ולא ב-A.",
+        "שגוי: שניהם חוסמים מיד, ואף אחד לא יפתח את השני. deadlock."
+      ],
+      "problem": "NVIDIA / Intel interview: two threads run alternately (ABAB...) k times",
+      "tags": [
+        "nvidia",
+        "intel"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/1299487/nvidia-software-intern-india-by-anonymou-8g0n/",
+        "https://www.glassdoor.com.mx/Entrevista/Intel-Corporation-Entrevista-E1519-RVW95626028.htm"
+      ],
+      "id": "conc.condvars.q53",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "prompt": "מה מודפס?",
+      "lang": "cpp",
+      "code": "std::binary_semaphore sa{1}, sb{0};\n\nint main() {\n  std::thread b([] {\n    for (int i = 0; i < 3; ++i) { sb.acquire(); std::printf(\"B\"); sa.release(); }\n  });\n  std::thread a([] {\n    for (int i = 0; i < 3; ++i) { sa.acquire(); std::printf(\"A\"); sb.release(); }\n  });\n  a.join();\n  b.join();\n}",
+      "choices": [
+        "הסדר לא דטרמיניסטי, כי b נוצר לפני a",
+        "`BABABA`",
+        "`ABABAB`",
+        "`AAABBB`"
+      ],
+      "answer": 2,
+      "explanation": "sa מתחיל ב-1 ו-sb ב-0, ולכן A מדפיס ראשון. כל הדפסה משחררת את ה-semaphore של השני וחוסמת את עצמה, כך שהפלט קבוע.",
+      "notes": [
+        "שגוי: סדר היצירה לא משנה. ה-semaphores קובעים סדר מלא.",
+        "שגוי: b אכן נוצר ראשון, אבל הוא חוסם על sb שמתחיל ב-0.",
+        "נכון: סירוגין מלא, שמתחיל ב-A כי sa פתוח.",
+        "שגוי: אחרי ההדפסה הראשונה sa כבר 0, ו-a חוסם עד ש-b ישחרר אותו."
+      ],
+      "id": "conc.condvars.q54",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בכל סיבוב (k סיבובים) thread A מסיים שלב 1, ורק אז thread B מבצע שלב 2. המפתח משתמש ב-`std::latch done(1);` אחד: A קורא `done.count_down()` בסוף שלב 1, ו-B קורא `done.wait()` לפני שלב 2, בכל סיבוב. מה קורה?",
+      "choices": [
+        "ה-latch מתאפס אוטומטית ל-1 אחרי שכל הממתינים עוברים",
+        "עובד בכל הסיבובים",
+        "בסיבוב הראשון הסדר נשמר, אבל latch הוא חד-פעמי: אחרי שהמונה הגיע ל-0, כל wait חוזר מיד, ומהסיבוב השני B כבר לא מחכה ל-A. ובנוסף count_down שמוריד אל מתחת ל-0 הוא UB",
+        "deadlock כבר בסיבוב הראשון"
+      ],
+      "answer": 2,
+      "explanation": "std::latch הוא חד-פעמי. לסיבובים חוזרים צריך מנגנון שחוזר למצב התחלתי: std::barrier (מחזורי), זוג semaphores, או cv עם מונה סיבובים.",
+      "notes": [
+        "שגוי: זה התיאור של std::barrier, שיש לו phases. latch לא חוזר לערך ההתחלתי.",
+        "שגוי: המונה יורד ל-0 בסיבוב הראשון ולא עולה שוב.",
+        "נכון: latch לא מתאפס. אחרי הסיבוב הראשון wait לא חוסם, ו-count_down נוסף מפר את התנאי המקדים (המונה לא יכול לרדת מתחת ל-0).",
+        "שגוי: בסיבוב הראשון הכול עובד: A מוריד ל-0 ו-B משתחרר."
+      ],
+      "id": "conc.condvars.q55",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "יצרנים מדורגים לפי rank (1 הכי חשוב). צרכנים חייבים תמיד לקחת את הפריט עם ה-rank הטוב ביותר שזמין כרגע, וצריכים לחכות (בלי busy-wait) כשאין פריטים. איזה תכנון מתאים?",
+      "choices": [
+        "`std::priority_queue` אחד לפי rank, מוגן ב-mutex אחד, עם cv אחד שהצרכנים מחכים עליו לתנאי \"לא ריק\"",
+        "תור lock-free לכל rank, וצרכן סורק את כולם בלולאה עד שהוא מוצא פריט",
+        "תור FIFO אחד, וכל צרכן ממיין את התור לפני כל שליפה",
+        "תור לכל rank עם mutex ו-cv משלו. צרכן מחכה על ה-cv של rank 1"
+      ],
+      "answer": 0,
+      "explanation": "הדרישה \"הטוב ביותר מכל ה-ranks\" היא תנאי על מצב משותף אחד, ולכן הוא צריך להיות תחת lock אחד ועם cv אחד. heap נותן O(log n) להכנסה ולשליפה. צרכן לא יכול לחכות על כמה condition variables בבת אחת, ולכן תורים נפרדים מסבכים את ההמתנה.",
+      "notes": [
+        "נכון: מצב אחד, lock אחד, cv אחד, ו-heap שמחזיר תמיד את ה-rank הטוב ביותר.",
+        "שגוי: סריקה בלולאה כשאין פריטים היא busy-wait. וגם בלי זה, הבדיקה \"תור 1 ריק\" ואז שליפה מתור 2 לא אטומית, כך שפריט rank 1 שמגיע באמצע מפסיד.",
+        "שגוי: מיון בכל שליפה הוא O(n log n) לשליפה, ויקר בהרבה מ-heap.",
+        "שגוי: צרכן שמחכה על rank 1 לא יתעורר כשמגיע פריט של rank 2, ופריטים כאלה ייתקעו."
+      ],
+      "problem": "Amazon interview: producer-consumer where producers have ranks",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://leetcode.com/discuss/post/323046/amazon-sde12-reject-by-anonymous_user-m4bz/"
+      ],
+      "id": "conc.condvars.q56",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 3,
+      "type": "mcq",
+      "prompt": "בתור עדיפויות של משימות, `std::priority_queue` ממוין רק לפי rank. שתי משימות עם אותו rank נכנסו בסדר X ואז Y, והצרכן קיבל קודם את Y. למה, ואיך מתקנים?",
+      "choices": [
+        "הצרכן קיבל את Y כי הוא נכנס אחרון, ו-priority_queue הוא LIFO",
+        "צריך לנעול את ה-mutex גם בזמן ה-push",
+        "באג ב-priority_queue. צריך std::set",
+        "heap אינו יציב: אין הבטחה לגבי סדר בין איברים שווים. מוסיפים מספר רץ (sequence) כמפתח שני, כך ש-(rank, seq) קובע סדר FIFO בתוך אותו rank"
+      ],
+      "answer": 3,
+      "explanation": "heap מסדר רק לפי המשווה. איברים שווים יכולים לצאת בכל סדר. מונה רץ (שמוקצה תחת אותו lock) הופך את ההשוואה לקפדנית ונותן FIFO בתוך כל רמת עדיפות.",
+      "notes": [
+        "שגוי: priority_queue לא LIFO. הסדר בין שווים פשוט לא מוגדר.",
+        "שגוי: ה-push כבר תחת lock. הבעיה היא בסדר, לא בסנכרון.",
+        "שגוי: זו ההתנהגות המתועדת של heap, לא באג. std::set עם אותו משווה היה מאחד איברים שווים לאחד.",
+        "נכון: מפתח משני של sequence הוא הפתרון הסטנדרטי."
+      ],
+      "id": "conc.condvars.q57",
+      "lesson": "conc.condvars"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "במערכת עם יצרנים מדורגים, rank 1 מייצר ברצף בקצב גבוה מקצב הצריכה. פריטים של rank 3 לא נצרכים במשך דקות. מה הפתרון המקובל?",
+      "choices": [
+        "להוסיף עוד mutexes",
+        "aging: העדיפות האפקטיבית של פריט משתפרת עם הזמן שהוא מחכה (או מגבילים את הנתח של כל rank), כך שגם פריטים בעדיפות נמוכה מתקדמים בסוף",
+        "להפוך את התור ל-FIFO פשוט",
+        "להגדיל את גודל התור"
+      ],
+      "answer": 1,
+      "explanation": "עדיפות קפדנית יוצרת starvation כשהעומס של העדיפות הגבוהה גבוה מהיכולת. aging או weighted fair queuing מבטיחים התקדמות לכולם, במחיר של הפרה מבוקרת של העדיפות.",
+      "notes": [
+        "שגוי: זו לא בעיית סנכרון. גם עם נעילה מושלמת המדיניות עצמה מרעיבה.",
+        "נכון: aging (או מכסות לכל rank) הוא הפתרון הקלאסי ל-starvation בתזמון לפי עדיפויות.",
+        "שגוי: זה מבטל את הדרישה העסקית לעדיפויות.",
+        "שגוי: תור גדול יותר רק צובר יותר פריטים של rank 3 שמחכים."
+      ],
+      "id": "conc.condvars.q58",
       "lesson": "conc.condvars"
     }
   ]

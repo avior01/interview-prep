@@ -217,6 +217,62 @@
         {
           "term": "MAP_POPULATE ו-prefault",
           "def": "אכלוס הדפים מראש: דגל של mmap, או כתיבה לכל דף באתחול, כדי שלא יהיו faults בזמן ריצה."
+        },
+        {
+          "term": ".text / .rodata / .data / .bss",
+          "def": "קטעי ה-image של תוכנית: קוד, קבועים (כולל string literals), משתנים גלובליים וסטטיים עם ערך התחלתי שאינו אפס, ומשתנים מאופסים. .bss לא תופס מקום בקובץ, רק גודל."
+        },
+        {
+          "term": "static מקומי",
+          "def": "משתנה static בתוך פונקציה חי לאורך כל התוכנית ויושב ב-.data או ב-.bss, לא על ה-stack. רק ה-scope שלו מוגבל לפונקציה."
+        },
+        {
+          "term": "כיוון גדילת ה-stack",
+          "def": "ב-x86 וב-ARM ה-stack גדל כלפי מטה: push מקטין את ה-stack pointer, ו-frame של פונקציה שנקראת נמצא בכתובות נמוכות יותר. בודקים אותו על ידי השוואה בין frames של קריאות מקוננות שאינן inline."
+        },
+        {
+          "term": "RLIMIT_STACK ו-stack guard gap",
+          "def": "הגבול על גודל ה-stack של ה-main thread (ulimit -s, בדרך כלל 8MB). מתחתיו יש מרווח שמור, ו-page fault שם מסתיים ב-SIGSEGV. handler של SIGSEGV במקרה כזה צריך sigaltstack."
+        },
+        {
+          "term": "frame",
+          "def": "יחידה של זיכרון פיזי בגודל דף. מספר ה-frames = גודל ה-RAM חלקי גודל הדף. דפים וירטואליים ממופים ל-frames."
+        },
+        {
+          "term": "page number / offset",
+          "def": "פירוק כתובת: הביטים הנמוכים (log2 של גודל הדף) הם ה-offset בתוך הדף, והשאר הוא מספר הדף. עם דף של 4KB, 3 ספרות הקסה נמוכות הן ה-offset."
+        },
+        {
+          "term": "טבלת דפים רב-שלבית",
+          "def": "עץ של טבלאות שבו כל רמה מאנדקסת בחלק אחר של הכתובת. טבלאות-משנה קיימות רק לאזורים ממופים, וזה חוסך זיכרון עצום במרחב כתובות דליל, במחיר page walk ארוך יותר."
+        },
+        {
+          "term": "EAT (effective access time)",
+          "def": "זמן גישה ממוצע עם TLB: hit × זמן גישה רגיל + miss × (זמן ה-page walk + הגישה). עם טבלה של k רמות, miss עולה k גישות נוספות."
+        },
+        {
+          "term": "global pages",
+          "def": "רשומות TLB שלא נפסלות בטעינת CR3, בדרך כלל דפי הקרנל שזהים בכל ה-processes. כך context switch לא מאבד את תרגומי הקרנל."
+        },
+        {
+          "term": "thrashing",
+          "def": "מצב שבו סכום ה-working sets גדול מה-RAM, והמערכת מבלה את רוב הזמן בפינוי דפים וטעינתם מחדש. סימנים: הרבה major faults, iowait גבוה, ניצול CPU נמוך, processes במצב D."
+        },
+        {
+          "term": "FIFO / LRU / OPT",
+          "def": "אלגוריתמי החלפת דפים: FIFO מפנה את הדף שנכנס ראשון, LRU את זה שלא היה בשימוש הכי הרבה זמן, ו-OPT את זה שישמש הכי מאוחר בעתיד (לא ניתן למימוש, משמש להשוואה)."
+        },
+        {
+          "term": "Belady's anomaly",
+          "def": "תופעה שבה הוספת frames מגדילה את מספר ה-page faults. קורית ב-FIFO. LRU ו-OPT הם stack algorithms ולכן חסינים: הקבוצה בזיכרון עם n frames מוכלת תמיד בקבוצה עם n+1."
+        },
+        {
+          "term": "fault / trap / abort",
+          "def": "סוגי exceptions: fault מדווח לפני שהפקודה הושלמה וחוזר אליה (page fault), trap חוזר לפקודה הבאה (breakpoint, syscall), abort הוא שגיאה שאי אפשר להמשיך ממנה."
+        },
+        {
+          "term": "file-backed / anonymous pages",
+          "def": "דף file-backed (קוד, mmap של קובץ, page cache) אפשר לשחרר בלי לכתוב אם הוא נקי, ולקרוא שוב מהקובץ. דף אנונימי (heap, stack) צריך swap כדי לפנות אותו."
         }
       ]
     }
@@ -377,9 +433,6 @@
       "answer": 0,
       "explanation": "1536 × 4KB = 6MB, ו-1536 × 2MB = 3GB. עם working set של 1GB בגישה אקראית ודפים של 4KB, כמעט כל גישה היא TLB miss, ועם 2MB כמעט אין. בפועל במעבדים רבים יש רשומות נפרדות או משותפות לגדלים השונים, אבל סדר הגודל הוא העיקר.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: TLB reach = רשומות × גודל דף. 1536 × 4KB = 6144KB = 6MB, ו-1536 × 2MB = 3072MB = 3GB.",
         "לא נכון: זה מתקבל מהכפלה ב-1KB במקום 4KB (וב-512KB במקום 2MB), כלומר טעות פי 4 בגודל הדף.",
@@ -428,9 +481,6 @@
       "answer": 1,
       "explanation": "ב-Linux מדיניות ברירת המחדל מקצה דף פיזי ב-node של ה-CPU שגרם ל-page fault. התיקונים: לאתחל את הבאפר מה-threads שישתמשו בו, numactl או mbind, או להקצות בכל node באפר משלו. רלוונטי מאוד כשה-NIC של ה-USRP מחובר ל-socket מסוים.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: ה-workers מוצמדים ל-node 1 כמתוכנן. הבעיה היא איפה הזיכרון נמצא, לא איפה ה-threads רצים.",
         "נכון: מדיניות first-touch מקצה כל דף ב-node של ה-CPU שגרם ל-fault הראשון, כאן node 0 בזמן האיפוס. כל קריאה מ-node 1 עוברת דרך ה-interconnect, עם latency גבוה ורוחב פס מוגבל.",
@@ -453,10 +503,7 @@
         "בונוס: עם דף 2MB ה-PD מצביע ישירות לדף וה-offset הוא 21 ביט"
       ],
       "explanation": "9 ביט לכל רמה כי טבלה היא דף של 4KB עם רשומות של 8 בתים, כלומר 512 רשומות. ביחד 4 × 9 + 12 = 48 ביט.",
-      "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.virtual-memory"
     },
     {
       "id": "sys.virtual-memory.q12",
@@ -472,9 +519,6 @@
       "answer": 0,
       "explanation": "THP משפר throughput, אבל הלוגיקה האוטומטית מכניסה עבודה לא צפויה לנתיב ה-fault וברקע. ל-RT מעדיפים שליטה מפורשת: `transparent_hugepage=madvise` (או never) ו-hugetlbfs עם דפים שמוקצים ב-boot, כך שכל ה-faults קורים באתחול. huge pages עצמן מקטינות TLB misses ולא מגדילות.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: ב-always, fault עלול להפעיל direct compaction כדי למצוא 2MB רציפים ולאפס 2MB בבת אחת, ו-khugepaged מאחד ברקע. הפתרון ל-RT: hugetlbfs או THP=madvise על אזורים ספציפיים, עם נגיעה מראש באתחול.",
         "לא נכון: huge pages מקטינות TLB misses ומשפרות ביצועים. הבעיה היא הלוגיקה האוטומטית של THP, לא huge pages עצמן.",
@@ -496,9 +540,6 @@
       "answer": 1,
       "explanation": "stride של 4KB הוא המקרה הגרוע ביותר: אותם ביטים נמוכים בכל כתובת, ולכן כולן מתחרות על אותו set ב-cache, ה-prefetcher לא עוזר, וכל גישה צריכה תרגום חדש. התיקונים: transpose או blocking (tiling), padding של רוחב השורה (למשל 1024 + 16), ו-huge pages.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: cache misses רגילים לבדם לא מסבירים פי עשרות. יש בנוסף TLB miss בכל גישה, prefetcher שלא עוזר ו-conflict misses שמבטלים את ניצול ה-cache.",
         "נכון: stride של 4096 בתים פירושו דף חדש בכל גישה (TLB miss), ה-prefetcher לא חוצה גבול של 4KB, וכל הכתובות חולקות את 12 הביטים הנמוכים ולכן נופלות לאותו set ב-L1 וב-L2.",
@@ -519,10 +560,7 @@
         "מזכיר THP, OOM, או memcg כפרטים מתקדמים"
       ],
       "explanation": "שאלה קלאסית בראיונות מערכות. מועמד חזק מחבר בין ה-allocator, הקרנל והחומרה.",
-      "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.virtual-memory"
     },
     {
       "id": "sys.virtual-memory.q15",
@@ -559,9 +597,6 @@
       "answer": 0,
       "explanation": "Virtually Indexed, Physically Tagged: ה-index נלקח מה-VA כדי לחסוך זמן, וה-tag מושווה ל-PA שמגיע מה-TLB. ביטים בתוך offset הדף זהים ב-VA וב-PA, ולכן אין aliasing כל עוד ה-index נמצא שם. 32KB / 8 = 4KB, ו-48KB / 12 = 4KB. כדי להגדיל את L1 מוסיפים ways, וזה מייקר את ההשוואה. ב-Apple Silicon הדף הבסיסי 16KB, וזה חלק מהסיבה שה-L1 שם גדול יותר.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: ב-VIPT ה-index נלקח מה-VA במקביל לחיפוש ב-TLB. כדי למנוע aliasing, ה-index וה-offset בשורה חייבים להיות בתוך 12 ביטי ה-offset של הדף, ולכן גודל way ≤ 4KB: 32KB/8 = 48KB/12 = 4KB, ואילו 64KB/8 = 8KB.",
         "לא נכון: גודל שורה של 64 בתים קובע כמה ביטי offset יש בשורה, לא את הגודל הכולל. גם 64KB עם 8 ways אפשרי עם שורות של 64 בתים.",
@@ -736,9 +771,6 @@
       "answer": 0,
       "explanation": "smp_call_function_many שולח IPIs, ו-flush_tlb_mm_range הוא ביטול התרגומים. allocator שמחזיר זיכרון ל-OS בכל free של בלוק גדול גורם לזה בכל פעם. allocators כמו jemalloc ו-tcmalloc מחזיקים זיכרון ומשחררים אותו באיחור ובאצוות. lock של malloc היה נראה כ-contention ב-user space, לא כ-IPIs.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: בלוקים מעל M_MMAP_THRESHOLD מוחזרים ב-munmap (או trim עם MADV_DONTNEED), וכל ביטול מיפוי דורש TLB shootdown: IPI דרך smp_call_function_many לכל core שמריץ את ה-mm, והמתנה. העלות גדלה עם מספר ה-cores, והפתרון הוא pool או העלאת הספים.",
         "לא נכון: ה-TLB הוא פר-core ולא תלוי במספר ה-threads. גם הסימנים ב-perf הם IPIs ו-flush, לא page walks.",
@@ -786,9 +818,6 @@
       ],
       "explanation": "קריאה מזיכרון אנונימי ממפה את ה-zero page, והכתיבה הראשונה בזמן ריצה עדיין תגרום ל-fault של COW מה-zero page. malloc גדול רק יוצר VMA. mlockall עם MCL_FUTURE ו-MAP_POPULATE מאכלסים בזמן היצירה, וכתיבה לכל דף מאכלסת באופן ידני. בנוסף לזה צריך להימנע מ-swap (mlock) ומשחרור הזיכרון בזמן ריצה.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "נכון: MCL_FUTURE גורם לכל מיפוי עתידי, כולל ה-mmap של malloc ל-256MB, להינעל ולהתאכלס כבר בזמן היצירה, עם דפים פרטיים ולא zero page כי המיפוי ניתן לכתיבה.",
         "נכון: MAP_POPULATE מבצע prefault לכל הטווח כבר ב-mmap, כך שכל הדפים קיימים לפני השימוש.",
@@ -809,10 +838,7 @@
         "2GiB"
       ],
       "explanation": "טבלת PT אחת מכסה 512 × 4KB = 2MB. נגיעה אחת בכל 2MB פירושה שכל דף נוגע ב-PT אחר: 1TB / 2MB = 524,288 טבלאות × 4KB = 2GB. הנתונים עצמם: 524,288 × 4KB = 2GB נוספים. טבלאות PD: 1024 בלבד (4MB). בזיכרון דליל כזה הטבלאות שוקלות כמו הנתונים, ולא מופיעות ב-RSS של הנתונים (רואים אותן ב-PageTables ב-/proc/meminfo).",
-      "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "sys.virtual-memory"
     },
     {
       "id": "sys.virtual-memory.q29",
@@ -828,9 +854,6 @@
       "answer": 1,
       "explanation": "ה-TLB לא coherent עם הטבלאות: שינוי PTE בזיכרון לא מבטל עותקים ב-TLB של cores אחרים. תרגום ישן עם פחות הרשאות הוא בטוח (במקרה הגרוע fault מיותר). תרגום ישן עם יותר הרשאות הוא חור: כתיבה לדף שאמור להיות מוגן, או גישה לדף שכבר שוחרר אחרי munmap. לכן munmap וצמצום הרשאות עולים IPIs, ומעבדים כמו AMD עם INVLPGB מנסים להוזיל זאת בחומרה.",
       "lesson": "sys.virtual-memory",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "לא נכון: זה הכיוון הבטוח. core עם תרגום ישן ומוגבל יותר יקבל רק fault מיותר, והקרנל יראה שה-PTE כבר מתיר ויחזור.",
         "נכון: ה-TLB לא coherent עם הטבלאות. בצמצום (RW ל-RO) core אחר עם תרגום ישן עדיין יכול לכתוב לדף המוגן, ולכן חייבים IPI ו-flush לפני ש-mprotect חוזר. בהרחבה תרגום ישן הוא רק מגביל מדי.",
@@ -852,10 +875,593 @@
         "כלי ניטור: meminfo, numastat, perf dTLB"
       ],
       "explanation": "השאלה מחברת TLB, NUMA, page faults ו-OOM לתכנון אחד. התשובה החזקה מבוססת על מספרים ולא על רשימת דגלים.",
-      "lesson": "sys.virtual-memory",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q31",
+      "level": 2,
+      "type": "multi",
+      "prompt": "בתוכנית C++ על Linux עם GCC:\n\n```cpp\nint g1 = 5;\nint g2;\nstatic int s = 0;\nconst char* msg = \"hi\";\n\nint main() {\n    static int cnt = 3;\n    int* h = (int*)malloc(4);\n}\n```\n\nאילו טענות נכונות?",
+      "choices": [
+        "התווים של `\"hi\"` נמצאים ב-`.rodata`, ולכן ניסיון לכתוב אליהם דרך pointer לא-const יקרוס בדרך כלל",
+        "4 הבתים ש-malloc החזיר נמצאים ב-heap, וה-pointer `h` עצמו נמצא על ה-stack",
+        "`cnt` נמצא על ה-stack, כי הוא מוגדר בתוך main",
+        "`g2` נמצא ב-`.bss`",
+        "`s` נמצא ב-`.data`, כי יש לו initializer מפורש",
+        "`g1` נמצא ב-`.data`"
+      ],
+      "answer": [
+        0,
+        1,
+        3,
+        5
+      ],
+      "notes": [
+        "נכון: string literals נשמרים בקטע read-only. כתיבה אליהם היא UB, ובפועל הדף ממופה בלי הרשאת כתיבה ולכן מתקבל SIGSEGV.",
+        "נכון: malloc מחזיר זיכרון מה-heap (או ממיפוי mmap עבור בלוקים גדולים). המשתנה h הוא משתנה מקומי רגיל, ולכן הוא עצמו על ה-stack.",
+        "שגוי: static מקומי חי לאורך כל התוכנית, ולכן הוא יושב ב-.data (כי ה-initializer הוא 3), לא על ה-stack. רק ה-scope שלו מוגבל ל-main.",
+        "נכון: גלובלי בלי initializer מאותחל לאפס ונשמר ב-.bss. ה-loader רק מקצה לו דפים מאופסים, והוא לא תופס מקום בקובץ.",
+        "שגוי: GCC ו-Clang שמים משתנה עם initializer של אפס ב-.bss, בדיוק כמו משתנה בלי initializer, כי אין צורך לשמור אפסים בקובץ.",
+        "נכון: משתנה גלובלי עם initializer שאינו אפס נשמר ב-.data, והערך 5 נמצא בקובץ ההרצה עצמו."
+      ],
+      "explanation": "מפת הזיכרון של תוכנית: .text (קוד), .rodata (קבועים ומחרוזות), .data (גלובליים וסטטיים עם ערך התחלתי שאינו אפס), .bss (מאופסים), heap שגדל למעלה, אזור mmap לספריות ולבלוקים גדולים, ו-stack שגדל למטה. static מקומי הוא גלובלי מבחינת מיקום, ומקומי רק מבחינת שם.",
+      "tags": [
+        "nvidia",
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-3-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/",
+        "https://www.geeksforgeeks.org/?p=334558"
+      ],
+      "problem": "NVIDIA / Qualcomm: memory map of a C program (text, data, bss, heap, stack)",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q32",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "בקובץ C++ מוסיפים מערך גלובלי של 4MB. גרסה A: `int big[1 << 20];`. גרסה B: `int big[1 << 20] = {1};`. מה ההבדל בגודל קובץ ההרצה?",
+      "choices": [
+        "שתי הגרסאות לא מגדילות את הקובץ, כי מערכים גלובליים תמיד מוקצים בזמן ריצה על ה-heap",
+        "גרסה B כמעט לא מגדילה את הקובץ, כי הקומפיילר שומר רק את האיבר הראשון ומאפס את השאר בזמן ריצה",
+        "אין הבדל: בשתי הגרסאות הקובץ גדל ב-4MB",
+        "גרסה A כמעט לא מגדילה את הקובץ (המערך ב-.bss). גרסה B מגדילה אותו בכ-4MB, כי המערך עובר ל-.data וכל התוכן שלו נשמר בקובץ"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: גלובליים לא נמצאים על ה-heap. הם חלק מה-image של התוכנית (.data או .bss), שה-loader ממפה.",
+        "שגוי: זה נשמע הגיוני, אבל ה-toolchain הרגיל לא מפצל אובייקט אחד בין .data ל-.bss. כל המערך הולך ל-.data.",
+        "שגוי: .bss מתואר בקובץ רק על ידי הגודל שלו, ולכן מערך מאופס לא תופס מקום בקובץ.",
+        "נכון: מספיק איבר אחד שאינו אפס כדי שכל המערך יעבור ל-.data, ו-.data נשמר בקובץ byte אחר byte, כולל כל האפסים."
+      ],
+      "explanation": "זה ההבדל המעשי בין .data ל-.bss: .data נטען מהקובץ, .bss רק מוקצה ומאופס. ב-embedded זה משפיע גם על גודל ה-flash וגם על זמן האתחול, כי את .data מעתיקים מ-flash ל-RAM ב-startup.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q33",
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את האזורים במרחב הכתובות של process טיפוסי ב-Linux x86-64, מהכתובת הנמוכה לגבוהה (בפריסה הקלאסית, בלי להתחשב בהזזות של ASLR):",
+      "items": [
+        ".text (קוד התוכנית)",
+        ".data (גלובליים מאותחלים)",
+        ".bss (גלובליים מאופסים)",
+        "heap (גדל כלפי מעלה עם brk)",
+        "אזור ה-mmap (ספריות משותפות ומיפויים גדולים)",
+        "stack (גדל כלפי מטה)"
+      ],
+      "explanation": "ה-image של התוכנית בכתובות נמוכות: קוד, נתונים מאותחלים ואז .bss. ה-heap מתחיל מיד אחריו וגדל למעלה. ה-stack בראש מרחב המשתמש וגדל למטה, ואזור ה-mmap נמצא מתחתיו וגדל לכיוון ה-heap. ASLR מזיז את נקודות ההתחלה, אבל הסדר נשמר.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q34",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מראיין מבקש תוכנית שבודקת אם ה-stack גדל כלפי מעלה או כלפי מטה. איזו שיטה אמינה?",
+      "choices": [
+        "להגדיר שני משתנים מקומיים באותה פונקציה ולהשוות את הכתובות שלהם",
+        "לשמור את הכתובת של משתנה מקומי בפונקציה הקוראת, לקרוא לפונקציה אחרת שאינה inline, ולהשוות לכתובת של משתנה מקומי שלה (כ-uintptr_t)",
+        "להשוות את הכתובות שמחזירות שתי קריאות רצופות ל-malloc",
+        "להשוות את הכתובת של משתנה מקומי ב-main לכתובת של משתנה גלובלי"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: הקומפיילר מסדר את המשתנים בתוך frame אחד כרצונו (לפי גודל, alignment או הגנות stack), ולכן הסדר ביניהם לא מלמד על כיוון הגדילה.",
+        "נכון: frame של פונקציה שנקראת נבנה אחרי ה-frame של הקוראת, ולכן הכיוון ביניהם הוא כיוון הגדילה. חייבים למנוע inlining, אחרת שני המשתנים באותו frame. ההמרה ל-uintptr_t נחוצה כי השוואת `<` בין pointers לאובייקטים לא קשורים לא מוגדרת ב-C++.",
+        "שגוי: malloc מחזיר זיכרון מה-heap, וזה לא אומר כלום על ה-stack. גם בתוך ה-heap הסדר תלוי ב-allocator.",
+        "שגוי: גלובליים יושבים ב-.data/.bss, באזור אחר לגמרי. ההשוואה מראה רק שה-stack נמצא בכתובות גבוהות יותר, לא לאיזה כיוון הוא גדל."
+      ],
+      "explanation": "כיוון הגדילה הוא היחס בין frames של קריאות מקוננות, ולכן משווים בין פונקציה לפונקציה שהיא קוראת לה. ב-x86-64 וב-ARM (AAPCS) ה-stack גדל כלפי מטה, ופקודת push מקטינה את ה-stack pointer.",
       "tags": [
         "nvidia"
-      ]
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
+      ],
+      "problem": "NVIDIA: find whether the stack grows up or down",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q35",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "על Linux x86-64 עם `ulimit -s` של 8MB, פונקציה רקורסיבית עם frame של כ-1KB נקראת לעומק של מיליון. מה קורה?",
+      "choices": [
+        "ה-stack גדל לתוך ה-heap ודורס נתונים בשקט, והתוכנית ממשיכה עם זיכרון משובש",
+        "הקומפיילר מזהה רקורסיה עמוקה ומחליף אותה בלולאה, ולכן אין בעיה",
+        "הקרנל מגדיל את ה-stack אוטומטית כל עוד יש RAM פנוי, ולכן הרקורסיה מסתיימת בהצלחה",
+        "בערך בעומק 8000, הגישה לכתובת מתחת לגבול ה-stack (ובאזור ה-guard gap) גורמת ל-page fault שהקרנל לא יכול לטפל בו, וה-process מקבל SIGSEGV"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: Linux משאיר מרווח שמור (stack guard gap) מתחת ל-stack, כך שגישה לשם נכשלת ולא דורסת מיפוי אחר. ב-microcontroller בלי MMU זה בדיוק מה שקורה, ולכן שם משתמשים ב-canaries וב-MPU.",
+        "שגוי: tail-call optimization אפשרית רק כשהקריאה הרקורסיבית היא הפעולה האחרונה, ושום תקן לא מחייב אותה. אי אפשר לסמוך עליה.",
+        "שגוי: הקרנל אכן מגדיל את ה-stack לפי דרישה, אבל רק עד RLIMIT_STACK (8MB כאן), לא עד גבול ה-RAM.",
+        "נכון: 8MB חלקי 1KB הם כ-8000 frames. מעבר לזה, page fault על כתובת מחוץ לגבול הוא שגיאה, והקרנל שולח SIGSEGV. כדי לטפל בו צריך handler שרץ על sigaltstack, כי ה-stack הרגיל מלא."
+      ],
+      "explanation": "ה-stack ב-Linux גדל עם page faults עד RLIMIT_STACK. מעבר לגבול יש guard gap, ו-page fault שם מסתיים ב-SIGSEGV. ב-threads הגבול הוא גודל ה-stack שהוקצה ל-thread (ברירת מחדל 8MB ב-glibc) עם guard page בסופו.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q36",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "מה קורה ל-stack pointer (rsp) כשמבצעים `push rax` על x86-64?",
+      "choices": [
+        "rsp גדל ב-8, והערך נכתב לכתובת הישנה",
+        "rsp קטן ב-4, כי push תמיד דוחף 32 ביט",
+        "rsp לא משתנה, ורק rbp זז",
+        "rsp קטן ב-8, והערך נכתב לכתובת החדשה, כי ה-stack גדל כלפי מטה"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: זה היה נכון ל-stack שגדל כלפי מעלה. ב-x86 הוא גדל כלפי מטה.",
+        "שגוי: ב-64 ביט push של רגיסטר כללי דוחף 8 בתים.",
+        "שגוי: rbp הוא frame pointer אופציונלי. push ו-pop משנים את rsp.",
+        "נכון: push מקטין את rsp בגודל האופרנד (8 בתים ב-64 ביט) וכותב לכתובת החדשה. pop קורא ואז מגדיל את rsp."
+      ],
+      "explanation": "ב-x86, ARM ורוב הארכיטקטורות הנפוצות ה-stack גדל כלפי מטה. כל frame חדש נמצא בכתובות נמוכות יותר, וזה מה שבדיקת כיוון הגדילה מגלה.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q37",
+      "level": 2,
+      "type": "short",
+      "prompt": "מערכת עם כתובות לוגיות של 32 ביט, דפים של 4KB וזיכרון פיזי של 1GB. כמה frames יש בזיכרון הפיזי?",
+      "accept": [
+        "262144",
+        "2^18",
+        "256K"
+      ],
+      "explanation": "frame הוא בגודל דף: 4KB = 2^12. מספר ה-frames הוא 2^30 / 2^12 = 2^18 = 262,144. מספר הדפים במרחב הלוגי הוא 2^32 / 2^12 = 2^20, כלומר יש יותר דפים לוגיים מ-frames, וזה בסדר: רק דפים שבשימוש צריכים frame.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
+      ],
+      "problem": "NVIDIA: one-level paging, number of pages and frames",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q38",
+      "level": 2,
+      "type": "short",
+      "prompt": "כתובת לוגית של 36 ביט ודפים של 8KB. כמה דפים יש במרחב הכתובות הלוגי?",
+      "accept": [
+        "8388608",
+        "2^23",
+        "8M"
+      ],
+      "explanation": "8KB = 2^13, ולכן ה-offset תופס 13 ביט. נשארים 36 - 13 = 23 ביט למספר הדף: 2^23 = 8,388,608 דפים.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q39",
+      "level": 3,
+      "type": "short",
+      "prompt": "דפים של 4KB. מה מספר הדף (page number) של הכתובת הלוגית `0x00403ABC`? (כתוב בהקסה)",
+      "accept": [
+        "0x403",
+        "403",
+        "0x00403"
+      ],
+      "explanation": "4KB = 2^12, כלומר 12 הביטים הנמוכים (3 ספרות הקסה) הם ה-offset: 0xABC. השאר הוא מספר הדף: 0x00403, כלומר 0x403 (1027 בעשרוני).",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q40",
+      "level": 3,
+      "type": "short",
+      "prompt": "מערכת עם כתובות וירטואליות של 32 ביט, דפים של 4KB, ו-PTE של 4 בתים. מה גודל טבלת דפים חד-שלבית (single-level) מלאה לכל process?",
+      "accept": [
+        "4MB",
+        "4 MB",
+        "4194304",
+        "4MiB"
+      ],
+      "explanation": "מספר הדפים: 2^32 / 2^12 = 2^20. כל אחד צריך PTE של 4 בתים: 2^20 × 4 = 4MB לכל process, גם אם הוא משתמש רק בכמה דפים. זו הסיבה לטבלאות רב-שלביות.",
+      "tags": [
+        "qualcomm"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=477855"
+      ],
+      "problem": "Qualcomm: page table entries and page table size",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q41",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה מעבדים מודרניים משתמשים בטבלת דפים רב-שלבית (למשל 4 רמות ב-x86-64) ולא בטבלה שטוחה אחת?",
+      "choices": [
+        "כי טבלה רב-שלבית מהירה יותר: page walk קצר יותר מגישה אחת לטבלה שטוחה",
+        "כי מרחב הכתובות דליל: רוב האזורים לא בשימוש, ובטבלה רב-שלבית לא מקצים בכלל טבלאות-משנה לאזורים ריקים. טבלה שטוחה ל-48 ביט הייתה תופסת מאות GB לכל process",
+        "כי ה-TLB יכול לשמור רק רשומות של טבלאות רב-שלביות",
+        "כי כך כל process יכול להשתמש בגודל דף אחר"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: ההפך. page walk של 4 רמות דורש עד 4 גישות לזיכרון, לעומת אחת בטבלה שטוחה. זה המחיר, וה-TLB וה-page walk caches מקטינים אותו.",
+        "נכון: עם 48 ביט ודפים של 4KB יש 2^36 דפים. טבלה שטוחה של 8 בתים לרשומה הייתה 512GB לכל process. במבנה עץ מקצים רק את הענפים שבשימוש.",
+        "שגוי: ה-TLB שומר תרגומים מוכנים (דף וירטואלי ל-frame), ולא אכפת לו מאיזה מבנה טבלה הם הגיעו.",
+        "שגוי: מבנה רב-שלבי אכן מאפשר huge pages (רשומה ברמה גבוהה שממפה 2MB או 1GB), אבל זה לא הסיבה העיקרית, ואין גודל דף שונה לכל process."
+      ],
+      "explanation": "הטבלה הרב-שלבית היא עץ: כל רמה מאנדקסת בחלק אחר של הכתובת, וטבלאות-משנה קיימות רק לאזורים ממופים. זה חוסך זיכרון עצום במחיר page walk ארוך יותר, וה-TLB מסתיר את המחיר ברוב הגישות.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q42",
+      "level": 3,
+      "type": "multi",
+      "prompt": "אילו שדות נמצאים בפועל בתוך PTE (page table entry) של x86-64?",
+      "choices": [
+        "ביט present",
+        "מספר הדף הווירטואלי שהרשומה ממפה",
+        "מספר ה-frame הפיזי",
+        "ה-PID של ה-process שהדף שייך לו",
+        "ביט dirty"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "notes": [
+        "נכון: כשהוא 0, גישה לדף גורמת ל-page fault, ושאר הביטים פנויים לשימוש הקרנל (למשל מיקום ב-swap).",
+        "שגוי: מספר הדף הווירטואלי הוא האינדקס שבעזרתו מגיעים לרשומה, ולכן אין צורך לשמור אותו בתוכה.",
+        "נכון: זה התוכן העיקרי של ה-PTE: לאיזה frame הדף ממופה.",
+        "שגוי: לכל process יש עץ טבלאות משלו (CR3 מצביע עליו), ולכן אין צורך ב-PID ב-PTE. התיוג ב-TLB נעשה עם PCID, לא דרך ה-PTE.",
+        "נכון: החומרה מדליקה אותו בכתיבה לדף, והקרנל משתמש בו כדי לדעת אם צריך לכתוב את הדף חזרה לדיסק לפני שמפנים אותו."
+      ],
+      "explanation": "PTE מכיל frame number וביטים: present, R/W, U/S, accessed, dirty, NX ועוד. הכתובת הווירטואלית קובעת איפה הרשומה נמצאת, והטבלה עצמה שייכת ל-process אחד, ולכן שני אלה לא נשמרים ברשומה.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q43",
+      "level": 3,
+      "type": "short",
+      "prompt": "גישה לזיכרון לוקחת 100ns, וזמן החיפוש ב-TLB זניח. יש טבלת דפים חד-שלבית בזיכרון, ושיעור ה-hit של ה-TLB הוא 90%. מה זמן הגישה האפקטיבי (EAT) בננו-שניות?",
+      "accept": [
+        "110",
+        "110ns",
+        "110 ns"
+      ],
+      "explanation": "hit: גישה אחת לנתון = 100ns. miss: גישה לטבלת הדפים ואז לנתון = 200ns. EAT = 0.9 × 100 + 0.1 × 200 = 90 + 20 = 110ns. בלי TLB כל גישה הייתה 200ns.",
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-3-campus/",
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-4-on-campus/"
+      ],
+      "problem": "NVIDIA: translation look-aside buffer (TLB)",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q44",
+      "level": 3,
+      "type": "short",
+      "prompt": "גישה לזיכרון לוקחת 100ns, וזמן החיפוש ב-TLB זניח. טבלת הדפים היא של 4 רמות, ואין page-walk caches, כך ש-TLB miss דורש 4 גישות לזיכרון לפני הגישה לנתון. שיעור ה-hit הוא 98%. מה ה-EAT בננו-שניות?",
+      "accept": [
+        "108",
+        "108ns",
+        "108 ns"
+      ],
+      "explanation": "hit: 100ns. miss: 4 × 100 + 100 = 500ns. EAT = 0.98 × 100 + 0.02 × 500 = 98 + 10 = 108ns. ככל שה-walk ארוך יותר, כל אחוז של miss יקר יותר, ולכן huge pages ו-page walk caches חשובים.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q45",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מה קורה ל-TLB ב-context switch בין שני processes שונים על x86-64, כש-PCID **לא** בשימוש?",
+      "choices": [
+        "כתיבה ל-CR3 מרוקנת את כל הרשומות שאינן global, ולכן ה-process החדש מתחיל עם TLB ריק ומשלם page walks",
+        "כלום: רשומות ה-TLB כוללות את ה-PID, ולכן של process אחר פשוט לא מתאימות",
+        "הקרנל שומר את תוכן ה-TLB בזיכרון ומשחזר אותו כשה-process חוזר",
+        "רק הרשומות של דפי ה-stack נמחקות"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: טעינת CR3 בלי PCID פוסלת את כל הרשומות, חוץ מרשומות global (בדרך כלל דפי הקרנל, שזהים בכל ה-processes). זה חלק גדול מהמחיר העקיף של context switch.",
+        "שגוי: בלי PCID אין שום תיוג ברשומות. אותה כתובת וירטואלית בשני processes ממופה ל-frames שונים, ולכן אסור להשאיר את הרשומות.",
+        "שגוי: אין מנגנון כזה. ה-TLB הוא cache חומרה שהקרנל לא שומר ולא משחזר.",
+        "שגוי: אין שום הבחנה לפי סוג דף. כל הרשומות של user space נפסלות."
+      ],
+      "explanation": "בלי PCID/ASID כל מעבר בין processes מרוקן את ה-TLB. עם PCID כל רשומה מתויגת במזהה של מרחב הכתובות, ואפשר להשאיר רשומות של כמה processes. בין threads של אותו process אין שינוי של CR3, ולכן ה-TLB נשמר.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q46",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "במכונה של 64 ביט עם 4GB RAM ו-swap גדול מריצים ארבעה processes. כל אחד מקצה 2GB ונוגע בכל הזיכרון שלו כל הזמן. מה קורה?",
+      "choices": [
+        "הקרנל מחלק את ה-RAM שווה בשווה, 1GB לכל process, וההקצאות מעבר לזה נכשלות",
+        "ה-process הרביעי נכשל מיד ב-fork או ב-exec, כי אין מספיק RAM",
+        "כולם רצים: כל אחד רואה מרחב וירטואלי משלו. אבל ה-working set הכולל (8GB) גדול מה-RAM, ולכן הקרנל מפנה דפים ל-swap כל הזמן, ומתקבל thrashing: רוב הזמן הולך על page faults ו-I/O",
+        "כולם רצים במהירות מלאה, כי virtual memory מסתיר את המחסור"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: Linux לא מחלק RAM מראש בין processes (אלא אם מגבילים עם cgroups). דפים מוקצים לפי דרישה ומפונים לפי שימוש.",
+        "שגוי: גודל ה-RAM לא נבדק ב-fork או ב-exec. ה-processes מתחילים קטנים וגדלים, ועם swap יש מקום לדפים שמפונים.",
+        "נכון: virtual memory מאפשר לכולם לרוץ, אבל כשכולם נוגעים בכל הדפים כל הזמן, כל דף שמפונה נדרש שוב מיד. סימנים: הרבה major faults, ניצול CPU נמוך, דיסק עמוס.",
+        "שגוי: virtual memory נותן מרחב כתובות, לא RAM. כשה-working set לא נכנס, הביצועים קורסים."
+      ],
+      "explanation": "סכום הזיכרון הווירטואלי יכול לעלות על ה-RAM, וזה בסדר כל עוד ה-working set הפעיל נכנס. כשהוא לא נכנס, מתקבל thrashing. בלי swap, Linux היה מפעיל את ה-OOM killer, ו-Windows היה נכשל כבר בהקצאה כשה-commit limit מתמלא.",
+      "tags": [
+        "microsoft"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=338497"
+      ],
+      "problem": "Microsoft: 4GB RAM and four 2GB processes",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q47",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "מכונת Linux עם 4GB RAM, בלי swap, עם `vm.overcommit_memory = 0` (ברירת מחדל). ארבעה processes קוראים כל אחד ל-`malloc(2GB)` ומצליחים, אבל לא נוגעים בזיכרון. מה מצב ה-RSS שלהם?",
+      "choices": [
+        "ה-RSS של כל אחד קטן מאוד: malloc גדול ממפה זיכרון אנונימי עם mmap, ודפים מקבלים frame רק בגישה הראשונה",
+        "ה-RSS הוא 2GB, אבל הוא מסומן כ-shared ולכן לא נספר",
+        "הקריאה הרביעית ל-malloc הייתה חייבת להיכשל, כי 8GB > 4GB",
+        "כל אחד עם RSS של 2GB, והמכונה כבר בשימוש מלא"
+      ],
+      "answer": 0,
+      "notes": [
+        "נכון: זה demand paging. malloc של 2GB מעל ל-M_MMAP_THRESHOLD עושה mmap, והקרנל רק רושם VMA. frames מוקצים ב-page fault של הגישה הראשונה.",
+        "שגוי: זיכרון אנונימי פרטי הוא לא shared, וגם לא קיבל עדיין frames.",
+        "שגוי: במצב 0 (heuristic overcommit) הקרנל דוחה רק הקצאה אחת שגדולה באופן ברור מכל ה-RAM וה-swap יחד. 2GB לכל קריאה עובר. הבעיה תתגלה רק כשיגעו בזיכרון, דרך OOM killer.",
+        "שגוי: RSS סופר רק דפים שנמצאים ב-RAM. דף שלא נגעו בו לא קיבל frame."
+      ],
+      "explanation": "malloc מקצה מרחב וירטואלי, לא RAM. overcommit מאפשר להבטיח יותר זיכרון ממה שיש, בהנחה שלא כולם ישתמשו בכולו. כשהם כן משתמשים, ה-OOM killer מכריע. במערכות real-time מאכלסים מראש (memset או MAP_POPULATE ו-mlockall) כדי לא להיתקל בזה באמצע.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q48",
+      "level": 4,
+      "type": "multi",
+      "prompt": "חושדים שמכונה נמצאת ב-thrashing. אילו מדדים תומכים בחשד?",
+      "choices": [
+        "הרבה minor page faults בזמן ההפעלה של תוכנית חדשה",
+        "load average גבוה, כש-processes רבים במצב D מחכים לדיסק",
+        "ניצול CPU של 100% ב-user mode ומעט מאוד I/O",
+        "ניצול CPU של אפליקציות נמוך, עם הרבה זמן ב-iowait",
+        "קצב גבוה של major page faults ושל swap-in/swap-out (למשל בעמודות si/so של vmstat)"
+      ],
+      "answer": [
+        1,
+        3,
+        4
+      ],
+      "notes": [
+        "שגוי: minor faults לא דורשים I/O (הדף כבר ב-RAM או מאופס), והם נורמליים לגמרי בהפעלה.",
+        "נכון: processes שמחכים ל-page fault מהדיסק נמצאים ב-uninterruptible sleep (D), ובלינוקס הם נספרים ב-load average.",
+        "שגוי: זה פרופיל של עבודה CPU-bound בריאה. ב-thrashing ה-CPU מחכה.",
+        "נכון: ה-processes מחכים לדיסק במקום לרוץ, ולכן ה-CPU עומד, וזמן ה-iowait גבוה.",
+        "נכון: thrashing מוגדר בדיוק כך: דפים מפונים ונטענים שוב ושוב. major fault דורש I/O, ו-si/so מראים את התעבורה ל-swap."
+      ],
+      "explanation": "thrashing: הסכום של ה-working sets גדול מה-RAM, ולכן המערכת מבלה את רוב הזמן בהעברת דפים. מטפלים בהורדת העומס (פחות processes או cgroups עם memory.max), בהוספת RAM, או בהקטנת ה-working set.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q49",
+      "level": 3,
+      "type": "short",
+      "prompt": "מחרוזת הפניות לדפים: `1, 2, 3, 4, 1, 2, 5, 1, 2, 3, 4, 5`. עם FIFO ושלושה frames (ריקים בהתחלה) יש 9 page faults. כמה page faults יהיו עם FIFO וארבעה frames?",
+      "accept": [
+        "10"
+      ],
+      "explanation": "עם 4 frames: 1, 2, 3, 4 הם 4 faults. 1 ו-2 הם hits. 5 מפנה את 1 (fault 5). אחריו 1 מפנה את 2 (6), 2 מפנה את 3 (7), 3 מפנה את 4 (8), 4 מפנה את 5 (9), ו-5 מפנה את 1 (10). יותר frames ויותר faults: זו האנומליה של Belady, ו-FIFO חשוף לה כי הוא לא אלגוריתם מחסנית (stack algorithm).",
+      "tags": [
+        "microsoft",
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=338497",
+        "https://www.geeksforgeeks.org/interview-experiences/amazon-interview-experience-399-campus-full-time/"
+      ],
+      "problem": "Microsoft / Amazon: page replacement algorithms and Belady's anomaly",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q50",
+      "level": 3,
+      "type": "short",
+      "prompt": "מחרוזת הפניות לדפים: `1, 2, 3, 4, 1, 2, 5, 1, 2, 3, 4, 5`. כמה page faults יהיו עם LRU ושלושה frames (ריקים בהתחלה)?",
+      "accept": [
+        "10"
+      ],
+      "explanation": "1, 2, 3 נטענים (3 faults). 4 מפנה את 1 (4). 1 מפנה את 2 (5). 2 מפנה את 3 (6). 5 מפנה את 4 (7). 1 ו-2 הם hits. 3 מפנה את 5 (8). 4 מפנה את 1 (9). 5 מפנה את 2 (10). כאן LRU גרוע יותר מ-FIFO (9), אבל עם 4 frames הוא יורד ל-8, כי LRU לא סובל מהאנומליה של Belady.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q51",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "איזה מאלגוריתמי ההחלפה הבאים יכול להציג את האנומליה של Belady (יותר frames גורמים ליותר page faults)?",
+      "choices": [
+        "LRU",
+        "OPT (האלגוריתם האופטימלי של Belady, שמפנה את הדף שישמש הכי מאוחר בעתיד)",
+        "FIFO",
+        "אף אחד מהם: יותר frames תמיד מקטינים או משאירים את מספר ה-faults"
+      ],
+      "answer": 2,
+      "notes": [
+        "שגוי: LRU הוא stack algorithm: קבוצת הדפים בזיכרון עם n frames תמיד מוכלת בקבוצה עם n+1 frames, ולכן הוספת frame לא יכולה להוסיף faults.",
+        "שגוי: OPT גם הוא stack algorithm, ולכן לא סובל מהאנומליה. הוא גם לא ניתן למימוש, כי הוא צריך לדעת את העתיד; משתמשים בו כקו בסיס להשוואה.",
+        "נכון: ב-FIFO הסדר נקבע לפי זמן הכניסה, ולכן קבוצת הדפים עם n+1 frames לא בהכרח מכילה את הקבוצה עם n frames. המחרוזת 1,2,3,4,1,2,5,1,2,3,4,5 נותנת 9 faults עם 3 frames ו-10 עם 4.",
+        "שגוי: זו בדיוק האינטואיציה שהאנומליה סותרת, ורק עבור אלגוריתמים שאינם stack algorithms."
+      ],
+      "explanation": "האנומליה של Belady: באלגוריתמים שאינם stack algorithms, כמו FIFO, הוספת frames יכולה להגדיל את מספר ה-faults. LRU ו-OPT מקיימים את תכונת ההכלה ולכן חסינים. בפועל הקרנלים מקרבים LRU עם clock / רשימות active ו-inactive.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q52",
+      "level": 2,
+      "type": "order",
+      "prompt": "process ניגש לדף שהועבר ל-swap. סדר את השלבים של טיפול ב-major page fault:",
+      "items": [
+        "ה-MMU מוצא PTE עם present = 0 ומעלה exception של page fault",
+        "הקרנל מוצא את ה-VMA של הכתובת ובודק שהגישה חוקית (קיימת והרשאות מתאימות)",
+        "הקרנל מוצא frame פנוי, ואם אין, מפנה דף אחר",
+        "הקרנל מתחיל קריאה מה-swap ל-frame, וה-process ישן עד שה-I/O מסתיים",
+        "הקרנל מעדכן את ה-PTE עם ה-frame ומדליק present",
+        "החזרה מה-exception מריצה מחדש את הפקודה שנכשלה, והפעם היא מצליחה"
+      ],
+      "explanation": "page fault הוא exception סינכרוני: הפקודה לא הסתיימה, ולכן אחרי הטיפול היא מורצת מחדש. בדיקת ה-VMA מבדילה בין fault חוקי (טוענים את הדף) לבין גישה לא חוקית (SIGSEGV). בזמן ה-I/O ה-CPU פנוי להריץ processes אחרים.",
+      "tags": [
+        "qualcomm",
+        "intel",
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/?p=152508",
+        "https://www.geeksforgeeks.org/?p=296416",
+        "https://www.geeksforgeeks.org/interview-experiences/amazon-interview-experience-399-campus-full-time/"
+      ],
+      "problem": "Qualcomm / Intel / Amazon: steps of page fault handling",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q53",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "process מקבל page fault. באיזה מקרה הקרנל שולח לו SIGSEGV במקום לטעון דף?",
+      "choices": [
+        "כשהדף נמצא ב-swap ולא ב-RAM",
+        "כשהכתובת לא נמצאת באף VMA של ה-process, או שהגישה סותרת את ההרשאות (למשל כתיבה לאזור read-only)",
+        "כשזו הגישה הראשונה לדף אנונימי שהוקצה עם malloc",
+        "כשאין frame פנוי ב-RAM"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: זה major fault רגיל: הקרנל קורא את הדף מה-swap וממשיך.",
+        "נכון: הקרנל בודק ב-VMAs אם הכתובת שייכת למיפוי חוקי ואם ההרשאות מתאימות. אם לא, הגישה לא חוקית ו-SIGSEGV נשלח.",
+        "שגוי: זו הקצאה עצלה (demand paging): הקרנל מקצה frame מאופס, ממפה אותו וממשיך. זה minor fault.",
+        "שגוי: אז הקרנל מפנה דף אחר (reclaim), ואם גם זה לא אפשרי, ה-OOM killer מכריע. זה לא SIGSEGV."
+      ],
+      "explanation": "רוב ה-page faults הם חלק תקין מ-virtual memory: הקצאה עצלה, COW, טעינה מקובץ או מה-swap. רק גישה לכתובת שלא ממופה, או בניגוד להרשאות, היא שגיאה של התוכנית.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q54",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "למה אחרי טיפול ב-page fault המעבד מריץ **מחדש** את הפקודה שגרמה לו, ולא ממשיך לפקודה הבאה כמו אחרי interrupt?",
+      "choices": [
+        "כדי לבדוק שוב את ההרשאות, שאולי השתנו בזמן הטיפול",
+        "כי page fault הוא interrupt אסינכרוני, וכל interrupt אסינכרוני חוזר לאותה פקודה",
+        "כי הקרנל לא יודע מה הייתה הפקודה, ולכן חוזר אחורה ליתר ביטחון",
+        "כי הפקודה לא הושלמה: הגישה לזיכרון נכשלה לפני שהתוצאה נכתבה, ולכן צריך לבצע אותה שוב כשהדף ממופה"
+      ],
+      "answer": 3,
+      "notes": [
+        "שגוי: הפקודה מורצת שוב כי היא לא בוצעה, לא כדי לבדוק משהו. בדיקת ההרשאות קורית שוב רק כתוצאה מכך.",
+        "שגוי: page fault הוא exception סינכרוני שנגרם על ידי הפקודה עצמה. interrupt אסינכרוני מטופל דווקא בין פקודות, וחוזר לפקודה הבאה.",
+        "שגוי: המעבד שומר את הכתובת המדויקת של הפקודה, וב-x86 גם את הכתובת שנכשלה ב-CR2.",
+        "נכון: page fault הוא fault: הוא מדווח לפני שהפקודה משנה את המצב, וכתובת החזרה השמורה היא של הפקודה עצמה. לכן אפשר להריץ אותה שוב בלי תופעות לוואי."
+      ],
+      "explanation": "exceptions מתחלקים ל-faults (חוזרים לאותה פקודה, למשל page fault), traps (חוזרים לפקודה הבאה, למשל breakpoint או syscall) ו-aborts. התכנון של page fault כ-fault הוא שמאפשר את כל ה-demand paging באופן שקוף לתוכנית.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q55",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "איך אפשר להריץ תוכנית שקובץ ההרצה והנתונים שלה תופסים 6GB, על מכונה עם 4GB RAM?",
+      "choices": [
+        "אי אפשר: ה-loader חייב לטעון את כל התוכנית לפני שהיא מתחילה לרוץ",
+        "demand paging: ה-loader רק ממפה את הקובץ, ודפים נטענים ל-RAM כשניגשים אליהם לראשונה. דפים שלא בשימוש מפונים, ונטענים שוב אם צריך",
+        "הקרנל דוחס את התוכנית ל-4GB בזמן הטעינה",
+        "צריך לחלק את התוכנית ידנית ל-overlays, כי מערכות הפעלה מודרניות לא תומכות בזה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: execve ממפה את הקובץ (mmap של ה-segments) בלי לקרוא אותו. רוב הקוד של תוכנית גדולה לא נטען אף פעם.",
+        "נכון: רק ה-working set צריך להיות ב-RAM. דפי קוד ונתונים שלא נגעו בהם לא מגיעים ל-RAM, ודפים ישנים מפונים לפי הצורך.",
+        "שגוי: יש מנגנונים כמו zswap, אבל זה לא מה שמאפשר להריץ תוכנית גדולה מה-RAM.",
+        "שגוי: overlays היו הפתרון הידני לפני virtual memory. היום ה-MMU והקרנל עושים את זה שקוף."
+      ],
+      "explanation": "virtual memory מפריד בין מרחב הכתובות לבין ה-RAM. התוכנית רואה 6GB, וה-RAM מחזיק רק את מה שבשימוש. אם ה-working set עצמו גדול מה-RAM, הביצועים קורסים (thrashing).",
+      "tags": [
+        "amazon"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/amazon-interview-experience-sde1-off-campus-2/"
+      ],
+      "problem": "Amazon: run a program larger than RAM with virtual memory",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q56",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "תחת לחץ זיכרון, הקרנל מפנה דף **קוד** (מ-.text) של תוכנית רצה, שלא שונה. לאן הוא נכתב?",
+      "choices": [
+        "ל-swap, כמו כל דף אחר",
+        "לשום מקום: הדף הוא file-backed ונקי, ולכן הקרנל פשוט משחרר את ה-frame. אם יצטרכו אותו שוב, הוא ייקרא מחדש מקובץ ההרצה",
+        "הוא נדחס ונשאר ב-RAM",
+        "דפי קוד לא ניתנים לפינוי"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: swap משמש לדפים אנונימיים (heap, stack) או לדפים שהשתנו ואין להם קובץ לחזור אליו. לדף קוד יש עותק זהה בקובץ.",
+        "נכון: דף file-backed שלא שונה (לא dirty) זהה לתוכן בקובץ. מספיק לשחרר אותו ולקרוא שוב ב-page fault הבא. לכן גם מחיקה או החלפה של קובץ הרצה שרץ מסוכנת, ו-Linux מחזיק את ה-inode הישן.",
+        "שגוי: יש zswap/zram, אבל הם לדפים אנונימיים, וגם אז זה לא 'נשאר ב-RAM' במובן הרגיל.",
+        "שגוי: דפי קוד הם דווקא מהקלים לפינוי, כי הם נקיים. רק דפים נעולים (mlock) לא מפונים."
+      ],
+      "explanation": "הקרנל מבחין בין דפים file-backed (קוד, קבצים ממופים, page cache) לבין דפים אנונימיים. דף file-backed נקי משוחרר בלי שום כתיבה, dirty נכתב לקובץ שלו, ואנונימי הולך ל-swap. לכן גם בלי swap בכלל, מערכת עמוסה יכולה לפנות ולטעון שוב דפי קוד.",
+      "lesson": "sys.virtual-memory"
+    },
+    {
+      "id": "sys.virtual-memory.q57",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "תוכנית גדולה רצה כבר שעה, ועכשיו קוראת בפעם הראשונה לפונקציה שנמצאת בדף קוד שאף פעם לא נטען. מה קורה?",
+      "choices": [
+        "הפונקציה רצה ישר מהדיסק, בלי לעבור דרך ה-RAM",
+        "page fault: הקרנל מוצא שהכתובת שייכת ל-VMA של קובץ ההרצה. אם הדף כבר ב-page cache (למשל כי process אחר משתמש באותו קובץ), הוא רק ממופה (minor fault). אחרת הוא נקרא מהדיסק (major fault). אחר כך הפקודה מורצת מחדש",
+        "ה-loader טוען באותו רגע את כל הקובץ",
+        "התוכנית קורסת, כי הקוד לא נטען בזמן ההפעלה"
+      ],
+      "answer": 1,
+      "notes": [
+        "שגוי: המעבד מריץ רק קוד שנמצא בזיכרון (דרך ה-caches). הדף חייב להגיע ל-RAM קודם.",
+        "נכון: זה demand paging של דפי קוד. ההבדל בין minor ל-major הוא רק אם צריך I/O. ספריות משותפות כמו libc כמעט תמיד כבר ב-page cache, ולכן גישה ראשונה לקוד שלהן זולה.",
+        "שגוי: רק הדף (ולפעמים כמה דפים סמוכים, בגלל readahead) נטען, לא כל הקובץ.",
+        "שגוי: execve לא טוען את הקוד מראש. הוא ממפה אותו, ודפים נטענים לפי דרישה. זה תקין לגמרי."
+      ],
+      "explanation": "דפי קוד, כמו כל דף file-backed, נטענים בגישה הראשונה. זה מאפשר להריץ תוכניות גדולות מה-RAM ולהתחיל אותן מהר. ב-real-time זה גם מקור ל-latency בלתי צפוי, ולכן mlockall(MCL_CURRENT) נועל גם את דפי הקוד.",
+      "lesson": "sys.virtual-memory"
     }
   ]
 }

@@ -180,6 +180,26 @@
         {
           "term": "cudaMalloc / cudaFree / cudaMallocAsync",
           "def": "הקצאה ושחרור של זיכרון GPU. cudaFree עלול לסנכרן את ה-device, ולכן בזמן-אמת מעדיפים pools או cudaMallocAsync שמשחרר לפי סדר ה-stream."
+        },
+        {
+          "term": "move-only resource wrapper",
+          "def": "wrapper של RAII למשאב שאי אפשר לשכפל (fd, socket, handle): copy מחוק, ו-move מעביר בעלות ומאפס את המקור (`std::exchange(o.fd_, -1)`). אם המקור לא מאופס, שני האובייקטים משחררים את אותו משאב."
+        },
+        {
+          "term": "rename אטומי",
+          "def": "rename באותה מערכת קבצים מחליף את ה-directory entry באופן אטומי, ולכן קוראים רואים את הקובץ הישן או החדש. עבור עמידות בנפילת חשמל צריך fsync לקובץ הזמני לפני ה-rename (ולתיקייה אחריו). בין מערכות קבצים rename נכשל עם EXDEV."
+        },
+        {
+          "term": "new מול malloc",
+          "def": "new מחשב גודל, מקצה דרך operator new, מריץ constructor, מחזיר T* וזורק std::bad_alloc בכישלון. malloc מחזיר void* לבתים גולמיים, בלי אובייקט, ו-NULL בכישלון. delete מריץ destructor ואז משחרר. free רק משחרר. ערבוב בין המשפחות הוא UB."
+        },
+        {
+          "term": "lifetime extension של temporary",
+          "def": "temporary שנקשר ישירות ל-const T& (או T&&) מקומי חי עד סוף ה-scope של ה-reference, ונהרס לפי הסדר ההפוך לבנייה יחד עם שאר המקומיים. temporary רגיל נהרס בסוף ה-full-expression."
+        },
+        {
+          "term": "סדר בנייה והריסה של אובייקטים סטטיים",
+          "def": "globals עם אתחול דינמי נבנים לפני main (בתוך TU לפי סדר ההגדרה). static locals נבנים בקריאה הראשונה. כולם נהרסים אחרי main, בסדר הפוך לסיום הבנייה שלהם."
         }
       ]
     }
@@ -428,9 +448,6 @@
       "answer": 1,
       "explanation": "לפי כלל הפענוח של C++, T(x); הוא הצהרה של משתנה x מטיפוס T, כאילו נכתב T x;. נוצר unique_lock ריק שמסתיר את ה-member mtx_. עם סוגריים מסולסלים, std::unique_lock<std::mutex>{mtx_};, היה נוצר temporary שנועל ומשחרר מיד, וזה באג אחר. התיקון: std::unique_lock lk(mtx_); או std::scoped_lock lk(mtx_);.",
       "lesson": "cpp.raii",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. זה היה נכון עם סוגריים מסולסלים (`std::unique_lock<std::mutex>{mtx_};`). עם סוגריים עגולים, כלל ה-disambiguation קובע שזו הצהרה ולא temporary.",
         "נכון. `T(x);` מפוענח כהצהרה `T x;` ([stmt.ambig]): נוצר unique_lock ריק בשם mtx_ שמסתיר את ה-member, וה-mutex האמיתי לא ננעל בכלל.",
@@ -477,10 +494,7 @@
         "מזכיר שאי אפשר לזרוק מ-destructor אם close נכשל (log, או מתודת close מפורשת)"
       ],
       "explanation": "זה מימוש של unique_ptr עם custom deleter ו-sentinel של -1 במקום nullptr. כל פעולה צריכה להשאיר את האובייקט במצב תקין גם אחרי move.",
-      "lesson": "cpp.raii",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.raii"
     },
     {
       "id": "cpp.raii.q15",
@@ -496,10 +510,7 @@
         "בעיה של globals סטטיים מול teardown של ה-context"
       ],
       "explanation": "מראיין ב-NVIDIA ירצה לשמוע שאתה מבין ש-RAII פותר דליפות אבל לא את התזמון: בזמן-אמת חשוב גם מתי ובאיזה thread השחרור קורה.",
-      "lesson": "cpp.raii",
-      "tags": [
-        "nvidia"
-      ]
+      "lesson": "cpp.raii"
     },
     {
       "id": "cpp.raii.q16",
@@ -557,9 +568,6 @@
       "answer": 1,
       "explanation": "range-for מתורגם ל-auto&& __range = make().get(); ואחריו הלולאה. ה-reference נקשר לתוצאה של get(), ולא ל-temporary Holder עצמו, ולכן ה-Holder נהרס בסוף ה-statement. C++23 (P2718) תיקן זאת: temporaries ב-range initializer חיים עד סוף הלולאה. עד אז כותבים auto h = make(); for (int x : h.get()).",
       "lesson": "cpp.raii",
-      "tags": [
-        "nvidia"
-      ],
       "notes": [
         "שגוי. עד C++23 range-for מאריך רק את ה-temporary שנקשר ישירות ל-`auto&& __range`. כאן נקשר reference שמוחזר מ-get(), וה-Holder לא מוארך.",
         "נכון. `auto&& __range = make().get();` קושר ל-reference שמוחזר, ה-Holder הזמני נהרס בסוף ה-statement, ו-__range מצביע ל-vector מת: UB עד C++23.",
@@ -739,9 +747,6 @@
         "self-assignment גורם ל-double free"
       ],
       "answer": 2,
-      "tags": [
-        "microsoft"
-      ],
       "explanation": "אם בניית other זורקת, *this לא השתנה. swap ב-noexcept משלים את הפעולה. הפרמטר by value מקבל rvalue דרך move constructor, כך שאותו operator משמש גם כ-move assignment. self-assignment תקין, כי other הוא עותק נפרד. החיסרון: std::vector למשל לא עושה כך, כי השמה לתוך capacity קיים חוסכת הקצאה, והוא מוותר על strong guarantee בהשמה.",
       "lesson": "cpp.raii",
       "notes": [
@@ -809,9 +814,225 @@
         "מנסח את העיקרון: קודם עבודה שזורקת, אחר כך commit ב-noexcept"
       ],
       "explanation": "שאלה קלאסית של exception safety ברמת סניור: לא מספיק לדעת את ההגדרות, צריך לבנות את הסדר הנכון של פעולות ולדעת מה כל פתרון עולה.",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 4,
+      "type": "oral",
+      "prompt": "מימשת `cp SOURCE DEST` עם open, read ו-write של POSIX. המראיין מבקש להפוך את זה ל-C++ איכותי: איך תבטיח שכל file descriptor נסגר בכל מסלול (כולל שגיאות ו-exceptions), מה המשמעות של copy ו-move ב-wrapper של fd, ואיך תמנע מצב שבו DEST נשאר חצי כתוב כשההעתקה נכשלת?",
+      "modelAnswer": "- RAII: מחלקה `UniqueFd` שמחזיקה int fd, סוגרת ב-destructor (רק אם fd >= 0), ולא זורקת מה-destructor. כל open עוטף מיד את ה-fd, כך שכל return מוקדם או exception סוגר אוטומטית.\n- copy מחוק: העתקה של fd הייתה גורמת ל-double close, ובין שתי הסגירות fd עם אותו מספר עלול להיפתח מחדש ולהיסגר בטעות. move מעביר את הבעלות ומציב -1 במקור (std::exchange). אם באמת צריך שני handles, משתמשים ב-dup() במפורש.\n- שגיאות: close יכול להיכשל (למשל ב-NFS, write-back שנכשל), ובקובץ יעד זו שגיאה אמיתית. לכן מספקים `close()` מפורש שמחזיר ומדווח על השגיאה, וה-destructor משמש רק כרשת ביטחון ושומר את הכישלון בלוג.\n- לולאת ההעתקה: read מחזיר 0 ב-EOF, -1 עם EINTR חוזרים על הקריאה, ו-write יכול לכתוב חלקית ולכן כותבים בלולאה.\n- אטומיות: כותבים לקובץ זמני באותה תיקייה (`DEST.tmp.XXXXXX` עם mkstemp), עושים fsync, ורק אז rename(tmp, DEST). rename באותה מערכת קבצים אטומי, ולכן DEST הוא תמיד הישן או החדש. scope guard מוחק את הקובץ הזמני אם יוצאים בכישלון.\n- בדיקות נוספות: SOURCE ו-DEST הם אותו קובץ (השוואת st_dev ו-st_ino), DEST שהוא תיקייה, והרשאות.\n- ביצועים: buffer גדול (128KB ומעלה), או copy_file_range/sendfile כדי שהנתונים לא יעברו ב-user space.",
+      "rubric": [
+        "wrapper של RAII ל-fd שסוגר ב-destructor ולא זורק ממנו",
+        "move-only: copy מחוק (double close), ו-move שמאפס את המקור",
+        "close יכול להיכשל: close מפורש שמדווח שגיאה בקובץ היעד",
+        "קובץ זמני, fsync ו-rename אטומי, וניקוי בכישלון (scope guard)",
+        "לולאת read/write נכונה: partial writes, EINTR ו-EOF"
+      ],
+      "explanation": "תשובה טובה: wrapper של RAII שהוא move-only, טיפול בשגיאות של close, וכתיבה לקובץ זמני שמבצעים לו rename אטומי רק אחרי הצלחה מלאה.",
       "tags": [
         "microsoft"
       ],
+      "sources": [
+        "https://prachub.com/interview-questions/implement-the-linux-cp-command-then-explain-its-os-and-cplusplus-internals"
+      ],
+      "problem": "Microsoft onsite: implement cp, then robust C++ (RAII for descriptors)",
+      "id": "cpp.raii.q31",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "`UniqueFd` אמור להיות move-only ולסגור את ה-fd פעם אחת. אחרי `UniqueFd b = std::move(a);` לפעמים fd אחר לגמרי בתהליך נסגר. איפה הבאג?",
+      "code": "class UniqueFd {\n  int fd_ = -1;\npublic:\n  explicit UniqueFd(int fd) : fd_(fd) {}\n  UniqueFd(const UniqueFd&) = delete;\n  UniqueFd(UniqueFd&& o) noexcept : fd_(o.fd_) {}\n  ~UniqueFd() { if (fd_ >= 0) ::close(fd_); }\n  int get() const { return fd_; }\n};",
+      "bugLine": 6,
+      "choices": [
+        "ה-move constructor לא מציב -1 במקור, ולכן שני האובייקטים סוגרים את אותו fd",
+        "חסר `operator=` ולכן move לא עובד",
+        "close חייב להיקרא רק אם fd_ > 0, כי 0 הוא stdin",
+        "explicit על ה-constructor מונע move"
+      ],
+      "answer": 0,
+      "explanation": "ה-move constructor מעתיק את ה-fd אבל לא מאפס את המקור. כשה-a המרוקן נהרס, הוא סוגר את אותו מספר fd ש-b מחזיק. מעבר לזה, אם בינתיים ה-fd נסגר ונפתח קובץ אחר שקיבל את אותו מספר, a סוגר את הקובץ הלא נכון. התיקון: `fd_(std::exchange(o.fd_, -1))`.",
+      "notes": [
+        "נכון: move צריך להעביר בעלות, כלומר לרוקן את המקור. בלי זה יש double close, ובמקרה הגרוע סגירה של fd שכבר שייך לקובץ אחר.",
+        "שגוי: move construction לא משתמש ב-operator=. חסר assignment זו בעיה נפרדת (הוא פשוט לא יתקמפל), לא הבאג שמתואר.",
+        "שגוי: 0 הוא fd תקין שאפשר לקבל מ-open אם stdin סגור. הבדיקה `>= 0` נכונה.",
+        "שגוי: explicit חל רק על ה-constructor מ-int. ה-move constructor פועל כרגיל."
+      ],
+      "id": "cpp.raii.q32",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 4,
+      "type": "mcq",
+      "prompt": "כלי שמעדכן קובץ קונפיגורציה כותב ל-`cfg.tmp`, ואז מבצע `rename(\"cfg.tmp\", \"cfg\")`. מה נכון?",
+      "choices": [
+        "rename אטומי, ולכן אחרי נפילת חשמל cfg תמיד שלם",
+        "rename מחליף את cfg באופן אטומי מבחינת קוראים, אבל לעמידות בנפילת חשמל צריך fsync לקובץ הזמני לפני ה-rename (ולתיקייה אחריו)",
+        "rename מעתיק את התוכן, ולכן הוא איטי ולא אטומי",
+        "rename אטומי גם בין מערכות קבצים שונות"
+      ],
+      "answer": 1,
+      "explanation": "rename באותה מערכת קבצים מחליף את ה-directory entry באופן אטומי: קורא שפותח את cfg רואה את הקובץ הישן או החדש, לעולם לא חצי. אבל אטומיות היא לא durability: בלי fsync על הקובץ הזמני לפני ה-rename, נפילת חשמל עלולה להשאיר cfg ריק או חלקי. לעמידות מלאה עושים גם fsync לתיקייה אחרי ה-rename.",
+      "notes": [
+        "שגוי: ה-metadata של ה-rename יכול להגיע לדיסק לפני ה-data של הקובץ הזמני. זה באג שקרה באמת ב-ext4 עם delayed allocation.",
+        "נכון: אטומיות (מה שתהליכים אחרים רואים) ו-durability (מה ששורד קריסה) הן שתי הבטחות נפרדות.",
+        "שגוי: באותה מערכת קבצים rename רק משנה את ה-directory entry ולא מעתיק נתונים.",
+        "שגוי: בין מערכות קבצים rename נכשל עם EXDEV. mv עושה במקרה כזה copy ו-unlink, וזה לא אטומי."
+      ],
+      "id": "cpp.raii.q33",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 2,
+      "type": "multi",
+      "prompt": "אילו טענות על new מול malloc ועל delete מול free נכונות?",
+      "choices": [
+        "new מריץ constructor, ו-malloc לא",
+        "כש-new נכשל הוא מחזיר nullptr, בדיוק כמו malloc",
+        "delete מריץ destructor לפני שחרור הזיכרון, ו-free לא",
+        "מותר לשחרר עם free זיכרון שהוקצה עם new, כל עוד ל-T אין destructor",
+        "new מחזיר pointer מטיפוס T*, ו-malloc מחזיר void*"
+      ],
+      "answer": [
+        0,
+        2,
+        4
+      ],
+      "explanation": "new מחשב את הגודל לפי הטיפוס, מקצה (דרך operator new), מריץ constructor ומחזיר pointer מהטיפוס הנכון. בכישלון הוא זורק std::bad_alloc. malloc רק מקצה בתים, מחזיר void*, ובכישלון מחזיר NULL. delete מריץ destructor ואז משחרר. free רק משחרר. ערבוב בין המשפחות הוא UB.",
+      "notes": [
+        "נכון: new יוצר אובייקט (allocation ואחריה construction). malloc נותן זיכרון גולמי שאין בו אובייקט.",
+        "שגוי: new רגיל זורק std::bad_alloc. רק `new (std::nothrow)` מחזיר nullptr.",
+        "נכון: delete מסיים את חיי האובייקט ואז קורא ל-operator delete. free לא יודע שיש שם אובייקט.",
+        "שגוי: גם עם טיפוס טריוויאלי זה UB. operator new יכול להיות מוחלף (replaced) או להשתמש ב-allocator אחר מ-malloc.",
+        "נכון: לכן ב-C++ צריך cast בתוצאה של malloc, וב-new לא."
+      ],
+      "tags": [
+        "nvidia",
+        "intel"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/",
+        "https://www.geeksforgeeks.org/interview-experiences/intel-interview-experience-set-4-campus-full-time/"
+      ],
+      "problem": "NVIDIA / Intel interview: new vs malloc, delete vs free",
+      "id": "cpp.raii.q34",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 3,
+      "type": "bug",
+      "lang": "cpp",
+      "prompt": "הקוד קורס ב-`p->name = \"rx0\"` (או מתנהג בצורה אקראית). למה?",
+      "code": "struct Device {\n  std::string name;\n  int rate = 0;\n};\n\nint main() {\n  auto* p = static_cast<Device*>(std::malloc(sizeof(Device)));\n  p->name = \"rx0\";\n  p->rate = 48000;\n  std::free(p);\n}",
+      "bugLine": 7,
+      "choices": [
+        "malloc לא מריץ constructor, ולכן name הוא std::string שלא נבנה, וההשמה פועלת על זבל",
+        "sizeof(Device) לא כולל את התווים של ה-string",
+        "static_cast לא יכול להמיר void* ל-Device*",
+        "חסרה בדיקה ש-p אינו nullptr. זו הסיבה היחידה לקריסה"
+      ],
+      "answer": 0,
+      "explanation": "malloc מקצה בתים ולא מריץ constructor, ולכן אין שם אובייקט Device ובוודאי לא std::string מאותחל. operator= של string יוצא מהנחה שהאובייקט קיים (pointer פנימי, גודל, capacity), ומפעיל אותו על זבל. צריך `new Device` (או placement new על הזיכרון), ובשחרור delete (או destructor מפורש ואחריו free).",
+      "notes": [
+        "נכון: חיי האובייקט לא התחילו. כל member לא טריוויאלי (string, vector) חייב constructor. התיקון: `auto* p = new Device;` ו-`delete p;`.",
+        "שגוי: נכון שהתווים (מעבר ל-SSO) נמצאים מחוץ לאובייקט, אבל זה בדיוק מה ש-string מנהל בעצמו. הבעיה היא שהוא לא נבנה.",
+        "שגוי: static_cast מ-void* לכל pointer לאובייקט הוא חוקי.",
+        "שגוי: בדיקת null רצויה, אבל גם כש-malloc מצליח הקוד שבור, כי אין אובייקט."
+      ],
+      "id": "cpp.raii.q35",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 2,
+      "type": "order",
+      "prompt": "סדר את מה שקורה ב-`Widget* w = new Widget(3); ... delete w;` (בלי exceptions):",
+      "items": [
+        "`operator new(sizeof(Widget))` מקצה זיכרון גולמי",
+        "ה-constructor `Widget(3)` רץ על הזיכרון הזה",
+        "הביטוי מחזיר Widget* שנשמר ב-w",
+        "בזמן `delete w` רץ ה-destructor `~Widget()`",
+        "`operator delete` משחרר את הזיכרון"
+      ],
+      "explanation": "new הוא שני שלבים: הקצאה ע\"י `operator new(sizeof(Widget))` ובנייה עם ה-constructor באותה כתובת. delete הוא ההפך: קודם destructor ורק אחר כך שחרור עם `operator delete`. אם ה-constructor זורק, הקומפיילר קורא ל-operator delete בעצמו, ולכן אין דליפה.",
+      "id": "cpp.raii.q36",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct T {\n  char c;\n  T(char x) : c(x)       { std::cout << '+' << c; }\n  T(const T& o) : c(o.c) { std::cout << \"+c\"; }\n  ~T()                   { std::cout << '-' << c; }\n};\nT make() { return T('m'); }\nvoid take(T) {}\n\nint main() {\n  T a('a');\n  T b = make();\n  take(a);\n}",
+      "choices": [
+        "+a+m+c-a-m-a",
+        "+a+m+c-m-a-a",
+        "+a+m+c-c-m-a",
+        "+a+m+c+c-m-c-a-a"
+      ],
+      "answer": 0,
+      "explanation": "a נבנה (+a). make מחזירה prvalue, ובזכות guaranteed copy elision (C++17) b נבנה ישירות: +m, בלי copy. take(a) מעתיק לפרמטר (+c), שנהרס בסוף הקריאה (-a, כי העותק שומר c='a'). בסוף main נהרסים לפי סדר הפוך לבנייה: b (-m) ואז a (-a).",
+      "notes": [
+        "נכון: אין copy ב-make (C++17). העותק של take נהרס בסוף הקריאה, ואז b ו-a לפי סדר הפוך.",
+        "שגוי: הפרמטר של take נהרס מיד בסוף הקריאה, לפני ש-main מסתיים, ולכן -a שלו קודם ל--m.",
+        "שגוי: ה-copy constructor מעתיק את c מהמקור, ולכן העותק מדפיס -a בהריסה ולא -c.",
+        "שגוי: guaranteed copy elision: `return T('m')` ו-`T b = make()` בונים את b ישירות, בלי העתקות."
+      ],
+      "tags": [
+        "nvidia"
+      ],
+      "sources": [
+        "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-sde-2/"
+      ],
+      "problem": "NVIDIA interview: output question on constructor and destructor order",
+      "id": "cpp.raii.q37",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט?",
+      "code": "struct T {\n  char c;\n  T(char x) : c(x) { std::cout << '+' << c; }\n  ~T()             { std::cout << '-' << c; }\n};\n\nint main() {\n  {\n    T a('a');\n    const T& r = T('r');\n    T('t');\n    std::cout << '|';\n  }\n}",
+      "choices": [
+        "+a+r-r+t-t|-a",
+        "+a+r+t-t|-r-a",
+        "+a+r+t|-t-r-a",
+        "+a+r+t-t|-a-r"
+      ],
+      "answer": 1,
+      "explanation": "a נבנה. `const T& r = T('r')` קושר temporary ל-const reference, וזמן החיים שלו מתארך עד סוף ה-scope של r. `T('t');` הוא temporary רגיל שנהרס בסוף ה-statement. אחרי '|' נסגר ה-block: האובייקטים נהרסים בסדר הפוך לבנייה, קודם ה-temporary של r ואז a.",
+      "notes": [
+        "שגוי: temporary שנקשר ל-const reference לא נהרס בסוף ה-statement. lifetime extension מאריך אותו עד סוף ה-scope של r.",
+        "נכון: t נהרס מיד, r חי עד סוף ה-block, וההריסה בסוף ה-block היא בסדר הפוך לבנייה: r ואז a.",
+        "שגוי: `T('t');` הוא temporary שנהרס בסוף ה-full-expression, לפני ההדפסה של '|'.",
+        "שגוי: ה-temporary המוארך נבנה אחרי a, ולכן נהרס לפניו."
+      ],
+      "id": "cpp.raii.q38",
+      "lesson": "cpp.raii"
+    },
+    {
+      "level": 3,
+      "type": "output",
+      "lang": "cpp",
+      "prompt": "מה הפלט של התוכנית כולה?",
+      "code": "struct T {\n  char c;\n  T(char x) : c(x) { std::cout << '+' << c; }\n  ~T()             { std::cout << '-' << c; }\n};\nT g('g');\nvoid f() { static T s('s'); }\n\nint main() {\n  std::cout << '[';\n  f();\n  f();\n  std::cout << ']';\n}",
+      "choices": [
+        "[+g+s]-s-g",
+        "+g[+s]-s-g",
+        "+g[+s+s]-s-s-g",
+        "+g[+s-s+s-s]-g"
+      ],
+      "answer": 1,
+      "explanation": "g הוא global ונבנה לפני main (+g). s הוא static local, ונבנה בקריאה הראשונה ל-f בלבד (+s). הקריאה השנייה לא בונה שוב. אחרי ש-main מסתיים, אובייקטים סטטיים נהרסים בסדר הפוך לסדר שבו הבנייה שלהם הסתיימה: s ואז g.",
+      "notes": [
+        "שגוי: global עם constructor דינמי מאותחל לפני ש-main מתחיל (בפועל), ולכן +g לפני '['.",
+        "נכון: g לפני main, s בקריאה הראשונה בלבד, וההריסה אחרי main בסדר הפוך: s ואז g.",
+        "שגוי: static local נבנה פעם אחת, גם אם הפונקציה נקראת כמה פעמים.",
+        "שגוי: static local לא נהרס בסוף הקריאה. הוא חי עד סוף התוכנית."
+      ],
+      "id": "cpp.raii.q39",
       "lesson": "cpp.raii"
     }
   ]
