@@ -353,11 +353,25 @@ function scheduleSync() {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => { if (canSync()) syncNow().catch(() => {}); }, 20000);
 }
+// Pull from the other device, then refresh screens that list open sessions or
+// progress (never in the middle of a question).
+async function pullAndRefresh() {
+  if (!canSync()) return;
+  try { await syncNow(); } catch { return; }
+  const top = (location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]) || 'home';
+  if (['home', 'practice', 'progress'].includes(top)) route();
+}
 async function onlineWork() {
   const n = await ai.drainQueue();
   if (n) toast(`המראיין בדק ${n} תשובות שחיכו. התוצאות במסך ההתקדמות.`);
-  if (canSync()) syncNow().catch(() => {});
+  pullAndRefresh();
 }
+// Leaving the app pushes right away (so the other device sees the session where
+// you stopped); coming back pulls what the other device did.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { clearTimeout(syncTimer); if (canSync()) syncNow().catch(() => {}); }
+  else pullAndRefresh();
+});
 
 // ---------- boot ----------
 async function boot() {

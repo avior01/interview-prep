@@ -29,7 +29,8 @@ const defaults = () => ({
   aiQueue: [],      // { id, qid, prompt, answer, ts }
   aiResults: [],    // { id, qid, score, verdict, missing, followUp, ts, answer }
   open: [],         // in-progress sessions, each resumable where it stopped: { sid, title, updatedAt, ... }
-  activeSid: null,  // the open session currently shown
+  activeSid: null,  // the open session currently shown (per device, not synced)
+  closedSids: {},   // sid -> when it was finished/closed, so other devices drop it on sync
   streak: { day: 0, count: 0 },
   u: 0,
 });
@@ -58,6 +59,7 @@ function attachCurrent(s) {
         s.open = [v, ...s.open.filter((x) => x.sid !== v.sid)].slice(0, MAX_OPEN);
         s.activeSid = v.sid;
       } else {
+        if (s.activeSid) s.closedSids[s.activeSid] = Date.now();
         s.open = s.open.filter((x) => x.sid !== s.activeSid);
         s.activeSid = null;
       }
@@ -85,6 +87,7 @@ export function activate(sid) {
   if (state.open.some((x) => x.sid === sid)) state.activeSid = sid;
 }
 export function closeSession(sid) {
+  state.closedSids[sid] = Date.now();
   state.open = state.open.filter((x) => x.sid !== sid);
   if (state.activeSid === sid) state.activeSid = null;
 }
@@ -145,11 +148,30 @@ export function merge(remote) {
   else if (remote.streak?.day === state.streak.day) state.streak.count = Math.max(state.streak.count, remote.streak.count);
   const rs = remote.settings || {};
   for (const k of ['interviewDate', 'company', 'startDate']) if (rs[k]) state.settings[k] = rs[k];
+  mergeOpenSessions(remote);
 }
 
-// What gets uploaded to the gist: everything except secrets and the
-// in-progress session.
+// Open sessions follow you between devices: the copy changed most recently wins,
+// and a session finished or closed anywhere stays closed everywhere.
+function mergeOpenSessions(remote) {
+  const keepFor = 60 * 86400000;
+  const closed = { ...(remote.closedSids || {}), ...state.closedSids };
+  for (const [sid, ts] of Object.entries(remote.closedSids || {})) closed[sid] = Math.max(closed[sid] || 0, ts);
+  for (const [sid, ts] of Object.entries(closed)) if (Date.now() - ts > keepFor) delete closed[sid];
+  state.closedSids = closed;
+  const bySid = new Map();
+  for (const x of [...state.open, ...(remote.open || [])]) {
+    if (!x?.sid || closed[x.sid]) continue;
+    const had = bySid.get(x.sid);
+    if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) bySid.set(x.sid, x);
+  }
+  state.open = [...bySid.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, MAX_OPEN);
+  if (state.activeSid && !bySid.has(state.activeSid)) state.activeSid = null;
+}
+
+// What gets uploaded to the gist: everything except secrets, the AI queue and
+// which session this device has on screen.
 export function exportable() {
   const { apiKey, gistToken, gistId, lastSync, ...settings } = state.settings;
-  return { ...state, settings, open: [], activeSid: null, aiQueue: [] };
+  return { ...state, settings, activeSid: null, aiQueue: [] };
 }
