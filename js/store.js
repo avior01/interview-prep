@@ -28,12 +28,43 @@ const defaults = () => ({
   sessions: [],     // { ts, mode, scope, level, total, correct, perDomain }
   aiQueue: [],      // { id, qid, prompt, answer, ts }
   aiResults: [],    // { id, qid, score, verdict, missing, followUp, ts, answer }
-  current: null,    // in-progress session (resumable)
+  open: [],         // in-progress sessions, each resumable where it stopped: { sid, title, updatedAt, ... }
+  activeSid: null,  // the open session currently shown
   streak: { day: 0, count: 0 },
   u: 0,
 });
 
 let state;
+const MAX_OPEN = 30;
+
+// `state.current` is the active open session. It is a non-enumerable accessor, so it
+// is never saved twice: assigning a session opens it (and makes it active), assigning
+// null closes the active one.
+function attachCurrent(s) {
+  if (s.current !== undefined && Object.getOwnPropertyDescriptor(s, 'current')?.value !== undefined) {
+    // Older saves kept a single in-progress session here: keep it as an open session.
+    const old = s.current;
+    delete s.current;
+    if (old) { old.sid ||= `s${old.startedAt || Date.now()}`; s.open = [...(s.open || []), old]; s.activeSid = old.sid; }
+  }
+  Object.defineProperty(s, 'current', {
+    enumerable: false,
+    configurable: true,
+    get: () => s.open.find((x) => x.sid === s.activeSid) || null,
+    set: (v) => {
+      if (v) {
+        v.sid ||= `s${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+        v.updatedAt = Date.now();
+        s.open = [v, ...s.open.filter((x) => x.sid !== v.sid)].slice(0, MAX_OPEN);
+        s.activeSid = v.sid;
+      } else {
+        s.open = s.open.filter((x) => x.sid !== s.activeSid);
+        s.activeSid = null;
+      }
+    },
+  });
+  return s;
+}
 
 export function load() {
   try {
@@ -43,7 +74,19 @@ export function load() {
   } catch {
     state = defaults();
   }
-  return state;
+  return attachCurrent(state);
+}
+
+// Open sessions, most recently used first.
+export function openSessions() {
+  return [...state.open].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+export function activate(sid) {
+  if (state.open.some((x) => x.sid === sid)) state.activeSid = sid;
+}
+export function closeSession(sid) {
+  state.open = state.open.filter((x) => x.sid !== sid);
+  if (state.activeSid === sid) state.activeSid = null;
 }
 
 export function get() { return state; }
@@ -58,14 +101,14 @@ const listeners = new Set();
 export function onSave(fn) { listeners.add(fn); }
 
 export function replace(next) {
-  state = { ...defaults(), ...next };
+  state = attachCurrent({ ...defaults(), ...next });
   state.settings = { ...defaults().settings, ...next.settings };
   save();
 }
 
 export function reset() {
   const keep = { apiKey: state.settings.apiKey, gistToken: state.settings.gistToken, gistId: state.settings.gistId };
-  state = defaults();
+  state = attachCurrent(defaults());
   Object.assign(state.settings, keep);
   save();
 }
@@ -108,5 +151,5 @@ export function merge(remote) {
 // in-progress session.
 export function exportable() {
   const { apiKey, gistToken, gistId, lastSync, ...settings } = state.settings;
-  return { ...state, settings, current: null, aiQueue: [] };
+  return { ...state, settings, open: [], activeSid: null, aiQueue: [] };
 }

@@ -18,7 +18,9 @@ let root, toast, navigate;
 
 export function startSession(opts, qs) {
   const st = get();
+  const scopeName = content.subById[opts.scope]?.name || content.domainById[opts.scope]?.name || '';
   st.current = {
+    title: [MODE_NAMES[opts.mode], scopeName, opts.level ? `רמה ${opts.level}` : ''].filter(Boolean).join(' · '),
     mode: opts.mode, scope: opts.scope || '', level: opts.level || 0,
     ids: qs.map((q) => q.id), idx: 0, results: [], requeued: [], startedAt: Date.now(), timeLeft: {},
   };
@@ -44,7 +46,7 @@ function header(q) {
   const pct = Math.round((cur.idx / cur.ids.length) * 100);
   return `<div class="session-top">
     <div class="row spread">
-      <button class="btn ghost small" data-act="quit">✕ סיום</button>
+      <span class="row"><button class="btn ghost small" data-act="quit">✕ סיום</button><button class="btn ghost small" data-act="leave" title="הסשן נשמר, ואפשר להמשיך אותו מהבית">⏸ הפסקה</button></span>
       <span class="small muted">${MODE_NAMES[cur.mode] || ''} · ${cur.idx + 1}/${cur.ids.length}</span>
       <span class="timer" id="timer"></span>
     </div>
@@ -162,6 +164,7 @@ function bind() {
       case 'lesson': ui.showLesson = true; draw(); break;
       case 'closeLesson': ui.showLesson = false; draw(); break;
       case 'quit': if (confirm('לסיים את הסשן עכשיו? התשובות שכבר נתת נשמרו.')) finish(); break;
+      case 'leave': stopTimer(); get().current.updatedAt = Date.now(); save(); navigate('#/'); break;
       case 'pause': togglePause(); break;
       case 'followUp': followUp(); break;
       case 'followUpSend': followUpSend(); break;
@@ -329,6 +332,7 @@ function next() {
   const cur = get().current;
   if (ui.ok !== undefined && !ui.skipSchedule) schedule(q.id, ui.ok ? (ui.grade === 'hard' ? 'hard' : 'good') : 'wrong');
   cur.idx++;
+  cur.updatedAt = Date.now();
   save();
   renderSession(root, { toast, navigate });
   window.scrollTo(0, 0);

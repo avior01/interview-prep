@@ -46,10 +46,42 @@ function subStats(key) {
   return { total: qs.length, seen, weak, level: levelOf(key) };
 }
 
+// ---------- open sessions (several can be in progress at once) ----------
+const ago = (ts) => {
+  const m = Math.round((Date.now() - (ts || Date.now())) / 60000);
+  if (m < 1) return 'עכשיו';
+  if (m < 60) return `לפני ${m} דק'`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `לפני ${h} שע'` : `לפני ${Math.round(h / 24)} ימים`;
+};
+
+const MODE_TITLES = { continue: 'המשך', domain: 'תחום', sub: 'תת-נושא', exam: 'מבחן כולל', review: 'חזרות', interview: 'מראיין AI' };
+// Sessions saved before titles existed get one from their mode and scope.
+const sessionTitle = (x) => x.title || [MODE_TITLES[x.mode], content.subById[x.scope]?.name || content.domainById[x.scope]?.name, x.level ? `רמה ${x.level}` : ''].filter(Boolean).join(' · ') || 'סשן';
+
+function openSessionsHtml() {
+  const list = store.openSessions();
+  if (!list.length) return '';
+  return `<div class="card"><h2>סשנים פתוחים (${list.length})</h2><ul class="list">${list.map((x) => {
+    const pct = Math.round((x.idx / x.ids.length) * 100);
+    return `<li class="open-session">
+      <div class="row spread"><strong>${esc(sessionTitle(x))}</strong><span class="small muted">${x.idx}/${x.ids.length} · ${ago(x.updatedAt || x.startedAt)}</span></div>
+      <div class="bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
+      <div class="actions"><a class="btn primary small" href="#/session/${encodeURIComponent(x.sid)}">להמשיך</a>
+        <button class="btn small" data-close="${esc(x.sid)}">לסגור</button></div></li>`;
+  }).join('')}</ul></div>`;
+}
+
+function bindOpenSessions(rerender) {
+  app.querySelectorAll('[data-close]').forEach((b) => b.onclick = () => {
+    if (!confirm('לסגור את הסשן? התשובות שכבר נתת נשמרות, רק ההמשך שלו נמחק.')) return;
+    store.closeSession(b.dataset.close); store.save(); rerender();
+  });
+}
+
 // ---------- views ----------
 function home() {
   const c = counts();
-  const cur = st().current;
   const week = currentWeek();
   const weekSubs = (PLAN[week - 1] || []).map((k) => content.subById[k]?.name).filter(Boolean);
   const s = st().settings;
@@ -57,8 +89,7 @@ function home() {
   app.innerHTML = `
     <h1>שלום 👋</h1>
     <p class="muted">שבוע ${week} מתוך 16${ivDays !== null && ivDays >= 0 ? ` · ${ivDays} ימים לראיון` : ''}${s.company ? ` · ${companyName(s.company)}` : ''}</p>
-    ${cur ? `<div class="card"><p><strong>יש סשן פתוח</strong> (${cur.idx}/${cur.ids.length}).</p>
-      <div class="actions"><a class="btn primary" href="#/session">להמשיך את הסשן</a><button class="btn" id="dropCur">לסגור אותו</button></div></div>` : ''}
+    ${openSessionsHtml()}
     <div class="card">
       <div class="stats">
         <div class="stat"><b>${c.weak}</b><span>שאלות חלשות</span></div>
@@ -79,8 +110,7 @@ function home() {
   document.getElementById('go').onclick = () => begin({ mode: 'continue' });
   const inst = document.getElementById('install');
   if (inst) inst.onclick = async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; home(); };
-  const drop = document.getElementById('dropCur');
-  if (drop) drop.onclick = () => { st().current = null; store.save(); home(); };
+  bindOpenSessions(home);
 }
 
 function begin(opts) {
@@ -110,7 +140,10 @@ function practice(params) {
       <hr class="sep">
       <div id="opts"></div>
       <button class="btn primary big" id="start">התחל</button>
-    </div>`;
+      <p class="small muted" style="margin-top:8px">סשן חדש לא מוחק סשנים פתוחים: כל אחד ממשיך מהמקום שבו עצרת.</p>
+    </div>
+    ${openSessionsHtml()}`;
+  bindOpenSessions(() => practice(params));
   const opts = document.getElementById('opts');
   const levelSelect = (withCurrent) => `<label class="field"><span>רמה</span><select id="lv">
       ${withCurrent ? '<option value="0">הרמה הנוכחית שלי בכל תת-נושא</option>' : ''}
@@ -300,7 +333,10 @@ function route() {
   switch (top) {
     case 'home': home(); break;
     case 'practice': practice(params); break;
-    case 'session': renderSession(app, { toast, navigate }); break;
+    case 'session':
+      if (parts[1]) store.activate(decodeURIComponent(parts[1]));
+      renderSession(app, { toast, navigate });
+      break;
     case 'summary': renderSummary(app); break;
     case 'library': library(params); break;
     case 'lesson': lesson(decodeURIComponent(parts.slice(1).join('/'))); break;
