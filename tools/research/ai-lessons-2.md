@@ -1,0 +1,39 @@
+# Research sources: ai.context, ai.agents, ai.evals, ai.safety
+
+All lesson and question text was written from scratch (synthesized, not copied).
+Format: title · URL · what was used.
+
+## Anthropic (primary)
+
+- Prompting best practices (long context prompting, tool use, agentic systems, subagents, autonomy and safety) · https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices · documents at the top and query at the end (up to ~30% on complex multi-document inputs), `<document>`/`<source>` tagging, quote-first grounding, explicit "do" vs "suggest" wording, reversibility-based confirmation guidance, multi-context-window state (git, structured state files), subagent overuse.
+- Prompt caching · https://platform.claude.com/docs/en/build-with-claude/prompt-caching · prefix order tools → system → messages, exact-prefix match, up to 4 breakpoints, 5 min default TTL refreshed on hit vs 1 h, write ~1.25× / read ~0.1× base input price (varies by model), what invalidates which level, put breakpoint on last stable block, lookback window.
+- Reduce hallucinations · https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-hallucinations · permission to say "I don't know", quote extraction first for long docs, cite-then-verify-and-retract, best-of-N inconsistency check, restrict to provided documents.
+- Mitigate jailbreaks and prompt injections · https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/mitigate-jailbreaks · two threat models (user as adversary vs third-party content), harmlessness screen with a small model + structured output, untrusted content only in tool results, label source, untrusted-content policy in system prompt, JSON-encode untrusted strings, don't put own instructions in tool results, least privilege, screen tool outputs, red-teaming, monitoring.
+- Increase output consistency · https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/increase-consistency · exact format spec, structured outputs for schema guarantees, examples, retrieval for consistency, chaining, role in system prompt.
+- Define success criteria · https://platform.claude.com/docs/en/test-and-evaluate/define-success · specific/measurable/achievable/relevant criteria, bad-vs-good examples, criteria dimensions (fidelity, consistency, tone, privacy, context use, latency, price).
+- Develop tests · https://platform.claude.com/docs/en/test-and-evaluate/develop-tests · task-specific evals with edge cases, automate, volume over hand-grading, eval examples (exact match, embedding similarity, ROUGE-L, Likert, binary), code vs human vs LLM grading, LLM-grader tips (rubric, constrained output, reason first), use a different grader model.
+- Tool use overview · https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview · client vs server tools, `tool_use` block with id → `tool_result` with `tool_use_id`, stop_reason tool_use, tool_choice and disable_parallel_tool_use, strict tool use, steering trigger rate via system prompt, missing-parameter behavior.
+- Citations · https://platform.claude.com/docs/en/build-with-claude/citations · sentence chunking of documents, `cited_text` guaranteed to point into the provided docs, comparison with prompt-based citations.
+- Building effective agents · https://www.anthropic.com/engineering/building-effective-agents · workflows vs agents, augmented LLM, prompt chaining, routing, parallelization (sectioning/voting), orchestrator-workers, evaluator-optimizer, start simple, ACI and poka-yoke tool design.
+- Effective context engineering for AI agents · https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents · context rot / attention budget, "right altitude" system prompts, minimal-but-complete, just-in-time retrieval vs pre-retrieval, hybrid, compaction, structured note-taking, sub-agents returning condensed summaries.
+- Writing effective tools for agents · https://www.anthropic.com/engineering/writing-tools-for-agents · don't just wrap APIs, consolidate, namespacing, meaningful returns (names over UUIDs), concise/detailed response format, pagination/truncation, actionable errors, unambiguous parameter names, eval-driven iteration with held-out tasks.
+- How we built our multi-agent research system · https://www.anthropic.com/engineering/multi-agent-research-system · orchestrator-worker, ~4× / ~15× token cost of agents / multi-agent vs chat, where multi-agent is a poor fit, delegation instructions (objective, output format, boundaries), scaling effort, small early eval samples, LLM judge with rubric, checkpoints and resume.
+- Demystifying evals for AI agents · https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents · task/trial/grader/transcript/outcome, capability vs regression evals, pass@k vs pass^k (0.75³ ≈ 0.42), grade outcome not path, balanced sets, read transcripts, saturation.
+- Introducing Contextual Retrieval · https://www.anthropic.com/news/contextual-retrieval · chunk context loss, contextual embeddings + contextual BM25, hybrid search with rank fusion, reranking (retrieve ~150 → keep 20), failure-rate reductions (35% / 49% / 67%), "under ~200k tokens just put it all in the prompt" + caching.
+- Anthropic Academy course catalog · https://anthropic.skilljar.com/ · course list (Building with the Claude API, MCP, subagents, AI Fluency) used only to check topic coverage.
+
+## Other vendors and standards
+
+- OpenAI function calling guide · https://developers.openai.com/api/docs/guides/function-calling · 5-step call flow with call_id, strict mode (additionalProperties false, all fields required, null for optional), keep tools < ~20, enums, "intern test", don't ask the model for what code already knows, tool_choice modes, parallel calls.
+- Google Gemini prompting strategies · https://ai.google.dev/gemini-api/docs/prompting-strategies · add context, ground to supplied context and say when missing, prefixes, break down prompts, long context first and question last.
+- Azure AI Search: chunk large documents · https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-chunk-documents (found via search; mirror docs.azure.cn) · start ~512 tokens with ~25% overlap, structure-aware chunking, prepend document title to mid-document chunks.
+- OWASP Top 10 for LLM Apps, LLM01 Prompt Injection · https://genai.owasp.org/llmrisk/llm01-prompt-injection/ · direct vs indirect, injection vs jailbreak, payload splitting, multimodal, adversarial suffix, obfuscation, mitigations (constrain, validate output format, filter, least privilege, human approval, segregate external content, adversarial testing), cannot be fully prevented.
+- OWASP LLM06 Excessive Agency · https://genai.owasp.org/llmrisk/llm062025-excessive-agency/ · excessive functionality/permissions/autonomy, narrow tools, user-scoped credentials, authorization enforced downstream not by the LLM, human approval.
+- Simon Willison, The lethal trifecta · https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/ · private data + untrusted content + exfiltration channel, exfil via image URLs/links, guardrail detection rates are not security.
+
+## Papers
+
+- ReAct (Yao et al., 2022) · https://arxiv.org/abs/2210.03629 · interleaved reasoning and actions, less hallucination than CoT-only on HotpotQA/FEVER via external lookups, interpretable trajectories.
+- RAG (Lewis et al., 2020) · https://arxiv.org/abs/2005.11401 · parametric vs non-parametric memory, dense retriever over Wikipedia, RAG-Sequence vs RAG-Token.
+- Lost in the Middle (Liu et al., 2023) · https://arxiv.org/abs/2307.03172 · accuracy highest when relevant info is at the start/end of long input, worse in the middle.
+- Judging LLM-as-a-Judge (Zheng et al., 2023) · https://arxiv.org/abs/2306.05685 · position, verbosity and self-enhancement bias, limited reasoning on math, >80% agreement with humans for strong judges.
