@@ -407,7 +407,17 @@
         "Kafka לא יודע מה קרה ב-DB חיצוני; transactions של Kafka מכסים רק כתיבות בתוך Kafka.",
         "הטרנזקציה של ה-DB הסתיימה בהצלחה לפני הקריסה; עיבוד חוזר יבצע טרנזקציה חדשה שתכפיל את העדכון."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "הזכרת שמירת ה-offset באותה טרנזקציה של ה-DB. איך זה עובד בפועל: מה נשמר, ומאיפה הצרכן ממשיך אחרי restart או rebalance?",
+        "modelAnswer": "ב-DB יש טבלה (topic, partition, offset), ובאותה טרנזקציה שמעדכנת את הרשומה העסקית מעדכנים גם את ה-offset הבא לקריאה. כך או ששניהם נשמרו או ששניהם לא. ה-offsets שב-Kafka לא משמשים יותר כמקור אמת: כשה-partition מוקצה לצרכן (callback של `onPartitionsAssigned` ב-ConsumerRebalanceListener), הוא קורא את ה-offset מה-DB ועושה `seek()` אליו. התוצאה היא effectively-once לתוך ה-DB הזה. המחיר הוא טרנזקציה לכל עדכון, ולכן מאגדים batch של מאות הודעות לטרנזקציה אחת, ומשלמים בכך שכשל מבטל את כל ה-batch ומעבד אותו מחדש.",
+        "rubric": [
+          "טבלת offsets מתעדכנת באותה טרנזקציה עם הרשומה",
+          "בהקצאת partition קוראים offset מה-DB ועושים seek",
+          "ה-offsets ב-Kafka לא משמשים כמקור אמת",
+          "batching של כמה הודעות לטרנזקציה כדי להוריד עלות"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q09",
@@ -428,7 +438,17 @@
         "נכון: כשעבודת השלב קטנה מעלות ה-handoff (תור, wakeup, העברת cache line בין cores), fusion עושה את שתי הפעולות במעבר אחד על נתונים חמים ב-cache.",
         "ב-GPU עלות העברת הנתונים ו-launch גבוהה בסדרי גודל מ-0.3 מיקרו-שניות של חישוב."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "תן סדרי גודל: כמה עולה handoff בין threads, ומתי כן שווה לפצל שלבים ל-threads נפרדים?",
+        "modelAnswer": "העברת cache line בין cores עולה בערך 50 עד 100 ns, ותור lock-free עם busy polling מוסיף כמה העברות כאלה לכל הודעה. אם ה-thread הצרכן ישן ומעירים אותו דרך futex, ה-wakeup עולה כמה מיקרו-שניות, כלומר פי 10 ויותר מ-0.3 מיקרו-שניות של העבודה. פיצול שווה כשהעבודה לכל בלוק גדולה בהרבה מעלות ה-handoff, נאמר פי 10 ומעלה, וכשה-throughput הנדרש באמת חורג ממה ש-core אחד נותן. אם בכל זאת חייבים thread נפרד, מאגדים כמה בלוקים להעברה אחת, כך שעלות ה-handoff מתחלקת על יותר עבודה.",
+        "rubric": [
+          "cache line בין cores: כ-50-100 ns",
+          "wakeup דרך futex: מיקרו-שניות",
+          "פיצול רק כשהעבודה גדולה בהרבה מה-handoff ו-core אחד לא מספיק",
+          "batching של בלוקים להעברה אחת"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q10",
@@ -465,7 +485,17 @@
         "late data הוא מצב צפוי ש-stream processors מטפלים בו; הוא לא גורם לקריסה.",
         "שיוך לחלון הנוכחי היה שובר את סמנטיקת event time: האירוע קרה ב-10:03, לא עכשיו."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "איך ה-watermark עצמו נוצר, ואיך תבחר את הפרמטר שלו לפי נתונים? מה המחיר של לבחור ערך גדול מדי או קטן מדי?",
+        "modelAnswer": "הדרך הנפוצה היא bounded out-of-orderness: watermark = ה-event time המקסימלי שנראה פחות delay קבוע, למשל 30 שניות. delay קטן סוגר חלונות מהר, אבל יותר אירועים נחשבים late ונזרקים או מתקנים תוצאה. delay גדול נותן פחות אירועים מאחרים, אבל כל תוצאה מתעכבת ב-delay הזה וה-state של חלונות פתוחים גדל. בוחרים לפי מדידה: histogram של lateness, כלומר processing time פחות event time, ולוקחים אחוזון גבוה, נאמר p99.9, כ-delay. את השארית מטפלים עם allowed lateness או side output, ומנטרים את קצב האירועים המאחרים כ-metric.",
+        "rubric": [
+          "watermark = max event time − delay קבוע",
+          "delay קטן: יותר late events; delay גדול: latency ו-state גבוהים",
+          "בחירה לפי histogram של lateness (אחוזון גבוה)",
+          "ניטור קצב האירועים המאחרים"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q12",
@@ -492,7 +522,17 @@
         "נכון: ה-snapshot חייב לכלול את ה-offsets של המקור, כדי שאפשר יהיה לנגן מחדש בדיוק מנקודת החיתוך.",
         "נכון: אחרי כשל משחזרים את כל השלבים מאותו snapshot ומנגנים מה-offsets שבו, כך שכל אירוע משפיע על ה-state פעם אחת."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "אופרטור עם שני קלטים קיבל את ה-barrier מקלט אחד ועוד לא מהשני. מה הוא חייב לעשות ולמה? ומה המחיר של זה תחת backpressure?",
+        "modelAnswer": "הוא חייב להפסיק לעבד את הקלט שה-barrier כבר הגיע ממנו, ולשמור את הרשומות שמגיעות בו ב-buffer, עד שה-barrier מגיע גם מהקלט השני. אחרת רשומות שאחרי ה-barrier בקלט הראשון ישפיעו על ה-state לפני ה-snapshot, ובשחזור הן ינוגנו שוב, כלומר ייספרו פעמיים. זה barrier alignment. תחת backpressure ה-barrier בקלט האיטי עומד בתור מאחורי הרבה נתונים, ה-alignment נמשך זמן רב, ה-checkpoint לוקח דקות ובזמן הזה הקלט המהיר חסום. Flink הוסיף unaligned checkpoints: ה-barrier עוקף את הנתונים שבדרך, והנתונים האלה נשמרים כחלק מה-snapshot. המחיר הוא snapshot גדול יותר, בתמורה ל-checkpoint מהיר שלא תלוי בעומס.",
+        "rubric": [
+          "חסימה ו-buffering של הקלט שה-barrier הגיע ממנו עד שמגיע מהשני",
+          "בלי alignment רשומות נספרות פעמיים בשחזור",
+          "תחת backpressure ה-alignment ארוך וה-checkpoint מתעכב",
+          "unaligned checkpoints: שמירת הנתונים שבדרך כחלק מה-snapshot"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q13",
@@ -513,7 +553,17 @@
         "מחיקת partition מאבדת את כל ההודעות התקינות שבו בגלל הודעה אחת.",
         "נכון: מספר ניסיונות מוגבל ואז dead letter queue עם פרטי השגיאה; ההודעה נשמרת לחקירה, ה-partition ממשיך, ומונה ה-DLQ מתריע."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ההודעה עברה ל-DLQ, וההודעות הבאות של אותו key ממשיכות להיות מעובדות. מתי זה שובר נכונות, ואיך מבדילים בין שגיאה זמנית לקבועה?",
+        "modelAnswer": "כשהסדר בתוך key חשוב, למשל אירועי חשבון (נפתח, הופקד, נסגר): אם 'הופקד' ב-DLQ ו'נסגר' עובד, ה-state שגוי. פתרון: כשהודעה של key נכנסת ל-DLQ, מסמנים את ה-key כ-parked, וכל ההודעות הבאות שלו עוברות גם הן לתור המתנה עד שהבעיה נפתרת ומנגנים אותן לפי הסדר. כדי להבדיל: שגיאה זמנית (timeout, 503 מתלות) מקבלת retries עם backoff בתוך retry topics עם השהיות עולות, כך שה-partition הראשי לא נחסם; שגיאה דטרמיניסטית (parsing, schema לא תקין) הולכת ל-DLQ מיד, כי retry לא ישנה אותה. סיווג לפי סוג ה-exception הוא חלק מהקוד, לא החלטה בזמן ריצה.",
+        "rubric": [
+          "דילוג על הודעה שובר נכונות כשהסדר בתוך key חשוב",
+          "parking של כל ה-key עד פתרון ונגינה לפי הסדר",
+          "שגיאות זמניות: retry topics עם השהיות עולות",
+          "שגיאות דטרמיניסטיות: DLQ מיד"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q14",
@@ -529,7 +579,17 @@
         "rate limiting ו-scaling"
       ],
       "explanation": "שאלת system design קלאסית: מחפשים מספרים, הפרדה בין דרישות latency שונות, ובחירות סמנטיות (event time, idempotency) ולא רק רשימת מוצרים.",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "השעון של חלק מהמכשירים סוטה בשתי דקות. מה זה עושה לממוצע לדקה ולהתראה, ואיך מתגוננים?",
+        "modelAnswer": "ב-event time, מכשיר שהשעון שלו מקדים בשתי דקות שולח אירועים שנכנסים לחלון עתידי, ומכשיר שמאחר שולח אירועים שהגיעו אחרי ה-watermark ונחשבים late, כך שהממוצעים לדקה שגויים או חסרים. ההתראה על חריגה מסף לא תלויה בחלון: היא נבדקת על כל הודעה בנפרד כשהיא נכנסת, ולכן היא לא מושפעת ונשארת בתוך 10 השניות. כדי להתגונן שומרים גם ingest timestamp של השרת, ומחשבים לכל מכשיר את ההפרש בין השעון שלו לשעון השרת. אם ההפרש עובר סף, מתקנים לפי offset שנלמד או עוברים ל-ingest time לאותו מכשיר ומסמנים את הנתונים שלו. אחוז המכשירים עם skew גבוה הוא metric בפני עצמו.",
+        "rubric": [
+          "שעון סוטה משייך אירועים לחלון שגוי או הופך אותם ל-late",
+          "ההתראה נבדקת לכל הודעה בלי חלון ולכן לא מושפעת",
+          "שמירת ingest timestamp וחישוב skew לכל מכשיר",
+          "תיקון לפי offset או מעבר ל-ingest time עם סימון"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q15",
@@ -550,7 +610,17 @@
         "Kafka תומך ב-exactly-once ל-read-process-write בתוך Kafka דרך transactions ו-idempotent producer.",
         "זה הפוך: הכתיבה ל-B היא שמוגנת, וה-email הוא שעלול להיות כפול."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "איך היית בונה את שליחת ה-email כך שתקרה רק אם הטרנזקציה עשתה commit, ובלי כפילויות כמה שאפשר?",
+        "modelAnswer": "האפליקציה לא שולחת email ישירות. במקום זה היא כותבת רשומת 'email request' ל-topic ייעודי בתוך אותה Kafka transaction, עם מזהה יציב שנגזר מההודעה המקורית. אם הטרנזקציה עושה abort, הרשומה לא נראית. שירות email נפרד צורך את ה-topic ב-`read_committed`, ולכן רואה רק בקשות מטרנזקציות שהצליחו. הוא שולח עם idempotency key אם הספק תומך, ואחרת שומר ב-DB את המזהים שכבר נשלחו ובודק לפני כל שליחה. נשאר חלון קטן של כפילות אם הוא קורס בין השליחה לרישום, וזה at-least-once מבוקר ולא exactly-once אמיתי.",
+        "rubric": [
+          "כתיבת בקשת email ל-topic בתוך אותה transaction",
+          "שירות נפרד צורך ב-read_committed",
+          "idempotency key או רישום מזהים שנשלחו",
+          "נשאר חלון כפילות קטן; exactly-once מול מערכת חיצונית לא מובטח"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q16",
@@ -571,7 +641,17 @@
         "נכון: max חלקי לכל pane של 10 שניות מקטין את ה-state ל-60 ערכים לכל key, ו-monotonic deque או two-stacks נותנים max של החלון ב-O(1) amortized בכל הזזה.",
         "איפוס כל 10 דקות הוא tumbling window, לא sliding window שזז כל 10 שניות."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "הסבר איך two-stacks נותן max ב-O(1) amortized, וכמה זיכרון זה יעלה ל-10 מיליון keys.",
+        "modelAnswer": "כל stack שומר ליד כל איבר את ה-max של כל מה שמתחתיו. הכנסה של pane חדש היא push ל-stack הקלט, O(1). הוצאת pane ישן היא pop מ-stack הפלט; אם הוא ריק, מעבירים את כל ה-stack הקלט אליו ומחשבים מחדש את ה-max המצטבר בדרך. כל איבר עובר מקסימום פעם אחת, ולכן O(1) amortized. ה-max של החלון הוא max של שני ה-max בראשי ה-stacks. לכל key יש 60 panes של ערך ו-max מצטבר, כ-16 bytes לכל pane, כלומר כ-1 KB ל-key ו-10 GB ל-10 מיליון keys, ולכן ה-state מחולק בין workers לפי key או נשמר ב-state backend על דיסק כמו RocksDB.",
+        "rubric": [
+          "כל איבר שומר max מצטבר של ה-stack שלו",
+          "push ל-stack קלט, pop מ-stack פלט עם העברה כשהוא ריק",
+          "כל איבר מועבר לכל היותר פעם אחת, O(1) amortized",
+          "כ-1 KB ל-key, כ-10 GB ל-10M keys"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q17",
@@ -587,7 +667,17 @@
         "הכרעה מתי GPU מתאים ומתי לא (לולאת תגובה מהירה)"
       ],
       "explanation": "שאלה ברוח NVIDIA: מחפשים הבנה שה-GPU הוא מכונת throughput, ושהתכנון סובב סביב batching, overlap והעברות נתונים, לא סביב ה-kernel עצמו.",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "תן מספרים: איזה batch תבחר, כמה זמן לוקחת ההעברה ב-PCIe, ואיך מסתירים אותה כך שה-GPU לא מחכה?",
+        "modelAnswer": "200 Msps של complex float הם 8 bytes לדגימה, כלומר 1.6 GB/s. batch של 2^20 דגימות הוא 8 MB ומייצג כ-5.2 ms של אות. ב-PCIe Gen3 x16 עם כ-12 GB/s אפקטיביים, ההעברה של 8 MB לוקחת כ-0.7 ms. כדי להסתיר אותה משתמשים ב-pinned memory, ב-`cudaMemcpyAsync` ובכמה CUDA streams עם triple buffering: בזמן שה-batch הבא עובר ל-GPU, הנוכחי מחושב, והקודם חוזר. מחזירים מה-GPU רק את ה-detections ולא את כל הספקטרום, כך שה-D2H קטן. ה-latency הוא בערך זמן מילוי ה-batch ועוד ההעברה והחישוב, כ-6-7 ms; batch קטן יותר מוריד אותו, אבל מעלה את משקל ה-overhead הקבוע של kernel launch ומוריד את ניצול ה-GPU.",
+        "rubric": [
+          "1.6 GB/s; batch של 8 MB = כ-5.2 ms של אות",
+          "העברה ב-PCIe של כ-0.7 ms",
+          "pinned memory, async copy, כמה streams ו-triple buffering",
+          "latency ≈ מילוי + העברה + חישוב; batch קטן מעלה overhead"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q18",
@@ -735,7 +825,17 @@
         "thread pool לא הופך סדר; הוא יכול לשבש סדר, אבל זה לא הסיכון העיקרי כאן.",
         "נכון: auto-commit מתקדם לפי מה שנקרא, לא לפי מה שהושלם; קריסה אחרי commit ולפני סיום העיבוד מאבדת את ההודעות שבדרך."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "עברת ל-commit ידני, אבל ה-thread pool מסיים הודעות לא לפי הסדר. איזה offset בדיוק מותר לעשות לו commit, ומה עושים ב-rebalance?",
+        "modelAnswer": "לכל partition עוקבים אחרי ה-offsets שהושלמו, ומבצעים commit רק ל-offset הרציף הגבוה ביותר: אם הושלמו 100, 101 ו-103, מבצעים commit ל-102, כלומר ה-offset הבא לקריאה הוא 102. אחרי קריסה 102 ו-103 יעובדו שוב, ולכן העיבוד צריך להיות idempotent. ב-rebalance, ב-`onPartitionsRevoked`, מחכים שהעבודה על ה-partition תסתיים (או עוצרים אותה), מבצעים commit למה שהושלם, ורק אז משחררים את ה-partition. אחרת הצרכן החדש יעבד את אותן הודעות במקביל. בנוסף, thread pool משותף מאבד את הסדר בתוך key, ולכן אם הסדר חשוב משייכים כל key ל-worker קבוע לפי hash.",
+        "rubric": [
+          "commit רק ל-offset הרציף הגבוה ביותר שהושלם (+1)",
+          "דוגמה: 100,101,103 הושלמו, commit ל-102",
+          "ב-onPartitionsRevoked: סיום/עצירת עבודה ו-commit לפני השחרור",
+          "שמירת סדר לפי key דרך שיוך key ל-worker קבוע"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q26",
@@ -762,7 +862,17 @@
         "ממוצע של ממוצעים שגוי כשלכל salt מספר קליקים שונה; משקלות שונים הולכים לאיבוד.",
         "נכון: (sum, count) ניתנים לחיבור בין salts, ולכן הממוצע שמחושב באיחוד מדויק."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "לפי מה בוחרים את מספר ה-salts, למה לא להחיל salting על כל ה-keys, ואיך מזהים key חם בזמן ריצה?",
+        "modelAnswer": "N נגזר מהקצב של ה-key חלקי הקיבולת של worker: אם המפרסם מייצר 300k קליקים בשנייה ו-worker מחזיק 50k, צריך N ≥ 6, ובוחרים 8 עם מרווח. salting לכל ה-keys מכפיל את מספר ה-keys ואת ה-state, ומוסיף שלב איחוד עם latency של חלון נוסף, כי שלב האיחוד חייב לחכות לכל N התוצאות החלקיות של החלון לפני שהוא פולט. לכן מפעילים salting רק על keys חמים. מזהים אותם בזמן ריצה עם heavy hitters, למשל count-min sketch עם heap בשלב ה-upstream, או עם רשימה שמתעדכנת מדי כמה דקות לפי ספירות קודמות.",
+        "rubric": [
+          "N ≥ קצב ה-key / קיבולת worker (חישוב)",
+          "salting לכולם מכפיל state ומוסיף שלב איחוד",
+          "שלב האיחוד מחכה לכל N התוצאות של החלון",
+          "זיהוי keys חמים עם heavy hitters (count-min sketch)"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q27",
@@ -794,7 +904,17 @@
         "הירידה ב-throughput זניחה; הבעיה היא שאין פלט בכלל, כי שום חלון לא נסגר.",
         "נכון: ה-watermark של אופרטור הוא המינימום על הקלטים, וה-partition השקט תקוע ומקפיא אותו; חלונות לא נסגרים וה-state גדל. idleness timeout מוציא אותו מהמינימום."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "הפעלת idleness timeout. מה קורה כשה-partition השקט חוזר פתאום עם אירועים ישנים, ואיך היית מונע את הבעיה כבר בצד ה-producer?",
+        "modelAnswer": "כשה-partition סומן idle, ה-watermark הכולל התקדם בלעדיו וחלונות נסגרו. אם הוא חוזר עם אירועים עם timestamps שלפני ה-watermark, הם late, ולפי ה-allowed lateness נזרקים או מתקנים תוצאות. לכן ה-timeout הוא trade-off: קצר מדי הופך עיכוב רגעי לאובדן נתונים, ארוך מדי מקפיא את הפלט. בצד ה-producer אפשר לשלוח heartbeats או watermark events מחזוריים לכל partition, כך ששקט נראה כ'אין אירועים עד זמן T' ולא כחוסר מידע. בכל מקרה מנטרים watermark lag, כלומר now פחות ה-watermark, ומתריעים כשהוא גדל, כי זה הסימפטום הראשון של partition תקוע.",
+        "rubric": [
+          "אירועים מה-partition שחזר נחשבים late אחרי שה-watermark התקדם",
+          "trade-off: timeout קצר = אובדן, ארוך = פלט קפוא",
+          "heartbeats או watermark events מה-producer",
+          "ניטור watermark lag"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q29",
@@ -815,7 +935,17 @@
         "transactions מונעים כפילויות של אותה רשומה, אבל כאן מדובר בשני ערכים לגיטימיים שונים לאותה דקה.",
         "processing time מוותר על הנכונות של שיוך לפי מתי האירוע קרה; זה מחליף באג אחד באחר."
       ],
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ה-downstream צריך להציג סכום יומי מעודכן בכל רגע. איך מתחזקים אותו ביעילות מתוך upserts, בלי לסכום מחדש 1,440 דקות בכל עדכון?",
+        "modelAnswer": "שומרים לכל (key, דקה) את הערך העדכני, ולכל (key, יום) סכום מצטבר. כשמגיע upsert, קוראים את הערך הקודם של אותה דקה (0 אם אין), ומעדכנים את הסכום היומי ב-delta = חדש פחות ישן, ואז שומרים את הערך החדש. כך עדכון הוא O(1) ולא O(1,440). חשוב שקריאת הישן וכתיבת החדש יהיו אטומיות, בטרנזקציה או עם writer יחיד לכל key, אחרת שני עדכונים מקבילים יחשבו delta מאותו ערך ישן. זה בדיוק מה שזרם retractions נותן: זוג (−ישן, +חדש) שאפשר פשוט לסכם.",
+        "rubric": [
+          "שמירת הערך העדכני לכל (key, דקה) וסכום מצטבר ליום",
+          "עדכון לפי delta = חדש − ישן, O(1)",
+          "אטומיות של קריאה-כתיבה (transaction או writer יחיד)",
+          "retraction כזוג (−ישן, +חדש)"
+        ]
+      }
     },
     {
       "id": "design.pipelines.q30",
@@ -831,7 +961,17 @@
         "טיפול ב-hot advertisers, side effects דרך outbox, ומדדים"
       ],
       "explanation": "תשובה חזקה מבינה ש-exactly-once לחיוב לא מגיע ממנוע ה-streaming לבד: צריך מזהה יציב מהמקור, dedup, sink אידמפוטנטי, ו-reconciliation מול מקור אמת.",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ה-dedup לפי click_id דורש state. כמה state צריך אם שומרים מזהים ל-24 שעות במיליון קליקים בשנייה, ואיך היית מקטין אותו בלי לפגוע בדיוק החיוב?",
+        "modelAnswer": "יום הוא 86,400 שניות, כלומר כ-86 מיליארד מזהים; ב-16 bytes למזהה זה כ-1.4 TB לפני overhead, יקר מדי ל-state של streaming. אבל כפילויות של retry מגיעות בדרך כלל תוך שניות או דקות, ולכן חלון dedup של 10 דקות ב-streaming מספיק: 600 מיליון מזהים, כ-10 GB, מחולק לפי click_id בין workers. הדיוק הסופי לא מגיע מה-streaming: החיוב היומי רץ ב-batch על ה-log הגולמי ועושה dedup מלא על כל היום (group by click_id). Bloom filter היה חוסך עוד, אבל false positive שלו זורק קליק אמיתי, כלומר חיוב בחסר, ולכן הוא מתאים רק ל-dashboard ולא לחשבונית.",
+        "rubric": [
+          "24 שעות: כ-86 מיליארד מזהים, כ-1.4 TB",
+          "חלון dedup קצר ב-streaming (דקות), כ-10 GB",
+          "batch יומי על ה-log הגולמי לדיוק מלא",
+          "Bloom filter: false positive = קליק אמיתי שלא חויב"
+        ]
+      }
     },
     {
       "level": 4,
@@ -859,7 +999,17 @@
       ],
       "problem": "Amazon SDE-2 interview: design WhatsApp; keep message order when client timestamps are unreliable",
       "id": "design.pipelines.q31",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "השרת שמקצה מספרי רצף לשיחה נופל, ושרת אחר לוקח את השיחה. איך מבטיחים שלא יהיו שני מספרים זהים או פער שה-clients יפרשו כהודעה חסרה?",
+        "modelAnswer": "מספר הרצף צריך להיקבע באותה כתיבה עמידה של ההודעה, לא לפניה בזיכרון. למשל כתיבה מותנית ל-storage משוכפל: הכנס הודעה עם seq = last + 1 רק אם last עדיין שווה לערך שקראתי (compare-and-set). השרת החדש קורא את ה-seq האחרון שנשמר ב-storage וממשיך ממנו, ולכן אין פער ממספר שהוקצה ולא נשמר. כדי שהשרת הישן, אם הוא רק היה איטי, לא ימשיך לכתוב, לכל leader יש epoch, וה-storage דוחה כתיבות עם epoch ישן (fencing). אם בכל זאת נוצר פער, ה-client מבקש את הטווח החסר, והשרת עונה שאין הודעה, וכך הפער נסגר.",
+        "rubric": [
+          "seq נקבע באותה כתיבה עמידה של ההודעה (CAS על last)",
+          "השרת החדש ממשיך מה-seq האחרון שנשמר",
+          "fencing לפי epoch נגד השרת הישן",
+          "client מבקש טווח חסר והשרת מאשר שאין הודעה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -880,7 +1030,17 @@
         "שגוי: זה דורש לכתוב עותק לכל מקבל, וגם אז כל עותק נכתב בנפרד ואין ערובה שהסדר יהיה זהה בכל ה-partitions."
       ],
       "id": "design.pipelines.q32",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ערוץ של 100,000 חברים מקבל 100 הודעות בשנייה. האם ה-partition הוא הבעיה? איפה באמת העומס, ואיך מתכננים אותו?",
+        "modelAnswer": "100 הודעות בשנייה זה כלום עבור partition, ולכן הסידור עצמו לא בעיה. הבעיה היא ה-fan-out: 100 × 100,000 = 10 מיליון מסירות בשנייה. מפרידים בין סידור למסירה: ה-partition של השיחה קובע seq, ומסירה נעשית במקביל על ידי workers לפי shard של נמענים. כל worker שולח לנמענים שלו לפי סדר ה-seq, וה-client ממילא ממיין לפי seq. לקבוצות ענקיות עוברים ל-pull: חברים שלא צופים כרגע בערוץ מקבלים רק התראה קלה, והתוכן נמשך מה-log של הערוץ לפי cursor כשהם פותחים אותו.",
+        "rubric": [
+          "100 הודעות בשנייה לא מעמיסות partition",
+          "העומס הוא fan-out: 10 מיליון מסירות בשנייה",
+          "הפרדה בין סידור (seq) למסירה מקבילית לפי shard נמענים",
+          "pull לפי cursor לקבוצות ענקיות"
+        ]
+      }
     },
     {
       "level": 4,
@@ -901,7 +1061,17 @@
         "שגוי: עובד, אבל מבזבז רוחב פס וזמן בצורה קיצונית. לא סביר ב-30 שיחות עם היסטוריה ארוכה."
       ],
       "id": "design.pipelines.q33",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ל-client יש 5,000 שיחות. איך הוא יודע באילו מהן יש הודעות חדשות בלי לשלוח 5,000 בקשות?",
+        "modelAnswer": "מחזיקים לכל משתמש change log או מונה ברמת המשתמש, שמתקדם בכל פעם שאחת השיחות שלו מקבלת הודעה. ה-client שולח cursor אחד של המשתמש, והשרת מחזיר את רשימת השיחות שהשתנו מאז, עם ה-seq האחרון של כל אחת. אחר כך ה-client מבקש הודעות רק מהשיחות האלה, מה-seq האחרון שהוא מכיר בכל אחת. חלופה היא אינדקס לכל משתמש של (conversation_id, last_seq) ממוין לפי זמן עדכון, שממנו מחזירים את מה שעודכן אחרי ה-cursor. כך הסנכרון פרופורציוני למספר השיחות שהשתנו ולא למספר השיחות הכולל.",
+        "rubric": [
+          "cursor ברמת המשתמש שמתקדם בכל הודעה בשיחה שלו",
+          "השרת מחזיר רק שיחות שהשתנו עם ה-seq האחרון שלהן",
+          "משיכת הודעות רק מהשיחות שהשתנו",
+          "עלות פרופורציונית לשיחות שהשתנו"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1007,7 +1177,17 @@
       ],
       "problem": "Amazon interview: online teaching system with SMS / social / email notification preferences",
       "id": "design.pipelines.q40",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ספק ה-SMS נפל לשעה. מה קורה ל-pipeline, להודעות שממתינות, ולסטודנט שבחר רק SMS?",
+        "modelAnswer": "בגלל שלכל ערוץ יש תור ו-workers משלו, email ורשתות חברתיות ממשיכים כרגיל, וה-SMS צוברים בתור שלהם. ה-workers של SMS עושים retry עם exponential backoff, ו-circuit breaker מפסיק לנסות כשהספק בבירור למטה, כדי לא לבזבז משאבים. לכל התראה יש TTL לפי התוכן: הודעה על שיעור בעוד 30 דקות לא שווה כלום אחרי השיעור, ולכן נזרקת עם רישום. להודעות קריטיות מוגדר fallback לערוץ אחר גם אם הסטודנט בחר רק SMS, או ספק SMS שני. כשהספק חוזר, מרוקנים את התור בקצב של מגבלת הספק, והודעות חדשות מקבלות עדיפות על פני ישנות.",
+        "rubric": [
+          "תורים נפרדים לכל ערוץ מבודדים את התקלה",
+          "retry עם backoff ו-circuit breaker",
+          "TTL לפי רלוונטיות ההודעה",
+          "fallback לערוץ או ספק אחר להודעות קריטיות"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1022,7 +1202,17 @@
       ],
       "explanation": "וריאציה על מערכת ההתראות מזווית של קיבולת ספק. החשבון הפשוט מראה מיד שמגבלה חיצונית קובעת את התכנון.",
       "id": "design.pipelines.q41",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "קיבלת ספק SMS שני עם עוד 500 בשנייה, ול-60% מהסטודנטים יש את האפליקציה עם push. האם עכשיו עומדים ב-10 דקות? אם לא, מה עוד?",
+        "modelAnswer": "push ל-1.2 מיליון סטודנטים עם האפליקציה אפשרי תוך דקות, כי לספקי push יש קיבולת גבוהה בהרבה. נשארים 800,000 ל-SMS בקצב משולב של 1,000 בשנייה, כלומר 800 שניות, כ-13.3 דקות, עדיין מעל 10. אפשרויות: לשלוח email במקביל לכולם (לא מחליף SMS אבל מגיע לרבים), לסכם מראש עם הספקים quota מוגבר לחירום, לתעדף את הסטודנטים שנמצאים בקמפוס או באזור הסכנה, ולשלוח SMS גם למשתמשי אפליקציה רק אם ה-push לא נקרא תוך דקה. החשבון מראה שמגבלות חיצוניות קובעות את התכנון, ולכן הכנה מראש (הסכמים, ערוצים) חשובה יותר מקוד.",
+        "rubric": [
+          "push ל-1.2M תוך דקות",
+          "800,000 SMS ב-1,000 בשנייה = כ-13.3 דקות, עדיין חורג",
+          "תעדוף לפי מיקום/סיכון ו-quota חירום מוסכם מראש",
+          "SMS כ-fallback רק למי שלא קרא את ה-push"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1037,7 +1227,17 @@
       ],
       "explanation": "וריאציה מזווית delivery semantics. שאלה סניורית: לא להבטיח exactly-once מול מערכת חיצונית שלא תומכת בזה.",
       "id": "design.pipelines.q42",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "בהודעת חירום, מה גרוע יותר: כפילות או אובדן? איך זה משנה את התכנון, ואיך מקטינים את חלון הכפילות שנשאר?",
+        "modelAnswer": "בהודעת חירום אובדן גרוע בהרבה, ולכן בוחרים at-least-once ומקבלים כפילות נדירה. כדי לצמצם אותה, לפני הקריאה לספק כותבים ל-DB רשומה עם idempotency key ומצב 'sending'. worker שמוצא אחרי קריסה רשומה במצב הזה לא שולח מיד שוב, אלא שואל את הספק על הסטטוס לפי ה-client reference, אם הספק תומך בזה, או שולח עם idempotency key שהספק מכבד. כך כפילות קורית רק כשגם השאילתה לא אפשרית. העלות היא כתיבה נוספת ל-DB לכל הודעה, שב-500 בשנייה זניחה. בהודעת שיווק אפשר לבחור הפוך ולהעדיף at-most-once.",
+        "rubric": [
+          "בחירום: at-least-once, כפילות עדיפה על אובדן",
+          "רישום 'sending' עם idempotency key לפני הקריאה לספק",
+          "אחרי קריסה: בדיקת סטטוס אצל הספק לפני שליחה חוזרת",
+          "עלות כתיבה נוספת זניחה ב-500 בשנייה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1060,7 +1260,17 @@
       ],
       "problem": "Google L5 onsite: API for a service that receives out-of-order video frames and forwards them in timestamp order",
       "id": "design.pipelines.q43",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "frame אחד לא מגיע. כמה זמן מחכים לו לפני שמדלגים, לפי מה בוחרים את זה, ומה קורה אם הוא מגיע אחרי שדילגת?",
+        "modelAnswer": "קובעים גבול לפי זמן או לפי עומק: מחכים עד שהעיכוב של ה-frame החסר עובר אחוזון גבוה של התפלגות ה-jitter הנמדדת (למשל p99.9), או עד שיש ב-buffer יותר מ-K frames, למשל 3 frames ב-30 fps שהם כ-100 ms. זה trade-off ישיר בין latency לאובדן: המתנה ארוכה מעכבת את כל מה שאחריו. אחרי הדילוג next_expected מתקדם, ו-frame שמגיע באיחור עם seq קטן ממנו נזרק ונספר במונה. בווידאו מקודד צריך לשים לב שדילוג על frame שאחרים תלויים בו יכול לחייב לדלג עד ה-keyframe הבא. אם מספר הרצף קצר, משווים בחשבון serial number כדי לא להיתקע ב-wraparound.",
+        "rubric": [
+          "גבול לפי אחוזון של jitter או לפי מספר frames ב-buffer",
+          "trade-off בין latency לאובדן",
+          "frame מאחר עם seq < next_expected נזרק ונספר",
+          "בווידאו מקודד ייתכן דילוג עד keyframe"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1093,7 +1303,17 @@
       ],
       "explanation": "לרוב הפתרון הנקי הוא לרכז את המצב ב-thread יחיד ולהזין אותו דרך תור. כך בונים גם pipeline של SDR.",
       "id": "design.pipelines.q45",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "איזה מבנה נתונים יחזיק ה-thread היחיד ל-reorder buffer, ומה עושים עם frame שמגיע עם seq רחוק מדי קדימה?",
+        "modelAnswer": "כשמספרי הרצף צפופים וחלון הסידור חסום, מערך מעגלי בגודל W שמאונדקס לפי seq mod W נותן הכנסה ובדיקה ב-O(1) בלי הקצאות, לעומת `std::map` שהוא O(log n) עם הקצאה לכל frame. לכל תא שומרים את ה-seq עצמו כדי לזהות אם התא מכיל את ה-frame הנכון. frame עם seq ≥ next_expected + W לא נכנס לחלון: אפשר להכריז שה-frames החסרים אבדו ולקפוץ קדימה, או לזרוק את ה-frame החדש. בדרך כלל קפיצה עדיפה, כי frame רחוק כל כך קדימה אומר שה-frames הישנים כנראה לא יגיעו. W נבחר לפי עומק ה-reorder המקסימלי שנמדד.",
+        "rubric": [
+          "מערך מעגלי לפי seq mod W, O(1) בלי הקצאות",
+          "שמירת seq בכל תא לבדיקת תקפות",
+          "seq מחוץ לחלון: קפיצה קדימה והכרזה על אובדן, או זריקה",
+          "W לפי עומק ה-reorder הנמדד"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1116,7 +1336,17 @@
       ],
       "problem": "Meta onsite system design: ad click aggregation system",
       "id": "design.pipelines.q46",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "מפרסם מתלונן: ה-dashboard הראה 10,500 קליקים והחשבונית 10,120. איך המערכת מסבירה את ההבדל, ואיזה מספר הוא הקובע?",
+        "modelAnswer": "ה-dashboard מחושב ב-streaming: מהיר, אבל לפני סינון קליקים פסולים (bots, fraud), עם dedup בחלון קצר בלבד, ובלי חלק מהקליקים המאחרים. החשבונית מחושבת ב-batch על ה-log הגולמי, עם dedup מלא על כל היום וסינון invalid clicks, והיא הקובעת. כדי שזה יהיה מוסבר, ה-log הגולמי נשמר immutable לתקופת ה-audit, וכל שורה בחשבונית ניתנת לשחזור עד רשימת click_ids. בממשק כותבים במפורש שה-dashboard הוא הערכה, ומציגים גם את מספר הקליקים שסוננו ומאיזו סיבה. ההפרש עצמו (כאן כ-3.6%) הוא metric שמנטרים: קפיצה בו אומרת שאחד המסלולים שבור.",
+        "rubric": [
+          "dashboard מ-streaming לפני סינון fraud ועם dedup חלקי",
+          "חשבונית מ-batch על log גולמי היא הקובעת",
+          "log גולמי immutable ו-lineage עד click_id",
+          "ניטור ההפרש בין המסלולים כמדד תקינות"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1137,7 +1367,17 @@
       ],
       "explanation": "Streaming נותן מהירות, batch נותן דיוק. במערכת כספית משתמשים בשניהם.",
       "id": "design.pipelines.q47",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "למה לא פשוט להגדיר allowed lateness של 24 שעות ב-stream, וכך לוותר על ה-batch?",
+        "modelAnswer": "כל חלון שעוד מקבל עדכונים נשאר ב-state. עם חלונות של דקה ו-lateness של 24 שעות, לכל מודעה פעילה יש 1,440 חלונות פתוחים במקום 2. במיליון מודעות ובכ-50 bytes לחלון זה כ-72 GB לעומת כ-100 MB, וה-checkpoints גדלים באותו יחס ומתארכים. בנוסף כל אירוע מאחר פולט תוצאה מתוקנת שה-downstream צריך לעבד כ-upsert. ויש קליקים שמגיעים אחרי ימים (טלפון שהיה כבוי), כך ש-24 שעות לא סוגרות את הבעיה. לכן lateness קצר ב-stream לטובת זמינות מהירה, ו-batch על כל ה-log לדיוק.",
+        "rubric": [
+          "1,440 חלונות פתוחים לכל מודעה במקום 2",
+          "הערכת state: עשרות GB לעומת כ-100 MB",
+          "checkpoints גדולים ו-re-emission לכל אירוע מאחר",
+          "קליקים יכולים לאחר גם יותר מ-24 שעות"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1163,7 +1403,17 @@
       ],
       "explanation": "Effectively-once = מזהה ייחודי לאירוע + פעולה idempotent ביעד.",
       "id": "design.pipelines.q48",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "ה-click_id נוצר ב-client. למה זה בעייתי במערכת חיוב, ומה מזהה טוב יותר?",
+        "modelAnswer": "את ה-client אי אפשר לסמוך עליו: גורם זדוני יכול לייצר click_id חדש לכל קליק מזויף, וה-dedup לא יעצור אותו, ו-client עם באג יכול לחזור על אותו מזהה לקליקים שונים ולגרום לחיוב בחסר. מזהה טוב יותר נוצר בשרת: כשמוגשת מודעה, השרת מייצר impression_id חתום (HMAC) ושולח אותו עם המודעה. הקליק מפנה ל-impression_id הזה, והשרת מאמת את החתימה ושה-impression באמת הוגש. כך אפשר להגביל ל-קליק אחד בר-חיוב לכל impression, ו-dedup לפי impression_id. קליק בלי impression תקף נדחה או מסומן כחשוד.",
+        "rubric": [
+          "מזהה מה-client ניתן לזיוף ויכול להתנגש בגלל באגים",
+          "impression_id שנוצר ונחתם בשרת בזמן ההגשה",
+          "אימות חתימה ושה-impression הוגש",
+          "לכל היותר קליק בר-חיוב אחד לכל impression"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1186,7 +1436,17 @@
       ],
       "problem": "Meta onsite system design: top 10 songs played on Spotify (top-k problem)",
       "id": "design.pipelines.q49",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "איך מחשבים בדיוק את top-10 של השעה האחרונה, שזזה כל דקה, עם מיליוני שירים?",
+        "modelAnswer": "מחלקים את האירועים לפי song_id, כך שכל partition מחזיק את כל הספירות של השירים שלו. בכל partition שומרים ספירה לכל שיר לכל דקה (רק לשירים שהושמעו), וספירה שעתית מצטברת לכל שיר. כל דקה מוסיפים את ה-bucket החדש ומחסירים את ה-bucket שיצא מהחלון. בניגוד ל-max, סכום הוא הפיך, ולכן זה O(שירים שהשתנו) ולא חישוב מחדש. כל partition מחזיק top-10 מקומי, וה-merger ממזג 10 × מספר ה-partitions מועמדים, וזה מדויק כי כל שיר שלם במקום אחד. בגרסה מקורבת אפשר להחזיק count-min sketch לכל דקה, וכיוון שה-sketch לינארי אפשר גם לחסר sketches.",
+        "rubric": [
+          "partition לפי song_id",
+          "buckets לדקה, הוספת החדש והחסרת היוצא (סכום הפיך)",
+          "top-10 מקומי ומיזוג מדויק בגלל ה-partitioning",
+          "גרסה מקורבת: count-min sketch לדקה, לינארי וניתן לחיסור"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1218,7 +1478,17 @@
       ],
       "explanation": "Count-min sketch מחליף דיוק בזיכרון קבוע, עם טעות חד-כיוונית (הערכת יתר).",
       "id": "design.pipelines.q51",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "איך בוחרים את הרוחב והעומק של ה-sketch? חשב לדוגמה ל-מיליארד השמעות עם טעות של עד 10,000 בהסתברות 99%. ומה ה-sketch לא נותן לך?",
+        "modelAnswer": "רוחב w = ⌈e/ε⌉ ועומק d = ⌈ln(1/δ)⌉. טעות של 10,000 מתוך N = 10^9 היא ε = 10^-5, ולכן w ≈ 271,829. δ = 0.01 נותן d = ⌈ln 100⌉ = 5. סך הכול כ-1.36 מיליון counters; ב-4 bytes ל-counter (מספיק עד כ-4 מיליארד) זה כ-5.4 MB, בלי תלות במספר השירים. ה-sketch עונה על 'כמה פעמים שיר X הושמע', אבל לא יודע אילו שירים קיימים, ולכן לא יכול לבד להחזיר top-10. לשם כך מחזיקים לצידו heap של מועמדים: בכל השמעה מעריכים את הספירה של השיר ומעדכנים את ה-heap אם הוא נכנס.",
+        "rubric": [
+          "w = ⌈e/ε⌉, d = ⌈ln(1/δ)⌉",
+          "חישוב: w ≈ 271,829, d = 5, כ-5.4 MB",
+          "הזיכרון לא תלוי במספר השירים",
+          "ה-sketch לא יודע אילו מפתחות קיימים; צריך heap למועמדים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1241,7 +1511,17 @@
       ],
       "problem": "Meta E5 system design: remove bad ad posts from Instagram before they are visible to users",
       "id": "design.pipelines.q52",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "נגיד שמגיעות מיליון מודעות חדשות ביום, המודל מחליט אוטומטית על 90%, ובדיקה אנושית לוקחת דקה בממוצע. כמה בודקים צריך, ומה משנה את המספר הזה?",
+        "modelAnswer": "10% הם 100,000 מודעות ליום, כלומר 100,000 דקות בדיקה, כ-1,670 שעות. ב-משמרת של 8 שעות עם כ-75% זמן בדיקה נטו (6 שעות), צריך כ-280 בודקים ביום, ובפועל יותר כי ההגעה לא אחידה לאורך היממה, ויש peaks וצורך ב-SLA. הגורם החזק ביותר הוא אחוז האוטומציה: מעבר מ-90% ל-95% מוריד את העומס בחצי. לכן משקיעים בשכבת מודל כבדה יותר למקרים לא חד-משמעיים, ובאמון לפי היסטוריית מפרסם. משתמשים בהחלטות הבודקים כ-labels לאימון, וכך הלולאה משפרת את האוטומציה לאורך זמן.",
+        "rubric": [
+          "100,000 בדיקות ביום = כ-1,670 שעות",
+          "כ-280 בודקים (עם זמן נטו למשמרת), יותר בגלל peaks",
+          "אחוז האוטומציה הוא הגורם הדומיננטי (90% → 95% = חצי עומס)",
+          "החלטות בודקים כ-labels לאימון"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1268,7 +1548,17 @@
       ],
       "explanation": "בדיקה מחדש מופעלת כשהתוכן או המידע עליו משתנים, לא בגלל שינויים בהפצה.",
       "id": "design.pipelines.q53",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "איך מזהים בזול שדף הנחיתה של מיליוני מודעות השתנה, ואיך מתמודדים עם מפרסם שמראה ל-crawler דף אחר מאשר למשתמשים?",
+        "modelAnswer": "סורקים את דפי הנחיתה מחדש בתדירות לפי סיכון והוצאה: מודעה עם תקציב גבוה או מפרסם חדש נסרקת לעתים קרובות, ומפרסם ותיק ונקי לעתים רחוקות. לכל דף שומרים hash של התוכן המנורמל, או simhash כדי להתעלם משינויים קטנים כמו תאריך, ושומרים את שרשרת ה-redirects; שינוי משמעותי מחזיר את המודעה לבדיקה. הצגת דף אחר ל-crawler נקראת cloaking. מתמודדים איתה בסריקה מכתובות IP ו-user agents שנראים כמו משתמשים אמיתיים במכשירים שונים, ובהשוואה בין גרסאות. בנוסף, דיווחי משתמשים שמגיעים אחרי קליק הם אות שה-crawler לא רואה.",
+        "rubric": [
+          "תדירות סריקה לפי סיכון והוצאה",
+          "hash או simhash של תוכן מנורמל ומעקב אחרי redirects",
+          "cloaking: סריקה מ-IPs ו-user agents של משתמשים אמיתיים",
+          "דיווחי משתמשים כאות משלים"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1307,7 +1597,17 @@
       ],
       "problem": "Google L5 onsite: API for a service that receives out-of-order video frames and forwards them in timestamp order (phone)",
       "id": "design.pipelines.q55",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "מספר הרצף הוא 16 ביט, כמו ב-RTP. מה קורה אחרי 65,535, ואיך משווים נכון 'מי בא קודם'?",
+        "modelAnswer": "אחרי 65,535 המספר חוזר ל-0, ולכן השוואה רגילה תחשוב ש-frame 0 'ישן' מ-65,535 ותזרוק אותו או תחכה לנצח. משתמשים ב-serial number arithmetic: a בא אחרי b אם ההפרש (a − b), מחושב ב-16 ביט ומפורש כ-signed (`int16_t`), חיובי. למשל 0 − 65,535 ב-16 ביט הוא 1, ולכן 0 בא אחרי 65,535. זה נכון רק כל עוד חלון הסידור קטן מחצי מרחב המספרים, כלומר 32,768. דרך נוספת היא להרחיב בתוך המקלט ל-64 ביט, על ידי ספירת wraparounds, ולעבוד עם מספר שלא חוזר.",
+        "rubric": [
+          "אחרי 65,535 חוזרים ל-0 והשוואה רגילה נשברת",
+          "השוואה לפי (int16_t)(a − b) > 0",
+          "תקף רק כשהחלון קטן מחצי המרחב (32,768)",
+          "חלופה: הרחבה ל-64 ביט עם ספירת wraparounds"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1355,7 +1655,17 @@
       ],
       "problem": "Meta onsite system design: top 10 songs played on Spotify (top-k problem) (phone)",
       "id": "design.pipelines.q57",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "נניח שאי אפשר לשנות את ה-partitioning, והנתונים נשארים ב-round robin. האם יש דרך לקבל top-10 מדויק בלי לשלוח את כל הספירות ל-merger?",
+        "modelAnswer": "כן, בשלושה סבבים, כמו באלגוריתם TPUT. סבב 1: כל אחד מ-m ה-workers שולח את ה-top-10 המקומי, וה-merger מחשב מהסכומים החלקיים את הערך העשירי, τ, שהוא חסם תחתון לספירה של העשירי האמיתי. סבב 2: כל worker שולח כל שיר שהספירה המקומית שלו היא לפחות τ/m. שיר שהסכום שלו לפחות τ חייב להגיע ל-τ/m לפחות באחד ה-workers, ולכן אף מועמד אמיתי לא מתפספס. סבב 3: ה-merger מבקש מכל ה-workers את הספירות המדויקות של המועמדים בלבד ומחשב top-10 מדויק. התעבורה קטנה בהרבה מכל הספירות, במחיר של שלושה round trips.",
+        "rubric": [
+          "סבב 1: top-10 מקומי וחישוב τ מהסכומים החלקיים",
+          "סבב 2: כל שיר עם ספירה מקומית ≥ τ/m",
+          "נימוק: סכום ≥ τ מחייב ≥ τ/m לפחות ב-worker אחד",
+          "סבב 3: ספירות מדויקות למועמדים בלבד"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1383,7 +1693,17 @@
       ],
       "problem": "Meta E5 system design: remove bad ad posts from Instagram before they are visible to users (phone)",
       "id": "design.pipelines.q58",
-      "lesson": "design.pipelines"
+      "lesson": "design.pipelines",
+      "followUp": {
+        "prompt": "fail closed משאיר מפרסמים לחכות. איך מקצרים את ההמתנה בלי לרכך את הדרישה שאף מודעה לא מוצגת לפני בדיקה?",
+        "modelAnswer": "קודם מקטינים את מה שמגיע לבני אדם: מודל כבד ויקר יותר רץ רק על המקרים הלא חד-משמעיים, ומפרסמים עם היסטוריה נקייה ארוכה מקבלים סף אוטומטי מקל יותר, כי הסיכון שלהם נמוך יותר. אחר כך מתעדפים את התור לפי חשיפה צפויה ותקציב, וקובעים SLA לכל רמת עדיפות. הקיבולת האנושית צריכה להיות גמישה לפי שעות ועומס. בצד המפרסם מאפשרים להגיש מודעות מראש, לפני מועד ההשקה, ומציגים לו סטטוס וזמן משוער. מודדים את גיל הפריט הוותיק בתור (p95 לכל רמת עדיפות) ולא רק את אורך התור.",
+        "rubric": [
+          "מודל כבד יותר על המקרים הלא חד-משמעיים לפני בדיקה אנושית",
+          "אמון לפי היסטוריית מפרסם",
+          "תעדוף לפי חשיפה/תקציב עם SLA לכל רמה",
+          "מדידת גיל התור (p95) ולא רק אורכו"
+        ]
+      }
     }
   ]
 }

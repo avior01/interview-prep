@@ -377,7 +377,16 @@
         "נכון: ב-Linux כל thread הוא task שנוצר ב-clone(), עם TID משלו (רואים אותם ב-/proc/<pid>/task), וה-scheduler מתזמן כל task בנפרד.",
         "נכון: signal ברמת process (kill) נמסר ל-thread שרירותי שלא חוסם אותו. לכן נהוג לחסום signals בכל ה-threads ולטפל בהם ב-thread ייעודי עם sigwait.",
         "לא נכון: threads נוצרים עם CLONE_VM ולכן חולקים את אותו mm ואותן page tables. העתקה (copy-on-write) של page tables היא מה ש-fork עושה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-`ps` רואים process אחד, אבל הוא צורך 100% CPU, ויש בו 12 threads. איך תזהה איזה thread אחראי ומה הוא עושה, בלי לעצור את התוכנית?",
+        "modelAnswer": "כל thread הוא task עם TID משלו, ולכן `top -H -p PID` או `ps -L` מראים CPU לכל TID בנפרד. אם בקוד נתנו שמות עם pthread_setname_np (עד 15 תווים ועוד NUL), השם מופיע ישר ב-top ומזהה את התפקיד. אחר כך `perf top -t TID` או `perf record -t TID` מראים באילו פונקציות הוא מבלה, ו-`/proc/PID/task/TID/stack` מראה את ה-stack בקרנל אם הוא תקוע ב-syscall. ב-gdb, `thread apply all bt` נותן את ה-stack של כל thread, ומתאימים לפי ה-LWP שהוא ה-TID. הכלל המעשי: לתת שמות לכל ה-threads כבר בקוד, כי בלי שם 12 שורות של TID כמעט לא אומרות כלום.",
+        "rubric": [
+          "top -H או ps -L מראים CPU לכל TID",
+          "pthread_setname_np נותן שם שמופיע בכלים (מוגבל ל-16 בתים)",
+          "perf record/top -t TID או gdb thread apply all bt (התאמה לפי LWP)"
+        ]
+      }
     },
     {
       "id": "conc.threads.q08",
@@ -398,7 +407,17 @@
         "לא נכון: join לא זורק מחדש exceptions של ה-thread. זה מה ש-`future::get()` עושה כשמשתמשים ב-std::async או ב-promise.",
         "נכון: exception שלא נתפס ויוצא מהפונקציה הראשית של thread גורם ל-`std::terminate`, שמסיים את כל ה-process.",
         "לא נכון: ל-std::thread אין מנגנון לשמירת exception. כדי להעביר שגיאה צריך `std::exception_ptr` דרך promise או std::async."
-      ]
+      ],
+      "followUp": {
+        "prompt": "במערכת production עם 20 workers, איך מבטיחים ששגיאה ב-worker אחד לא מפילה את כל ה-process, אבל גם לא נבלעת בשקט? ומתי דווקא עדיף לקרוס?",
+        "modelAnswer": "בפונקציית הכניסה של כל worker שמים try/catch(...), ותופסים את השגיאה עם std::current_exception לתוך exception_ptr. מעבירים אותה הלאה: promise::set_exception ל-future של המשימה, או דיווח ל-supervisor עם הקשר (איזה worker, איזו משימה). ל-supervisor יש מדיניות מפורשת: להפעיל worker מחדש, לסמן את המשימה כנכשלת, או להתחיל shutdown מסודר. בנוסף מתקינים std::set_terminate שרושם stack trace ללוג לפני abort, למקרים שבכל זאת בורחים, למשל exception מפונקציה noexcept. מתי לקרוס: כשהשגיאה מעידה על מצב פנימי פגום (invariant שבור, זיכרון דרוס). שם המשך ריצה מסוכן יותר מקריסה מהירה שאחריה מערכת חיצונית מפעילה את ה-process מחדש.",
+        "rubric": [
+          "catch(...) בכניסה ל-thread והעברה עם exception_ptr או promise",
+          "supervisor עם מדיניות: restart, כישלון משימה או shutdown",
+          "set_terminate שרושם stack trace למקרים שבורחים",
+          "fail-fast כשה-invariants שבורים"
+        ]
+      }
     },
     {
       "id": "conc.threads.q09",
@@ -437,7 +456,17 @@
         "לא נכון: יצירת thread עולה עשרות מיקרו-שניות, באותו סדר גודל כמו המשימה עצמה, כך שחלק גדול מהזמן הולך על overhead. מקביליות מעבר למספר ה-cores לא מוסיפה throughput.",
         "לא נכון: 10,000 threads ממתינים צורכים זיכרון ל-stacks ולמבני kernel, וכשהם מתעוררים יחד יש oversubscription והרבה context switches. אין סיבה ליותר workers מ-cores כשהמשימות חישוביות.",
         "לא נכון: ה-overhead של threads משמעותי רק כשיוצרים thread לכל משימה. עם pool, המשימות בלתי תלויות ואפשר להתקרב לפי 8, ולכן thread יחיד מוותר על ביצועים בלי סיבה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-pool עובד עם תור אחד מוגן ב-mutex. על מכונה גדולה מגדילים מ-8 ל-64 workers, וה-throughput מפסיק לעלות כבר בסביבות 16. למה, ואיך מתקנים?",
+        "modelAnswer": "כל משימה לוקחת 20 מיקרו-שניות, אז 64 workers מבקשים בערך 3.2 מיליון pop בשנייה מאותו mutex. תחת תחרות כל העברה של ה-lock היא העברת cache line בין cores, מאות ננו-שניות ולפעמים יותר, ויש גם futex syscalls כשמישהו נרדם. ה-mutex נהיה צוואר הבקבוק, והזמן שבתוך ה-critical section קובע את התקרה. תיקונים: batching, כלומר כל worker שולף למשל 32 משימות בבת אחת. chunking, כלומר לאחד משימות קטנות כך שכל יחידה לוקחת לפחות כ-100 מיקרו-שניות. או תור לכל worker עם work-stealing. מאמתים עם `perf lock contention` או `perf c2c`, ומודדים זמן המתנה על ה-lock.",
+        "rubric": [
+          "חישוב: 64 workers ו-20µs נותנים כ-3.2M פעולות בשנייה על mutex אחד",
+          "contention: העברת cache line ו-futex syscalls",
+          "תיקון: batching, chunking או תור פר-worker עם work-stealing",
+          "מדידה עם perf lock contention או perf c2c"
+        ]
+      }
     },
     {
       "id": "conc.threads.q11",
@@ -458,7 +487,17 @@
         "נכון: 6 threads שמסתובבים על 4 cores גורמים ל-time sharing: צרכן שמסתובב תופס core בזמן שהיצרן שהוא מחכה לו יושב ב-runqueue. ה-latency קופץ לסדר גודל של time slice של CFS, כלומר מילי-שניות.",
         "לא נכון: SCHED_OTHER בהחלט מתזמן threads של אותו process על cores שונים. ב-Linux כל thread הוא task נפרד מבחינת ה-scheduler.",
         "לא נכון: busy-poll מהיר רק כשלכל thread שמסתובב יש core משלו. כשיש יותר threads מ-cores, הסיבוב שורף זמן CPU שהיצרן צריך, ו-cache misses לא מסבירים קפיצות של מילי-שניות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אסור להוסיף cores. איך היית מעצב מחדש את ה-pipeline של 6 השלבים כדי לקבל latency יציב על 4 cores?",
+        "modelAnswer": "קודם מודדים כמה CPU כל שלב צורך לבלוק, ומוודאים שהסכום נכנס ב-4 cores עם מרווח. אחר כך מאחדים שלבים זולים ל-thread אחד שמריץ אותם ברצף על אותו בלוק, וזה גם חוסך העברות בין cores ו-cache misses. המטרה: מספר ה-threads שמסתובבים לא עולה על מספר ה-cores שמוקדשים להם, ומשאירים core למערכת ההפעלה. את השלבים הקריטיים מצמידים כל אחד ל-core משלו, ב-SCHED_FIFO. שלבים לא קריטיים עוברים ל-spin קצר של כמה מיקרו-שניות ואחר כך המתנה חוסמת, כך שהם לא שורפים CPU שאחרים צריכים.",
+        "rubric": [
+          "מדידת CPU לכל שלב ובדיקה שהסכום נכנס ב-4 cores",
+          "איחוד שלבים כך ש-threads מסתובבים <= cores מוקדשים",
+          "pinning ו-SCHED_FIFO לשלבים הקריטיים",
+          "spin קצר ואז block לשלבים לא קריטיים"
+        ]
+      }
     },
     {
       "id": "conc.threads.q12",
@@ -481,7 +520,17 @@
         "נכון: a ו-b מגדילים כל אחד את העותק שלו ל-3, והעותקים נהרסים בסיום שלהם. main מגדיל את העותק שלו מ-0 ל-3 ומדפיס 3.",
         "לא נכון: 9 היה הפלט אילו `cnt` היה משתנה גלובלי רגיל (ושלוש הקריאות ל-work היו מסונכרנות). מי שבוחר בזה מתעלם מ-`thread_local`.",
         "לא נכון: 0 מניח ש-main לא נוגע ב-cnt, אבל main קורא ל-`work()` בעצמו אחרי ה-join ומגדיל את העותק שלו שלוש פעמים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה עולה גישה ל-`thread_local` לעומת משתנה גלובלי רגיל, ומתי היא יכולה להיות יקרה במיוחד?",
+        "modelAnswer": "ב-x86-64 על Linux, בלוק ה-TLS של כל thread נמצא ביחס לרגיסטר fs. בקוד שבתוך ה-executable (מודלים local-exec או initial-exec) הגישה היא הוראה אחת עם offset קבוע מ-fs, כמעט זולה כמו גלובלי. בספרייה משותפת שנטענת עם dlopen משתמשים במודל global-dynamic, וכל גישה עלולה לעבור דרך קריאה ל-__tls_get_addr, שזו פונקציה ולא הוראה. מחיר נוסף: thread_local עם constructor או destructor לא טריוויאלי מאותחל בגישה הראשונה בכל thread, ולכן כל גישה עוברת בדיקת guard (wrapper function), וה-destructors נרשמים לריצה ביציאה מה-thread. בלולאה חמה עדיף לקרוא אותו פעם אחת למשתנה מקומי.",
+        "rubric": [
+          "TLS נגיש דרך רגיסטר fs ב-x86-64",
+          "ב-executable: הוראה אחת עם offset קבוע",
+          "בספרייה דינמית: קריאה ל-__tls_get_addr",
+          "constructor לא טריוויאלי: בדיקת guard בכל גישה"
+        ]
+      }
     },
     {
       "id": "conc.threads.q13",
@@ -497,7 +546,17 @@
         "מדידה: cyclictest, היסטוגרמה, worst-case ולא ממוצע"
       ],
       "explanation": "מראיין סניור מחפש תמונה מלאה: affinity לבדו לא מספיק אם interrupts, ticks, page faults או C-states עדיין נוחתים על ה-core הקריטי.",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "אחרי כל ההגדרות, cyclictest מראה max של 15 מיקרו-שניות, אבל ה-pipeline עדיין מקבל overflow פעם בשעה. מה זה אומר, ואיך ממשיכים?",
+        "modelAnswer": "cyclictest מודד רק כמה מהר thread ישן מתעורר מ-timer, כלומר שהבסיס של המערכת טוב. הוא לא מודד את הנתיב של האפליקציה. הבעיה כנראה בעיבוד עצמו: spike תלוי-נתונים, הקצאת זיכרון, page fault על buffer חדש, logging שנחסם. או בנתיב הרשת: ring של ה-NIC שמתמלא, socket buffer קטן מדי (rmem), או interrupt coalescing. ממשיכים עם instrumentation: timestamp בכל בלוק וכל שלב, שומרים max ותפוסת תור ומציירים היסטוגרמה. בודקים `ethtool -S` כדי להבחין בין drops ב-NIC לבין overflow ב-UHD. מריצים cyclictest תחת העומס האמיתי, ומוסיפים trace עם trigger שנעצר ברגע ה-overflow.",
+        "rubric": [
+          "cyclictest מודד רק wake-up latency ולא את נתיב האפליקציה",
+          "instrumentation: זמן מקסימלי לכל שלב ותפוסת תורים",
+          "בדיקת drops ב-NIC (ethtool -S) וגודל socket buffer",
+          "trace עם trigger על האירוע הנדיר"
+        ]
+      }
     },
     {
       "id": "conc.threads.q14",
@@ -518,7 +577,16 @@
         "לא נכון: אין מגבלה כזו; std::async עם launch::async יכול להריץ הרבה משימות במקביל, כל אחת ב-thread משלה.",
         "נכון: ה-future שמוחזר מ-std::async הוא temporary שנהרס בסוף ה-full-expression, וה-destructor שלו חוסם עד סיום המשימה. לכן כל איטרציה מחכה למשימה שלה לפני שהבאה מתחילה.",
         "לא נכון: הרצה עצלה היא המדיניות `std::launch::deferred`. עם `std::launch::async` המשימה מתחילה מיד ב-thread חדש."
-      ]
+      ],
+      "followUp": {
+        "prompt": "שמרת את ה-futures ב-vector. כמה threads נוצרים בפועל, ומה קורה אם במקום 100 יש 100,000 משימות?",
+        "modelAnswer": "התקן אומר שהמשימה רצה כאילו ב-thread חדש, והמימוש קובע. ב-libstdc++ ו-libc++ כל קריאה עם launch::async יוצרת thread חדש, כלומר 100 threads. MSVC משתמש ב-thread pool של Windows, ושם המספר קטן יותר. עם 100,000 משימות ב-libstdc++ מנסים ליצור 100,000 threads: מגבלות כמו RLIMIT_NPROC, threads-max או זיכרון גורמות ל-std::async לזרוק std::system_error (resource_unavailable_try_again). ואם זה כן מצליח, יש oversubscription עצום ו-context switches. הפתרון: thread pool עם מספר workers בערך כמספר ה-cores, או חלוקה ל-chunks, כך שכל async מטפל באלפי משימות.",
+        "rubric": [
+          "libstdc++: thread חדש לכל קריאה; MSVC: thread pool (תלוי מימוש)",
+          "100,000: std::system_error כשמגיעים למגבלות, או oversubscription",
+          "פתרון: pool בגודל כמספר ה-cores או chunking"
+        ]
+      }
     },
     {
       "id": "conc.threads.q15",
@@ -545,7 +613,17 @@
         "נכון: סיום ה-thread הוא synchronizes-with החזרה מ-`join()`, ולכן הכתיבה ל-x happens-before הקריאה ב-main.",
         "נכון: store עם release ו-load עם acquire שקורא את הערך true יוצרים synchronizes-with, והכתיבה ל-x שקדמה ל-store נראית ל-main אחרי ה-load.",
         "לא נכון: פעולות relaxed הן atomic אבל לא יוצרות synchronizes-with, ולכן הכתיבה ל-x לא happens-before הקריאה. זה data race על x למרות שהדגל עצמו atomic."
-      ]
+      ],
+      "followUp": {
+        "prompt": "התרחיש עם relaxed כמעט תמיד עובד על x86. למה, ומתי הוא יישבר בפועל?",
+        "modelAnswer": "x86 הוא TSO: החומרה לא מחליפה סדר בין store ל-store או בין load ל-load, ולכן הכתיבה ל-x נראית לפני done, והקריאה של x לא עוקפת את הקריאה של done. אבל זה עדיין UB, והקומפיילר רשאי לסדר מחדש: להזיז את הכתיבה הרגילה ל-x אחרי ה-store של done, או לקרוא את x לפני הלולאה. על ARM או POWER גם החומרה יכולה להראות את done=true לפני x, והקורא יראה ערך ישן. release/acquire לא עולה כלום נוסף על x86 (mov רגיל, רק מגביל את הקומפיילר). על ARMv8 הוא מתורגם ל-stlr ו-ldar, שזולים בהרבה מ-fence מלא.",
+        "rubric": [
+          "x86 TSO שומר על סדר store-store ו-load-load",
+          "הקומפיילר עדיין רשאי לסדר מחדש, כי זה UB",
+          "ARM/POWER יכולים להראות את done לפני x",
+          "release/acquire בחינם על x86, ו-stlr/ldar על ARMv8"
+        ]
+      }
     },
     {
       "id": "conc.threads.q16",
@@ -566,7 +644,16 @@
         "לא נכון: copy-on-write מטופל ע״י ה-kernel ב-page faults רגילים ולא גורם ל-deadlock. התקיעה קורית ב-user space, בהמתנה על mutex.",
         "לא נכון: async-signal-safe הוא כלל שימוש של POSIX (מה מותר לקרוא בילד עד exec), לא מנגנון שה-kernel אוכף. ה-kernel לא חוסם את ה-mutex; ה-mutex פשוט נשאר נעול.",
         "נכון: הזיכרון מועתק כולו, כולל mutex שהיה נעול ברגע ה-fork ע״י thread אחר. ה-thread הזה לא קיים בילד, ולכן אף אחד לא ישחרר את ה-mutex והנעילה בילד נתקעת לנצח."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ספרייה צריכה להריץ תהליך חיצוני מתוך תוכנית multithreaded. איך עושים את זה בצורה בטוחה, ולמה pthread_atfork הוא לא פתרון כללי?",
+        "modelAnswer": "הדרך המומלצת היא posix_spawn. ב-glibc הוא ממומש עם clone בסגנון vfork, כך שלא מעתיקים את טבלאות הדפים, וזה חשוב כשה-process גדול. אם חייבים fork, מכינים את argv, את הסביבה ואת ה-fds לפני ה-fork, ובילד קוראים רק לפונקציות async-signal-safe (dup2, close, execve, _exit) עד ה-exec, בלי malloc ובלי logging. pthread_atfork דורש שכל ספרייה בתוכנית תרשום handlers שינעלו את כל ה-locks שלה לפני ה-fork, בסדר עקבי שלא יוצר deadlock, ותשחרר אותם אחריו. אי אפשר להבטיח את זה לקוד צד שלישי, ו-POSIX עצמו מכיר בכך שהמנגנון מוגבל.",
+        "rubric": [
+          "posix_spawn (מימוש בסגנון vfork, בלי העתקת page tables)",
+          "fork ואז רק async-signal-safe עד exec, עם הכנה מראש של argv ו-env",
+          "atfork דורש שכל הספריות ינעלו את כל ה-locks שלהן, ואי אפשר להבטיח זאת"
+        ]
+      }
     },
     {
       "id": "conc.threads.q17",
@@ -587,7 +674,17 @@
         "לא נכון: מדיניות תזמון נכנסת לתוקף מיד כשה-thread נוצר; אין שום תלות ב-sleep ראשון.",
         "לא נכון: הטווח של SCHED_FIFO ב-Linux הוא 1–99, ולכן 80 תקין. גם priority לא חוקי היה גורם ל-EINVAL, לא לבחירה שקטה בברירת מחדל.",
         "לא נכון: בלי CAP_SYS_NICE או RLIMIT_RTPRIO מתאים, pthread_create עם EXPLICIT_SCHED נכשל עם EPERM. ה-kernel לא מוריד בשקט ל-SCHED_OTHER, וכאן ה-pthread_create הצליח."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תיקנת עם PTHREAD_EXPLICIT_SCHED, ועכשיו pthread_create נכשל עם EPERM כשמריצים בלי sudo. איך נותנים לאפליקציה הרשאה ל-RT בלי root, ואיך מוודאים בקוד שהעדיפות באמת נקבעה?",
+        "modelAnswer": "יש כמה דרכים. `setcap cap_sys_nice+ep` על ה-binary. או להגדיר RLIMIT_RTPRIO למשתמש, למשל שורת rtprio ב-/etc/security/limits.conf לקבוצה מתאימה. או, כשרצים כ-service, LimitRTPRIO ו-CPUSchedulingPolicy ב-systemd. ב-container צריך גם --cap-add SYS_NICE, ולפעמים להגדיר תקציב RT ב-cgroup. בקוד: פונקציות pthread מחזירות את קוד השגיאה כערך החזרה ולא דרך errno, ולכן בודקים את הערך של pthread_create. אחרי היצירה קוראים ל-pthread_getschedparam על ה-thread ומוודאים policy ועדיפות, ורושמים בלוג. אם זה נכשל, האפליקציה צריכה להיכשל בקול או לרוץ במצב מופחת מוצהר, לא בשקט.",
+        "rubric": [
+          "setcap cap_sys_nice או RLIMIT_RTPRIO (limits.conf / systemd LimitRTPRIO)",
+          "pthread מחזירות קוד שגיאה, לא errno",
+          "אימות עם pthread_getschedparam אחרי היצירה",
+          "ב-container צריך SYS_NICE"
+        ]
+      }
     },
     {
       "id": "conc.threads.q18",
@@ -732,7 +829,17 @@
         "לא נכון: SIGSEGV הוא signal סינכרוני שנגרם מפעולה של thread מסוים, ולכן נמסר ל-thread שגרם לו. רק signals ברמת process (כמו kill) נמסרים ל-thread שרירותי.",
         "נכון: חסימה ב-main לפני יצירת ה-threads מבטיחה שכולם יורשים את ה-mask, ו-thread ייעודי עם sigwait מטפל ב-signal כקוד רגיל, בלי מגבלות async-signal-safe.",
         "לא נכון: ה-handler משותף לכל ה-process, ולכן התקנה ב-thread אחד דורסת את ההתקנה של thread אחר. אפשר לשלוט רק על מי מקבל את ה-signal (דרך ה-mask), לא על איזה handler רץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך thread ייעודי עם sigwait ל-SIGINT ול-SIGTERM. איך הוא גורם לכל שאר ה-threads לצאת בצורה מסודרת, כשחלקם ממתינים על condition variable וחלקם חסומים ב-read על socket?",
+        "modelAnswer": "ה-thread של ה-signals מדליק דגל stop: atomic, או משתנה שנכתב תחת ה-mutex של ה-cv, כדי לא לאבד wakeup. אחר כך קורא ל-notify_all על כל ה-cvs, וה-predicate של כל המתנה כולל את stop. threads שחסומים ב-read לא מתעוררים מדגל. עבורם קוראים ל-shutdown(fd, SHUT_RDWR) על ה-socket, וה-read חוזר. או שמראש כל thread ממתין ב-poll או ב-epoll גם על eventfd או self-pipe ייעודי, וכותבים אליו. בסוף main עושה join לכולם, עושה flush ללוגים ויוצא. לא משתמשים ב-pthread_cancel, שלא משתלב טוב עם C++ ומשאיר משאבים, ולא קוראים ל-exit מה-thread של ה-signals.",
+        "rubric": [
+          "דגל stop תחת ה-mutex או atomic, ו-notify_all",
+          "הערת I/O חוסם עם shutdown() או eventfd ב-poll",
+          "main עושה join לכולם ואז יוצא",
+          "בלי pthread_cancel ובלי exit מה-thread של ה-signals"
+        ]
+      }
     },
     {
       "id": "conc.threads.q25",
@@ -753,7 +860,17 @@
         "נכון: ב-32 ביט יש כ-3GB מרחב כתובות למשתמש, ו-3GB חלקי 8MB הם כ-380 stacks, פחות המקום של הקוד, ה-heap והספריות. מרחב הכתובות הווירטואלי נגמר, לא הזיכרון הפיזי.",
         "לא נכון: אין מגבלה קבועה של 300 threads ב-kernel של 32 ביט. המגבלות (threads-max, pid_max) גבוהות בהרבה ולא תלויות בגודל המילה.",
         "לא נכון: glibc מוסיף guard page לכל stack גם ב-32 ביט. היעדר guard pages גם לא היה גורם לכשל ביצירה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השרת הזה צריך לטפל ב-2,000 חיבורים בו-זמנית, והוא חייב לרוץ ב-32 ביט. איך תעשה את זה בלי thread לכל חיבור, ומה המחיר?",
+        "modelAnswer": "מודל event-driven: sockets במצב non-blocking ו-epoll, עם thread אחד לכל core (או מעט threads). כל thread מריץ event loop ומחזיק state machine לכל חיבור. ה-state של חיבור הוא כמה KB ולא stack של MB, כך ש-2,000 חיבורים תופסים כמה MB בלבד ממרחב הכתובות. חלופה נוחה יותר לכתיבה היא coroutines בלי stack של C++20, שבהן כל frame בגודל מאות בתים עד כמה KB. המחיר: הקוד מורכב יותר, הלוגיקה מפוצלת ל-callbacks או לנקודות co_await, וכל קריאה חוסמת בתוך handler, כמו קריאת קובץ או DNS סינכרוני, עוצרת את כל החיבורים של אותו loop. לכן פעולות כאלה מעבירים ל-thread pool נפרד.",
+        "rubric": [
+          "epoll עם non-blocking sockets ו-thread לכל core",
+          "state לכל חיבור הוא KB ולא stack של MB",
+          "חלופה: coroutines בלי stack",
+          "קריאה חוסמת ב-handler עוצרת את כל ה-loop, ולכן מעבירים אותה ל-pool"
+        ]
+      }
     },
     {
       "id": "conc.threads.q26",
@@ -774,7 +891,17 @@
         "לא נכון: stop_token עובד עם jthread (שמעביר אותו לפונקציה), עם stop_source ועם condition_variable_any; אין לו קשר מיוחד ל-std::async.",
         "נכון: request_stop רק מסמן את ה-stop_state, ו-std::condition_variable לא יודע עליו, כך שאף אחד לא מעיר את ה-worker ו-join מחכה לנצח. `condition_variable_any::wait(lk, st, pred)` רושם stop_callback שמעיר את ההמתנה.",
         "לא נכון: detach רק מסתיר את הבעיה: ה-worker נשאר תקוע לנצח ועלול לגשת למשאבים שכבר נהרסו. זה לא תיקון."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה מבטיח ש-condition_variable_any עם stop_token לא מפספס את בקשת העצירה, אם request_stop קורה בדיוק בין בדיקת ה-predicate לבין ההירדמות?",
+        "modelAnswer": "wait(lk, st, pred) רושם stop_callback לפני שהוא בודק את ה-predicate ואת stop_requested. ה-callback, כשהוא רץ, לוקח את ה-mutex הפנימי של ה-cv ואז קורא ל-notify_all. ההמתנה בודקת את המצב ונרדמת תחת אותו mutex פנימי, ומשחררת את ה-lock של המשתמש באופן אטומי. לכן ה-callback רץ או לפני הבדיקה, ואז ההמתנה רואה stop_requested וחוזרת, או אחרי שההמתנה כבר ישנה, ואז ה-notify מעיר אותה. אין חלון ביניהם. זה אותו עיקרון כמו lost wakeup: משנים את המצב תחת אותו mutex שהממתין מחזיק בזמן הבדיקה. ה-wait מחזיר את pred(), ולכן אחרי החזרה צריך לבדוק אם זו עצירה או עבודה אמיתית.",
+        "rubric": [
+          "stop_callback נרשם לפני בדיקת ה-predicate",
+          "ה-callback מעיר תחת ה-mutex הפנימי של ה-cv, ולכן אין חלון",
+          "אותו עיקרון כמו מניעת lost wakeup",
+          "wait מחזיר pred(), ולכן צריך לבדוק stop_requested אחריו"
+        ]
+      }
     },
     {
       "id": "conc.threads.q27",
@@ -798,7 +925,17 @@
         "נכון: `[&]` לוכד את i ב-reference, וה-thread קורא אותו בזמן ש-main מגדיל אותו (data race), ולכן כמה threads רואים אותו ערך. אחרי הלולאה i כבר לא קיים (dangling). לכידה `[i]` נותנת לכל thread עותק.",
         "לא נכון: std::ref היה מעביר שוב reference לאותו i המשותף ומשאיר בדיוק את אותו race ואת אותו dangling reference. צריך עותק, לא reference.",
         "לא נכון: std::thread הוא move-only, ו-vector יכול לגדול באמצעות move. emplace_back בונה את ה-thread במקום, ולכן אין כאן בעיה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תיקנת ל-[i]. עכשיו כל thread כותב את התוצאה ל-`results[i]` ב-vector<int> משותף. יש data race? ומה אם זה vector<bool>?",
+        "modelAnswer": "ב-vector<int> כל איבר הוא memory location נפרד, ולכן threads שכותבים לאיברים שונים לא יוצרים data race, כל עוד ה-vector לא משנה גודל בזמן הזה. אבל איברים סמוכים נמצאים באותה cache line של 64 בתים, ואם כל thread כותב לאיבר שלו בלולאה הרבה פעמים, יש false sharing: ה-line קופץ בין cores וה-throughput קורס. לכן צוברים במשתנה מקומי וכותבים פעם אחת, או מרפדים ל-64 בתים. vector<bool> שונה: הוא דוחס ביטים, ואיברים שונים חולקים את אותה מילה. כתיבה במקביל לאיברים שונים היא data race, והתקן מחריג במפורש את vector<bool> מהערבות הזו.",
+        "rubric": [
+          "איברים שונים ב-vector<int> = memory locations נפרדים, בלי race",
+          "false sharing בתוך cache line של 64 בתים",
+          "פתרון: צבירה מקומית או ריפוד",
+          "vector<bool> דוחס ביטים, ולכן כתיבות מקבילות הן data race"
+        ]
+      }
     },
     {
       "id": "conc.threads.q28",
@@ -819,7 +956,17 @@
         "נכון: exit מריץ את ה-destructors של האובייקטים הסטטיים (ו-atexit handlers) ב-thread הקורא, בזמן ש-threads אחרים עדיין רצים ומשתמשים בהם, למשל בלוגר. התוצאה: use-after-destruction וקריסות.",
         "לא נכון: exit לא שולח SIGKILL ל-threads האחרים לפני הניקוי. בדיוק בגלל שהם ממשיכים לרוץ בזמן הניקוי הסטטי נוצרת הקריסה.",
         "לא נכון: exit לא מחכה ל-join של threads. אילו היה עושה זאת, הסימפטום היה תקיעה ולא קריסה ב-destructor."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תכנן shutdown מסודר למקרה שה-worker נתקל בשגיאה קטלנית. מה ה-worker עושה, מה main עושה, ומה קורה אם אחד ה-threads תקוע ולא מגיב?",
+        "modelAnswer": "ה-worker לא יוצא מה-process. הוא רושם את השגיאה (exception_ptr או קוד שגיאה במשתנה מוגן), מאותת ל-main (cv או eventfd), וחוזר מהפונקציה שלו. main מדליק דגל stop גלובלי, מעיר את כולם (notify_all, shutdown על sockets), ועושה join לכל ה-threads עם deadline. אם thread לא מגיב תוך זמן מוגדר, למשל 2 שניות, אי אפשר להריץ destructors סטטיים בבטחה בזמן שהוא חי. לכן רושמים בלוג מי תקוע, מבצעים flush מפורש לנתונים החשובים, ויוצאים עם _exit או quick_exit.",
+        "rubric": [
+          "ה-worker מדווח וחוזר, לא קורא ל-exit",
+          "main מדליק stop, מעיר את כולם ועושה join",
+          "timeout: flush מפורש ואז _exit או quick_exit",
+          "אין destructors סטטיים כל עוד threads חיים"
+        ]
+      }
     },
     {
       "id": "conc.threads.q29",
@@ -840,7 +987,16 @@
         "לא נכון: לבנאי של std::thread אין פרמטר כזה; ארגומנט נוסף מועבר כארגומנט לפונקציה של ה-thread.",
         "לא נכון: hardware_concurrency מחזיר רמז למספר ה-threads שהחומרה מריצה במקביל, ואין לו שום קשר לגודל stack.",
         "לא נכון: glibc קורא את RLIMIT_STACK בעיקר בעליית התוכנית כדי לקבוע את ברירת המחדל, ולכן שינוי בזמן ריצה לא מובטח להשפיע, ובוודאי לא \"בכל מימוש\"."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תדע כמה stack ה-thread באמת צריך, ומה קורה כשהוא חורג? האם תמיד תקבל SIGSEGV?",
+        "modelAnswer": "glibc שם guard page (ברירת מחדל דף אחד, ואפשר לשנות עם pthread_attr_setguardsize) מתחת ל-stack, וחריגה רגילה נוגעת בו ומקבלת SIGSEGV. אבל לא תמיד: פונקציה עם frame גדול, למשל מערך מקומי של 64KB, יכולה לקפוץ מעל ה-guard page ישר לזיכרון של thread אחר או של mapping אחר, ולדרוס אותו בשקט. `-fstack-clash-protection` ב-GCC וב-Clang נוגע בכל דף בדרך ומונע זאת. למדידה: `-fstack-usage` נותן את גודל ה-frame של כל פונקציה באופן סטטי. בזמן ריצה ממלאים את ה-stack בתבנית ידועה (stack painting) ובודקים אחרי בדיקות עומס כמה ממנה נדרס, כדי לקבל high-water mark. לגודל הסופי מוסיפים מרווח.",
+        "rubric": [
+          "guard page גורם ל-SIGSEGV בחריגה רגילה",
+          "frame גדול יכול לדלג מעל ה-guard: השחתה שקטה, ו-stack-clash-protection מונע זאת",
+          "מדידה: -fstack-usage סטטית ו-stack painting ל-high-water mark"
+        ]
+      }
     },
     {
       "id": "conc.threads.q30",
@@ -855,7 +1011,17 @@
         "shutdown מוגדר: drain מול abort, stop תחת mutex, notify_all, join, ואזהרה מ-join מתוך worker"
       ],
       "explanation": "שאלת design קלאסית. מועמד חזק מגדיר במפורש את המקרים הקשים: exceptions, תור מלא, משימה שמחכה למשימה, וסדר ה-shutdown.",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "ה-pool שלך משרת גם בקשות קצרות (מיקרו-שניות) וגם עבודות ארוכות (שניות). משתמשים מתלוננים על tail latency גבוה בבקשות הקצרות. מה קורה, ומה תעשה?",
+        "modelAnswer": "זה head-of-line blocking: כשכמה עבודות ארוכות תופסות את כל ה-workers, הבקשות הקצרות מחכות בתור מאחוריהן, וה-p99 שלהן הופך לסדר גודל של שניות, למרות שהממוצע נראה טוב. מודדים זמן המתנה בתור, בנפרד מזמן הריצה, לכל סוג משימה (היסטוגרמה, p50 ו-p99). תיקונים: pool נפרד לכל סוג, או workers שמוקצים רק למשימות קצרות. הגבלת מספר העבודות הארוכות שרצות במקביל (למשל N-2). חלוקת העבודות הארוכות ל-chunks שחוזרים לתור, כך שבקשות קצרות נכנסות ביניהם. או תורי עדיפויות, בתנאי שיש מנגנון aging נגד הרעבה של הארוכות.",
+        "rubric": [
+          "head-of-line blocking: עבודות ארוכות תופסות את כל ה-workers",
+          "מדידת זמן המתנה בתור, p99 לכל סוג משימה",
+          "pools נפרדים או הגבלת מקביליות של עבודות ארוכות",
+          "chunking של עבודות ארוכות או תור עדיפויות עם aging"
+        ]
+      }
     },
     {
       "level": 2,
@@ -925,7 +1091,17 @@
         "נכון: ה-join של B הפך את האובייקט ל-not joinable. ה-join השני מפר את התנאי המקדים וזורק std::system_error."
       ],
       "id": "conc.threads.q33",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "בתרחיש הזה, B ו-main היו יכולים לקרוא join על אותו std::thread באותו זמן. למה זה UB ולא סתם exception, ואיך מאפשרים לכמה threads לחכות לסיום של A בצורה בטוחה?",
+        "modelAnswer": "std::thread הוא אובייקט רגיל עם state לא אטומי (ה-native handle). שתי קריאות מקבילות ל-member function שמשנה אותו הן data race, ולכן UB: הבדיקה של joinable לא אטומית, ושתיהן יכולות לעבור אותה ולקרוא ל-pthread_join על אותו thread, שגם הוא UB ב-POSIX. רק בקריאות סדרתיות מקבלים את ה-system_error המוגדר. כשכמה threads צריכים לחכות: יש בעלים אחד שעושה join, והסיום מתפרסם דרך מנגנון שתומך בכמה ממתינים. למשל promise ש-A ממלא בסוף, ו-std::shared_future שכל ממתין מחזיק עותק שלו וקורא wait או get. או std::latch עם ספירה 1, או cv עם דגל.",
+        "rubric": [
+          "קריאות מקבילות על אותו אובייקט = data race על state לא אטומי",
+          "pthread_join כפול הוא UB ב-POSIX",
+          "בעלים אחד עושה join",
+          "כמה ממתינים: shared_future, latch או cv עם דגל"
+        ]
+      }
     },
     {
       "level": 3,
@@ -956,7 +1132,17 @@
         "https://leetcode.com/discuss/post/1341747/qualcomm-by-monty4597-ys8n/"
       ],
       "id": "conc.threads.q34",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "Config גדול, עשרות MB, ומתעדכן בזמן ריצה על ידי thread אחר. העתקה לפי ערך כבר לא מתאימה. איך מעבירים אותו ל-worker כך שיקבל עדכונים בלי dangling ובלי data race?",
+        "modelAnswer": "משתמשים ב-snapshot שלא משתנה: shared_ptr<const Config>. ה-updater בונה אובייקט חדש בצד ומפרסם אותו בבת אחת, עם std::atomic<std::shared_ptr<const Config>> של C++20 או עם החלפה של shared_ptr תחת mutex קצר. ה-worker לוקח עותק של ה-shared_ptr בתחילת כל איטרציה ועובד עליו עד סוף האיטרציה, כך שהאובייקט חי כל עוד מישהו משתמש בו. הישן משתחרר כשה-reference האחרון נעלם, בדומה ל-RCU. שני דברים לשים לב אליהם: atomic<shared_ptr> לא בהכרח lock-free (ב-libstdc++ is_lock_free מחזיר false). ואם ה-worker הוא RT, השחרור של config ישן יכול לקרות בתוכו כשהוא מחזיק את העותק האחרון. לכן מעבירים את השחרור ל-thread אחר.",
+        "rubric": [
+          "shared_ptr<const Config> כ-snapshot שלא משתנה",
+          "פרסום אטומי: atomic<shared_ptr> או swap תחת mutex",
+          "ה-worker לוקח snapshot בכל איטרציה",
+          "השחרור האחרון יכול לקרות ב-thread ה-RT, ולכן מעבירים אותו הלאה"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1000,7 +1186,17 @@
         "נכון: שני עותקים של workers מגיעים ל-1000, והעותק של main נשאר 0."
       ],
       "id": "conc.threads.q36",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "בתוך thread pool משימות שונות רצות על אותו worker. מה המשמעות של thread_local counter כמו בקוד הזה, ואיזה באג זה יכול ליצור?",
+        "modelAnswer": "thread_local חי כל עוד ה-thread חי, לא כל עוד המשימה רצה. ב-pool ה-worker ממשיך לחיות, ולכן counter צובר ערכים מכל המשימות שרצו עליו. משימה שמניחה שהוא מתחיל מ-0 תקבל ערך שתלוי באילו משימות רצו לפניה על אותו worker, וזה תלוי בתזמון. התוצאה: באג לא דטרמיניסטי שמשתנה עם מספר ה-workers והעומס. או שמאפסים במפורש בתחילת כל משימה, או שמעבירים state דרך context של המשימה. שימושים לגיטימיים ב-thread_local ב-pool: buffers זמניים לשימוש חוזר בלי הקצאה, ו-statistics לכל thread שמסכמים בסוף.",
+        "rubric": [
+          "thread_local חי לפי thread ולא לפי משימה",
+          "state דולף בין משימות על אותו worker ותלוי בתזמון",
+          "איפוס מפורש או context פר-משימה",
+          "שימוש לגיטימי: scratch buffers או stats פר-thread"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1028,7 +1224,17 @@
         "https://leetcode.com/discuss/post/5966607/qualcomm-offcampus-by-anonymous_user-cmcm/"
       ],
       "id": "conc.threads.q37",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "למה ספריות M:1, כמו fibers ו-coroutines, בכל זאת שימושיות היום, ואיך הן עוקפות את בעיית ה-syscall החוסם?",
+        "modelAnswer": "החלפה בין user threads היא שמירה וטעינה של כמה רגיסטרים בלי syscall, עשרות ננו-שניות, לעומת context switch בקרנל שעולה מיקרו-שניות. לכן אפשר להחזיק מיליוני fibers. את ה-syscall החוסם עוקפים בכך שכל ה-I/O הוא non-blocking: ה-fiber מבצע פעולה, ואם היא תחזיר EAGAIN הוא רושם עניין ב-epoll או מגיש בקשה ל-io_uring ומוותר על ה-CPU. ה-scheduler מחזיר אותו לפעולה כשה-I/O מוכן. קבצים רגילים לא עובדים עם epoll, ולכן את קריאות הדיסק מעבירים ל-thread pool או ל-io_uring. את מגבלת ה-core היחיד פותרים עם scheduler נפרד לכל core.",
+        "rubric": [
+          "החלפה בעשרות ננו-שניות, בלי syscall",
+          "I/O non-blocking עם epoll או io_uring, וה-fiber מוותר על ה-CPU",
+          "I/O לקבצים מועבר ל-pool או ל-io_uring",
+          "scheduler לכל core כדי לנצל כמה cores"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1070,7 +1276,17 @@
         "שגוי: עדיפות לא מקצרת המתנה ל-I/O, ואין קשר בין זה לבין המשך הריצה של שאר ה-user threads."
       ],
       "id": "conc.threads.q39",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "מה הבעיה אם user thread ב-runtime כזה רץ בלולאה חישובית ארוכה בלי syscalls ובלי נקודות yield, ואיך Go מתמודד עם זה?",
+        "modelAnswer": "תזמון ה-user threads הוא שיתופי: בלי נקודת החלפה, ה-goroutine תופס את ה-kernel thread שלו, ושאר ה-goroutines בתור של אותו מעבד לוגי (P) מורעבים. גרוע מזה, stop-the-world של ה-GC מחכה שכל ה-goroutines יגיעו ל-safepoint, ולכן לולאה אחת כזו עוצרת את כל התוכנית. לפני Go 1.14 החלפה קרתה רק בנקודות כמו קריאה לפונקציה (בדיקת ה-stack ב-prologue), ולולאה הדוקה בלי קריאות לא נקטעה. מ-Go 1.14 יש asynchronous preemption: ה-thread של sysmon מזהה goroutine שרץ יותר מכ-10ms, ושולח signal (SIGURG) ל-kernel thread שלו. ה-handler עוצר את ה-goroutine בנקודה בטוחה ומחזיר אותו לתור.",
+        "rubric": [
+          "תזמון שיתופי: הרעבה של user threads אחרים על אותו kernel thread",
+          "GC stop-the-world מחכה ל-safepoint ונתקע",
+          "לפני 1.14: preemption רק בכניסה לפונקציות",
+          "Go 1.14: async preemption עם SIGURG אחרי כ-10ms"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1120,7 +1336,17 @@
         "שגוי: ה-predicate הוא בדיוק מה שמגן מפני spurious wakeups. if היה מוסיף באג, לא מתקן אחד."
       ],
       "id": "conc.threads.q41",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "אחרי התיקון (unlock לפני task()), מה עוד צריך לבדוק בקוד הזה ובקוד שסביבו כדי שה-pool יהיה נכון ב-exceptions וב-shutdown?",
+        "modelAnswer": "אם task() זורקת, ה-exception יוצא מה-worker ונקרא std::terminate. לכן עוטפים ב-packaged_task, שמעביר את ה-exception ל-future, או ב-try/catch. submit אחרי stop צריך להידחות (לזרוק), אחרת המשימה נכנסת לתור אחרי שה-workers יצאו וה-future שלה לא יהיה מוכן לעולם. ב-submit עושים push תחת ה-lock ו-notify_one. ב-destructor מדליקים stop תחת ה-lock, קוראים ל-notify_all ועושים join, כדי לא לאבד wakeup. ולבסוף: גם אחרי התיקון, משימה שמחכה ל-future של תת-משימה באותו pool יכולה להיתקע אם כל ה-workers מחכים כך. פותרים עם work-stealing, שבו worker שמחכה מריץ משימות בעצמו, או עם pool נפרד.",
+        "rubric": [
+          "exception מ-task() מפעיל terminate, אלא אם יש packaged_task או try/catch",
+          "submit אחרי stop נדחה",
+          "stop תחת ה-lock, notify_all ו-join",
+          "המתנה לתת-משימה בתוך ה-pool יכולה להביא ל-deadlock כשכל ה-workers מחכים"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1141,7 +1367,17 @@
         "נכון: ה-predicate מתקיים כל עוד יש משימות, ותנאי היציאה לא מתקיים עד שהתור ריק. ה-join מחכה לכל ה-500."
       ],
       "id": "conc.threads.q42",
-      "lesson": "conc.threads"
+      "lesson": "conc.threads",
+      "followUp": {
+        "prompt": "הלקוח רוצה shutdown תוך 100ms גם אם יש 500 משימות בתור. איך מממשים abort, ומה מקבלים ה-futures של המשימות שלא רצו?",
+        "modelAnswer": "תחת ה-lock מדליקים stop ומחליפים (swap) את התור בתור ריק מקומי, ואחר כך משחררים את ה-lock, קוראים ל-notify_all ועושים join. ה-workers רואים stop עם תור ריק ויוצאים. כשה-packaged_tasks שבתור המקומי נהרסים בלי שרצו, ה-future של כל אחד מקבל std::future_error עם broken_promise, ואפשר במקום זה לשים exception מפורש של ביטול. משימות שכבר רצות אי אפשר לעצור מבחוץ. הן צריכות ביטול שיתופי: stop_token שהן בודקות כל כמה זמן. לכן החסם של 100ms תלוי במשך הגרוע של קטע עבודה בין בדיקות. משימה שרצה 2 שניות בלי בדיקה שוברת את החסם.",
+        "rubric": [
+          "swap של התור תחת ה-lock, ואחר כך notify_all ו-join",
+          "packaged_task שנהרס בלי לרוץ נותן broken_promise ל-future",
+          "משימות רצות צריכות ביטול שיתופי (stop_token)",
+          "החסם תלוי בקטע הארוך ביותר בין בדיקות"
+        ]
+      }
     }
   ]
 }

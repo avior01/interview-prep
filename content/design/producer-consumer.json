@@ -391,7 +391,17 @@
         "detach לא עוצר את ה-threads; הם ממשיכים לחכות, והשליטה בהם אובדת.",
         "notify_one מעיר consumer אחד בלבד, והשאר יישנו לנצח על ה-cv."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "עכשיו יש deadline: הסגירה חייבת להסתיים תוך 5 שניות, ואחד ה-consumers נמצא באמצע עיבוד ארוך של פריט. מה עושים, ומה קורה ל-producer שמנסה לדחוף אחרי close?",
+        "modelAnswer": "close() מדליק את הדגל תחת ה-mutex ועושה notify_all, ו-push אחרי close מחזיר שגיאה או false במקום להכניס פריט שאף אחד לא יעבד. מבדילים בין graceful drain (מעבדים את מה שבתור) לבין abort (זורקים את מה שבתור). כדי לעמוד ב-deadline, ה-consumer צריך cancellation שיתופי: `std::jthread` עם `stop_token`, שהעיבוד הארוך בודק מדי פעם, ואז מפסיק בצורה נקייה. ב-C++ אי אפשר להרוג thread בבטחה, כי locks ומשאבים לא ישתחררו. אם ה-thread לא סיים עד ה-deadline, האפשרות היחידה היא לנטוש אותו ולסיים את כל התהליך.",
+        "rubric": [
+          "push אחרי close מחזיר שגיאה",
+          "הבחנה בין drain לבין abort",
+          "cancellation שיתופי עם stop_token שנבדק בעיבוד",
+          "אין הריגה בטוחה של thread; במקרה הגרוע יוצאים מהתהליך"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q09",
@@ -412,7 +422,17 @@
         "MPMC עם CAS משלם על כלליות שלא צריך: עם producer ו-consumer יחידים אין תחרות על אותו אינדקס.",
         "נכון: SPSC ring של מצביעים לבלוקים מוקצים מראש: שני אינדקסים atomic בלי CAS ובלי syscall, ו-try_push לא חוסם את ה-RX וסופר drops כשמלא."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "ה-SPSC פותר את ה-RX. אבל איך ה-thread של ה-DSP ממתין כשהתור ריק, בלי לשרוף core שלם ובלי לגרום ל-RX לעשות syscall על כל בלוק?",
+        "modelAnswer": "שלוש אפשרויות. busy polling על core ייעודי: ה-latency הכי נמוך, אבל core שלם ב-100% תמיד; זה מקובל במערכות זמן-אמת עם cores מבודדים. spin-then-sleep: ה-consumer מסתובב זמן קצר, ואם אין עבודה מדליק דגל 'אני ישן' ונרדם על futex או eventfd; ה-producer עושה syscall כדי להעיר רק אם הדגל דלוק, כלומר כמעט אף פעם בעומס. כדי שלא יהיה lost wakeup, צריך fence של seq_cst בין הדלקת הדגל לבדיקה החוזרת של התור בצד ה-consumer, ובין הדחיפה לבדיקת הדגל בצד ה-producer. אפשרות שלישית היא polling עם sleep קצר, שמוסיפה latency של עד משך ה-sleep.",
+        "rubric": [
+          "busy polling על core ייעודי: latency נמוך במחיר core",
+          "spin-then-sleep עם דגל sleeping ו-futex/eventfd",
+          "ה-producer מעיר רק כשהדגל דלוק",
+          "צריך fence/seq_cst כדי למנוע lost wakeup"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q10",
@@ -439,7 +459,17 @@
         "batching הוא trade-off: throughput עולה, אבל latency של פריט בודד יכול לעלות, במיוחד אם מחכים למילוי.",
         "נכון: פחות נעילות של ה-consumer מקטינות contention, וה-producer נחסם פחות."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "איך היית מקבל את יתרונות ה-batching בעומס גבוה בלי להוסיף latency בעומס נמוך? ומתי בכל זאת צריך timeout?",
+        "modelAnswer": "batching אופורטוניסטי: ה-consumer לוקח את כל מה שכבר נמצא בתור, עד 64, ולא מחכה ליותר. בעומס נמוך זה batch של 1 בלי שום המתנה, ובעומס גבוה התור מתמלא בזמן שה-consumer עובד, וה-batches גדלים לבד. זה מתכוונן אוטומטית לפי העומס. timeout להמתנה למילוי batch נחוץ רק כשיש עלות קבועה גבוהה לכל batch בשלב הבא, למשל kernel launch ב-GPU או כתיבה לדיסק, שבו batch קטן מבזבז את רוב העבודה. אז קובעים את ה-timeout כחלק קטן מתקציב ה-latency, למשל 1 ms מתוך 10 ms.",
+        "rubric": [
+          "לקחת את כל מה שזמין עד הגבול בלי לחכות",
+          "בעומס נמוך batch של 1, בעומס גבוה batches גדלים לבד",
+          "timeout רק כשיש עלות קבועה גבוהה לכל batch",
+          "timeout כחלק קטן מתקציב ה-latency"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q11",
@@ -478,7 +508,16 @@
         "כל הגישה לתור נעשית תחת ה-mutex, ולכן אין data race; הבעיה היא wakeup שהגיע ל-thread הלא נכון.",
         "spurious wakeup גורם רק לבדיקה חוזרת של התנאי בלולאה; הוא לא מכפיל פריטים."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "עברת לשני cv נפרדים, not_full ו-not_empty, עם notify_one. האם יש עדיין מקרים שבהם notify_one לא מספיק?",
+        "modelAnswer": "כן. push_batch שמכניס 10 פריטים ועושה notify_one מעיר consumer אחד בלבד, והשאר ממשיכים לישון למרות שיש עבודה; זו לא תקיעה, אבל throughput אובד עד שמגיע notify נוסף. התיקון הוא notify_all, או notify_one לכל פריט שנוסף. close() חייב notify_all על שני ה-cv, כי כל הממתינים צריכים לראות את הדגל ולצאת. בנוסף, אם ה-consumer שהתעורר מגלה שה-batch כבר נלקח על ידי מישהו אחר, הוא חוזר לישון, וזה תקין כל עוד ה-predicate נבדק בלולאה.",
+        "rubric": [
+          "push_batch עם notify_one משאיר consumers ישנים כשיש עבודה",
+          "פתרון: notify_all או notify לכל פריט",
+          "close() דורש notify_all על שני ה-cv"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q13",
@@ -499,7 +538,17 @@
         "notify תחת ה-mutex לא יוצר deadlock; במקרה הגרוע ה-thread שהתעורר נחסם לרגע על ה-mutex.",
         "יש הבדל בביצועים: notify תחת ה-mutex עלול לגרום ל-\"hurry up and wait\", אם המימוש לא עושה wait morphing."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "תאר תרחיש קונקרטי שבו notify אחרי unlock הוא use-after-free, ואיך נמנעים ממנו.",
+        "modelAnswer": "אובייקט completion (mutex, cv ודגל done) נמצא על ה-stack של thread A, שממתין שהעבודה תסתיים. thread B נועל, מדליק done, משחרר את ה-mutex, ורק אז קורא ל-notify. בדיוק בין ה-unlock ל-notify, A מתעורר (spurious wakeup או timeout), רואה done, יוצא מהפונקציה, והאובייקט עם ה-cv נהרס. אז B קורא ל-notify על cv שכבר לא קיים. במקרה כזה עושים notify בזמן שה-mutex עדיין נעול, כי A לא יכול לחזור מ-wait בלי לתפוס את ה-mutex, ולכן לא יהרוס את האובייקט לפני ש-B סיים. חלופה: לוודא שה-cv חי יותר משני הצדדים, למשל בבעלות shared_ptr משותף.",
+        "rubric": [
+          "האובייקט עם ה-cv נמצא אצל הממתין והוא הורס אותו כשהוא רואה done",
+          "החלון בין unlock ל-notify מאפשר לממתין לצאת ולהרוס",
+          "פתרון: notify בזמן שה-mutex נעול",
+          "חלופה: lifetime משותף (shared_ptr)"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q14",
@@ -526,7 +575,17 @@
         "נכון: הגנב עובד על הקצה הנגדי לזה של ה-owner, ולכן התנגשויות נדירות, כמעט רק כשנשאר פריט אחד.",
         "כשהמשימות ארוכות (מילישניות), תקורת התור זניחה, ותור משותף פשוט מצוין."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "ב-work stealing ה-owner לוקח LIFO. למה זה מסוכן בשרת שמטפל בבקשות משתמשים, ולא בחישוב divide and conquer? ומה runtimes כמו Go או Tokio עושים?",
+        "modelAnswer": "ב-LIFO המשימה החדשה ביותר רצה ראשונה, ולכן תחת עומס מתמשך בקשות ישנות נדחקות לתחתית ומחכות הרבה, כלומר tail latency גרוע ואפילו starvation. ב-divide and conquer זה לא משנה כי רק זמן הסיום של כל החישוב חשוב, אבל בשרת כל בקשה היא משתמש שמחכה. לכן runtimes של שרתים משתמשים בתור מקומי FIFO, עם slot יחיד ל-LIFO: המשימה האחרונה שנוצרה (למשל זו שה-task הנוכחי העיר) רצה מיד בשביל ה-locality, וכל השאר לפי הסדר. ב-Go זה runnext, ו-Tokio משתמש ב-LIFO slot דומה. הגניבה עדיין מהקצה השני, כך שהיתרון של מעט התנגשויות נשמר.",
+        "rubric": [
+          "LIFO תחת עומס מתמשך מרעיב בקשות ישנות ופוגע ב-tail",
+          "ב-divide and conquer רק זמן הסיום הכולל חשוב",
+          "תור מקומי FIFO עם slot LIFO יחיד למשימה האחרונה",
+          "דוגמה: runnext ב-Go או LIFO slot ב-Tokio"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q15",
@@ -542,7 +601,17 @@
         "פרטי זמן-אמת: core pinning, SCHED_FIFO, mlock, מדדים"
       ],
       "explanation": "מראיין רוצה לראות חשבון מספרי, הפרדה בין מנגנון (SPSC + pool) למדיניות (מה עושים במחסור), והבנה שתור רק סופג bursts.",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "בחר גודל בלוק של 8,192 samples. כמה בלוקים בשנייה זה, כמה בלוקים צריך ב-pool כדי לספוג 100 ms של עיכוב ב-DSP, ולמה לא פשוט בלוקים של 1 MB?",
+        "modelAnswer": "100 Msps × 4 bytes = 400 MB/s. בלוק של 8,192 samples הוא 32 KB ו-82 מיקרו-שניות של אות, כלומר כ-12,200 בלוקים בשנייה. 100 ms של עיכוב הם 40 MB, כלומר כ-1,220 בלוקים, ולכן pool של כ-1,300 בלוקים מוקצה מראש. בלוק של 1 MB הוא 2.6 ms של אות, וזה latency מינימלי לכל בלוק. בנוסף 1 MB לא נכנס ב-L1 או ב-L2 של core, ולכן כל מעבר על הבלוק בשלבי ה-DSP הולך ל-L3 או ל-DRAM, בעוד ש-32 KB נשאר חם ב-cache. 12,000 handoffs בשנייה זולים לגמרי ל-SPSC, כך שאין סיבה לבלוקים גדולים.",
+        "rubric": [
+          "400 MB/s; 32 KB לבלוק; כ-12,200 בלוקים בשנייה",
+          "100 ms = 40 MB = כ-1,220 בלוקים ב-pool",
+          "בלוק של 1 MB = 2.6 ms latency",
+          "1 MB לא נכנס ב-L1/L2, 32 KB כן"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q16",
@@ -563,7 +632,17 @@
         "seq_cst נכון אבל לא מינימלי, ועולה fences נוספים בחלק מהארכיטקטורות.",
         "acquire על store ו-release על load אינם orderings חוקיים לפעולות האלה; זה הזוג ההפוך."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "ב-x86 גם store רגיל וגם store עם release מתקמפלים ל-mov רגיל. אז למה גרסת ה-relaxed עדיין באג גם על x86?",
+        "modelAnswer": "כי הבעיה היא לא רק החומרה אלא גם הקומפיילר. עם relaxed, הקומפיילר רשאי להזיז את הכתיבה ל-slot אחרי ה-store של tail, או לשמור את ה-slot ב-register ולכתוב אותו מאוחר יותר, ואז ה-consumer יקרא נתון ישן גם על x86. release אוסר על הקומפיילר להזיז כתיבות קודמות אל אחרי ה-store. מבחינת התקן, בלי happens-before בין הכתיבה ל-slot לקריאה שלו זה data race, כלומר undefined behavior. על ARM יש גם reordering בחומרה, ולכן release מתקמפל שם להוראה כמו `stlr` או ל-`dmb`. כלומר x86 מסתיר את הבאג רק באופן חלקי, וזה הופך אותו לקשה במיוחד למציאה.",
+        "rubric": [
+          "הקומפיילר רשאי להזיז את כתיבת ה-slot אחרי tail ב-relaxed",
+          "release אוסר את ההזזה הזו",
+          "לפי התקן זה data race ולכן UB",
+          "ב-ARM יש גם reordering בחומרה (stlr/dmb)"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q17",
@@ -584,7 +663,17 @@
         "seq_cst רק מוסיף fences ומאט; הבעיה היא תעבורת cache lines, לא reordering.",
         "נכון: עם עותק מקומי של האינדקס של הצד השני, כל צד קורא את ה-atomic המשותף רק כשנראה שהתור מלא או ריק, והתעבורה בין ה-cores יורדת בסדר גודל."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "הרצת את ה-benchmark שוב: פעם עם producer ו-consumer על שני hyperthreads של אותו core, פעם על cores שונים באותו socket, ופעם על sockets שונים. מה תצפה לראות ומה זה אומר על ה-deployment?",
+        "modelAnswer": "על hyperthreads של אותו core ה-L1 וה-L2 משותפים, ולכן העברת ה-cache line כמעט חינמית וה-ops/s הכי גבוהים, אבל שני ה-threads מתחרים על אותן יחידות ביצוע, כך שאם כל צד עושה עבודה אמיתית שניהם מואטים. על cores שונים באותו socket, ההעברה היא דרך L3 ועולה עשרות ns. על sockets שונים (NUMA), ההעברה עוברת בין המעבדים ועולה כ-100 ns ויותר, וה-throughput יורד משמעותית. לכן ב-deployment מצמידים את ה-threads ל-cores (affinity) באותו socket, ומקצים את ה-ring וה-buffers על ה-NUMA node של אותו socket, ועדיף גם של ה-NIC.",
+        "rubric": [
+          "hyperthreads: מהיר ביותר אבל מתחרים על יחידות ביצוע",
+          "cores באותו socket: העברה דרך L3, עשרות ns",
+          "sockets שונים: כ-100 ns+ ו-throughput נמוך",
+          "affinity לאותו socket והקצאת זיכרון על אותו NUMA node"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q18",
@@ -600,7 +689,17 @@
         "זיהוי בעיית state בין בלוקים (filter state, phase) ופתרון כמו overlap"
       ],
       "explanation": "ההבחנה הסניורית היא שהמקביליות קונה throughput במחיר של tail latency וסיבוכיות, ושעיבוד עם state בין בלוקים לא ניתן לפיצול נאיבי.",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "שלב ה-DSP הוא FIR עם 256 taps, כלומר כל בלוק צריך את 255 הדגימות האחרונות של הבלוק הקודם. איך מחלקים אותו ל-4 workers, ומה עושים אם השלב הוא IIR או PLL?",
+        "modelAnswer": "ב-FIR אפשר להשתמש ב-overlap-save: כל בלוק נשלח ל-worker יחד עם 255 הדגימות שלפניו, כך שכל worker יכול לחשב לבד בלי state משותף. המחיר הוא עבודה נוספת של 255/B לכל בלוק, כלומר כ-3% בבלוק של 8,192, ועותק קטן של נתונים. IIR או PLL הם רקורסיביים: הפלט של דגימה תלוי ב-state שנוצר מכל הדגימות הקודמות, ולכן אי אפשר להתחיל בלוק לפני שהקודם הסתיים. שם עוברים למקביליות מסוג אחר: pipeline לפי שלבים (worker לכל שלב), או חלוקה לפי ערוצים או פסי תדר עצמאיים, או אופטימיזציה של השלב עצמו (SIMD).",
+        "rubric": [
+          "overlap-save: כל בלוק נשלח עם 255 הדגימות הקודמות",
+          "עלות: עבודה נוספת של כ-255/B",
+          "IIR/PLL רקורסיביים ואי אפשר לפצל לפי בלוקים",
+          "חלופות: pipeline לפי שלבים, חלוקה לפי ערוצים, SIMD"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q19",
@@ -724,7 +823,16 @@
         "נכון: pop מחכה לפריט (full), מוציא, ומאותת שהתפנה מקום (empty).",
         "זה הפוך: בהתחלה התור ריק, ולכן full הוא 0 ו-empty הוא N."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "הוספת mutex בשביל כמה producers. איפה בדיוק הוא צריך להיות ביחס ל-acquire של empty, ומה קורה אם נועלים אותו לפני ה-acquire?",
+        "modelAnswer": "הסדר הנכון ב-push: acquire(empty), אחר כך נעילת ה-mutex, הכנסת הפריט, שחרור ה-mutex, ואז release(full). אם נועלים את ה-mutex לפני acquire(empty), producer יכול להחזיק את ה-mutex בזמן שהוא חסום על empty כי התור מלא. ה-consumer צריך את אותו mutex כדי להוציא פריט ולעשות release(empty), אבל הוא לא יכול לתפוס אותו, ולכן deadlock. הכלל: לא חוסמים על semaphore או משאב אחר בזמן שמחזיקים mutex שהצד השני צריך כדי לשחרר אותך.",
+        "rubric": [
+          "סדר: acquire(empty) → lock → insert → unlock → release(full)",
+          "נעילה לפני acquire: producer חסום על empty מחזיק את ה-mutex",
+          "ה-consumer לא יכול לשחרר מקום, ולכן deadlock"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q25",
@@ -756,7 +864,17 @@
         "C++ לא אוסר שום דבר כזה; זו בחירה אלגוריתמית.",
         "זה הפוך: הגנבים מקבלים את המשימות הישנות, שבדרך כלל הגדולות, כדי שגניבה אחת תספק הרבה עבודה."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "מה קורה כשנשאר פריט אחד ב-deque, וה-owner וה-thief מנסים לקחת אותו באותו רגע? איך Chase-Lev פותר את זה?",
+        "modelAnswer": "ב-Chase-Lev ל-owner יש bottom ול-thieves יש top. pop של ה-owner מקטין קודם את bottom, ואז, אחרי fence של seq_cst, קורא את top. אם top עדיין קטן מ-bottom החדש, נשארו עוד פריטים, וה-owner לוקח את שלו בלי CAS. אם top שווה ל-bottom, זה בדיוק הפריט האחרון: ה-owner וה-thief מתחרים עליו עם CAS על top, ורק אחד מצליח; המפסיד רואה deque ריק. thieves תמיד עושים CAS על top כי ייתכנו כמה גנבים. כך ה-owner, שעושה את רוב הפעולות, משלם CAS רק במקרה הנדיר של פריט אחרון. ה-fence חיוני: בלעדיו ה-load של top יכול להתבצע לפני שה-store של bottom נראה, ושניהם ייקחו את אותו פריט.",
+        "rubric": [
+          "owner מקטין bottom ואז קורא top אחרי fence",
+          "אם נשארו פריטים: לקיחה בלי CAS",
+          "פריט אחרון: שני הצדדים מתחרים ב-CAS על top",
+          "בלי fence שניהם עלולים לקחת את אותו פריט"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q27",
@@ -777,7 +895,17 @@
         "כתיבה סינכרונית לדיסק תקוע חוסמת בדיוק כמו חסימה על התור.",
         "הגדלה דינמית היא תור unbounded עם סיכון OOM; הבעיה רק נדחית."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "איך מממשים 'מקום שמור להודעות ERROR' בתור bounded, ואיך מבטיחים שהשורה 'נזרקו X הודעות' עצמה לא תיזרק?",
+        "modelAnswer": "מגדירים שני ספים לאותו תור בגודל N: הודעה רגילה נכנסת רק אם התפוסה קטנה מ-N − R, והודעת ERROR נכנסת עד N. כך R המקומות האחרונים שמורים לשגיאות. על כל זריקה מגדילים counter אטומי לפי רמת חומרה, בלי lock. את השורה המסכמת כותב ה-thread הכותב עצמו: בכל פעם שהוא כותב batch לדיסק, הוא בודק אם ה-counter גדל מאז הפעם הקודמת, וכותב ישירות 'נזרקו X הודעות INFO' לפני ה-batch. כיוון שהשורה לא עוברת בתור, היא לא יכולה להיזרק. אותו counter מיוצא גם כ-metric ומתריעים עליו.",
+        "rubric": [
+          "שני ספים: רגילות עד N − R, ERROR עד N",
+          "counter אטומי של drops לכל רמת חומרה",
+          "השורה המסכמת נכתבת ישירות ע\"י ה-thread הכותב, לא דרך התור",
+          "ה-counter מיוצא כ-metric"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q28",
@@ -798,7 +926,17 @@
         "ה-sequence הוא חלק מהותי מהפרוטוקול, לא סטטיסטיקה; בלעדיו יש קריאה של slot לא כתוב או דריסה של slot לא נקרא.",
         "ה-CAS על tail עדיין נדרש כדי לתאם בין producers; ה-sequence משלים אותו ולא מחליף."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "עבור על ערכי ה-sequence: מה הערך ההתחלתי של כל slot, מה producer ו-consumer בודקים ומה הם כותבים? והאם התור הזה באמת lock-free במובן הפורמלי?",
+        "modelAnswer": "slot i מאותחל עם seq = i. producer במיקום p קורא את seq של slot[p mod N]: אם seq == p ה-slot פנוי, הוא עושה CAS על tail מ-p ל-p+1, כותב את הנתון ואז store של seq = p + 1 עם release. אם seq < p, התור מלא. consumer במיקום c בודק אם seq == c + 1, כלומר הנתון מוכן, עושה CAS על head, קורא את הנתון, ואז store של seq = c + N עם release, שמסמן שה-slot פנוי לסיבוב הבא. פורמלית התור לא lock-free: producer שעשה CAS ואז הופסק על ידי ה-scheduler לפני שכתב את ה-seq חוסם את ה-consumer שמחכה בדיוק ל-slot הזה. בפועל זה נדיר ומהיר, אבל זה הבדל אמיתי למערכות זמן-אמת.",
+        "rubric": [
+          "אתחול seq = i",
+          "producer: seq == p → CAS על tail, כתיבה, seq = p + 1",
+          "consumer: seq == c + 1 → CAS על head, קריאה, seq = c + N",
+          "לא lock-free פורמלית: producer שהופסק אחרי CAS חוסם"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q29",
@@ -819,7 +957,17 @@
         "notify מחוץ ל-mutex כן מעיר ממתינים; מה שחייב להיות תחת ה-mutex הוא שינוי המצב, לא ה-notify.",
         "spurious wakeup היה דווקא מציל את המצב, כי ה-consumer היה בודק שוב ורואה ready=true."
       ],
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "C++20 נותן `std::atomic::wait` ו-`notify_one` בלי mutex. למה שם אין lost wakeup באותו תרחיש בדיוק?",
+        "modelAnswer": "`ready.wait(false)` לא בודק predicate ואז נרדם בשני צעדים נפרדים. הוא מעביר ל-kernel (ב-Linux דרך futex) את הערך שהוא מצפה לו, וה-kernel בודק את הערך ומכניס את ה-thread לשינה באופן אטומי ביחס ל-wake על אותה כתובת. אם ה-producer כבר שינה את הערך ל-true, ה-wait חוזר מיד במקום להירדם. אם ה-producer עושה store ו-notify אחרי שה-thread נרדם, ה-notify מעיר אותו. לכן החלון בין הבדיקה לשינה לא קיים. זו בעצם אותה אטומיות שה-mutex נותן ב-cv, רק בתוך ה-kernel. גם `std::binary_semaphore` פותר את זה, כי semaphore זוכר את ה-release.",
+        "rubric": [
+          "wait מקבל את הערך הצפוי ולא predicate",
+          "ה-kernel (futex) בודק את הערך ונרדם באופן אטומי",
+          "אם הערך כבר השתנה, wait חוזר מיד",
+          "semaphore כחלופה כי הוא זוכר release"
+        ]
+      }
     },
     {
       "id": "design.producer-consumer.q30",
@@ -835,7 +983,17 @@
         "fairness בין tenants, backpressure בכניסה ומדדים"
       ],
       "explanation": "אותו דפוס producer-consumer בקנה מידה מבוזר: מה שמחליף את ה-mutex הוא lease, ומה שמחליף את 'בדיוק פעם אחת' הוא at-least-once עם עיבוד idempotent.",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "המשימות לוקחות בין 30 שניות ל-20 דקות. איך קובעים את אורך ה-lease, ומה קורה כש-worker חי אבל מנותק מהרשת, ה-lease שלו פג, ו-worker אחר מתחיל את אותה משימה?",
+        "modelAnswer": "lease קבוע של 25 דקות אומר ש-worker שקרס מתגלה רק אחרי 25 דקות. במקום זה נותנים lease קצר, נאמר 3 דקות, וה-worker מאריך אותו ב-heartbeat כל דקה, כך שקריסה מתגלה תוך כ-3 דקות בלי קשר לאורך המשימה. אם ה-worker רק מנותק, הוא ממשיך לעבוד בזמן ש-worker אחר לוקח את המשימה, כלומר שניהם מעבדים. כדי שזה לא ישחית תוצאה, כל ניסיון מקבל attempt id, ה-worker כותב את הפלט לנתיב ייחודי לניסיון, ובסוף מבצע commit מותנה לרשומת המשימה: 'סמן הושלם עם הפלט שלי רק אם ה-attempt id עדיין שלי'. ה-worker הישן נכשל ב-commit, והפלט שלו נמחק בתהליך ניקוי.",
+        "rubric": [
+          "lease קצר עם heartbeat שמאריך אותו",
+          "זמן גילוי קריסה תלוי ב-lease ולא באורך המשימה",
+          "attempt id ופלט לנתיב ייחודי לכל ניסיון",
+          "commit מותנה לפי attempt id (fencing)"
+        ]
+      }
     },
     {
       "level": 4,
@@ -858,7 +1016,17 @@
       ],
       "problem": "Microsoft SDE-II interview: producer/consumer messaging system with a delegator",
       "id": "design.producer-consumer.q31",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "איך מוסיפים עדיפויות במיליוני הודעות בשנייה בלי ש-priority queue מרכזי יהפוך לצוואר בקבוק, ובלי שהודעות בעדיפות נמוכה ירעבו לנצח?",
+        "modelAnswer": "heap משותף עולה O(log n) לכל פעולה, ומחייב lock אחד לכל ה-producers וה-consumers, ובמיליוני הודעות בשנייה זה צוואר בקבוק. במקום זה קובעים מספר קטן וקבוע של רמות עדיפות, נאמר 4, ולכל רמה תור FIFO נפרד, אפשר גם לכל consumer. ה-consumer בוחר מאיזו רמה לקחת: strict priority מעבד תמיד את הגבוהה קודם, אבל זה מרעיב את הנמוכות תחת עומס. weighted round robin, למשל 8 הודעות מהגבוהה על כל 1 מהנמוכה, נותן העדפה ברורה ועדיין מבטיח התקדמות לכולן. בתוך כל רמה נשמר הסדר.",
+        "rubric": [
+          "heap משותף: O(log n) ו-lock יחיד = צוואר בקבוק",
+          "מספר קבוע של רמות עם תור FIFO לכל רמה",
+          "strict priority מרעיב רמות נמוכות",
+          "weighted round robin מבטיח התקדמות לכולן"
+        ]
+      }
     },
     {
       "level": 4,
@@ -873,7 +1041,17 @@
       ],
       "explanation": "וריאציה על producer-consumer עם delegator: כאן הדגש הוא בידוד תקלות ולא throughput. תשובה חזקה מגיעה ל-process isolation כשהקוד לא אמין.",
       "id": "design.producer-consumer.q32",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "איך מזהים ש-handler נתקע, ומה בעצם אפשר לעשות ל-thread שתקוע בקריאת רשת בתוך C++?",
+        "modelAnswer": "watchdog: לכל handler רושמים timestamp של תחילת האירוע הנוכחי, ו-thread ניטור בודק מדי כמה מאות ms אם now פחות timestamp עבר את ה-timeout. ב-C++ אין דרך בטוחה להרוג thread: `pthread_cancel` לא משחרר locks ולא מריץ את כל ה-destructors באופן אמין, והתהליך עלול להישאר במצב לא תקין. לכן מה שאפשר הוא להפסיק לשלוח ל-handler הזה אירועים (לזרוק עם מונה), להתריע, ולהפעיל thread חלופי, ובכך לדלוף את ה-thread התקוע. בידוד אמיתי דורש להריץ את ה-plugin בתהליך נפרד: אז אפשר `SIGKILL` ו-restart, והתקשורת עוברת דרך shared memory ring או IPC, במחיר של מיקרו-שניות וסריאליזציה לכל אירוע.",
+        "rubric": [
+          "watchdog לפי timestamp של תחילת אירוע",
+          "אין הריגה בטוחה של thread ב-C++ (pthread_cancel מסוכן)",
+          "הפסקת dispatch ל-handler התקוע ותחליף",
+          "תהליך נפרד מאפשר kill ו-restart במחיר IPC"
+        ]
+      }
     },
     {
       "level": 4,
@@ -888,7 +1066,17 @@
       ],
       "explanation": "וריאציה מבוזרת של אותה שאלה. המספר המרכזי: partitions ≥ קצב נכנס חלקי קצב consumer = 25, ועוד מרווח.",
       "id": "design.producer-consumer.q33",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "התנועה של סוג אחד גדלה פי 2 ואתה רוצה להוסיף consumers. מה קורה אם יש פחות partitions מ-consumers, ומה קורה לסדר לפי key אם מגדילים את מספר ה-partitions מ-32 ל-64?",
+        "modelAnswer": "המקביליות המקסימלית של consumer group היא מספר ה-partitions: consumer שלא קיבל partition פשוט יושב בטל. הוספת consumers גורמת ל-rebalance; ב-eager rebalance כל ה-group עוצר לרגע, וב-cooperative incremental רק ה-partitions שזזים עוצרים. הגדלת partitions משנה את המיפוי hash(key) mod n, ולכן key שהיה ב-partition 5 עובר לאחר. הודעות חדשות שלו עלולות להיות מעובדות לפני ישנות שעוד ממתינות ב-partition הקודם, כלומר הסדר לפי key נשבר סביב המעבר. לכן מתכננים מראש partitions עם מרווח גדול (למשל 64 ל-25 הנדרשים), או מבצעים מיגרציה מבוקרת ל-topic חדש.",
+        "rubric": [
+          "consumers מעבר למספר ה-partitions לא מקבלים עבודה",
+          "rebalance עוצר עיבוד (eager מול cooperative)",
+          "הגדלת partitions משנה את hash mod n ושוברת סדר לפי key",
+          "מרווח partitions מראש או מיגרציה ל-topic חדש"
+        ]
+      }
     },
     {
       "level": 4,
@@ -916,7 +1104,17 @@
       ],
       "problem": "Microsoft SDE-2 interview: design an n reader / writer class",
       "id": "design.producer-consumer.q34",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "האם `std::shared_mutex` מגן עליך מ-writer starvation? ואיך עובד RW lock הוגן שלא מרעיב אף צד?",
+        "modelAnswer": "התקן לא מגדיר מדיניות עדיפות ל-`std::shared_mutex`, כלומר זה תלוי מימוש. ב-Linux, libstdc++ בונה אותו בדרך כלל על `pthread_rwlock`, שב-glibc ברירת המחדל שלו מעדיפה readers, ולכן writer starvation אפשרי בדיוק כמו במימוש שלך. RW lock הוגן עובד לפי סדר הגעה, למשל עם ticket: readers שמגיעים ברצף נכנסים יחד כ-batch, אבל ברגע שמגיע writer, readers שמגיעים אחריו ממתינים מאחוריו. כך ה-writer מחכה רק ל-readers שכבר היו לפניו, וה-readers שאחריו מחכים רק ל-writer אחד. העדפת writers מלאה פשוט הופכת את הבעיה ל-reader starvation כשה-writers תכופים.",
+        "rubric": [
+          "התקן לא מגדיר עדיפות; תלוי מימוש",
+          "glibc pthread_rwlock מעדיף readers כברירת מחדל",
+          "RW lock הוגן לפי סדר הגעה: readers אחרי writer ממתינים לו",
+          "העדפת writers מלאה גורמת ל-reader starvation"
+        ]
+      }
     },
     {
       "level": 4,
@@ -937,7 +1135,17 @@
         "שגוי: רוב המימושים לא מזהים את זה ולא זורקים. ב-`std::shared_mutex` זה undefined behavior, ובפועל לרוב נתקע."
       ],
       "id": "design.producer-consumer.q35",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "התוכנית פשוט נתקעת ב-production מדי פעם. איך תגלה שזה deadlock כזה, ואיך תתפוס באגים כאלה לפני שהם מגיעים ל-production?",
+        "modelAnswer": "כשהתהליך תקוע, לוקחים stacks של כל ה-threads, למשל `gdb -p` ואז `thread apply all bt`, או core dump עם `gcore`. רואים thread אחד שממתין ל-read lock בתוך פונקציה שכבר מחזיקה read lock על אותו lock, ו-thread שני שממתין ל-write lock. לפני production: ThreadSanitizer מזהה lock-order inversion, ובגרסת debug אפשר לעטוף את ה-lock כך שכל thread רושם (thread_local) אילו locks הוא מחזיק, ו-assert נכשל על ניסיון לתפוס שוב lock שכבר מוחזק. בנוסף כדאי watchdog שמזהה thread שלא התקדם X שניות וכותב את ה-stacks ללוג אוטומטית.",
+        "rubric": [
+          "stacks של כל ה-threads (gdb thread apply all bt / gcore)",
+          "זיהוי הדפוס: read lock כפול + writer ממתין",
+          "TSan לזיהוי lock-order inversion",
+          "wrapper ב-debug שבודק re-acquisition של lock מוחזק"
+        ]
+      }
     },
     {
       "level": 4,
@@ -958,7 +1166,17 @@
         "שגוי: ב-5% כתיבות עם critical section של 50 ns, writers מחזיקים את ה-lock זמן זניח. ההאטה קיימת גם כמעט בלי writers."
       ],
       "id": "design.producer-consumer.q36",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "הצעת RCU. איך הקורא ניגש לנתונים בלי לכתוב לזיכרון משותף, ומה הכותב משלם כדי שזה יעבוד?",
+        "modelAnswer": "הנתונים נגישים דרך מצביע אטומי אחד. קורא עושה load של המצביע עם acquire וקורא את הנתונים דרכו, בלי שום כתיבה לזיכרון משותף, ולכן אין cache line שקופץ בין cores וקריאה עולה כמעט כמו קריאה רגילה. כותב מעתיק את המבנה, משנה את העותק, ומפרסם אותו עם store של release למצביע. את הגרסה הישנה אסור לשחרר מיד, כי קוראים אולי עדיין מחזיקים אותה; משחררים רק אחרי grace period שבו כל הקוראים שהתחילו לפני הפרסום סיימו (ב-userspace עם epochs או hazard pointers). המחיר: העתקה של המבנה בכל כתיבה, זיכרון כפול זמנית ו-latency של שחרור, ולכן זה מתאים כשהכתיבות נדירות.",
+        "rubric": [
+          "קורא: load של מצביע עם acquire, בלי כתיבה משותפת",
+          "כותב: copy, modify, publish עם release",
+          "שחרור הגרסה הישנה רק אחרי grace period (epochs/hazard pointers)",
+          "מחיר: העתקה בכל כתיבה, מתאים לכתיבות נדירות"
+        ]
+      }
     },
     {
       "level": 3,
@@ -986,7 +1204,17 @@
       ],
       "problem": "NVIDIA SDE-2 interview: two threads print odd/even numbers in order",
       "id": "design.producer-consumer.q37",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "התיקון עובד. כמה עולה כל העברת תור בין ה-threads, ומה היה קורה אם היו צריכים להתחלף 10 מיליון פעמים?",
+        "modelAnswer": "כל העברת תור היא notify ל-thread ישן, כלומר futex wake, context switch, ותזמון של ה-thread השני, בסדר גודל של כמה מיקרו-שניות. ל-100 מספרים זה לא משנה, אבל 10 מיליון החלפות ב-5 מיקרו-שניות הן 50 שניות, וכל העבודה טורית לגמרי, כך שאין שום תועלת מהמקביליות. אם שני ה-threads על cores ייעודיים, אפשר להחליף את ה-cv ב-spin על משתנה atomic, ואז העברה היא בעיקר מעבר cache line, כ-100 ns. אבל הלקח העיקרי הוא שחילוף קפדני בין threads הוא טורי מעצם הגדרתו, ובמערכת אמיתית thread אחד היה עושה את זה מהר יותר.",
+        "rubric": [
+          "כל העברה = wake + context switch, מיקרו-שניות",
+          "10M החלפות ≈ עשרות שניות",
+          "spin על atomic ב-cores ייעודיים: כ-100 ns",
+          "חילוף קפדני הוא טורי; thread אחד מהיר יותר"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1007,7 +1235,16 @@
         "נכון: הבעיה היא ש-notify_one 'מבזבז' את ההתעוררות על thread שלא יכול להתקדם. notify_all או cv נפרד לכל thread פותרים אותה."
       ],
       "id": "design.producer-consumer.q38",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "notify_all פותר את התקיעה. מה המחיר שלו אם יש 64 threads בסבב במקום 3, ולמה cv לכל thread עדיף?",
+        "modelAnswer": "עם notify_all כל העברת תור מעירה את כל 63 הממתינים. כולם מתחרים על ה-mutex, בודקים את התנאי אחד אחרי השני, ו-62 מהם חוזרים לישון. זה thundering herd: O(N) wakeups ו-context switches לכל צעד במקום אחד, וכמעט כל ה-CPU הולך על התעוררויות מיותרות. עם cv לכל thread (או semaphore לכל thread), ה-thread הנוכחי מעיר בדיוק את הבא, כלומר O(1) לכל צעד. ב-3 threads ההבדל זניח, אבל הוא גדל לינארית עם מספר ה-threads.",
+        "rubric": [
+          "notify_all מעיר את כל N−1 הממתינים בכל צעד",
+          "N−2 חוזרים לישון: O(N) wakeups לצעד (thundering herd)",
+          "cv או semaphore לכל thread: O(1) לצעד"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1028,7 +1265,17 @@
         "שגוי: זה מתחיל מה-thread הזוגי, שידפיס קודם (למשל 2 לפני 1, תלוי איך מחשבים את המספר)."
       ],
       "id": "design.producer-consumer.q39",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "הרחב את זה ל-N threads בסבב עם semaphores. איך הם מתחילים, איך מעבירים את התור, ואיך כולם יוצאים בסוף בלי שאחד יישאר חסום לנצח?",
+        "modelAnswer": "מערך של N semaphores: sem[0] = 1 וכל השאר 0. thread k עושה acquire(sem[k]), מדפיס, ו-release(sem[(k+1) % N]), כך שאסימון אחד בדיוק מסתובב. לסיום, כל thread יכול לדעת מראש כמה מספרים שלו: thread k מדפיס את k+1, k+1+N, וכן הלאה עד 100, ולכן הלולאה שלו רצה מספר פעמים קבוע ויוצאת. אם הלולאה מבוססת על דגל done, ה-thread שמדפיס את המספר האחרון חייב בכל זאת לעשות release לבא, כדי שהוא יתעורר, יראה את הדגל ויצא, וכך בשרשרת. בלי זה ה-threads האחרים נשארים חסומים ב-acquire וה-join נתקע.",
+        "rubric": [
+          "sem[0] = 1, השאר 0",
+          "thread k: acquire(sem[k]) → print → release(sem[(k+1)%N])",
+          "יציאה: מספר איטרציות ידוע מראש לכל thread",
+          "עם דגל done: release לבא גם אחרי ההדפסה האחרונה"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1056,7 +1303,17 @@
       ],
       "problem": "Microsoft SDE-II interview: design an alarm system (create/update/delete, fire on time)",
       "id": "design.producer-consumer.q40",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "הזכרת timer wheel. איך הוא עובד, מה הסיבוכיות, ובאיזה מקרה הוא עדיף על heap?",
+        "modelAnswer": "timer wheel הוא מערך מעגלי של slots, כל slot מייצג tick (למשל 1 ms) ומחזיק רשימה מקושרת דו-כיוונית של alarms. alarm לזמן t נכנס ל-slot (t / tick) mod size, כלומר הכנסה וביטול ב-O(1), וב-tick מעבדים רק את ה-slot הנוכחי. הרזולוציה מוגבלת ל-tick, ו-alarm רחוק יותר מסיבוב אחד נשמר עם מונה סיבובים או בגלגל היררכי (ms, שניות, דקות) שבו alarms יורדים לגלגל עדין יותר כשהם מתקרבים. הוא עדיף כשיש הרבה timeouts שרובם מבוטלים לפני שהם פוקעים, כמו timeouts של חיבורי רשת, ולכן Linux kernel משתמש בו לכך. heap עדיף כשנדרש זמן מדויק ומספר ה-alarms קטן או דליל.",
+        "rubric": [
+          "מערך מעגלי של slots עם רשימות, slot = (t/tick) mod size",
+          "הכנסה וביטול ב-O(1)",
+          "רזולוציה = tick; טווח ארוך ע\"י מונה סיבובים או גלגל היררכי",
+          "עדיף כשרוב ה-timeouts מבוטלים (כמו timeouts ברשת)"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1077,7 +1334,17 @@
         "שגוי: ערמה ממוינת לגמרי היא בעצם מערך ממוין, ואז הכנסה היא O(n). מאבדים את היתרון של heap."
       ],
       "id": "design.producer-consumer.q41",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "ב-workload שבו 90% מה-alarms מבוטלים לפני שהם פוקעים, מה קורה לערמה עם lazy deletion, ואיך שומרים על זיכרון וזמן תקינים?",
+        "modelAnswer": "הערמה מתמלאת ברשומות מתות: אם יש מיליון alarms חיים ו-90% מכל מה שנכנס מבוטל, הערמה יכולה להכיל פי כמה יותר רשומות מתות מחיות. זה מגדיל זיכרון, ומעלה את ה-log n של כל הכנסה. הפתרון הוא compaction: סופרים כמה רשומות מתות יש, וכשהן עוברות חצי מגודל הערמה, בונים אותה מחדש רק מהחיות ב-heapify, ב-O(n). כיוון שזה קורה רק אחרי n/2 ביטולים, העלות מתחלקת ל-O(1) amortized לביטול. בדיקת התוקף נעשית לפי מפה id → version: רשומה בערמה מחזיקה (time, id, version) ומדלגים עליה אם ה-version לא תואם.",
+        "rubric": [
+          "רשומות מתות מצטברות ומנפחות זיכרון וזמן",
+          "compaction כשהמתות עוברות חצי מהערמה",
+          "heapify ב-O(n), amortized O(1) לביטול",
+          "בדיקת תוקף לפי (id, version) מול מפה"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1143,7 +1410,17 @@
         "שגוי: בין הכתיבה לקריאה החוזרת thread אחר יכול לכתוב, ושניהם יראו את הביט דלוק. זו לא הוכחת בעלות."
       ],
       "id": "design.producer-consumer.q45",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "16 threads מתחילים כולם לחפש ביט פנוי מהמילה הראשונה. מה הבעיה בביצועים, ואיך מתכננים את זה כך שיתרחב?",
+        "modelAnswer": "כולם מתחרים על אותן מילים ראשונות: CAS נכשל שוב ושוב, וה-cache line שמכילה אותן (8 מילים של 64 ביט ב-line של 64 bytes) קופצת בין cores. בנוסף, ככל שהמילים הראשונות מתמלאות, כל חיפוש סורק יותר מילים מלאות. פתרונות: כל thread מתחיל לחפש מנקודה אחרת, למשל מה-hint של המקום האחרון שבו מצא ביט פנוי, או מ-offset לפי מזהה ה-thread. טוב עוד יותר לתפוס מילה שלמה של 64 IDs בבת אחת ולהחזיק אותם ב-cache מקומי של ה-thread, כך שרוב ההקצאות לא נוגעות בזיכרון משותף בכלל. שחרור ID נעשה עם `fetch_and(~bit)`.",
+        "rubric": [
+          "contention על אותן מילים ו-cache line ping-pong",
+          "נקודת התחלה שונה לכל thread (hint או offset)",
+          "תפיסת 64 IDs בבת אחת ל-cache מקומי",
+          "שחרור עם fetch_and(~bit)"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1166,7 +1443,17 @@
       ],
       "problem": "Google L4/L5 coding-system-design: customer agent system (schedule next customer, agents with different speeds, report wait time; agent break / interrupted mid-request)",
       "id": "design.producer-consumer.q46",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "זמני הטיפול של הסוכנים משתנים מאוד. איך נותנים ללקוח הערכת זמן המתנה שהיא כנה ולא מבטיחה יותר מדי?",
+        "modelAnswer": "לכל סוכן אומדים מההיסטוריה את התפלגות זמן הטיפול, לא רק את הממוצע. הערכה גסה ללקוח במקום k עם A סוכנים היא k × זמן טיפול ממוצע / A, כלומר לפי קצב השירות המצטבר. כדי לתת טווח, מריצים סימולציית Monte Carlo: דוגמים זמני טיפול מההתפלגות של כל סוכן, מריצים את סימולציית ה-heap מאות פעמים, ומציגים טווח כמו p50 עד p90. מעדכנים את ההערכה כשהתור מתקדם, כי אי-הוודאות קטנה ככל שהלקוח מתקרב. ומבחינת חוויה, עדיף להציג את ה-p80 ולהקדים מאשר להבטיח ממוצע ולאחר.",
+        "rubric": [
+          "התפלגות זמני טיפול לכל סוכן ולא רק ממוצע",
+          "הערכה גסה: k × ממוצע / A",
+          "Monte Carlo על הסימולציה לקבלת טווח אחוזונים",
+          "עדכון שוטף והצגת אחוזון שמרני"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1187,7 +1474,17 @@
       ],
       "explanation": "בתורי עבודה מוחקים פריט רק אחרי ack. עד אז הוא בבעלות זמנית (lease) של ה-worker.",
       "id": "design.producer-consumer.q47",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "ה-lease פג בגלל תקלת רשת רגעית, הלקוח שובץ לסוכן חדש, אבל הסוכן הראשון בכלל לא נפל וממשיך לטפל בו. איך מונעים מצב ששני סוכנים פועלים על אותו לקוח?",
+        "modelAnswer": "לכל שיבוץ יש assignment id או epoch עולה. כש-lease פג והלקוח משובץ מחדש, נוצר assignment id חדש, וכל פעולה של סוכן (סגירת פנייה, כתיבת הערות, החזר כספי) נשלחת עם ה-id שלו. השרת מקבל רק פעולות עם ה-id העדכני, ולכן הפעולות של הסוכן הישן נדחות. הסוכן הישן מקבל את הדחייה, או מגלה בעצמו כשה-heartbeat שלו נכשל, ומפסיק לטפל. לפני פעולות קריטיות הסוכן בודק שה-lease שלו עדיין בתוקף, אבל זה לא מספיק לבד, כי ה-lease יכול לפוג רגע אחרי הבדיקה; ההגנה האמיתית היא הבדיקה בצד השרת.",
+        "rubric": [
+          "assignment id / epoch חדש בכל שיבוץ מחדש",
+          "השרת דוחה פעולות עם id ישן (fencing)",
+          "הסוכן הישן מגלה דרך דחייה או heartbeat כושל",
+          "בדיקת lease בצד הסוכן לבד לא מספיקה"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1208,7 +1505,16 @@
       ],
       "explanation": "min-heap של 'מתי מתפנה כל משאב' הוא הכלי הסטנדרטי לסימולציית שיבוץ.",
       "id": "design.producer-consumer.q48",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "ומה אם k הוא מיליון ו-A הוא 100, וכל סוכן לוקח זמן קבוע משלו לכל לקוח? אפשר לחשב את זמן ההמתנה בלי לסמלץ מיליון צעדים?",
+        "modelAnswer": "כן, עם binary search על הזמן. אם סוכן i לוקח s_i לכל לקוח (ומתפנה לראשונה בזמן f_i), מספר הלקוחות שהוא מתחיל עד זמן T הוא בערך floor((T − f_i) / s_i) + 1 כש-T ≥ f_i. סכום על כל הסוכנים נותן count(T), שהוא פונקציה מונוטונית עולה ב-T. מחפשים בינארית את ה-T הקטן ביותר שבו count(T) ≥ k, וזה זמן תחילת הטיפול בלקוח k. כל בדיקה היא O(A), ולכן הכול O(A log(range)) במקום O(k log A). זה אותו דפוס כמו בבעיות 'זמן מינימלי להשלים k משימות'.",
+        "rubric": [
+          "count(T) = Σ מספר הלקוחות שכל סוכן מתחיל עד T",
+          "count(T) מונוטונית ולכן binary search על T",
+          "O(A log(range)) במקום O(k log A)"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1233,7 +1539,17 @@
       ],
       "problem": "Meta onsite (product design): design LeetCode / an online coding (contest) platform",
       "id": "design.producer-consumer.q49",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "תחרות מתחילה: 50,000 משתתפים מגישים בדקות הראשונות. כמה קיבולת judge צריך, ואיך מונעים מהתחרות להרוס את חוויית התרגול הרגיל?",
+        "modelAnswer": "הערכה: 50,000 משתתפים × 3 הגשות ב-30 הדקות הראשונות = 150,000 הגשות, כ-83 בשנייה, עם שיא גבוה יותר בדקות הראשונות. אם הגשה צורכת כ-5 שניות CPU על כל ה-test cases, זה כ-415 cores במקביל בממוצע, ופי 2 עם מרווח לשיא. מפרידים תורים: תור לתחרות ותור לתרגול, עם workers או קיבולת שמורה לכל אחד, כך שגל התחרות לא תוקע את המתרגלים. מגדילים מראש את ה-pool של ה-sandboxes לפני שעת ההתחלה הידועה, במקום להסתמך על autoscaling תגובתי שמגיע מאוחר. למשתתפים מציגים מיקום בתור וזמן משוער, ומגבילים קצב הגשות לכל משתמש.",
+        "rubric": [
+          "חישוב: כ-83 הגשות בשנייה וכמה מאות cores",
+          "תורים נפרדים לתחרות ולתרגול עם קיבולת שמורה",
+          "pre-warming לפני שעת ההתחלה הידועה",
+          "rate limit להגשות לכל משתמש"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1271,7 +1587,17 @@
       ],
       "explanation": "קוד לא אמין רץ בבידוד מלא שנאכף מבחוץ: רשת, משאבים, syscalls והרשאות.",
       "id": "design.producer-consumer.q51",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "האם container רגיל עם cgroups ו-seccomp מספיק לקוד עוין? מה החלופות, ומה המחיר שלהן?",
+        "modelAnswer": "container חולק את ה-kernel עם ה-host, כך שכל חולשה ב-kernel שנגישה דרך syscalls מותרים היא דרך לברוח, ו-seccomp מצמצם אבל לא מבטל את זה. חלופה אחת היא gVisor, שמיירט את ה-syscalls ומממש אותם ב-kernel שרץ ב-user space, כך שהקוד כמעט לא נוגע ב-kernel האמיתי, במחיר overhead על כל syscall. חלופה חזקה יותר היא microVM כמו Firecracker, שמבוסס על KVM ונותן בידוד של VM עם זמן עלייה של כ-100 ms וזיכרון overhead קטן. המחיר של בידוד חזק הוא זמן עלייה, ולכן מחזיקים pool של sandboxes חמים. בכל מקרה מגבילים גם מספר processes (pids cgroup) נגד fork bomb.",
+        "rubric": [
+          "container חולק kernel; חולשת kernel = בריחה",
+          "gVisor: kernel ב-user space, overhead על syscalls",
+          "microVM (Firecracker): בידוד VM עם עלייה מהירה",
+          "pool חם ו-pids limit נגד fork bomb"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1318,7 +1644,17 @@
       ],
       "problem": "Meta onsite (product design): design LeetCode / an online coding (contest) platform (phone)",
       "id": "design.producer-consumer.q53",
-      "lesson": "design.producer-consumer"
+      "lesson": "design.producer-consumer",
+      "followUp": {
+        "prompt": "10,000 משתמשים ממתינים לתוצאה בו-זמנית. מה העלות של polling כל שנייה לעומת WebSocket, ומה קורה אם ה-client שולח את ה-POST שוב אחרי timeout?",
+        "modelAnswer": "polling כל שנייה הוא 10,000 בקשות בשנייה, ורובן מחזירות 'עדיין רץ', כלומר עומס על ה-API ועל ה-DB ו-latency ממוצע של חצי שנייה לגילוי התוצאה. WebSocket או SSE מחזיקים חיבור פתוח ודוחפים את התוצאה ברגע שהיא מוכנה, במחיר של חיבורים פתוחים וצורך לנתב את ההודעה לשרת שמחזיק את החיבור (למשל pub/sub לפי submission_id). long polling הוא פשרה: בקשה שהשרת מחזיק עד שיש תשובה או timeout. אם ה-POST נשלח שוב אחרי timeout, נוצרת הגשה כפולה; לכן ה-client שולח header של Idempotency-Key, והשרת מחזיר את אותו submission_id לבקשה חוזרת עם אותו מפתח.",
+        "rubric": [
+          "polling: 10,000 בקשות בשנייה, רובן ריקות",
+          "WebSocket/SSE דוחפים את התוצאה, דורשים ניתוב לשרת המחזיק",
+          "long polling כפשרה",
+          "Idempotency-Key למניעת הגשה כפולה"
+        ]
+      }
     }
   ]
 }

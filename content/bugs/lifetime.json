@@ -369,7 +369,16 @@
         "נכון: sv מצביע לתווים של הזמני מ-makeName(), שנהרס בסוף ה-full-expression. ל-string_view אין lifetime extension, וההדפסה קוראת זיכרון משוחרר."
       ],
       "explanation": "string_view הוא רק מצביע ואורך, ואין לו lifetime extension: הזמני נהרס בסוף ה-full-expression. ב-SSO (מחרוזת קצרה כמו כאן) הנתונים נמצאים על ה-stack של הזמני, ולכן לפעמים 'עובד' ולפעמים זבל. ASan יתפוס (stack-use-after-scope עם SSO, heap-use-after-free למחרוזת ארוכה), וגם Clang מזהיר כאן עם `-Wdangling-gsl`. תיקון: `std::string s = makeName();`.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "אמרת שעם מחרוזת קצרה זה לפעמים עובד ועם ארוכה זה heap-use-after-free. הסבר את ה-SSO: איפה הנתונים נשמרים בכל מקרה, מה הסף הטיפוסי, ולמה זה משנה את סוג הדיווח של ASan?",
+        "modelAnswer": "Small String Optimization שומר מחרוזות קצרות בתוך אובייקט ה-std::string עצמו, בלי הקצאת heap. הסף תלוי מימוש: ב-libstdc++ עד 15 תווים, ב-libc++ עד 22 תווים ב-64 ביט, ב-MSVC עד 15. כאן radio-7 קצרה, ולכן התווים יושבים בזמני שנמצא על ה-stack של main, וה-view מצביע ל-stack שעדיין ממופה ולרוב לא נדרס מיד, ולכן נראה שזה עובד. ASan מדווח stack-use-after-scope כשהוא מופעל עם בדיקת scope (ברירת מחדל ב-clang וב-GCC החדשים). במחרוזת ארוכה הנתונים ב-heap ומשתחררים ב-destructor, ו-ASan מדווח heap-use-after-free כי הבלוק נמצא ב-quarantine. בשני המקרים זה UB, וההבדל הוא רק מה שומר על הזיכרון.",
+        "rubric": [
+          "SSO: מחרוזת קצרה בתוך האובייקט, בלי heap",
+          "סף תלוי מימוש (15 ב-libstdc++, 22 ב-libc++)",
+          "stack-use-after-scope מול heap-use-after-free לפי מיקום הנתונים"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q08",
@@ -393,7 +402,16 @@
         "שגוי: אין כאן ריבוי threads; atomic לא רלוונטי."
       ],
       "explanation": "לכידה by reference היא מצביע ל-`count` המקומי. התיקון: `[count]() mutable { return ++count; }`, כך שהמונה נשמר בתוך ה-closure. `mutable` נחוץ רק כשלוכדים by value, ולכן הוא חלק מהתיקון ולא הבאג המקורי.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "תיקנת ל-`[count]() mutable`. עכשיו מעתיקים את `c` ל-`auto d = c;` וקוראים לשניהם. מה כל אחד מחזיר, ואיך היית משנה את הקוד אם רוצים ששני העותקים יחלקו מונה אחד?",
+        "modelAnswer": "העתקה של std::function מעתיקה את ה-closure, ולכן ל-d יש עותק משלו של count עם הערך שהיה ברגע ההעתקה. אם c נקרא פעם אחת לפני ההעתקה, c ימשיך 2, 3 ו-d יתחיל גם הוא מ-2, באופן בלתי תלוי. כדי לשתף מונה צריך שה-closure ילכוד בעלות משותפת: `auto p = std::make_shared<int>(0); return [p] { return ++*p; };`, ואז כל עותק מחזיק את אותו int והוא חי כל עוד יש closure אחד לפחות. אם הקוראים ב-threads שונים, צריך `std::shared_ptr<std::atomic<int>>` כי ה-shared_ptr מגן רק על ה-refcount, לא על האובייקט.",
+        "rubric": [
+          "העתקת std::function מעתיקה את ה-state, כל עותק נפרד",
+          "שיתוף: לכידת shared_ptr למונה",
+          "מ-threads שונים צריך atomic, shared_ptr לא מגן על הערך"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q09",
@@ -417,7 +435,16 @@
         "שגוי: reference לא-const מאפשר לשנות את הווקטור של הקורא; זו בדיוק הכוונה."
       ],
       "explanation": "erase מבטל iterators מהמיקום שנמחק והלאה. השימוש ב-`it` אחרי זה הוא UB; בפועל האיבר הבא זז למקום של `it` ו-`++it` מדלג עליו, ואם נמחק האיבר האחרון `it` עובר את `end()`. תיקון: `it = v.erase(it)` בלי `++it` באותה איטרציה, או `std::erase_if(v, [](int x){ return x < 0; })` (C++20), שהוא גם O(n) במקום O(n^2).",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "אמרת ש-erase_if הוא O(n) ולולאה עם `it = v.erase(it)` היא O(n²). הסבר למה, ותאר איך erase_if (או erase-remove) עושה את זה במעבר אחד.",
+        "modelAnswer": "vector::erase של איבר אחד מזיז את כל האיברים שאחריו מקום אחד שמאלה, כלומר O(n-i). אם מחצית האיברים שליליים, יש כ-n/2 מחיקות שכל אחת מזיזה בממוצע n/2 איברים, כלומר O(n²); במיליון איברים זה סדר גודל של 10¹¹ הזזות. std::remove_if עובר פעם אחת עם שני מצביעים: read עובר על כל האיברים, ו-write מתקדם רק כשמוצאים איבר שנשאר ומעבירים אותו (move) למקום write. בסוף [begin, write) מכיל את האיברים שנשארו בסדר המקורי, ו-erase אחד מקצר את ה-vector. erase_if של C++20 עושה בדיוק את זה ומחזיר כמה נמחקו. ה-capacity לא משתנה; כדי לשחרר זיכרון צריך shrink_to_fit.",
+        "rubric": [
+          "erase בודד מזיז את כל הזנב: O(n²) בסך הכל",
+          "remove_if: שני מצביעים read/write במעבר אחד",
+          "erase יחיד בסוף; capacity לא משתנה"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q10",
@@ -440,7 +467,16 @@
         "שגוי: מחלקה רגילה תומכת ב-weakref; רק טיפוסים כמו int ו-list לא."
       ],
       "explanation": "weakref לא מעלה את ה-refcount. כל עוד `b` קיים, `r()` מחזיר את האובייקט. אחרי `del b` ה-refcount יורד ל-0 וב-CPython האובייקט משוחרר מיד, אז `r()` מחזיר None. ב-PyPy, עם GC אחר, השחרור לא מיידי, ולכן השאלה מוגבלת ל-CPython. מחלקה רגילה תומכת ב-weakref; `int` או `list` לא.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "ניסית לעשות `weakref.ref(xs)` כש-xs הוא list ונכשלת. למה int ו-list לא תומכים ב-weakref, ואיך עוקפים את זה אם צריך הפניה חלשה למערך גדול?",
+        "modelAnswer": "כדי לתמוך ב-weakref, אובייקט צריך שדה `__weakref__` שבו CPython שומר את רשימת ה-weak references אליו, כדי לנקות אותן כשהאובייקט מת. טיפוסים מובנים כמו int, tuple, list ו-dict לא כוללים את השדה כדי לחסוך זיכרון, כי יש מהם מיליונים. מחלקה רגילה מקבלת אותו אוטומטית, אלא אם הגדירה `__slots__` בלי `__weakref__`. העקיפה היא subclass ריק: `class WList(list): pass` תומך ב-weakref. מערכי NumPy דווקא תומכים ב-weakref ישירות, ולכן הפניה חלשה ל-ndarray גדול עובדת בלי טריקים.",
+        "rubric": [
+          "צריך slot של __weakref__ באובייקט",
+          "טיפוסים מובנים חוסכים אותו; __slots__ בלי __weakref__ גם מבטל",
+          "עקיפה: subclass ריק; ndarray תומך ישירות"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q11",
@@ -464,7 +500,16 @@
         "שגוי: ה-thread נוצר רק אחרי fill, ו-join לפני fill אינו חוקי (אין עוד thread); הבעיה היא ה-detach."
       ],
       "explanation": "אחרי detach אין שום סנכרון בין סיום startWorker לבין ה-thread. ה-vector נהרס ביציאה, וה-thread קורא heap משוחרר. תחת עומס ה-thread מתחיל מאוחר יותר ולכן הקריסה מופיעה דווקא שם. תיקון: להעביר בעלות, `[s = std::move(samples)] { process(s); }`, או להחזיק את ה-thread ולעשות join. mutex לא יעזור, הבעיה היא lifetime ולא race על ערכים.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "תיקנת עם move לתוך ה-lambda ו-detach נשאר. מה עדיין לא בטוח ב-detach כשהתהליך יוצא, ולמה רוב ההנחיות אומרות לא להשתמש בו?",
+        "modelAnswer": "גם אם ה-thread מחזיק את הנתונים שלו, הוא עלול לגעת במשאבים גלובליים: std::cout, logger, אובייקטים static. כש-main חוזר, ה-static-ים נהרסים בזמן שה-thread המנותק עדיין רץ, וזה UB; ואם exit נקרא, ה-thread פשוט נהרג באמצע, בלי לסיים כתיבה לקובץ או flush. בנוסף אין דרך לדעת שהעבודה הסתיימה, לבטל אותה או לקבל ממנה exception. לכן משתמשים ב-std::jthread (C++20), שעושה join ב-destructor ותומך ב-stop_token לביטול, או ב-thread pool שהבעלים שלו עושה shutdown ו-join מסודרים לפני היציאה.",
+        "rubric": [
+          "thread מנותק עלול לגעת ב-static-ים שנהרסים ביציאה",
+          "אין דרך לדעת סיום, לבטל או לקבל exception",
+          "חלופה: jthread עם stop_token או pool עם shutdown מסודר"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q12",
@@ -488,7 +533,16 @@
         "שגוי: Logger סטטי היה משנה את התכנון ויוצר state גלובלי; התיקון הנכון הוא בעלות (member by value או shared_ptr) או חוזה lifetime ברור."
       ],
       "explanation": "member reference לא מחזיק בעלות, ולכן ה-Sensor שורד את ה-Logger. ההחזרה מתקמפלת: copy construction של reference member מותר (רק assignment נמחק), ו-C++17 מבטיח copy elision ל-prvalue. תיקון: Logger כ-member by value, shared_ptr<Logger>, או לקבל את ה-Logger מבחוץ ולתעד שהוא חייב לחיות יותר.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "אמרת שאפשר להחליף ל-shared_ptr<Logger> או ל-Logger by value. במערכת שבה מאות Sensors כותבים לאותו קובץ לוג, איזו בחירה נכונה, ומה ה-trade-off מול הזרקה של reference עם חוזה מתועד?",
+        "modelAnswer": "Logger by value בכל Sensor אומר מאות Loggers שפותחים את אותו קובץ, וזה שגוי. shared_ptr<Logger> נותן בעלות משותפת: ה-Logger חי כל עוד Sensor אחד לפחות קיים, וזה בטוח, אבל מחירו refcount אטומי בכל העתקה של Sensor ובעלות מעורפלת (קשה לדעת מתי הלוג נסגר). reference או raw pointer עם חוזה מתועד, כשה-Logger נוצר בתחילת main וחי יותר מכל ה-Sensors, אפס תקורה ונפוץ במערכות שה-lifetime שלהן היררכי וברור. כדי לתפוס הפרות של החוזה מריצים טסטים תחת ASan. ההכרעה תלויה בשאלה אם יש בעלים ברור שחי יותר מכולם.",
+        "rubric": [
+          "by value = מופע נפרד לכל Sensor, לא מתאים למשאב משותף",
+          "shared_ptr: בטוח, עלות refcount ובעלות מעורפלת",
+          "reference עם חוזה כשיש בעלים ברור שחי יותר"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q13",
@@ -515,7 +569,16 @@
         "שגוי: makeVector מחזיר by value, כלומר prvalue, ו-const auto& נקשר אליו ישירות ומאריך את חייו."
       ],
       "explanation": "lifetime extension קורה רק כש-reference נקשר ישירות לזמני, כמו `const std::string& r = std::string(\"abc\")` ו-`const auto& r = makeVector()`. ב-`std::max(x, 1)` מוחזר `const int&` לאחד הארגומנטים, והזמני `1` מת בסוף השורה; ההרחבה לא עוברת דרך קריאה לפונקציה. ב-`std::vector<int>{1, 2}[0]`, `operator[]` מחזיר reference לאיבר בתוך vector זמני שנהרס. string_view אינו reference ולכן אין הרחבה.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "`const std::string& r = std::string(3, 'a');` מאריך את חיי הזמני. למה התקן בחר לא להאריך חיים דרך פונקציה כמו `std::max`, גם כשהקומפיילר רואה את הגוף שלה?",
+        "modelAnswer": "lifetime extension היא החלטה סטטית שהקומפיילר צריך לקבל בנקודת הקשירה, וצריך לדעת בדיוק איזה אובייקט להאריך. כשפונקציה מחזירה reference, היא יכולה להחזיר כל דבר: אחד הארגומנטים, member שלהם, משתנה גלובלי, ובחירה בזמן ריצה כמו ב-max. אם ההרחבה הייתה תלויה בגוף הפונקציה, ההתנהגות הייתה משתנה לפי inlining, יחידת קומפילציה ורמת אופטימיזציה, והפונקציה הייתה צריכה חוזה שלא קיים בחתימה שלה. לכן הכלל מוגבל לקשירה ישירה לזמני (או ל-subobject שלו דרך member access). הכלים המודרניים מנסים לסגור את הפער באזהרות כמו `-Wdangling-reference` ב-GCC 13 והאנוטציה `[[clang::lifetimebound]]`.",
+        "rubric": [
+          "ההרחבה נקבעת סטטית בנקודת הקשירה",
+          "reference מוחזר יכול להפנות לכל דבר ונבחר בזמן ריצה",
+          "כלים: -Wdangling-reference ו-[[clang::lifetimebound]]"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q14",
@@ -539,7 +602,16 @@
         "נכון: ה-callback לוכד this כ-raw pointer ואין unsubscribe ב-destructor. אחרי ש-Rx נהרס ה-Bus ממשיך לקרוא ל-onFrame על אובייקט מת."
       ],
       "explanation": "לכידת `this` היא raw pointer בלי בעלות. ה-Bus חי יותר מה-Rx ולא יודע שהוא נהרס. תיקונים: subscribe שמחזיר token/handle (RAII) שה-destructor של Rx משחרר, או weak_ptr ב-callback. גם עם unsubscribe צריך לוודא שאין callback שרץ במקביל ב-thread אחר בזמן ההריסה. קריאה ל-subscribe ב-constructor חוקית, אבל ה-callback עלול לרוץ לפני שה-constructor סיים (במחלקה נגזרת זה עוד יותר מסוכן).",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "הוספת token שמבטל את ה-subscribe ב-destructor של Rx. ה-Bus מפזר frames מ-thread משלו. תאר את ה-race שעדיין קיים, ואיך Bus צריך לממש unsubscribe כדי שיהיה בטוח.",
+        "modelAnswer": "ה-race: thread ה-Bus כבר העתיק את רשימת ה-callbacks או נמצא בתוך onFrame, ובאותו רגע ה-thread הראשי הורס את Rx. unsubscribe מסיר את ה-callback מהרשימה, אבל לא עוצר קריאה שכבר רצה, ו-onFrame ממשיך על אובייקט מת. unsubscribe בטוח צריך להיות חוסם: הוא מסיר את ה-callback ומחכה שכל קריאה פעילה אליו תסתיים, למשל עם מונה קריאות פעילות לכל subscription ו-condition variable, או בכך שהפיזור נעשה תחת mutex שגם unsubscribe לוקח. מלכודת: אם onFrame עצמו הורס את Rx או קורא ל-unsubscribe מתוך ה-callback, unsubscribe חוסם יגרום deadlock, ולכן צריך לזהות קריאה מאותו thread ולא לחכות.",
+        "rubric": [
+          "unsubscribe לא עוצר callback שכבר רץ ב-thread אחר",
+          "unsubscribe חוסם שמחכה לסיום קריאות פעילות",
+          "unsubscribe מתוך ה-callback: deadlock אם לא מזהים את אותו thread"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q15",
@@ -555,7 +627,16 @@
         "דפוסים חשודים ב-review ומניעה: ASan ב-CI, טסט רגרסיה"
       ],
       "explanation": "מראיין סניור מחפש הבנה שהסימפטום רחוק מהגורם, ושיטה מסודרת משחזור, דרך כלים, ועד מניעה.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "הזכרת GWP-ASan ל-production. איך הוא מצליח לרוץ על מכונות אמיתיות כשהעלות של ASan מלא היא פי 2, ומה המחיר בכמות הבאגים שהוא תופס?",
+        "modelAnswer": "GWP-ASan הוא sampling allocator: רק הקצאה אחת מתוך אלפים (למשל 1 ל-5000) מקבלת יחס מיוחד, והשאר עוברות ל-allocator הרגיל, כך שהתקורה זניחה ב-CPU ובזיכרון. ההקצאה שנבחרה מקבלת דף משלה עם guard page אחריו (או לפניו), והבלוק מיושר לקצה הדף, כך שגלישה מיד נוגעת בדף מוגן ומקבלת SIGSEGV. בשחרור הדף מסומן כ-PROT_NONE, ולכן גישה אחרי free גם קורסת מיד, עם stack של הקצאה ושחרור שנשמרו. המחיר: הסיכוי לתפוס באג בודד בריצה בודדת קטן מאוד, ולכן הוא שימושי רק כשרץ על צי גדול של מכונות לאורך זמן. הוא גם לא תופס גלישה בתוך ה-padding של יישור, ולא קריאות מזיכרון לא מאותחל.",
+        "rubric": [
+          "sampling: רק חלק קטן מההקצאות, תקורה זניחה",
+          "guard pages ודף PROT_NONE אחרי free: קריסה מיידית",
+          "תופס הסתברותית, צריך צי גדול ולאורך זמן"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q16",
@@ -579,7 +660,16 @@
         "שגוי: ביטוי הטווח מוערך פעם אחת בלבד, לפני הלולאה."
       ],
       "explanation": "range-for מתורגם ל-`auto&& __range = <expr>;` ולולאה עליו. lifetime extension חל רק על הזמני שהוא התוצאה הסופית של הביטוי, כאן reference שמוחזר מפונקציה, ולא על ה-Packet שממנו הוא בא. מעניין: `for (int x : recv().data)` היה תקין, כי גישה ל-member של prvalue קושרת ישירות ל-subobject של הזמני ומאריכה את חיי כולו. C++23 (P2718) מאריך את חיי כל הזמניים ב-range initializer. `&&`-qualifier היה מונע קריאה על זמני, לא מתקן. `recv()` נקרא פעם אחת.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "C++23 תיקן את זה עם P2718. אבל הקוד צריך להתקמפל גם ב-C++20. אילו שתי דרכים לכתוב את הלולאה כך שהיא בטוחה בשתי הגרסאות, ואיזה כלי היה תופס את הבאג המקורי?",
+        "modelAnswer": "הדרך הראשונה היא לשמור את הזמני במשתנה בעל שם: `auto p = recv(); for (int x : p.items())`, ו-p חי עד סוף ה-scope. השנייה היא init-statement של range-for מ-C++20: `for (auto p = recv(); int x : p.items())`, שמגביל את p ל-scope של הלולאה. אפשרות שלישית היא לשנות את ה-API: overload של items שמסומן `&&` ומחזיר את ה-vector by value (או מסומן deleted), כך ש-`recv().items()` כבר לא מחזיר reference לזמני. את הבאג המקורי ASan תופס כ-heap-use-after-free בזמן ריצה, ו-clang עם `[[clang::lifetimebound]]` על items יזהיר בזמן קומפילציה.",
+        "rubric": [
+          "משתנה בעל שם לפני הלולאה",
+          "init-statement של range-for (C++20)",
+          "ref-qualified overload (&&) או lifetimebound/ASan לזיהוי"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q17",
@@ -603,7 +693,16 @@
         "שגוי: co_await משעה את ה-coroutine ומחזיר שליטה לקורא; הוא לא חוסם את ה-thread של onError."
       ],
       "explanation": "הפרמטרים אכן מועתקים ל-frame, אבל העתקה של `const std::string&` היא העתקה של ה-reference. הזמני חי עד סוף ה-full-expression בקורא, כלומר עד ש-`logLater` מחזיר את ה-Task בהשעיה הראשונה; כשה-coroutine ממשיך שנייה אחר כך, `msg` dangling. תיקון: לקבל `std::string msg` by value. זה כלל אצבע ידוע ל-coroutines: לא לקבל references או views אם ה-coroutine חי יותר מהקריאה.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "שינית לקבלת `std::string msg` by value. עכשיו מישהו מעביר `std::string_view` לפונקציה אחרת שהיא coroutine וחוזר על אותה טעות. איזה כלל עבודה היית קובע לצוות לגבי פרמטרים של coroutines, ומה מחיר הכלל?",
+        "modelAnswer": "הכלל: coroutine שעלול לחיות מעבר ל-full-expression של הקורא (eager, detached, או נשמר) מקבל פרמטרים רק by value, ובמיוחד לא references, string_view, span או pointers גולמיים. לכידת this היא אותה בעיה, ולכן ב-member coroutines צריך להבטיח את חיי האובייקט, למשל shared_from_this. המחיר הוא העתקה של כל פרמטר לתוך ה-frame, כולל הקצאת heap למחרוזות ארוכות, וגם ה-frame עצמו גדל. בפועל זה זניח לעומת ה-co_await. ההנחיות של C++ Core Guidelines (CP.53) אומרות בדיוק את זה, ו-clang-tidy יכול לאכוף חלק מזה.",
+        "rubric": [
+          "פרמטרים by value בלבד ל-coroutine שחי מעבר לקריאה",
+          "כולל string_view, span, pointers ו-this",
+          "מחיר: העתקה לתוך ה-frame, לרוב זניח"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q18",
@@ -777,7 +876,16 @@
         "שגוי: ה-int עצמו לא זז ולא התאפס; רק הבעלות עברה, ו-*q הוא 5."
       ],
       "explanation": "בניגוד לרוב הטיפוסים, שאחרי move הם valid but unspecified, unique_ptr מובטח להיות null אחרי move. לכן `p` הוא false ו-`*q` הוא 5. בדיקת `p` חוקית לחלוטין; מה שהיה UB הוא `*p`. האובייקט עצמו (ה-int) לא זז, רק הבעלות עליו.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "unique_ptr מובטח null אחרי move. מה מובטח על `std::string s2 = std::move(s1);` לגבי s1, ומה מותר ואסור לעשות עם s1 אחר כך?",
+        "modelAnswer": "עבור std::string התקן אומר רק valid but unspecified state: s1 הוא string תקין, אבל התוכן לא מוגדר. בפועל הוא לרוב ריק, אבל עם SSO מימוש רשאי להשאיר את התווים, כי העתקה של מחרוזת קצרה זולה כמו move. מותר לקרוא לכל פעולה בלי preconditions: להשים לו ערך חדש, `clear()`, `size()`, `empty()`, להרוס אותו. אסור להניח תוכן מסוים, וקריאה ל-`s1[0]` או `front()` מסוכנת כי הם דורשים שהמחרוזת לא ריקה. הדפוס הנכון הוא לא להשתמש באובייקט אחרי move, או להשים לו ערך מחדש לפני שימוש; clang-tidy עם bugprone-use-after-move מזהיר על זה.",
+        "rubric": [
+          "valid but unspecified, בפועל לרוב ריק אך לא מובטח",
+          "מותר: השמה, clear, size, הריסה; אסור להניח תוכן",
+          "clang-tidy bugprone-use-after-move"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q26",
@@ -817,7 +925,16 @@
         "שגוי: −1 נמחק בפועל באיטרציה הראשונה; מי שמדולג הוא −2."
       ],
       "explanation": "ה-iterator של list מחזיק אינדקס. באינדקס 0 הוא רואה -1 ומוחק אותו, ו-[-2, 3] זזים שמאלה. באיטרציה הבאה האינדקס הוא 1 ומצביע ל-3, כך ש--2 מדולג. זו הגרסה של Python ל-iterator invalidation: לא קריסה אלא דילוג שקט. RuntimeError נזרק רק ל-dict ו-set. תיקון: `xs = [x for x in xs if x >= 0]`.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "הרשימה כאן היא מיליון איברים ואין זיכרון להעתקה שנייה. איך מסננים in-place ב-O(n), ולמה `xs[:] = (x for x in xs if x >= 0)` לא באמת חוסך זיכרון?",
+        "modelAnswer": "סינון in-place ב-O(n) נעשה בשני מצביעים: עוברים עם אינדקס קריאה, וכל איבר שנשאר כותבים במקום אינדקס הכתיבה ומקדמים אותו, ובסוף `del xs[w:]` חותך את הזנב בפעולה אחת. זה בדיוק remove_if של C++. לעומת זאת, השמה ל-slice מ-generator נראית in-place, אבל CPython חייב לממש את ה-generator לרשימה זמנית לפני ההשמה, כי הוא צריך לדעת את האורך, ולכן יש שוב עותק. remove בלולאה היה O(n²) כי כל remove מחפש ומזיז. אם הנתונים מספריים, מערך NumPy עם mask בוליאני `a[a >= 0]` מהיר בסדרי גודל, אבל גם הוא יוצר עותק.",
+        "rubric": [
+          "שני אינדקסים read/write ו-del xs[w:] בסוף",
+          "slice assignment מ-generator בונה רשימה זמנית",
+          "remove בלולאה הוא O(n²)"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q28",
@@ -841,7 +958,16 @@
         "שגוי: operator>> למחרוזת מנקה את word לפני הקריאה; זו לא הבעיה."
       ],
       "explanation": "`counts[word]` בונה string_view שמצביע לתוכן הנוכחי של `word`. בקריאה הבאה התוכן נדרס, כך שמפתחות קיימים משנים ערך אחרי שה-hash שלהם חושב והמבנה נשבר; ובסוף הפונקציה `word` נהרס וכל המפתחות dangling. rehash מזיז nodes בין buckets אבל לא נוגע בנתונים שה-views מצביעים עליהם, ולכן reserve לא עוזר. `operator[]` מוסיף ערך ברירת מחדל ולא זורק. תיקון: מפתח `std::string`.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "התיקון הפשוט הוא מפתחות `std::string`. אבל הקלט הוא קובץ של 10GB שכבר טעון בזיכרון כ-buffer אחד, ורוצים להימנע מהקצאה לכל מילה. איך שומרים string_view כמפתחות בצורה בטוחה, ומה צריך להבטיח?",
+        "modelAnswer": "string_view כמפתח בטוח כל עוד ה-buffer שהוא מצביע אליו חי יותר מה-map ולא משתנה. לכן מפרקים את המילים ישירות מתוך ה-buffer הגדול (חיפוש רווחים ויצירת view לכל מילה), ולא דרך משתנה `word` זמני שנדרס. ה-buffer צריך להיות const ובבעלות אובייקט שמחזיק גם את ה-map, או שה-map מוחזר יחד עם shared_ptr ל-buffer. אם המילים לא באות מ-buffer יציב, דפוס נפוץ הוא string interning: arena שמעתיקה כל מילה ייחודית פעם אחת, והמפתח הוא view לתוך ה-arena. עם מפתחות std::string ב-C++20 אפשר גם heterogeneous lookup (is_transparent) כדי לחפש עם string_view בלי הקצאה, ולהקצות רק בהכנסה של מילה חדשה.",
+        "rubric": [
+          "views ישירות ל-buffer יציב שחי יותר מה-map ולא משתנה",
+          "בעלות משותפת של ה-buffer וה-map, או arena ל-interning",
+          "heterogeneous lookup: הקצאה רק במילה חדשה"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q29",
@@ -869,7 +995,16 @@
         "שגוי: map הוא node-based, והוספה לא מבטלת שום reference או iterator."
       ],
       "explanation": "vector שמקצה מחדש (push_back מלא, או reserve שמגדיל capacity) מעביר את כל האיברים ל-buffer חדש, ולכן כל reference מתבטל. ב-deque, push_back בקצוות מבטל iterators אבל לא references, כי הבלוקים הקיימים לא זזים. ב-unordered_map, rehash מבטל iterators בלבד; כל איבר חי ב-node משלו. list ו-map הם node-based ולא מבטלים כלום בהוספה. ההבחנה בין iterator ל-reference היא בדיוק מה שמראיין סניור בודק.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "ב-unordered_map, reference לאיבר שורד rehash. איך זה מתיישב עם ה-cache performance, ולמה מימושים כמו absl::flat_hash_map שוברים את ההבטחה הזו?",
+        "modelAnswer": "std::unordered_map חייב לשמור כל איבר ב-node נפרד שמוקצה ב-heap, ו-rehash רק מעביר pointers בין buckets, ולכן references ו-pointers לאיברים נשארים תקינים. המחיר: הקצאה לכל הכנסה, וכל lookup עוקב אחרי pointer לזיכרון מפוזר, כלומר cache miss לכל גישה. absl::flat_hash_map ו-boost::unordered_flat_map שומרים את האיברים ישירות במערך רציף עם open addressing ו-metadata קומפקטית שנבדקת ב-SIMD, ולכן הם מהירים פי כמה, אבל rehash מזיז את האיברים עצמם וכל reference מתבטל, כמו ב-vector. התקן לא יכול לאמץ את זה כי ההבטחה של references יציבים היא חלק מה-API. אם צריך יציבות ב-flat map, שומרים unique_ptr לערך או משתמשים ב-node_hash_map.",
+        "rubric": [
+          "std::unordered_map: node לכל איבר, rehash מזיז pointers בלבד",
+          "המחיר: הקצאה לכל איבר ו-cache miss לכל גישה",
+          "flat maps: open addressing רציף, rehash מבטל references"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q30",
@@ -892,7 +1027,16 @@
         "שגוי: references מוארכים נהרסים בסדר הפוך ליצירה, ולכן T3 (שנוצר אחרון) נהרס לפני T1."
       ],
       "explanation": "`a` נקשר ישירות לזמני ולכן T1 חי עד סוף main. ב-`b` הזמני T2 נקשר לפרמטר של pick, וה-reference שמוחזר אינו קשירה ישירה, לכן T2 נהרס בסוף השורה (ו-`b` dangling; GCC 13 מזהיר `-Wdangling-reference`). ב-`c`, גישה ל-member של prvalue קושרת ל-subobject ומאריכה את חיי T3 כולו. בסוף main ה-references המוארכים נהרסים בסדר הפוך ליצירה: T3 ואז T1.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "ב-b הקומפיילר לא יכול להאריך את חיי T2. אם pick היה מחזיר `T` by value במקום `const T&`, מה היה מודפס, וכמה אובייקטים היו נוצרים?",
+        "modelAnswer": "אם pick מחזיר T by value, הוא מעתיק את t לאובייקט חדש שהוא prvalue, ו-b נקשר אליו ישירות, ולכן חייו מוארכים עד סוף main. ה-T2 הזמני המקורי עדיין נהרס בסוף השורה, אחרי שהעתיק את עצמו. נוצרים ארבעה אובייקטים: T1, T2, העותק של T2 (עם v=2) ו-T3. הפלט: ~T2 body ~T3 ~T2 ~T1, כי בסוף main נהרסים המוארכים בסדר הפוך ליצירה, T3, אחריו העותק של T2, ואחריו T1. אין כאן copy elision, כי t הוא פרמטר reference ולא prvalue או משתנה מקומי, כך שההעתקה חייבת לקרות.",
+        "rubric": [
+          "החזרה by value יוצרת עותק ש-b נקשר אליו ישירות",
+          "פלט: ~T2 body ~T3 ~T2 ~T1",
+          "אין copy elision מפרמטר reference"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q31",
@@ -916,7 +1060,16 @@
         "שגוי: std::function מעתיק את ה-closure, שמכיל רק את המצביע this; Tuner עצמו לא מועתק."
       ],
       "explanation": "בתוך member function, `freq_` הוא `this->freq_`, ולכן `[=]` לוכד את המצביע `this` ולא העתקה של ה-member. ה-Tuner הוא זמני שמת בסוף השורה של `auto f`, וה-closure נשאר עם this מת. C++20 הוציא משימוש את הלכידה המובלעת הזו (GCC מזהיר `-Wdeprecated`). העתקת ה-closure ל-std::function מעתיקה רק את המצביע. תיקון: `[freq = freq_]` או `[*this]`.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "הצעת `[*this]` או `[freq = freq_]`. מה ההבדל המעשי ביניהם כשהמחלקה היא Tuner אמיתי עם vector של 1MB ו-mutex כ-members?",
+        "modelAnswer": "`[*this]` מעתיק את כל האובייקט לתוך ה-closure: vector של 1MB מועתק בכל קריאה ל-snapshot, ואם יש std::mutex כ-member זה בכלל לא יתקמפל כי mutex לא ניתן להעתקה. גם העתקה בזמן ש-thread אחר משנה את האובייקט היא data race. `[freq = freq_]` לוכד רק את מה שצריך, 8 בתים, בלי תלות בשאר המחלקה. אם snapshot צריך להיות עקבי מול כתיבות מ-thread אחר, קוראים את freq_ תחת נעילה או כ-atomic, ורק אז לוכדים את הערך. כלל אצבע: init-capture מפורש לכל מה שה-lambda צריך, ו-`[*this]` רק לאובייקטים קטנים וניתנים להעתקה.",
+        "rubric": [
+          "[*this] מעתיק את כל האובייקט (כולל 1MB)",
+          "mutex כ-member: [*this] לא מתקמפל",
+          "init-capture לוכד רק את הנחוץ"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q32",
@@ -931,7 +1084,16 @@
         "לא פוסל אוטומטית: מבקש מדידה ומבחין בין נתיב חם ל-API כללי"
       ],
       "explanation": "מראיין סניור מצפה לאיזון: views הם כלי ביצועים לגיטימי, אבל API ציבורי צריך להפוך את חוזה ה-lifetime לקשה לשבירה, או לפחות למפורש ונבדק.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "המחבר מסכים להשאיר string_view אבל מבקש שהקומפיילר יעזור למנוע `tokenize(readLine())`. אילו כלים קיימים היום כדי לסמן את חוזה ה-lifetime ב-API, ומה כל אחד תופס?",
+        "modelAnswer": "האפשרות הכי פשוטה היא overload שמוחק קריאה עם rvalue: `std::vector<std::string_view> tokenize(std::string&&) = delete;`, שחוסם העברת std::string זמני בזמן קומפילציה (אבל לא literals או views שכבר dangling). `[[clang::lifetimebound]]` על הפרמטר אומר ל-clang שהערך המוחזר תלוי בחיי הארגומנט, והוא מזהיר כשמעבירים זמני והתוצאה נשמרת. GCC 13 ו-14 הוסיפו `-Wdangling-reference` ו-אזהרות דומות. בזמן ריצה, טסטים תחת ASan תופסים את ההפרות שנשארו. ובתיעוד: שם שמבהיר את החוזה, או טיפוס עוטף שמחזיק גם shared_ptr ל-buffer למקרים שבהם ה-tokens נשמרים לאורך זמן.",
+        "rubric": [
+          "overload עם std::string&& מסומן delete",
+          "[[clang::lifetimebound]] או אזהרות GCC",
+          "ASan בטסטים לתפיסת מה שנשאר"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q33",
@@ -954,7 +1116,16 @@
         "שגוי: אחרי mv.release() אין עוד exports, וה-extend השני מצליח; האורך 6 ולא 4."
       ],
       "explanation": "כל עוד יש memoryview פעיל, bytearray מסרב לשנות גודל וזורק BufferError, כי הגדלה עלולה להקצות מחדש את ה-buffer ולהשאיר את ה-view מצביע לזיכרון ששוחרר, בדיוק הבאג של reference ל-vector אחרי push_back. אחרי `mv.release()` אין exports, ה-extend מצליח והאורך 6. ההרחבה הראשונה לא בוצעה כלל, ולכן לא 8. ב-C++ אין הגנה כזו, ולכן צריך sanitizer.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "NumPy מאפשר `a.resize(...)` על מערך ש-view אחר מצביע לתוכו? מה NumPy עושה כדי להגן, ומה ההבדל מהמנגנון של bytearray?",
+        "modelAnswer": "ndarray.resize in-place בודק אם יש הפניות אחרות למערך (refcheck=True כברירת מחדל), ואם יש view או שם נוסף הוא זורק ValueError ומסרב לשנות גודל. זה דומה ל-bytearray שסופר exports פעילים של buffer protocol, אבל המנגנון שונה: NumPy בודק refcount ו-base של המערך. ניתן לבטל את הבדיקה עם refcheck=False, ואז view קיים עלול להצביע לזיכרון ששוחרר, בדיוק כמו ב-C++. הדרך הבטוחה היא `np.resize(a, shape)` או concatenate, שיוצרים מערך חדש ומשאירים את הישן ואת ה-views שלו תקינים. view של NumPy מחזיק הפניה ל-base, ולכן הוא שומר את ה-buffer בחיים גם אחרי del של המקור.",
+        "rubric": [
+          "ndarray.resize עם refcheck=True זורק אם יש הפניות",
+          "refcheck=False מבטל את ההגנה ומסכן dangling",
+          "np.resize או concatenate יוצרים מערך חדש בטוח"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q34",
@@ -984,7 +1155,16 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-5/"
       ],
       "problem": "NVIDIA: what's wrong with returning a local array",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "ב-`-O0` אותו קוד מדפיס בדרך כלל 1. למה, ולמה זה מסוכן יותר מקריסה ב-O2?",
+        "modelAnswer": "ב-O0 GCC לא מחליף את הכתובת ב-nullptr, ו-p מצביע למקום על ה-stack שבו היה ה-frame של make. מיד אחרי החזרה עוד לא נקראה פונקציה אחרת שתדרוס את האזור, ולכן p[0] עדיין 1. אבל printf עצמו משתמש באותו אזור stack, כך שבקריאה מורכבת יותר או בגישה ל-p[3] הערכים כבר זבל. זה מסוכן יותר כי הבאג עובר טסטים ב-debug ומתגלה רק ב-release או אחרי שינוי קטן בסדר הקריאות. ההחלטה של GCC להחזיר nullptr ב-O2 היא בחירה מכוונת להפוך UB שקט לקריסה דטרמיניסטית. -Wreturn-local-addr מופעל כברירת מחדל ו-`-Werror` היה עוצר את זה בקומפילציה.",
+        "rubric": [
+          "ב-O0 ה-stack עוד לא נדרס, ולכן הערך נראה תקין",
+          "קריאה לפונקציה אחרת דורסת את האזור",
+          "UB שקט עובר טסטים; nullptr הופך אותו לקריסה דטרמיניסטית"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q35",
@@ -1007,7 +1187,16 @@
         "שגוי: אובייקט static חי עד סוף התוכנית, ולכן ה-pointer תקף. הבעיה היא שיתוף, לא lifetime."
       ],
       "explanation": "באפר static פותר את בעיית ה-lifetime ויוצר בעיה חדשה: כל הקריאות חולקות אותו. זה שובר שימוש כפול באותו ביטוי, שימוש מכמה threads (זו הסיבה ל-strerror_r ו-localtime_r) ו-reentrancy.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "החליפו ל-`thread_local static char buf[16]`. איזו מהבעיות זה פותר ואיזו לא, ומה ה-API הנכון לפונקציה כזו?",
+        "modelAnswer": "thread_local פותר את בעיית ה-threads: לכל thread יש באפר משלו, ולכן אין data race. הוא לא פותר את השימוש הכפול באותו ביטוי: printf עם fmt(1) ו-fmt(2) באותו thread עדיין מקבל את אותו pointer פעמיים. הוא גם לא פותר reentrancy, למשל אם signal handler או callback קורא ל-fmt בזמן שמישהו מחזיק את התוצאה. ה-API הנכון הוא שהקורא מספק את הבאפר, כמו strerror_r ו-localtime_r: `int fmt(int v, char* out, size_t n)`, או ב-C++ פשוט להחזיר std::string (16 תווים נכנסים ב-SSO, בלי הקצאה). כך כל קריאה מקבלת אחסון משלה.",
+        "rubric": [
+          "thread_local פותר race בין threads",
+          "לא פותר שתי קריאות באותו ביטוי או reentrancy",
+          "API נכון: באפר מהקורא או החזרת std::string (SSO)"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q36",
@@ -1110,7 +1299,16 @@
         "שגוי: הגודל לא משנה את ה-lifetime. (n גדול מסוכן מסיבה אחרת: stack overflow בלי שום בדיקה.)"
       ],
       "explanation": "alloca ו-VLA נותנים זיכרון על ה-stack בגודל דינמי, עם lifetime של הפונקציה. הם מהירים, אבל אין להם דיווח כישלון (גודל גדול מדי פשוט דורס את ה-stack), ולכן הרבה תקני קוד אוסרים אותם.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "מישהו טוען ש-alloca מעולה ל-real-time כי הוא O(1) ובלי malloc. מה הסיכון שלו ב-thread עם stack של 64KB, ואיזו חלופה נותנת את אותו יתרון בלי הסיכון?",
+        "modelAnswer": "alloca רק מזיז את ה-stack pointer, ולכן הוא O(1) ובלי נעילה, אבל אין לו שום בדיקת גבול: n גדול מ-64KB פשוט חוצה את סוף ה-stack. אם יש guard page של 4KB, הקפיצה עלולה לדלג מעליה ולדרוס זיכרון של thread אחר או heap בלי קריסה (stack clash; GCC מציע `-fstack-clash-protection` נגד זה). בנוסף, alloca בתוך לולאה לא משתחרר עד סוף הפונקציה, כך שהשימוש מצטבר. החלופה ל-real-time היא באפר שהוקצה מראש באתחול: member, pool, או arena פר-thread שמתאפסת בכל מחזור. אם הגודל המקסימלי ידוע וקטן, מערך מקומי בגודל קבוע עם בדיקת n גם הוא בטוח.",
+        "rubric": [
+          "alloca בלי בדיקת גבול, יכול לחצות את סוף ה-stack",
+          "stack clash: דילוג מעל guard page",
+          "חלופה: באפר שהוקצה מראש או arena פר-thread"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q40",
@@ -1138,7 +1336,16 @@
         "https://www.geeksforgeeks.org/microsoft-interview-experience-set-106/"
       ],
       "problem": "Microsoft: an int on the stack vs new int, effect with many threads",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "אמרת שה-allocator thread-safe. אם 8 threads קוראים ל-new ו-delete על 16 בתים מיליוני פעמים בשנייה, איפה תראה את התקורה, ואיך היית מבטל אותה כאן?",
+        "modelAnswer": "ב-glibc, tcache פר-thread מטפל ברוב ההקצאות הקטנות בלי נעילה, כך שהעלות היא עשרות ננו-שניות לזוג new/delete ולא נעילה גלובלית. אבל זה עדיין מאות מונים יותר ממשתנה stack, ובפרופיילר תראה זמן ב-malloc ו-free, ולפעמים ב-arena locks כשה-tcache מתרוקן או כשמשחררים ב-thread אחר. בקוד הזה הפתרון פשוט: `int b = 10` על ה-stack, בלי heap בכלל. כשבאמת צריך heap בלולאה חמה, משתמשים מחדש באובייקט (member או thread_local), ב-pool פר-thread, או ב-allocator כמו jemalloc. מודדים עם perf על malloc/free, או עם מונה הקצאות.",
+        "rubric": [
+          "tcache פר-thread, בלי נעילה ברוב המקרים",
+          "עדיין עשרות ns לזוג, מול ~0 ב-stack",
+          "פתרון: משתנה stack, או שימוש חוזר/pool פר-thread"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q41",
@@ -1159,7 +1366,16 @@
         "שגוי: static מקומי הוא אובייקט יחיד שחי לאורך כל התוכנית ומשותף לכל ה-threads. עותק לכל thread הוא thread_local."
       ],
       "explanation": "שינוי של מילה אחת הופך משתנה פרטי לכל קריאה למשתנה גלובלי משותף. static מקומי יושב ב-.data, לא על ה-stack, ולכן הוא חי לנצח ומשותף לכל ה-threads.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "החליפו ל-`static std::atomic<int> a{5};` ו-`log(a.fetch_add(1) + 1)`. ה-race נפתר. מה קורה לביצועים עם 8 threads על ליבות שונות, ואיך היית מתכנן מונה כזה אם הוא רק סטטיסטיקה?",
+        "modelAnswer": "fetch_add אטומי הוא lock-free, אבל כל ליבה שכותבת צריכה בעלות בלעדית על ה-cache line, וה-line קופץ בין הליבות בכל פעולה. עם 8 threads שכותבים כל הזמן, כל פעולה עולה עשרות עד מאות ננו-שניות במקום כמה ננו-שניות, והביצועים לא גדלים עם מספר ה-threads ולפעמים יורדים. אם זה רק סטטיסטיקה, נותנים לכל thread מונה פרטי, thread_local או מערך מונים מרופד ל-64 בתים (alignas(64)) כדי למנוע false sharing, וסוכמים אותם רק כשקוראים את הסטטיסטיקה. כך הכתיבה היא פעולה מקומית בלי תעבורת coherence. אם הערך המוחזר צריך להיות ייחודי, למשל מזהה, אפשר לתת לכל thread טווח של מזהים בבת אחת.",
+        "rubric": [
+          "atomic נכון אבל ה-cache line קופץ בין ליבות",
+          "מונה פרטי לכל thread, סכימה בקריאה",
+          "ריפוד ל-64 בתים נגד false sharing"
+        ]
+      }
     },
     {
       "id": "bugs.lifetime.q42",
@@ -1180,7 +1396,16 @@
         "נכון: thread_local הוא static ברמת ה-thread: נשמר בין קריאות, אבל פרטי לכל thread, ולכן אין data race. pointer אליו שעובר ל-thread אחר נהיה dangling כשה-thread הבעלים מסתיים."
       ],
       "explanation": "שלושה סוגי storage duration למשתנה בתוך פונקציה: automatic (לכל קריאה), static (אחד לתוכנית), thread_local (אחד לכל thread). השאלה 'כמה עותקים, ומי חולק אותם' קובעת אם יש race.",
-      "lesson": "bugs.lifetime"
+      "lesson": "bugs.lifetime",
+      "followUp": {
+        "prompt": "thread_local עם destructor לא טריוויאלי, למשל `thread_local std::vector<float> buf;` בתוך worker של thread pool. מה העלות של הגישה אליו, ומתי ה-destructor שלו לא ירוץ בכלל?",
+        "modelAnswer": "גישה ל-thread_local עם אתחול דינמי או destructor עוברת לרוב דרך wrapper שבודק אם המשתנה כבר אותחל ב-thread הזה ורושם את ה-destructor בפעם הראשונה; ב-Linux עם TLS model של executable זו כתובת קבועה יחסית ל-fs, ובספרייה משותפת עלולה להיות קריאה ל-`__tls_get_addr`. בלולאה חמה עדיף לקחת reference פעם אחת ולעבוד דרכו. ה-destructor רץ כשה-thread מסתיים כרגיל, אבל ב-thread pool ה-threads חיים כל חיי התהליך, כך שהבאפר לא משתחרר עד ה-shutdown; זה טוב לשימוש חוזר אבל נראה כמו זיכרון שלא יורד. ה-destructor לא רץ בכלל אם התהליך יוצא עם `_exit` או `quick_exit`, אם ה-thread הוא detached ונהרג ביציאת התהליך, או ב-threads אחרים שעדיין רצים כש-main קורא ל-exit.",
+        "rubric": [
+          "גישה דרך wrapper של אתחול או __tls_get_addr בספרייה משותפת",
+          "ב-pool ה-thread חי לנצח, הזיכרון לא משתחרר עד shutdown",
+          "לא רץ ב-_exit או ב-thread שנהרג ביציאה"
+        ]
+      }
     }
   ]
 }

@@ -358,7 +358,16 @@
         "נכון: [=] בתוך member function לוכד את this. ה-callback ניגש ל-value_ דרך this אחרי שהאובייקט נהרס, וזה UB. הפתרונות: unsubscribe ב-destructor, weak_ptr, או [*this] כשמתאים להעתיק.",
         "שגוי: [=] מתקמפל בתוך member function ולוכד את this במרומז. זה בדיוק מקור הבעיה.",
         "שגוי: C++20 הוציא משימוש (deprecated) רק את הלכידה המרומזת של this דרך [=]. זה עדיין מתקמפל, והבאג קיים בכל תקן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת בלכידת weak_ptr. כתוב במילים את הגוף של ה-callback, ותסביר מה קורה אם ה-Sensor נהרס בדיוק בזמן שה-callback רץ ב-thread של ה-bus. ומה הדרישה מהאופן שבו Sensor נוצר כדי שזה יעבוד?",
+        "modelAnswer": "ה-callback לוכד `std::weak_ptr<Sensor> w = weak_from_this()` (או shared_from_this שהומר ל-weak), ובגוף עושה `if (auto s = w.lock()) s->handle(s->value_);`. lock() אטומי: הוא מחזיר shared_ptr לא ריק רק אם ה-reference count עוד לא הגיע לאפס, ומרגע זה ה-callback מחזיק בעלות, כך שגם אם ה-thread השני משחרר את ה-shared_ptr האחרון, האובייקט ייהרס רק כש-s יוצא מה-scope ב-thread של ה-bus. כלומר ה-destructor ירוץ על ה-thread של ה-bus, וצריך לוודא שזה בטוח. הדרישה: Sensor חייב להיות מנוהל ב-shared_ptr ולרשת מ-enable_shared_from_this, ואסור לקרוא ל-weak_from_this/shared_from_this מתוך ה-constructor, כי ה-shared_ptr עוד לא קיים. מחיר: lock() הוא increment אטומי (ו-CAS) בכל קריאה.",
+        "rubric": [
+          "w.lock() ובדיקה שהתוצאה לא ריקה לפני שימוש",
+          "lock מחזיק בעלות עד סוף הקריאה, וה-destructor עשוי לרוץ ב-thread של ה-bus",
+          "דרישה: shared_ptr + enable_shared_from_this, ולא מה-constructor"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q09",
@@ -381,7 +390,16 @@
         "שגוי: מניח ש-p עדיין מחזיק את ה-int. ה-move ממנו קרה ביצירת ה-closure, ו-unique_ptr אחרי move הוא nullptr.",
         "שגוי: אין כאן העתקה. std::move(p) מאפשר move construction של q, ולכן זה מתקמפל. רק ה-closure עצמו הופך move-only.",
         "שגוי: ה-closure הוא הבעלים של ה-int דרך q, ולכן *q תקין לגמרי. p הוא שהתרוקן, וממנו לא קוראים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה צריך להעביר את ה-closure הזה (שמחזיק unique_ptr) לתור משימות של thread pool ב-C++17, בלי move_only_function. אילו אפשרויות יש לך, ומה המחיר של כל אחת?",
+        "modelAnswer": "אפשרות ראשונה: להחליף את unique_ptr ב-shared_ptr בתוך ה-capture, כך שה-closure copyable ונכנס ל-std::function. המחיר: control block, הקצאה נוספת ו-reference counting אטומי, וגם ההבטחה של בעלות יחידה הולכת לאיבוד. אפשרות שנייה: לכתוב type-erased wrapper משלך שהוא move-only, למשל מחלקה עם unique_ptr ל-base פנימי עם virtual operator() (בערך 20 שורות), שזה בדיוק מה ש-move_only_function עושה. המחיר: הקצאה לכל משימה אם אין SBO. אפשרות שלישית: std::packaged_task, שהוא move-only ומקבל callables כאלה, אבל מביא איתו shared state של future. אפשרות רביעית (hack): wrapper עם copy constructor שזורק או עושה move מהמקור, שמסוכן ולא מומלץ.",
+        "rubric": [
+          "shared_ptr במקום unique_ptr כדי להפוך את ה-closure ל-copyable, עם עלות refcount",
+          "type-erased wrapper move-only משלך (base עם virtual operator())",
+          "packaged_task כחלופה move-only"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q10",
@@ -408,7 +426,16 @@
         "נכון: generic lambda היא closure שה-operator() שלו הוא member function template. כל טיפוס ארגומנט יוצר instantiation נפרד.",
         "שגוי: function pointer לא יכול לשאת state בכלל, ולכן כל lambda עם captures, const או לא, לא ממירה אליו.",
         "נכון: ה-members של ה-closure מאותחלים פעם אחת ביצירה, ובכל קריאה משתמשים באותו עותק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה בפועל הקומפיילר מייצר עבור `[a, &b](auto x) { return a + b + x; }`? תאר את ה-closure class, ומה sizeof שלו על x86-64 כש-a הוא int ו-b הוא double.",
+        "modelAnswer": "הקומפיילר מייצר class אנונימי ייחודי עם שני data members: עותק של a (int) ו-reference ל-b, שבפועל ממומש כ-pointer (8 bytes), אם כי התקן לא מחייב את זה. יש לו `template<class T> auto operator()(T x) const`, שהוא const כי ה-lambda לא mutable, כך שאי אפשר לשנות את a בגוף. ה-constructor מאתחל את ה-members ברגע יצירת ה-lambda. sizeof בפועל: int (4) ועוד padding של 4 ועוד pointer (8) = 16 bytes ב-GCC ו-Clang. סדר ה-members והלייאאוט unspecified לפי התקן, ולכן אין להסתמך על כך. כי אין המרה ל-function pointer כשיש captures, האובייקט חייב לעבור by value או דרך template.",
+        "rubric": [
+          "class אנונימי עם member לכל capture: עותק ל-a, reference/pointer ל-b",
+          "operator() הוא template ו-const כברירת מחדל",
+          "sizeof בערך 16 (4 + padding + 8), והלייאאוט unspecified"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q11",
@@ -432,7 +459,17 @@
         "שגוי: work היא פונקציה חופשית ונקראת בתוך ה-lambda. אין שום דרישה שתהיה static.",
         "שגוי: detach היה מחמיר את המצב, כי ה-threads היו ממשיכים לרוץ בלי סנכרון. join הוא הנכון כאן.",
         "נכון: [&] לוכד את i by reference. ה-threads קוראים אותו בזמן שהלולאה מבצעת ++i, וזה data race. אחרי הלולאה i כבר יצא מה-scope וה-reference הוא dangling. [i] נותן לכל thread עותק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תיקנת ל-[i]. עכשיו כל thread צריך גם לכתוב תוצאה ל-`std::vector<double> results` (בגודל N, מוקצה מראש) באינדקס i. האם לכידת results by reference בטוחה כאן? מה הסכנה הנסתרת בביצועים, ואיך מתקנים?",
+        "modelAnswer": "לכידה by reference של results בטוחה כל עוד results חי עד שכל ה-threads עשו join, וכל thread כותב לאינדקס אחר ולא משנה את ה-vector עצמו (לא push_back ולא resize), כי כתיבה לאיברים שונים אינה data race. הסכנה הנסתרת היא false sharing: double הוא 8 bytes, ולכן 8 תוצאות יושבות באותו cache line של 64 bytes. אם threads כותבים בתדירות גבוהה לאיברים סמוכים, ה-cache line קופץ בין ליבות (MESI invalidations), וזה יכול להאט פי כמה. תיקון: לצבור לתוך משתנה מקומי בתוך ה-thread ולכתוב לתוצאה פעם אחת בסוף, או לרפד כל תוצאה ל-64 bytes (struct עם alignas(64), או std::hardware_destructive_interference_size).",
+        "rubric": [
+          "כתיבה לאינדקסים שונים אינה data race, בתנאי שה-vector לא משנה גודל",
+          "results חייב לחיות עד ה-join",
+          "false sharing: 8 doubles באותו cache line",
+          "תיקון: צבירה מקומית או alignas(64)"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q12",
@@ -459,7 +496,16 @@
         "שגוי: יש small buffer optimization, אבל closure גדול ממנו (16 בתים ב-libstdc++) מוקצה ב-heap.",
         "נכון: בפונקציה template הטיפוס המדויק של ה-closure ידוע בקומפילציה, ולכן הקריאה ישירה וניתנת ל-inline.",
         "שגוי: closure שלוכד unique_ptr הוא move-only, ו-std::function דורש copy. זה לא מתקמפל. ב-C++23 יש std::move_only_function."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך פונקציה `void for_each_sample(std::span<float> s, std::function<void(float&)> op)` שנקראת על בלוקים של 64K דגימות. כמה זה עולה לעומת template, איך תמדוד, ואם אתה חייב type erasure (למשל ממשק בין ספריות), מה החלופה הזולה יותר?",
+        "modelAnswer": "עם std::function, כל דגימה היא קריאה עקיפה (בערך 1-3 ננו-שניות) שהקומפיילר לא עושה לה inlining, ולכן גם אין vectorization: לפעולה כמו הכפלה ב-gain זה פי 4-16 איטי יותר מלולאה עם SIMD. עם template, op עובר inlining והלולאה עוברת auto-vectorization. מודדים עם google benchmark על אותו בלוק, ובודקים ב-perf או ב-disassembly אם יש call בלולאה והאם יש הוראות vector (vmulps). אם צריך type erasure בגבול API, מזיזים את הגבול לרמת הבלוק: הממשק מקבל `std::function<void(std::span<float>)>` שנקרא פעם אחת לבלוק, וכך עלות הקריאה העקיפה מתחלקת על 64K דגימות. חלופה נוספת היא function_ref (C++26) שלא מקצה ולא מעתיק.",
+        "rubric": [
+          "קריאה עקיפה לכל דגימה מונעת inlining ו-vectorization",
+          "מדידה: benchmark ובדיקת disassembly ל-call ול-SIMD",
+          "להעביר את ה-type erasure לרמת הבלוק (callback לבלוק ולא לדגימה)"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q13",
@@ -482,7 +528,16 @@
         "שגוי: מניח שאחד מהם הועתק. גם הגלובלי וגם ה-static לא נלכדים, ושניהם 10 בזמן הקריאה.",
         "נכון: לפי [expr.prim.lambda.capture] רק משתנים עם automatic storage duration נלכדים. g ו-s נגישים ישירות, ובזמן הקריאה שניהם 10, ולכן 20.",
         "שגוי: [=] פשוט לא לוכד אותם, ואין שגיאה. שגיאה הייתה רק בלכידה מפורשת כמו [s]."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם ה-closure הזה ריק ולא לוכד את s, מה קורה אם הקוד הזה רץ במקביל משני threads, כשאחד משנה את s והשני קורא ל-lambda? ומה אם במקום static היה `thread_local int s`?",
+        "modelAnswer": "כיוון שה-lambda ניגשת ל-s ישירות (לא עותק), שני ה-threads ניגשים לאותו אובייקט, וכתיבה מאחד וקריאה מהשני בלי סנכרון היא data race ו-UB. לכידה [=] לא נותנת כאן שום בידוד, למרות מה שהשם מרמז. צריך std::atomic<int> או mutex. עם thread_local, כל thread רואה עותק משלו של s, וה-lambda ניגשת לעותק של ה-thread שבו היא רצה, לא של ה-thread שבו היא נוצרה. זה מפתיע כשמעבירים lambda ל-thread pool: היא תקרא את ה-thread_local של ה-worker. גם thread_local לא נלכד, כי אין לו automatic storage duration.",
+        "rubric": [
+          "static לא נלכד, ולכן גישה מקבילה היא data race",
+          "thread_local לא נלכד גם הוא",
+          "ה-lambda ניגשת לעותק thread_local של ה-thread שמריץ אותה"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q14",
@@ -503,7 +558,16 @@
         "נכון: [*this] (C++17) מעתיק את כל האובייקט לתוך ה-closure. ה-lambda עובדת על snapshot עצמאי ולא תלויה ב-lifetime של המקור.",
         "שגוי: [this] לוכד רק pointer. ה-thread השני יראה את האובייקט החי, כולל שינויים מאוחרים, ועלול לגשת אליו אחרי שנהרס.",
         "שגוי: [&] לוכד גם את this וגם locals by reference. זה ההפך מ-snapshot, ומסוכן במיוחד כשה-lambda עוברת ל-thread אחר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "האובייקט מחזיק `std::vector<float>` של 100MB ו-mutex. מה יקרה עם [*this], ואיך היית בונה snapshot זול שעדיין בטוח לשימוש ב-thread אחר?",
+        "modelAnswer": "[*this] יעתיק את כל האובייקט: העתקה של 100MB בכל יצירת lambda, ובנוסף mutex הוא non-copyable, ולכן אם למחלקה אין copy constructor שמטפל בזה, [*this] לא יתקמפל בכלל. החלופה: להחזיק את הנתונים ב-`std::shared_ptr<const std::vector<float>>` ולתת ל-lambda ללכוד רק את ה-shared_ptr: `[data = data_]`. ה-snapshot עולה increment אטומי, הנתונים immutable ולכן בטוחים לקריאה מקבילה, ושינוי במקור נעשה על ידי יצירת vector חדש והחלפת ה-pointer (copy-on-write). אם צריך רק חלק קטן מהמצב, לוכדים רק את ה-members הנדרשים by value.",
+        "rubric": [
+          "[*this] מעתיק 100MB, ו-mutex non-copyable מונע קומפילציה",
+          "לכידת shared_ptr<const> לנתונים immutable",
+          "copy-on-write: שינוי יוצר עותק חדש ומחליף את ה-pointer"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q15",
@@ -544,7 +608,17 @@
         "שגוי: מניח ש-f ו-g חולקים מונה אחד. ה-copy יצר member נפרד, ולכן g() מתחיל מ-0 ומחזיר 1.",
         "שגוי: מניח שכולם, כולל n החיצוני, חולקים state. לכידה by value עם mutable משנה רק את העותק שבתוך כל closure.",
         "שגוי: מניח שהלכידה by value משנה את n החיצוני. n נשאר 0, כי ה-closures עובדים על עותקים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה מעביר lambda mutable שסופרת קריאות ל-`std::count_if` ומצפה לקבל את המונה בסוף דרך ה-lambda המקורית. למה זה לא עובד, ומה שתי הדרכים הנכונות לקבל את הספירה?",
+        "modelAnswer": "count_if מקבל את ה-predicate by value, ולכן עובד על עותק של ה-closure; המונה שבתוך ה-lambda המקורית נשאר 0. בנוסף, התקן לא מבטיח שהאלגוריתם לא מעתיק את ה-predicate שוב בפנים, ולכן גם state בעותק לא אמין, ופונקציות כמו remove_if עלולות לקבל עותקים שונים. דרך ראשונה: ה-lambda לוכדת counter חיצוני by reference (`[&cnt]`), וה-state חי מחוץ ל-closure. דרך שנייה: להעביר std::ref(f), שעוטף את ה-closure ב-reference_wrapper, וכל העותקים מפנים לאותו אובייקט. std::for_each הוא יוצא דופן שמחזיר את ה-functor, ולכן שם אפשר לקבל אותו מערך ההחזרה. predicates צריכים להיות stateless כעיקרון.",
+        "rubric": [
+          "אלגוריתמים מקבלים predicate by value ועשויים להעתיק אותו שוב",
+          "פתרון: לכידת counter חיצוני by reference",
+          "פתרון: std::ref(f)",
+          "for_each מחזיר את ה-functor"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q17",
@@ -565,7 +639,16 @@
         "שגוי: explicit object parameter (this auto self, P0847) הוא תכונה של C++23, לא של C++20.",
         "שגוי: fib2 שומרת reference ל-fib2, אבל משתמשת בו רק בזמן הקריאה, אחרי שהאתחול הסתיים. זה תקין.",
         "נכון: הטיפוס של fib1 עוד לא הוסק כשה-initializer מתייחס אליו, וזו שגיאה. fib2 עובדת דרך std::function עם קריאה עקיפה. fib3 משתמשת ב-deducing this של C++23 בלי type erasure."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה תקוע ב-C++17 ורוצה lambda רקורסיבית בלי std::function, למשל DFS על עץ בתוך פונקציה. איך עושים את זה, ומה ההבדל בביצועים?",
+        "modelAnswer": "מעבירים את ה-lambda לעצמה כפרמטר: `auto dfs = [&](auto& self, Node* n) -> void { ... self(self, n->left); ... };` ומפעילים `dfs(dfs, root)`. זו generic lambda, ולכן `self` מנוכה לטיפוס ה-closure עצמו, והקריאה ישירה: הקומפיילר יכול לעשות inlining חלקי ולפעמים להפוך tail recursion ללולאה. צריך לציין return type במפורש כשהגוף מכיל את הקריאה הרקורסיבית לפני return שמנכה טיפוס. לעומת זאת std::function עושה קריאה עקיפה בכל רמה ואולי הקצאה ביצירה, ובעץ עם מיליון צמתים זה מיליון קריאות עקיפות. חלופה: Y-combinator קטן, שהוא בדיוק העטיפה הזו בצורה כללית.",
+        "rubric": [
+          "העברת ה-lambda לעצמה כפרמטר auto& self",
+          "צריך return type מפורש",
+          "קריאה ישירה בלי type erasure, לעומת קריאה עקיפה ב-std::function"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q18",
@@ -586,7 +669,16 @@
         "שגוי: ב-C++17 גם לכידה by reference של structured binding אסורה. המעקף הוא init capture כמו [lo = lo].",
         "נכון: ב-C++17 structured binding הוא שם ל-subobject של משתנה נסתר ולא משתנה בפני עצמו, ולכן אסור ללכוד אותו. C++20 (P1091/P1381) מתיר זאת.",
         "שגוי: structured bindings הם לא references במובן הרגיל, וב-C++20 מותר ללכוד אותם. גם references רגילים אפשר ללכוד."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה התקן ב-C++17 בכלל אסר ללכוד structured binding? מה מיוחד בהם לעומת משתנה רגיל, ומה קורה ב-C++20 כשלוכדים by reference binding שמתייחס ל-bit-field?",
+        "modelAnswer": "structured binding אינו משתנה עצמאי: הקומפיילר יוצר משתנה נסתר (למשל pair) ו-lo ו-hi הם שמות ל-subobjects שלו (או תוצאות get<> עבור tuple-like). לכידה by reference של שם כזה מעלה את השאלה מה בדיוק נלכד, ולכן C++17 אסר את זה. C++20 מתיר לכידה, ואז זה מתנהג כמו לכידה של ה-subobject. החריג הוא bit-field: אי אפשר לקחת reference או pointer ל-bit-field, ולכן לכידה by reference של binding שמתייחס ל-bit-field היא ill-formed גם ב-C++20, ובמקרה כזה לוכדים by value או עם init capture.",
+        "rubric": [
+          "binding הוא שם ל-subobject של משתנה נסתר, לא משתנה עצמאי",
+          "C++20 מתיר לכידה",
+          "לכידה by reference של bit-field אסורה"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q19",
@@ -602,7 +694,17 @@
         "handle מסוג RAII להסרה בטוחה, או weak_ptr, עם הבנת המחיר"
       ],
       "explanation": "שאלה שמחברת lambdas, lifetime ומקביליות. התשובה החזקה מטפלת קודם ב-correctness (race ו-lifetime) ורק אחר כך בביצועים.",
-      "lesson": "cpp.lambdas"
+      "lesson": "cpp.lambdas",
+      "followUp": {
+        "prompt": "בעיצוב שלך ה-UI מחליף את רשימת ה-callbacks אטומית, וה-thread הקריטי קורא snapshot. איך מבטיחים שה-snapshot הישן ישתחרר רק כשה-thread הקריטי סיים להשתמש בו, ושהשחרור (כולל destructors של closures) לא יקרה על ה-thread הקריטי?",
+        "modelAnswer": "אם משתמשים ב-shared_ptr לרשימה, ה-thread הקריטי מחזיק עותק בזמן הריצה, ואם ה-UI החליף בינתיים, ה-reference האחרון עלול להשתחרר דווקא ב-thread הקריטי, ואז ה-destructor של הרשימה וה-free רצים בנתיב החם. פתרון אחד: ה-UI שומר את הרשימה הישנה ברשימת deferred-free, ומשחרר אותה רק אחרי שה-thread הקריטי מסמן שעבר גבול בלוק (epoch counter שה-thread הקריטי מקדם בכל בלוק, וה-UI מחכה שהוא יתקדם). זו גרסה פשוטה של RCU או epoch-based reclamation. פתרון שני: תור lock-free חוזר מה-thread הקריטי ל-UI, שאליו הוא דוחף את ה-pointer הישן לשחרור. בשני המקרים, ה-thread הקריטי עושה רק load אטומי וכתיבה אטומית, בלי malloc, free או locks.",
+        "rubric": [
+          "מזהה שה-reference האחרון של shared_ptr יכול להשתחרר ב-thread הקריטי",
+          "epoch / RCU: שחרור רק אחרי שה-thread הקריטי עבר גבול בלוק",
+          "או תור חוזר שמעביר את השחרור ל-thread אחר",
+          "ב-thread הקריטי אין malloc/free/lock"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q20",
@@ -723,7 +825,16 @@
         "נכון: לכידה by value של reference יוצרת member מטיפוס int עם הערך הנוכחי, 1. השינוי ל-x אחר כך לא משפיע על העותק.",
         "שגוי: מותר ללכוד reference by value. הלכידה פשוט מעתיקה את הערך של האובייקט המקושר.",
         "שגוי: אין כאן dangling או גישה לא חוקית. ה-closure מחזיק עותק int משלו, ו-x עדיין חי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך גורמים ל-lambda לראות את הערך העדכני של x אבל עדיין להיות בטוחה אם היא חיה יותר זמן מ-x? ומה ההבדל בין `[&r]` ל-`[r = std::ref(r)]` כאן?",
+        "modelAnswer": "שתי הדרישות סותרות עם reference: כדי לראות ערך עדכני צריך גישה לאובייקט המקורי, וכדי להיות בטוח צריך שהאובייקט יחיה. הפתרון הוא בעלות משותפת: להחזיק את x ב-`std::shared_ptr<int>` וללכוד את ה-shared_ptr by value, כך שה-lambda רואה שינויים ושומרת את האובייקט בחיים. `[&r]` לוכד reference ל-x (דרך r), ו-`[r = std::ref(r)]` יוצר member מסוג reference_wrapper<int> שמצביע ל-x; שניהם רואים את הערך העדכני, ושניהם dangling אם x מת. ההבדל: reference_wrapper הוא אובייקט רגיל שאפשר גם לאחסן ולהעביר הלאה, וצריך `.get()` (או המרה מרומזת) כדי לגשת ל-int.",
+        "rubric": [
+          "[&r] ו-std::ref שניהם רואים ערך עדכני ושניהם עלולים להיות dangling",
+          "בטיחות + ערך עדכני: shared_ptr שנלכד by value",
+          "reference_wrapper הוא אובייקט, צריך get() או המרה"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q26",
@@ -744,7 +855,16 @@
         "שגוי: C++17 הוסיף constexpr lambdas. constexpr auto sq הוא closure שהוא literal type.",
         "שגוי: מותר לכתוב constexpr אחרי הפרמטרים, אבל זה לא חובה. הקומפיילר מסמן אוטומטית כשאפשר.",
         "שגוי: sq(3) הוא constant expression, ולכן הגודל ידוע בקומפילציה וזה מערך רגיל. VLA הוא הרחבה של GCC ולא חלק מ-C++."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין lambda שהיא constexpr אוטומטית לבין lambda שמסומנת `consteval`? ואם תוסיף `std::cout` לגוף של sq, מה יקרה לשורת ה-static_assert ולשימוש ב-sq(x) בזמן ריצה?",
+        "modelAnswer": "constexpr (מפורש או מרומז) אומר שה-operator() יכול לרוץ בזמן קומפילציה כשההקשר מחייב, ועדיין ניתן לקרוא לו בזמן ריצה. consteval (C++20) אומר שכל קריאה חייבת להיות constant expression, וקריאה עם ערך זמן ריצה היא שגיאת קומפילציה. אם מוסיפים std::cout לגוף, operator() כבר לא עומד בדרישות constexpr, ולכן הקומפיילר פשוט לא מסמן אותו constexpr; זה לא שגיאה כל עוד לא כתבת constexpr במפורש. אז static_assert(sq(4) == 16) ו-int arr[sq(3)] נכשלים בקומפילציה, כי sq(4) אינו constant expression. השימוש בזמן ריצה ממשיך לעבוד. אם היית כותב constexpr במפורש, ב-C++17 עם std::cout זו שגיאה כבר בהגדרה.",
+        "rubric": [
+          "consteval: חייב להיות מחושב בזמן קומפילציה, אחרת שגיאה",
+          "עם std::cout ה-lambda מפסיקה להיות constexpr בשקט",
+          "static_assert ו-arr נכשלים, שימוש בזמן ריצה עובד"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q27",
@@ -767,7 +887,16 @@
         "שגוי: שוכח שגם i++ ב-init capture מקדם את i. i הוא 1 אחרי יצירת ה-closure ו-11 אחרי ה-+= 10.",
         "שגוי: מניח שה-init capture מוערך מחדש בכל קריאה. הוא רץ פעם אחת ביצירת ה-closure.",
         "נכון: ה-init capture מוערך פעם אחת ביצירה: j = i++ נותן j=0 ו-i=1. אחר כך i=11, ו-f() מחזיר את j השמור, 0."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין `[j = i]` לבין `[i]` מבחינת מה שקורה ל-type ול-const של ה-member? ואיך היית משתמש ב-init capture כדי ללכוד `std::vector` גדול בלי העתקה, וללכוד const reference למשתנה שאינו const?",
+        "modelAnswer": "`[i]` יוצר member מאותו טיפוס של i (כולל const אם i היה const). `[j = i]` מנכה את הטיפוס כמו `auto j = i`, כלומר בלי const ובלי reference. בשניהם, בלי mutable, ה-operator() הוא const ולכן אי אפשר לשנות את ה-member בגוף. לכידה בלי העתקה של vector: `[v = std::move(v)]`, שמעביר את הבעלות ל-closure ב-O(1); המשתנה המקורי נשאר valid but unspecified, ובפועל ריק. לכידת const reference: `[&cv = std::as_const(v)]`, שיוצר reference const לאובייקט שאינו const, כך שה-lambda לא יכולה לשנות אותו בטעות. init capture מוערך פעם אחת ביצירה, כמו שראינו בשאלה.",
+        "rubric": [
+          "init capture מנכה כמו auto (מוריד const/reference)",
+          "[v = std::move(v)] להעברה ב-O(1)",
+          "[&cv = std::as_const(v)] ל-const reference"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q28",
@@ -794,7 +923,16 @@
         "נכון: C++20 מתיר lambda ב-unevaluated context, כמו decltype או sizeof.",
         "שגוי: כל ביטוי lambda יוצר closure type ייחודי, גם עם טקסט זהה באותו קובץ.",
         "נכון: מ-C++20 ל-closure בלי captures יש copy assignment operator ברירת מחדל. עד C++20 הוא היה deleted."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-C++20 אפשר לכתוב `using Cmp = decltype([](int a, int b){ return a > b; });`. מה הסכנה אם השורה הזו מופיעה ב-header שנכלל בשני קבצי cpp, ו-Cmp משמש כחלק מטיפוס של פונקציה inline או של משתנה extern?",
+        "modelAnswer": "כל ביטוי lambda יוצר closure type ייחודי. ה-ODR מבטיח שאותה lambda תיתן אותו טיפוס בכל TU רק בהקשרים מסוימים, למשל בתוך inline function, בתוך הגדרת class או ב-template. alias ב-namespace scope הוא לא אחד מההקשרים האלה, ולכן בפועל כל TU שכולל את ה-header מקבל Cmp משלו, טיפוס שונה. אז `std::set<int, Cmp>` הוא טיפוס שונה בכל TU, ופונקציה inline או משתנה extern שהטיפוס שלהם כולל אותו מוגדרים אחרת בכל TU: הפרת ODR (ill-formed, no diagnostic required), או undefined reference בגלל mangling שונה. גם קומפיילרים טיפלו במקרים האלה באופן לא עקבי. הפתרון הבטוח הוא struct comparator עם שם, או std::greater<>.",
+        "rubric": [
+          "כל ביטוי lambda יוצר טיפוס ייחודי",
+          "ב-header זה עלול לייצר טיפוסים שונים בין TUs (הפרת ODR / mangling שונה)",
+          "פתרון: functor עם שם או std::greater<>"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q29",
@@ -817,7 +955,16 @@
         "שגוי: מניח ש-g עותק עצמאי עם מונה נפרד. f ו-g חולקים את אותו static, ולכן f() השלישי מחזיר 3.",
         "נכון: f ו-g מאותו closure type וחולקים static: 1, 2 ואז 3. ב-h לכל instantiation של ה-template יש static משלו: עם int הקריאה השנייה מחזירה 2, ועם double זו הראשונה ולכן 1.",
         "שגוי: מניח של-h יש static אחד לכל הקריאות. h(1.0) יוצר instantiation חדש עם double, עם static משלו שמתחיל מ-0."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מישהו משתמש ב-static בתוך lambda כדי לספור קריאות ל-callback בכל instance של מחלקה. למה זה שבור, ואיך מממשים מונה שהוא באמת per-closure? ומה הבעיה עם static כזה אם ה-lambda נקראת מכמה threads?",
+        "modelAnswer": "static בגוף שייך ל-operator() של ה-closure type, ולכן כל העותקים של ה-closure (וכל ה-instances של המחלקה שיוצרים את אותה lambda מאותו מקום בקוד) חולקים מונה אחד. מונה per-closure הוא data member: `[count = 0]() mutable { return ++count; }`, ואז כל עותק מקבל state משלו, ועותק שנוצר מהעתקה ממשיך מהערך שהיה ברגע ההעתקה. עם כמה threads, ++ על static int משותף הוא data race (UB); צריך std::atomic<int> עם fetch_add. אתחול של static local עצמו thread-safe מ-C++11, אבל השינויים שלו לא.",
+        "rubric": [
+          "static שייך לטיפוס ומשותף לכל העותקים",
+          "מונה per-closure: init capture עם mutable",
+          "גישה מקבילה ל-static int היא data race; צריך atomic"
+        ]
+      }
     },
     {
       "id": "cpp.lambdas.q30",
@@ -838,7 +985,16 @@
         "שגוי: הלכידה היא by reference ([&c]), ולכן אין עותק. השינויים מגיעים ל-counter.",
         "שגוי: מותר ללכוד פרמטר שהוא reference, גם by value וגם by reference.",
         "נכון: c הוא שם נוסף ל-counter, והלכידה [&c] מתייחסת ל-counter עצמו. counter חי לאורך כל התוכנית, ושתי הקריאות מעלות אותו ל-2."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן גרסה של make שנראית כמעט זהה אבל כן dangling, והסבר איך היית תופס את זה בכלי (קומפיילר, sanitizer) לפני production.",
+        "modelAnswer": "`auto make(int c) { return [&c] { return ++c; }; }`: כאן c הוא פרמטר by value עם automatic storage, והוא נהרס כש-make חוזרת, ולכן ה-closure מחזיק reference מת. גם `auto make(const int& c)` שנקראת עם temporary, כמו `make(5)`, יוצרת dangling, כי ה-temporary נהרס בסוף ה-full-expression. כלים: GCC 13 ו-Clang מזהירים על חלק מהמקרים (-Wdangling-reference, -Wreturn-stack-address), אבל לא תמיד על lambdas. בזמן ריצה, AddressSanitizer עם `detect_stack_use_after_return=1` (ברירת מחדל ב-Clang 15 ואילך ב-Linux) תופס גישה ל-frame שחזר. clang-tidy ו-static analyzers משלימים. הכלל ב-code review: lambda שבורחת מה-scope (מוחזרת, נשמרת, נשלחת ל-thread) לא לוכדת by reference אלא אם ה-lifetime מוכח.",
+        "rubric": [
+          "דוגמה: פרמטר by value שנלכד by reference",
+          "ASan עם detect_stack_use_after_return",
+          "כלל: lambda שבורחת מה-scope לא לוכדת locals by reference"
+        ]
+      }
     },
     {
       "level": 3,
@@ -869,7 +1025,16 @@
       ],
       "problem": "NVIDIA interview: memory safety of closures capturing references",
       "id": "cpp.lambdas.q31",
-      "lesson": "cpp.lambdas"
+      "lesson": "cpp.lambdas",
+      "followUp": {
+        "prompt": "החלפת ל-`[name]`. עכשיו schedule נקרא 10,000 פעמים בשנייה עם שמות של 200 תווים. מה העלות, ואיך מצמצמים אותה בלי לחזור ל-dangling?",
+        "modelAnswer": "לכידה `[name]` מעתיקה את המחרוזת: 200 תווים זה מעבר ל-SSO (בערך 15 ב-libstdc++, 22 ב-libc++), ולכן כל לכידה היא הקצאה והעתקה, ועוד הקצאה אם std::function לא מכיל את ה-closure ב-SBO. בסך הכל עשרות אלפי הקצאות בשנייה. שיפור ראשון: schedule מקבל std::string by value ולוכד `[name = std::move(name)]`, ואז כשהקורא מעביר temporary, המחרוזת עוברת ב-move ובלי העתקה. שיפור שני: אם השמות חוזרים על עצמם, interning: טבלה של שמות קבועים, ולוכדים אינדקס או `std::shared_ptr<const std::string>` או string_view למחרוזת שחיה לנצח (literal). מודדים עם heaptrack או counter על operator new.",
+        "rubric": [
+          "מעבר ל-SSO ולכן הקצאה לכל לכידה",
+          "קבלת string by value ו-init capture עם std::move",
+          "interning או לכידת pointer/view למחרוזת שחיה לנצח"
+        ]
+      }
     },
     {
       "level": 3,
@@ -892,7 +1057,16 @@
         "שגוי: v נלכד by value (deep copy), ולכן v[0] בתוך ה-lambda נשאר 1."
       ],
       "id": "cpp.lambdas.q32",
-      "lesson": "cpp.lambdas"
+      "lesson": "cpp.lambdas",
+      "followUp": {
+        "prompt": "מה היה קורה עם `std::unique_ptr<int>` במקום ה-pointer הגולמי, ועם `std::shared_ptr<int>`? מה כל אחד מאלה מלמד על ההבדל בין shallow ל-deep copy בלכידה by value?",
+        "modelAnswer": "unique_ptr הוא non-copyable, ולכן `[up]` לא מתקמפל; צריך `[up = std::move(up)]`, וה-closure הופך ל-move-only. אחרי זה up המקורי ריק, ושינוי של הערך דרך ה-closure נראה רק דרכו. shared_ptr ניתן להעתקה: הלכידה מעתיקה את ה-pointer ומגדילה את ה-reference count אטומית, ושני העותקים מצביעים לאותו int, כך ששינוי ב-x דרך המקור נראה ב-lambda, כמו ב-raw pointer, אבל בלי dangling כי ה-lambda שומרת את האובייקט חי. הכלל: לכידה by value מעתיקה בדיוק את מה שה-copy constructor של הטיפוס מעתיק: vector עושה deep copy, pointer ו-shared_ptr עושים shallow copy.",
+        "rubric": [
+          "unique_ptr לא נלכד by value בלי move, ה-closure move-only",
+          "shared_ptr: shallow copy עם increment אטומי, שומר את האובייקט חי",
+          "הלכידה עושה מה שה-copy constructor של הטיפוס עושה"
+        ]
+      }
     },
     {
       "level": 2,
@@ -950,7 +1124,16 @@
       ],
       "problem": "Qualcomm interview: function pointers vs direct calls (and C++11 lambdas)",
       "id": "cpp.lambdas.q34",
-      "lesson": "cpp.lambdas"
+      "lesson": "cpp.lambdas",
+      "followUp": {
+        "prompt": "אם הכרחי לך להעביר lambda עם captures ל-C API שאין בו בכלל `void* user_data` (למשל signal handler או qsort), מה האפשרויות, ואילו סכנות כל אחת מביאה?",
+        "modelAnswer": "אפשרות ראשונה: לשמור את ה-state במשתנה גלובלי או static (או thread_local) ולהעביר lambda בלי captures שקוראת אותו. זה עובד אבל לא reentrant: שני שימושים מקבילים דורסים זה את זה, ו-thread_local פותר רק חלק. ב-signal handler, גישה מותרת רק ל-`volatile std::sig_atomic_t` או ל-lock-free atomics, ואסור לקרוא לרוב פונקציות הספרייה (לא async-signal-safe), כך ש-lambda מורכבת שם מסוכנת. ל-qsort עדיף פשוט std::sort עם ה-lambda, או qsort_r (לא סטנדרטי, עם סדר פרמטרים שונה בין glibc ל-BSD). אפשרות קיצונית היא trampolines שנוצרים בזמן ריצה (כמו libffi closures), שדורשים זיכרון executable.",
+        "rubric": [
+          "state גלובלי/thread_local ו-lambda בלי captures, עם בעיית reentrancy",
+          "signal handler: רק sig_atomic_t או lock-free atomics, פונקציות async-signal-safe",
+          "ל-qsort: std::sort או qsort_r"
+        ]
+      }
     },
     {
       "level": 2,
@@ -994,7 +1177,17 @@
         "שגוי: std::function הוא אובייקט, לא function pointer. אין המרה ממנו ל-pointer של C."
       ],
       "id": "cpp.lambdas.q36",
-      "lesson": "cpp.lambdas"
+      "lesson": "cpp.lambdas",
+      "followUp": {
+        "prompt": "h הוא משתנה מקומי, והרישום חי מעבר לפונקציה. איך היית בונה RAII wrapper שמחזיק גם את ה-callable וגם את הרישום, כך שאי אפשר לטעות ב-lifetime? מה צריך לעשות עם copy ו-move של ה-wrapper?",
+        "modelAnswer": "מחלקה `Handler<F>` שמחזיקה את F כ-member, ב-constructor קוראת ל-set_handler עם trampoline ועם `this` (או כתובת ה-member) כ-user, וב-destructor קוראת ל-clear_handler או ל-set_handler(nullptr). כך ה-callable חי בדיוק כל עוד הרישום פעיל. ה-copy חייב להיות מחוק, כי שני עותקים יחזיקו רישום אחד. גם move בעייתי: הכתובת שנמסרה לספרייה מצביעה על האובייקט הישן, ולכן move יצטרך לרשום מחדש עם הכתובת החדשה, או שמוחקים גם move ושמים את ה-wrapper ב-unique_ptr כשצריך להעביר אותו. אם הספרייה קוראת ל-handler מ-thread אחר, ה-destructor חייב לוודא שאין קריאה בתהליך (הספרייה צריכה לספק unregister שמחכה) לפני שה-F נהרס.",
+        "rubric": [
+          "constructor רושם עם this כ-user, destructor מבטל רישום",
+          "copy מחוק",
+          "move דורש רישום מחדש או מחיקה (הכתובת השתנתה)",
+          "ב-multithreading: unregister שמחכה לקריאות פעילות"
+        ]
+      }
     }
   ]
 }

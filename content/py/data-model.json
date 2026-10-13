@@ -423,7 +423,16 @@
         "נכון: `0 + M(1)` הולך ל-`__radd__` ונותן `M(1)`; `M(1) + M(2)` הולך ל-`__add__` ונותן `M(3)`, ו-`.v` הוא 3.",
         "התוצאה של sum היא מופע של M שיש לו v, ולכן אין AttributeError."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "בקוד הזה `__radd__` לא בודק את הטיפוס של o. מה יקרה ב-`'abc' + M(1)`, ולמה `__radd__` אמור להחזיר NotImplemented ולא לזרוק בעצמו?",
+        "modelAnswer": "str.__add__ מקבל M ומחזיר NotImplemented, ואז Python קורא ל-M(1).__radd__('abc'), שמחשב s.v + o, כלומר 1 + 'abc'. שם int לא יודע לחבר str ול-str אין __radd__, ולכן נזרק TypeError מתוך __radd__ עם הודעה מבלבלת על int ו-str, ולא על M. החוזה הנכון: מתודה בינארית שלא מכירה את הטיפוס מחזירה NotImplemented, ואז Python מנסה את הצד השני, ורק אם שניהם החזירו NotImplemented הוא זורק TypeError עם הודעה ברורה על שני הטיפוסים. אם מתודה זורקת בעצמה, היא חוסמת את הצד השני מלטפל. לכן __radd__ צריך לבדוק isinstance(o, (int, float)) ולהחזיר NotImplemented אחרת.",
+        "rubric": [
+          "בלי בדיקת טיפוס נזרק TypeError מבלבל מתוך __radd__",
+          "NotImplemented מאפשר ל-Python לנסות את הצד השני",
+          "TypeError נזרק רק אחרי ששני הצדדים החזירו NotImplemented"
+        ]
+      }
     },
     {
       "id": "py.data-model.q08",
@@ -447,7 +456,17 @@
         "`@dataclass` מייצר את `__init__` אוטומטית, ולכן לא צריך להגדיר אותו ידנית.",
         "הסדר חוקי: שדה בלי ברירת מחדל לפני שדה עם ברירת מחדל. השגיאה הייתה הפוכה (`non-default argument follows default argument`) אם items עם ברירת מחדל היה בא לפני name."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "למה dataclass חוסם list אבל לא חוסם ברירת מחדל של מופע של מחלקה שלך, שגם היא mutable? ואיך פונקציה רגילה עם `items=[]` נכשלת בפועל?",
+        "modelAnswer": "הבדיקה של dataclass היא היוריסטיקה: היא זורקת ValueError רק כשלברירת המחדל אין __hash__, כלומר היא unhashable (כמו list, dict, set), ומאז Python 3.11 זה הקריטריון המפורש. מופע של מחלקה רגילה hashable לפי identity, ולכן עובר, למרות שאותו אובייקט ישותף בין כל המופעים, כלומר אותו באג בשקט. בפונקציה רגילה, ערך ברירת המחדל מחושב פעם אחת בזמן הגדרת הפונקציה ונשמר ב-`f.__defaults__`, ולכן כל קריאה בלי הארגומנט מקבלת את אותה רשימה, ו-append מצטבר בין קריאות. הפתרון בפונקציות: `items=None` ובגוף `if items is None: items = []`; ב-dataclass: `field(default_factory=...)` לכל אובייקט mutable.",
+        "rubric": [
+          "dataclass בודק unhashable, לא mutability באמת",
+          "מופע של מחלקה רגילה עובר את הבדיקה ומשותף בשקט",
+          "ברירת מחדל בפונקציה מחושבת פעם אחת ונשמרת ב-__defaults__",
+          "None ובדיקה בגוף, או default_factory"
+        ]
+      }
     },
     {
       "id": "py.data-model.q09",
@@ -474,7 +493,17 @@
         "מחלקה יורשת שלא מגדירה `__slots__` משלה מקבלת `__dict__` מחדש, ולכן החיסכון והחסימה נעלמים בה.",
         "נכון: לכל slot נוצר member descriptor ברמת המחלקה (`C.x` הוא `<member 'x'>`), ודרכו נעשית הקריאה והכתיבה לערך במופע."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "יש לך 10 מיליון מופעים של נקודה עם x ו-y. כמה זיכרון בערך חוסכים slots, ומה עוד היית שוקל אם זה עדיין יותר מדי?",
+        "modelAnswer": "מופע רגיל מחזיק __dict__ נפרד; ב-CPython מודרני עם key-sharing dicts זה עדיין בערך 100 bytes ומעלה לאובייקט, בנוסף לאובייקט עצמו. עם __slots__ האובייקט הוא header ושני מצביעים, בערך 48 bytes. כלומר חיסכון בסדר גודל של חצי, כמה מאות MB ב-10 מיליון. אבל ה-floats עצמם הם אובייקטים של 24 bytes כל אחד, אז כל נקודה עולה עדיין כ-100 bytes. אם זה יותר מדי, המבנה הנכון הוא struct-of-arrays: שני מערכי NumPy של float64, כלומר 16 bytes לנקודה, פי 6 ויותר פחות, וגם חישובים וקטוריים. אפשר גם array.array. מודדים עם tracemalloc או sys.getsizeof על דגימה.",
+        "rubric": [
+          "slots מבטלים את ה-__dict__ ומקטינים בערך פי 2",
+          "ה-floats עצמם עדיין אובייקטים נפרדים (24 bytes)",
+          "מערכי NumPy (SoA): 16 bytes לנקודה",
+          "מדידה עם tracemalloc או getsizeof"
+        ]
+      }
     },
     {
       "id": "py.data-model.q10",
@@ -515,7 +544,16 @@
         "זה מניח שכל מחלקה קוראת לשרשרת של ההורה שלה בנפרד, כמו ב-C++ בלי virtual inheritance. ה-C3 linearization מבטיח ש-A מופיע פעם אחת בלבד.",
         "הסדר ב-MRO נקבע לפי סדר הבסיסים בהגדרה `class D(B, C)`, ולכן B לפני C."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "עכשיו ל-B ול-C יש `__init__` עם פרמטרים שונים (B צריך `b`, C צריך `c`). איך כותבים אותם כך ש-`D(b=1, c=2)` יעבוד עם super, ולמה קריאה ישירה ל-`A.__init__(self)` שוברת את זה?",
+        "modelAnswer": "ב-cooperative inheritance כל מחלקה לא יודעת מי הבא ב-MRO, ולכן כל __init__ מקבל את הפרמטרים שלו כ-keyword ומעביר את השאר הלאה: `def __init__(self, b, **kw): super().__init__(**kw); self.b = b`. כך D קורא ל-B עם b ו-c, B לוקח את b ומעביר c ל-C, C לוקח את c ומעביר כלום ל-A, ו-A מעביר ל-object.__init__ בלי ארגומנטים, שזה חובה כי object לא מקבל ארגומנטים נוספים. קריאה מפורשת ל-`A.__init__(self)` מתוך B מדלגת על C, כי היא הולכת ישר לאב שבקוד ולא לבא ב-MRO, ולכן ה-__init__ של C לא ירוץ כלל. ובשילוב עם super במקום אחר, A יכול לרוץ פעמיים.",
+        "rubric": [
+          "כל __init__ לוקח את שלו ומעביר **kwargs ל-super",
+          "בסוף השרשרת לא נשארים ארגומנטים ל-object.__init__",
+          "קריאה מפורשת ל-A.__init__ מדלגת על C ב-MRO"
+        ]
+      }
     },
     {
       "id": "py.data-model.q12",
@@ -538,7 +576,17 @@
         "ההשמה `a.items = [9]` לא מוסיפה לרשימה המשותפת אלא יוצרת attribute חדש ב-`a.__dict__` שמסתיר אותה.",
         "נכון: שתי הקריאות ל-add משנות את הרשימה המשותפת `C.items` ל-`[1, 2]`; ההשמה יוצרת `a.items` פרטי `[9]`, ו-b ו-C ממשיכים לראות את המשותפת."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אם במקום רשימה, items היה int ו-add עשה `self.items += x`, מה היה מודפס בסוף? ואיך היית כותב מונה משותף למחלקה בצורה נכונה?",
+        "modelAnswer": "עם int, `self.items += x` הוא `self.items = self.items + x`: הקריאה מוצאת את משתנה המחלקה (0), אבל int immutable, אז נוצר int חדש וההשמה כותבת אותו ל-__dict__ של המופע. כלומר לכל מופע יש מונה משלו, ו-C.items נשאר 0. ההבדל מהרשימה נובע מכך ש-list מממש __iadd__ in-place ו-int לא, ולכן אותו קוד מתנהג אחרת לפי ה-mutability. מונה משותף נכון: לכתוב במפורש על המחלקה, `type(self).count += 1` או `C.count += 1`, או classmethod. ההבדל ביניהם בירושה: `type(self)` יוצר מונה נפרד בתת-מחלקה בפעם הראשונה שהיא כותבת, ו-`C.count` משותף לכל ההיררכיה.",
+        "rubric": [
+          "int immutable: += יוצר attribute חדש במופע",
+          "C.items נשאר 0, לכל מופע מונה משלו",
+          "list מממש __iadd__ in-place, int לא",
+          "מונה משותף: כתיבה על המחלקה במפורש"
+        ]
+      }
     },
     {
       "id": "py.data-model.q13",
@@ -559,7 +607,16 @@
         "שתיהן מוגדרות במחלקה ופועלות על גישה ל-attributes של המופעים שלה; ההבחנה בין מחלקה למופע לא קשורה.",
         "נכון: `__getattribute__` מיירט כל גישה (ולכן קל ליצור בו רקורסיה, ונמנעים ממנה דרך `object.__getattribute__`), ו-`__getattr__` נקרא רק אחרי AttributeError מהחיפוש הרגיל."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אתה כותב proxy שעוטף אובייקט ומעביר אליו כל גישה. למה `len(proxy)` לא עובד גם אם `__getattr__` מעביר הכל, ומה הפתרון?",
+        "modelAnswer": "פעולות מובנות כמו len(), +, iter() ו-with מחפשות את מתודות ה-dunder ישירות על הטיפוס (type(proxy)) ולא על המופע, ועוקפות גם את __getattr__ וגם את __getattribute__. זו אופטימיזציה של CPython (slots של type כמו tp_as_sequence) וגם החלטה סמנטית. לכן proxy שמגדיר רק __getattr__ עובד ל-`proxy.method()`, אבל `len(proxy)` זורק TypeError. הפתרון: להגדיר במפורש במחלקת ה-proxy את כל ה-dunders הנחוצים (`__len__`, `__iter__`, `__getitem__` וכו') שמעבירים לאובייקט הפנימי, ידנית או בלולאה שמייצרת אותם. כך בנויות ספריות כמו wrapt ו-`unittest.mock.MagicMock`, שמגדירה מראש את כל ה-magic methods.",
+        "rubric": [
+          "פעולות מובנות מחפשות dunder על הטיפוס, לא על המופע",
+          "גם __getattr__ וגם __getattribute__ נעקפים",
+          "הגדרה מפורשת של ה-dunders ב-proxy (כמו MagicMock)"
+        ]
+      }
     },
     {
       "id": "py.data-model.q14",
@@ -582,7 +639,17 @@
         "זה הפוך: מי שבוחר בזה הפך את כללי הקדימות. ה-data descriptor (property) מנצח את המופע, וה-non-data descriptor (פונקציה) מפסיד לו.",
         "נכון: `c.x` מגיע ל-property (data descriptor גובר על המופע) ומחזיר 1; `c.f` מגיע ל-lambda ב-`c.__dict__` (המופע גובר על non-data descriptor) ומחזיר `'inst'`."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "functools.cached_property שומר את התוצאה ב-`__dict__` של המופע. לפי מה שראית, האם הוא data descriptor או non-data, ולמה זה חייב להיות כך כדי שהוא יעבוד?",
+        "modelAnswer": "cached_property מגדיר רק __get__ (ו-__set_name__), כלומר הוא non-data descriptor. בגישה הראשונה אין ערך ב-__dict__, ולכן החיפוש מגיע לdescriptor במחלקה, שמחשב את הערך וכותב אותו ל-`instance.__dict__[name]`. בגישה הבאה, כי זה non-data descriptor, ה-__dict__ של המופע גובר והערך מוחזר ישירות בלי לקרוא לפונקציה, כלומר במהירות של attribute רגיל. אם הוא היה data descriptor (כמו property), הוא היה גובר על ה-__dict__ ונקרא בכל גישה, והמטמון לא היה עוזר. השלכה: cached_property לא עובד במחלקה עם __slots__ בלי __dict__, ואפשר לאפס אותו עם `del obj.attr`.",
+        "rubric": [
+          "cached_property הוא non-data descriptor (רק __get__)",
+          "בגישה השנייה ה-__dict__ גובר ואין קריאה לפונקציה",
+          "data descriptor היה נקרא בכל גישה",
+          "לא עובד עם __slots__ בלי __dict__"
+        ]
+      }
     },
     {
       "id": "py.data-model.q15",
@@ -605,7 +672,17 @@
         "זה הפוך: `==` הוא שנכשל על NaN, ובדיקת ה-containment מצליחה דרך בדיקת ה-identity.",
         "נכון: `in` משתמש ב-`is or ==`, ומכיוון שזה אותו אובייקט הבדיקה מצליחה; `x == x` הוא False כי NaN לא שווה לשום דבר, גם לא לעצמו."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "איך זה משפיע על `list.index`, `list.count`, `dict` עם NaN כמפתח, ועל `np.nan in arr`? ואיך היית בודק בבטחה אם יש NaN ברשימה?",
+        "modelAnswer": "list.index, list.count ו-in משתמשים באותה השוואה, identity ואז ==, ולכן הם מוצאים את אותו אובייקט NaN אבל לא NaN אחר. dict ו-set עושים את אותו דבר אחרי השוואת hash: `d[x]` עם אותו אובייקט NaN יעבוד, אבל `d[float('nan')]` לא, ואפשר לקבל כמה מפתחות NaN נפרדים ב-dict. ב-NumPy, `np.nan in arr` משתמש בהשוואה וקטורית ==, ולכן תמיד False, גם אם יש NaN במערך. בדיקה בטוחה: `any(math.isnan(v) for v in xs)` לרשימה, או `np.isnan(arr).any()` למערך. לא להשתמש ב-`x != x` כתחליף בקוד שאחרים קוראים, אף שזה עובד.",
+        "rubric": [
+          "index/count/in משתמשים ב-identity ואז ==",
+          "dict יכול להכיל כמה מפתחות NaN נפרדים",
+          "np.nan in arr הוא תמיד False",
+          "math.isnan או np.isnan לבדיקה"
+        ]
+      }
     },
     {
       "id": "py.data-model.q16",
@@ -628,7 +705,17 @@
         "ההשמה בחזרה ל-tuple כן נכשלת, כי tuple לא תומך ב-item assignment, ולכן ה-except רץ ומדפיס.",
         "גם יש exception (ההשמה ל-tuple נכשלת) וגם הרשימה השתנתה; שני החלקים כאן שגויים."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "האם אותו דבר יקרה עם `t[0].extend([2])` או `t[0].append(2)`? ומה זה מלמד על ההבדל בין mutation לבין rebinding?",
+        "modelAnswer": "לא. `t[0].extend([2])` הוא קריאה למתודה על הרשימה: קוראים את t[0] (מותר ב-tuple), והרשימה משתנה in-place, ואין שום השמה ל-t, ולכן אין שגיאה והתוצאה ([1, 2],). ה-+= הוא שתי פעולות: mutation דרך __iadd__ ואז rebinding של t[0], והשנייה אסורה כי tuple לא תומך ב-__setitem__. כלומר tuple immutable רק במובן שאי אפשר לשנות לאילו אובייקטים הוא מצביע, לא את האובייקטים עצמם. השלכה מעשית: tuple שמכיל list לא hashable, כי ה-hash שלו דורש hash של כל האיברים. בדיבוג: `dis.dis` על השורה יראה BINARY_OP (+=) ואחריו STORE_SUBSCR, וזה המקום שנכשל.",
+        "rubric": [
+          "extend/append הם mutation בלבד ולכן עובדים בלי שגיאה",
+          "+= הוא mutation ואז rebinding, וה-rebinding נכשל",
+          "tuple immutable רק ברמת ההפניות",
+          "tuple עם list אינו hashable"
+        ]
+      }
     },
     {
       "id": "py.data-model.q17",
@@ -649,7 +736,17 @@
         "נכון: מחלקה שמגדירה `__eq__` בלי `__hash__` מקבלת `__hash__ = None`, כי ה-hash שבירושה (לפי identity) כמעט בטוח לא עקבי עם ה-`__eq__` החדש. כדי לשמור אותו כותבים `__hash__ = Base.__hash__`.",
         "ל-Base אין hash \"לפי `__eq__`\": היא hashable לפי identity, וגם ה-hash הזה לא עובר ל-Sub."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "למה Python בחרה לבטל את ה-hash במקום להשאיר את ה-hash של ההורה? תן דוגמה קונקרטית לבאג שהיה נוצר.",
+        "modelAnswer": "החוזה הוא: a == b מחייב hash(a) == hash(b). ה-hash של Base מבוסס על identity, וה-__eq__ החדש של Sub מבוסס על תוכן, ולכן שני מופעים שונים עם אותו תוכן היו שווים עם hash שונה. דוגמה: `s = {Sub(1)}` ואז `Sub(1) in s` היה מחזיר False ברוב המקרים, כי החיפוש הולך ל-bucket לפי hash של identity ולא מוצא את האובייקט השווה, ו-set היה מכיל כפילויות 'שוות'. dict היה מתנהג באותה צורה, בשקט. לכן Python מעדיפה כשל רועש (TypeError: unhashable) על באג שקט. אם המחלקה באמת צריכה להיות hashable, מגדירים __hash__ שמבוסס על אותם שדות כמו __eq__, ושדות אלה צריכים להיות immutable.",
+        "rubric": [
+          "החוזה: a == b מחייב hash(a) == hash(b)",
+          "hash לפי identity מול eq לפי תוכן שובר את החוזה",
+          "דוגמה: in על set מחזיר False או כפילויות",
+          "__hash__ על אותם שדות immutable כמו __eq__"
+        ]
+      }
     },
     {
       "id": "py.data-model.q18",
@@ -665,7 +762,17 @@
         "special methods שמחופשות על הטיפוס ועוקפות את המופע"
       ],
       "explanation": "זו שאלת 'עומק' שמבדילה בין מי שמשתמש ב-Python למי שמבין אותה. property, methods, classmethod ו-__slots__ כולם נבנים על אותו מנגנון.",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "לפי השלבים שתיארת, למה גישה ל-method דרך המופע (`obj.f`) איטית יותר מגישה ל-attribute רגיל, ואיך CPython 3.11 ומעלה מצמצם את זה?",
+        "modelAnswer": "בגישה ל-`obj.f`, החיפוש עובר על ה-MRO של הטיפוס, מוצא פונקציה (non-data descriptor), בודק את ה-__dict__ של המופע, ואז קורא ל-__get__ שיוצר אובייקט bound method חדש, כלומר הקצאה. attribute רגיל במופע הוא בדיקת data descriptor בטיפוס וחיפוש ב-__dict__ של המופע, בלי הקצאה. עוד לפני 3.11, הקומפיילר מייצר LOAD_METHOD/CALL ל-`obj.f()` שמדלג על יצירת ה-bound method בקריאה ישירה. ב-3.11 ומעלה, ה-specializing adaptive interpreter (PEP 659) מחליף את ה-opcode בגרסה מותאמת שמטמנת את גרסת הטיפוס (type version tag) ואת מיקום הפונקציה, ולכן גישה חוזרת ל-method על אותו טיפוס כמעט חינמית. זו גם הסיבה ששינוי של מחלקה בזמן ריצה מבטל את המטמון.",
+        "rubric": [
+          "חיפוש ב-MRO ו-__get__ שיוצר bound method (הקצאה)",
+          "LOAD_METHOD מדלג על יצירת bound method בקריאה ישירה",
+          "PEP 659: specialization עם type version tag",
+          "שינוי מחלקה בזמן ריצה מבטל את המטמון"
+        ]
+      }
     },
     {
       "id": "py.data-model.q19",
@@ -808,7 +915,17 @@
         "K(2) שונה מ-K(1) גם ב-`__eq__`, ולכן לא מתמזג איתם.",
         "`__hash__` מוגדר במפורש, ולכן המחלקה hashable. TypeError היה עולה רק אם היה מוגדר `__eq__` בלבד."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "במחלקה הזו, `K(1) == 5` זורק AttributeError. איך היית מתקן את __eq__, ולמה החזרת False שם לא אידיאלית?",
+        "modelAnswer": "__eq__ ניגש ל-o.v בלי לבדוק את הטיפוס, ולכן int נכשל עם AttributeError. התיקון: `if not isinstance(o, K): return NotImplemented`. החזרת NotImplemented ולא False נותנת לצד השני הזדמנות להשוות (o.__eq__), וזה חשוב כשיש טיפוס אחר שיודע להשוות ל-K, למשל תת-מחלקה או wrapper. אם שני הצדדים מחזירים NotImplemented, Python עובר להשוואת identity עבור ==, ולכן התוצאה תהיה False בכל מקרה, בלי שגיאה. החזרת False ישירות חוסמת את הצד השני ושוברת סימטריה: a == b יכול להיות False ו-b == a True. גם `__ne__` נגזר אוטומטית מ-__eq__ ב-Python 3, כך שאין צורך להגדיר אותו.",
+        "rubric": [
+          "בדיקת isinstance והחזרת NotImplemented",
+          "NotImplemented מאפשר לצד השני להשוות",
+          "fallback ל-identity נותן False בלי שגיאה",
+          "False ישיר שובר סימטריה"
+        ]
+      }
     },
     {
       "id": "py.data-model.q26",
@@ -832,7 +949,17 @@
         "נכון: ה-hash נגזר מ-tags, שהיא רשימה mutable. אחרי `append` ה-hash של k השתנה, ה-lookup מחפש ב-bucket אחר (או מוצא hash שמור שונה) ולא מוצא את הרשומה, ומקבלים KeyError.",
         "dict לא מחפש לפי identity בלבד: הוא מחשב hash קודם, ורק בתוך ה-bucket המתאים בודק identity או `==`. hash שהשתנה מוביל למקום הלא נכון."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אחרי השינוי, האם אפשר בכלל למצוא את הערך ב-dict, למשל בלולאה על `d.items()`? ומה קורה אם יוצרים `Key([1, 2])` חדש ומחפשים אותו?",
+        "modelAnswer": "האיטרציה על d.items() לא משתמשת ב-hash, היא עוברת על הטבלה, ולכן תמצא את k ואת 'v'. חיפוש עם `Key([1, 2])` חדש מחשב hash של (1, 2), שזה אותו hash כמו של k אחרי השינוי, אבל ה-entry יושב ב-slot שנבחר לפי hash(1,), ולכן החיפוש לא מגיע אליו ומחזיר KeyError (אלא אם במקרה ה-probing מגיע לאותו slot, ואז גם ה-hash השמור צריך להתאים, והוא לא). גם חיפוש עם `Key([1])` חדש נכשל: הוא מגיע ל-slot הנכון וה-hash השמור תואם, אבל __eq__ משווה [1] ל-[1, 2] ונכשל. כלומר הערך 'אבוד' בכל דרך חיפוש, ותופס זיכרון עד שמנקים. הפתרון: מפתחות immutable (tuple או frozen dataclass).",
+        "rubric": [
+          "איטרציה מוצאת את הערך כי היא לא משתמשת ב-hash",
+          "Key([1, 2]) חדש: slot שגוי, KeyError",
+          "Key([1]) חדש: slot נכון אבל __eq__ נכשל",
+          "dict שומר את ה-hash של כל entry ומשווה אותו"
+        ]
+      }
     },
     {
       "id": "py.data-model.q27",
@@ -855,7 +982,17 @@
         "זה מניח ש-`+=` על list יוצר רשימה חדשה כמו `+`, וגם מתעלם מההשמה למופע. שני החלקים שגויים.",
         "נכון: `c.x += [2]` הוא `c.x = c.x.__iadd__([2])`: הקריאה מגיעה לרשימה של המחלקה ומשנה אותה in-place, וההשמה יוצרת `x` ב-`c.__dict__` שמצביע לאותה רשימה."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "מה יודפס אם x היה tuple, `x = (1,)` ו-`c.x += (2,)`? ובאיזה מצב הבאג הזה מסוכן במיוחד בקוד אמיתי?",
+        "modelAnswer": "tuple לא מממש __iadd__, ולכן += נופל ל-__add__ שיוצר tuple חדש (1, 2), וההשמה כותבת אותו ל-__dict__ של c. התוצאה: C.x נשאר (1,), c.x הוא (1, 2), ו-'x' in c.__dict__ הוא True. כלומר עם immutable כל מופע 'מתפצל' בשקט, ועם mutable כל המופעים משתנים יחד. המצב המסוכן: ברירת מחדל ברמת המחלקה כמו `handlers = []` או `config = {}`, שמופע אחד משנה ומשפיע על כל המופעים האחרים, כולל ב-tests שרצים באותו תהליך ומתחילים להיכשל לפי סדר הריצה. הפתרון: אתחול ב-__init__, או dataclass עם default_factory.",
+        "rubric": [
+          "tuple: __add__ יוצר אובייקט חדש, C.x לא משתנה",
+          "'x' נוצר ב-__dict__ של המופע בשני המקרים",
+          "attribute מחלקה mutable משותף בין מופעים וגורם לבאגים תלויי סדר",
+          "אתחול ב-__init__ או default_factory"
+        ]
+      }
     },
     {
       "id": "py.data-model.q28",
@@ -871,7 +1008,17 @@
         "frozen/NamedTuple/tuple כמפתחות immutable"
       ],
       "explanation": "השאלה בוחנת הבנה של הקשר בין mutability, שוויון ו-hashing — מקור נפוץ לבאגים שקטים עם set ו-dict.",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "frozen dataclass הוא hashable. אם אחד השדות שלו הוא list, מה קורה, ואיך frozen בכלל מונע השמה אם ל-Python אין const?",
+        "modelAnswer": "frozen=True מייצר __hash__ שמחשב hash של tuple של כל השדות, ולכן אם שדה הוא list, הקריאה ל-hash() תזרוק TypeError: unhashable type: 'list', רק כשמנסים לבצע hash, לא ביצירה. וגם אם היה hashable, frozen מגן רק על ההשמה לשדה, לא על התוכן: אפשר עדיין לעשות append לרשימה. המנגנון: dataclass מגדיר __setattr__ ו-__delattr__ שזורקים FrozenInstanceError, וה-__init__ עצמו משתמש ב-`object.__setattr__` כדי לעקוף אותם. כלומר זו מוסכמה שאוכפת ה-API, ומי שבאמת רוצה יכול לעקוף עם object.__setattr__. כדי שזה יהיה בטוח, שדות צריכים להיות immutable: tuple במקום list, frozenset במקום set.",
+        "rubric": [
+          "hash של שדה list זורק TypeError בזמן hash",
+          "frozen לא מונע mutation של אובייקט בשדה",
+          "__setattr__ שזורק FrozenInstanceError, __init__ עוקף עם object.__setattr__",
+          "שדות immutable (tuple, frozenset)"
+        ]
+      }
     },
     {
       "id": "py.data-model.q29",
@@ -894,7 +1041,17 @@
         "`A.radd` לא רלוונטי: האופרנד הימני הוא B, ו-B מדריסה את `__radd__`. גם בלי החריג, `A.__add__` היה מצליח קודם.",
         "שתי המתודות מוגדרות ומחזירות ערך, ולכן אין TypeError."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "למה Python נותנת עדיפות ל-__radd__ של תת-המחלקה? תן דוגמה מעשית שבה בלי הכלל הזה התוצאה הייתה שגויה.",
+        "modelAnswer": "הכלל קיים כדי שתת-מחלקה תוכל לשלוט בתוצאה של פעולות מעורבות עם ההורה. דוגמה: Vector ו-Vector3(Vector), ו-Vector3 רוצה שכל פעולה עם Vector תחזיר Vector3 עם בדיקת מימדים. בלי הכלל, `Vector() + Vector3()` היה קורא ל-Vector.__add__, שמחזיר Vector רגיל ומאבד את המידע, כי ההורה לא מכיר את תת-המחלקה. עם הכלל, Vector3.__radd__ נקרא קודם ומחליט. דוגמה אמיתית: numpy.ndarray ותת-מחלקות כמו np.ma.MaskedArray, או int ו-bool, ובאופן כללי __array_priority__ ב-NumPy הוא הרחבה של אותו רעיון. התנאי הוא שתת-המחלקה באמת מדריסה את המתודה המשתקפת; אם לא, אין סיבה להקדים אותה.",
+        "rubric": [
+          "תת-מחלקה צריכה לשלוט בתוצאת פעולה מעורבת",
+          "בלי הכלל, ההורה מחזיר טיפוס בסיס ומאבד מידע",
+          "התנאי: הדריסה של המתודה המשתקפת",
+          "דוגמה מעשית (NumPy, MaskedArray, או דומה)"
+        ]
+      }
     },
     {
       "id": "py.data-model.q30",
@@ -917,7 +1074,17 @@
         "`C.f` דרך המחלקה מחזיר ב-Python 3 את הפונקציה עצמה (אין unbound method), ולכן הוא אותו אובייקט בכל גישה.",
         "זה הפוך: מי שבוחר בזה מניח שהמופע מחזיק מתודה קבועה ושהמחלקה יוצרת עטיפה. בפועל הכריכה קורית רק בגישה דרך המופע."
       ],
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אם `c.f is c.f` הוא False, מה הבעיה ברישום callback כמו `signal.connect(c.f)` עם weakref, ואיך פותרים?",
+        "modelAnswer": "כל גישה ל-c.f יוצרת bound method חדש, ואם המנגנון שומר weakref אליו, אין לאובייקט הזה שום הפניה חזקה, ולכן הוא משתחרר מיד ו-weakref מת, והcallback לא נקרא אף פעם. בנוסף, ניתוק עם `disconnect(c.f)` צריך להשוות לפי == ולא is. הפתרון הוא `weakref.WeakMethod`, ששומר weakref לאובייקט (c) ולפונקציה בנפרד, ובונה מחדש את ה-bound method כשקוראים לו, ומת רק כש-c עצמו משתחרר. ספריות כמו blinker ו-Qt signals עושות את זה. החלופה: הפניה חזקה, עם הסיכון שה-callback מחזיק את c בחיים לנצח (memory leak).",
+        "rubric": [
+          "bound method חדש בכל גישה, ולכן weakref אליו מת מיד",
+          "השוואה לניתוק לפי == ולא is",
+          "weakref.WeakMethod: weakref לאובייקט ולפונקציה בנפרד",
+          "הפניה חזקה עלולה לגרום לדליפה"
+        ]
+      }
     },
     {
       "id": "py.data-model.q31",
@@ -1071,7 +1238,17 @@
       ],
       "explanation": "קריאה למתודה וירטואלית מתוך ה-constructor של ה-parent מגיעה לגרסה של היורשת, לפני שהיורשת סיימה לאתחל את עצמה. התיקון הוא לאתחל את השדות של היורשת לפני `super().__init__()`, או לא לקרוא למתודות שניתנות ל-override מתוך `__init__`.",
       "id": "py.data-model.q36",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "יש לך קוד קיים עם הרבה מחלקות שבנויות כך, ולא תמיד אפשר לסדר מחדש את ה-__init__. איזה דפוס היית מכניס כדי שהבדיקה תרוץ אחרי שכל האתחול הסתיים?",
+        "modelAnswer": "דפוס אחד: two-phase initialization, להוציא את ה-check מה-__init__ ולקרוא לו מפונקציית factory (classmethod create) אחרי שהאובייקט נבנה לגמרי. דפוס שני: hook שה-Base מגדיר ונקרא בסוף, למשל `__post_init__` כמו ב-dataclass, אבל זה דורש שמישהו יקרא לו אחרי ה-__init__ של היורשת, ולכן הכי נקי לעשות את זה ב-metaclass או ב-`__init_subclass__` שעוטף __init__, או לממש `__call__` במטא-מחלקה שקורא ל-`__init__` ואז ל-`_post_init`. דפוס שלישי ופשוט: lazy, להפוך את ready ל-property שמחושב בגישה, ואז אין בכלל תלות בסדר האתחול. ב-C++ אותה בעיה מתנהגת אחרת: בזמן ה-constructor של Base, קריאה וירטואלית מגיעה לגרסה של Base.",
+        "rubric": [
+          "factory או two-phase init שקורא ל-check אחרי הבנייה",
+          "hook של post-init דרך metaclass __call__ או __init_subclass__",
+          "property lazy שמבטל את התלות בסדר",
+          "ב-C++ הקריאה הווירטואלית מה-ctor מגיעה ל-Base"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1124,7 +1301,17 @@
       ],
       "explanation": "CPython משלב שני מנגנונים: reference counting שמשחרר אובייקט ברגע שאין אליו הפניות, ו-cyclic garbage collector (generational) שמוצא קבוצות של אובייקטים שמפנים זה לזה ואין אליהם הפניה מבחוץ. `gc.disable()` מכבה רק את השני; `gc.collect()` מריץ אותו ידנית.",
       "id": "py.data-model.q38",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "במה זה שונה אם `__del__` של b היה מנסה לגשת ל-`b.me.name`? ולמה בכלל לא כדאי לסמוך על `__del__` לשחרור משאבים?",
+        "modelAnswer": "כשה-GC אוסף cycle, הוא קורא ל-finalizers (PEP 442) לפני שהוא שובר את ההפניות, ולכן ב-__del__ של b, b.me עדיין b והגישה ל-name עובדת. אבל כשיש כמה אובייקטים ב-cycle, הסדר שבו ה-__del__ שלהם נקראים לא מוגדר, ואובייקט אחר כבר יכול להיות 'finalized' (אם כי לא משוחרר). __del__ לא אמין לשחרור משאבים כי: הזמן שבו הוא נקרא תלוי במימוש (מיד ב-refcount, מאוחר ב-cycle, ובכלל לא אם ה-GC כבוי והאובייקט ב-cycle), ב-shutdown של המפרש globals כבר יכולים להיות None, exception בתוכו רק מודפס כאזהרה ולא נזרק, ו-__del__ יכול 'להחיות' את האובייקט. לכן משתמשים ב-context managers, ואם חייבים fallback, `weakref.finalize`.",
+        "rubric": [
+          "finalizers נקראים לפני שבירת ההפניות (PEP 442)",
+          "סדר ה-finalizers ב-cycle לא מוגדר",
+          "זמן קריאה לא דטרמיניסטי, shutdown, exceptions נבלעות",
+          "context manager או weakref.finalize"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1145,7 +1332,17 @@
       ],
       "explanation": "ההבדל המרכזי מול Java: ב-CPython השחרור הוא בדרך כלל מיידי (refcount), אבל זה לא חוזה של השפה. משאבים כמו קבצים, sockets ו-locks משחררים עם `with`, כדי שהסגירה תהיה דטרמיניסטית בכל מימוש ובכל מסלול שגיאה.",
       "id": "py.data-model.q39",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "תן תרחיש קונקרטי ב-CPython שבו קובץ שנפתח בלי `with` נשאר פתוח הרבה אחרי שהפונקציה חזרה, ומה הנזק בשירות שרץ לאורך זמן.",
+        "modelAnswer": "תרחיש: הפונקציה פותחת קובץ `f = open(path)` וזורקת exception באמצע הקריאה. ה-traceback מחזיק את ה-frame, וה-frame מחזיק את f כמשתנה מקומי. אם ה-exception נשמר, למשל `self.last_error = e` או logging שמחזיק את האובייקט, או sys.exc_info ב-Python 2, הקובץ נשאר פתוח כל זמן שהשגיאה שמורה. תרחיש שני: הקובץ נכנס ל-cycle (למשל אובייקט שמחזיק את הקובץ ומפנה לעצמו), ואז הוא ייסגר רק כשה-GC המחזורי ירוץ. בשירות ארוך זה מוביל ל-'Too many open files' (ulimit של 1024 כברירת מחדל ב-Linux), ובכתיבה גם לנתונים שלא עברו flush לדיסק. זיהוי: `ls /proc/<pid>/fd | wc -l` לאורך זמן, ו-ResourceWarning עם `-W default`.",
+        "rubric": [
+          "traceback שמחזיק frame שמחזיק את הקובץ",
+          "cycle שדוחה את הסגירה ל-GC המחזורי",
+          "Too many open files ונתונים שלא עברו flush",
+          "זיהוי עם /proc/pid/fd או ResourceWarning"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1173,7 +1370,17 @@
       ],
       "explanation": "התמונה המלאה: refcount לשחרור מיידי, GC מחזורי לפי דורות שסורק רק containers, ו-PEP 442 שמאפשר לאסוף cycles עם `__del__`. `del` הוא פעולה על שם, לא על אובייקט.",
       "id": "py.data-model.q40",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "ב-Python 3.12 ומעלה יש immortal objects (PEP 683). מה זה משנה ל-refcount של None או של int קטנים, ולמה זה הוכנס?",
+        "modelAnswer": "PEP 683 מגדיר אובייקטים כמו None, True, False ו-int קטנים כ-immortal: ה-refcount שלהם מוגדר לערך מיוחד גבוה מאוד, ו-Py_INCREF/Py_DECREF לא משנים אותו. לכן `sys.getrefcount(None)` מחזיר מספר ענק וקבוע שאין לו משמעות. הסיבות: ביטול כתיבות לזיכרון משותף, כך שאחרי fork הדפים של אובייקטים אלה לא עוברים copy-on-write רק בגלל ספירת הפניות, וזה חשוב לשרתים עם pre-fork; וצעד הכרחי ל-free-threaded Python (PEP 703) ול-subinterpreters, כי אובייקטים משותפים בין threads לא צריכים refcount אטומי יקר. המחיר: בדיקה נוספת ב-INCREF/DECREF, שעלתה באחוזים בודדים.",
+        "rubric": [
+          "refcount קבוע ש-INCREF/DECREF לא משנים",
+          "getrefcount על None חסר משמעות",
+          "מונע copy-on-write אחרי fork",
+          "הכנה ל-free-threading ו-subinterpreters"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1196,7 +1403,17 @@
       ],
       "explanation": "שאלת 'explain the GC' בודקת אם אתה מבין את המודל של CPython ולא רק יודע שיש GC. תשובה חזקה מחברת את המנגנון לבעיה מעשית: איך מאבחנים זיכרון שעולה בשירות production.",
       "id": "py.data-model.q41",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "מצאת עם tracemalloc ש-dict אחד גדל בלי הפסקה, אבל לא ברור מי מחזיק אותו. מה הצעדים הבאים כדי למצוא את מי שמחזיק את ההפניה?",
+        "modelAnswer": "tracemalloc אומר איפה הזיכרון הוקצה, לא מי מחזיק אותו. לשאלה מי מחזיק: `gc.get_referrers(obj)` מחזיר את האובייקטים שמפנים אליו (רק containers שה-GC עוקב אחריהם), ואפשר לטפס כמה רמות עד שמגיעים ל-module, class או frame. כלי נוח יותר הוא objgraph: `objgraph.show_backrefs(obj)` מצייר את שרשרת ההפניות עד root, ו-`objgraph.show_growth()` מראה אילו טיפוסים גדלים בין שתי נקודות. חשודים נפוצים: cache גלובלי בלי הגבלה (`lru_cache` על מתודה מחזיק את self, dict ברמת module), רישום של callbacks שלא מנותקים, ו-exceptions שמוחזקים עם traceback. בשירות חי: snapshot השוואתי בין שני זמנים, ואם אי אפשר לעצור את התהליך, py-spy dump או heap dump עם memray.",
+        "rubric": [
+          "tracemalloc מראה איפה הוקצה, לא מי מחזיק",
+          "gc.get_referrers או objgraph.show_backrefs לשרשרת ההפניות",
+          "חשודים: cache בלי גבול, callbacks, exceptions שמוחזקים",
+          "השוואת snapshots בין שני זמנים"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1219,7 +1436,17 @@
       ],
       "explanation": "`weakref.ref` הוא דרך נוחה לבדוק אם אובייקט עדיין חי בלי להשאיר אותו בחיים. cycle לא משתחרר ב-refcount ומחכה ל-cyclic GC.",
       "id": "py.data-model.q42",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אם במקום weakref היית שומר `r = a` רגיל, מה היה מודפס, ולמה weakref הוא הכלי הנכון למטמון של אובייקטים גדולים?",
+        "modelAnswer": "עם הפניה חזקה, r מחזיק את a בחיים, ולכן a ו-b (שמוחזק דרך a.other) לא ישתחררו גם אחרי gc.collect(), והבדיקה 'is None' לא רלוונטית; האובייקטים חיים כל עוד r קיים. weakref לא מעלה את ה-refcount, ולכן הוא לא משפיע על חיי האובייקט: מטמון שבנוי מ-`weakref.WeakValueDictionary` מחזיר את האובייקט כל עוד מישהו אחר משתמש בו, ומתנקה מעצמו כשאף אחד לא מחזיק אותו. זה מתאים למטמון של אובייקטים גדולים (למשל buffers או תמונות) שרוצים לשתף בלי למנוע את שחרורם. מגבלות: לא כל טיפוס תומך ב-weakref (int, str, tuple ו-list לא, ומחלקה עם __slots__ צריכה `__weakref__` ב-slots).",
+        "rubric": [
+          "הפניה חזקה מחזיקה את כל ה-cycle בחיים",
+          "weakref לא מעלה refcount",
+          "WeakValueDictionary כמטמון שמתנקה מעצמו",
+          "טיפוסים מובנים כמו int/list לא תומכים, slots צריכים __weakref__"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1240,7 +1467,17 @@
       ],
       "explanation": "`gc.disable()` הוא כלי לגיטימי (וגם `gc.freeze()` לפני fork), אבל רק כשמבינים שהוא מכבה איסוף cycles בלבד, ולכן צריך לוודא שהקוד לא יוצר cycles או לקרוא ל-`gc.collect()` בזמנים מבוקרים.",
       "id": "py.data-model.q43",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אינסטגרם הריצו `gc.disable()` ואחר כך `gc.freeze()` בשרתי Django. מה הבעיה שהם פתרו בהקשר של fork, ולמה ה-GC גרם לה?",
+        "modelAnswer": "בשרת pre-fork (למשל uWSGI או gunicorn) תהליך ה-master טוען את כל הקוד ואז עושה fork ל-workers, והזיכרון משותף בעזרת copy-on-write. אבל ה-GC המחזורי כותב לכל אובייקט שהוא סורק (שדות ה-GC ב-header, ו-refcount שמשתנה), ולכן ריצת GC ב-worker נוגעת בדפים המשותפים ומעתיקה אותם, והזיכרון המשותף יורד מהר. `gc.freeze()` (מ-3.7) מעביר את כל האובייקטים הקיימים לדור קבוע שה-GC מתעלם ממנו, כך שאחרי fork הם לא נסרקים ולא נכתבים. בדרך כלל עושים `gc.disable()` מוקדם ב-master, טוענים הכל, `gc.freeze()` לפני fork, ומפעילים מחדש את ה-GC ב-workers. refcount עדיין כותב לאובייקטים בשימוש, ולכן הפתרון חלקי, ו-immortal objects (3.12) מצמצמים גם את זה.",
+        "rubric": [
+          "pre-fork ו-copy-on-write של הזיכרון המשותף",
+          "ריצת GC כותבת ל-headers ומעתיקה דפים",
+          "gc.freeze מוציא את האובייקטים הקיימים מסריקה",
+          "refcount עדיין כותב, הפתרון חלקי"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1270,7 +1507,17 @@
       ],
       "explanation": "התוצאה תלויה במיקום ה-NaN, כי NaN שובר את ההנחה ש-`<` הוא סדר מלא. זה הבסיס לשאלה 'כתוב safe_min': צריך להחליט במפורש איך NaN מסודר (למשל קטן מכל מספר) ולממש את זה עם `key` או בדיקה מפורשת.",
       "id": "py.data-model.q44",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "למה המיקום של ה-NaN משנה את התוצאה? תאר את הלוגיקה הפנימית של min, ומה `sorted` יעשה עם רשימה שיש בה NaN באמצע.",
+        "modelAnswer": "min שומר את הראשון כ-best ומחליף רק אם `x < best`. כש-NaN ראשון, כל השוואה `1.0 < nan` היא False, ולכן NaN לא מוחלף לעולם ומוחזר. כש-NaN באמצע, `nan < 1.0` False, ולכן מדלגים עליו, וההמשך תקין, ומקבלים 1.0. sorted משתמש ב-Timsort, שמניח סדר מלא; עם NaN, ההשוואות לא עקביות, ולכן התוצאה תלויה בסדר הקלט: NaN עשוי לחלק את הרשימה לקטעים, שכל אחד ממוין בפני עצמו, אבל הרשימה כולה לא ממוינת. אין שגיאה ואין אזהרה. לכן לפני מיון או min על נתונים שעלולים להכיל NaN, מסננים אותם או מגדירים key מפורש. ב-NumPy, `np.sort` שם NaN בסוף ו-`np.nanmin` מתעלם מהם.",
+        "rubric": [
+          "min מחליף רק כש-x < best, והשוואה עם NaN תמיד False",
+          "NaN ראשון לא מוחלף לעולם",
+          "sorted עם NaN נותן תוצאה לא ממוינת בלי שגיאה",
+          "סינון או key, או np.nanmin/np.sort"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1293,7 +1540,17 @@
       ],
       "explanation": "טכניקה שימושית ל-safe_min/safe_max: key שמחזיר tuple שהאיבר הראשון שלו מסדר את המקרים המיוחדים (NaN, None) והשני את הערך. כך מקבלים סדר מלא בלי לכתוב השוואות ידניות.",
       "id": "py.data-model.q45",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "ה-key הזה מחזיר tuple לכל איבר. מה העלות על רשימה של 10 מיליון floats, ואיך היית עושה את אותו דבר מהר יותר?",
+        "modelAnswer": "לכל איבר נקראת lambda (קריאת פונקציה ב-Python, עשרות ns), נבנה tuple חדש ובו bool, והשוואת tuples מסתכמת בהשוואת שני איברים. כלומר בערך פי 3-5 איטי מ-min רגיל על floats, ובערך 10 מיליון הקצאות זמניות. min קורא ל-key פעם אחת לכל איבר, לא בכל השוואה, כך שזה O(n). חלופות מהירות: ב-Python טהור, לבדוק קודם אם יש NaN (`any(v != v for v in xs)`) ואחרת להשתמש ב-min רגיל; ב-NumPy, `np.isnan(a).any()` ואז `np.nanmin` או `a.min()`, שזה וקטורי ובסדר גודל של מילישניות ל-10 מיליון. בחירה תלויה בשאלה אם הנתונים כבר במערך.",
+        "rubric": [
+          "קריאת lambda ו-tuple חדש לכל איבר, פי כמה איטי",
+          "key נקרא פעם אחת לאיבר, O(n)",
+          "בדיקת NaN מראש ואז min רגיל",
+          "NumPy: isnan ו-nanmin וקטוריים"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1350,7 +1607,17 @@
       ],
       "explanation": "דפוס ה-sentinel: כשכל ערך (כולל None) יכול להיות קלט לגיטימי, ברירת המחדל צריכה להיות אובייקט פרטי שנבדק עם `is`. כך עובדים גם `dict.pop(key, default)` ו-`next(it, default)` מאחורי הקלעים.",
       "id": "py.data-model.q47",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "יש עוד שני הבדלים בין safe_min הזה לבין min המובנה: אחד בתיקו ואחד בהשוואה. מהם, ואיך היית בודק שהפונקציה תואמת את min?",
+        "modelAnswer": "השוואה: `key or (lambda v: v)` נופל ל-identity גם כש-key הוא אובייקט callable שה-bool שלו False, מקרה נדיר אבל אפשרי; עדיף `key if key is not None else ...`. תיקו: `<` נכון ומחזיר את הראשון בתיקו, כמו min, ו-`<=` היה מחזיר את האחרון. הבדל אמיתי: min המובנה לא מקבל `default` כשמעבירים כמה ארגומנטים פוזיציונליים, וגם מקבל `min(a, b, c)` ולא רק iterable, וה-safe_min הזה לא תומך בזה. בדיקה: property-based testing עם Hypothesis, שמייצר רשימות אקראיות (כולל ריקות, תיקו, None כ-default) ומשווה את safe_min ל-min, כולל איזה אובייקט מוחזר (בדיקה עם is) כשיש כמה שווים.",
+        "rubric": [
+          "key or ... שגוי ל-callable falsy, עדיף בדיקת is not None",
+          "< מחזיר את הראשון בתיקו כמו min",
+          "min תומך גם בכמה ארגומנטים פוזיציונליים",
+          "property-based testing מול min עם בדיקת is בתיקו"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1394,7 +1661,16 @@
       ],
       "explanation": "sentinel פרטי פותר את הבעיה של 'ערך חסר' כשכל ערך, כולל None, הוא קלט חוקי. בודקים אותו עם `is`, כי הזהות שלו היא כל המשמעות שלו.",
       "id": "py.data-model.q49",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "איך ה-sentinel הזה מתנהג ב-pickle או בין תהליכים, ומה החלופה ב-Python המודרני שגם type checkers מבינים?",
+        "modelAnswer": "`object()` הוא אובייקט ייחודי בתהליך. אחרי pickle ו-unpickle נוצר אובייקט object חדש, ו-`is _MISSING` נכשל, כך שאם ה-sentinel עובר בין תהליכים (multiprocessing) או נשמר, המשמעות אובדת. גם ה-repr שלו לא אינפורמטיבי, ו-mypy לא יודע להבחין בו ב-type narrowing. החלופה המקובלת: Enum עם ערך יחיד, `class _Missing(Enum): MISSING = auto()`, שהוא singleton גם אחרי pickle (Enum עושה unpickle לפי שם), יש לו repr ברור, ו-type checkers מבינים `Literal[_Missing.MISSING]` ומצמצמים את הטיפוס אחרי בדיקת is. PEP 661 מציע `sentinel()` מובנה לאותה מטרה.",
+        "rubric": [
+          "object() לא שורד pickle: is נכשל",
+          "repr לא אינפורמטיבי, type checkers לא מצמצמים",
+          "Enum עם ערך יחיד: singleton גם אחרי pickle, Literal ל-typing"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1445,7 +1721,17 @@
       ],
       "explanation": "deque עם `maxlen` הוא circular buffer: כל הוספה כשהוא מלא מוציאה איבר מהקצה השני. שימושי לחלון של N הערכים האחרונים (למשל N ה-samples האחרונים).",
       "id": "py.data-model.q51",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "אתה משתמש ב-deque(maxlen=N) כחלון של N הדגימות האחרונות לחישוב ממוצע נע. מה הסיבוכיות של `sum(d)` בכל דגימה, ואיך מורידים את זה ל-O(1)?",
+        "modelAnswer": "`sum(d)` עובר על כל N האיברים, ולכן O(N) לדגימה, O(n·N) לכל הזרם. ל-O(1): שומרים סכום רץ. לפני ה-append, אם `len(d) == d.maxlen`, האיבר שייצא הוא `d[0]`, ומחסירים אותו מהסכום, ואז מוסיפים את החדש. append עם maxlen מוציא אותו אוטומטית. גישה ל-d[0] ו-d[-1] היא O(1), אבל גישה לאמצע של deque היא O(N), כי הוא בנוי כרשימה מקושרת של בלוקים של 64 איברים. עם floats, סכום רץ צובר שגיאת עיגול לאורך זמן, ולכן מחשבים אותו מחדש מדי פעם או משתמשים ב-math.fsum לבדיקה. בקצב גבוה עם NumPy עדיף לחשב על בלוקים עם cumsum או np.convolve.",
+        "rubric": [
+          "sum(d) הוא O(N) לדגימה",
+          "סכום רץ: החסרת d[0] לפני append",
+          "d[0] ו-d[-1] הם O(1), אמצע O(N)",
+          "שגיאת עיגול מצטברת בסכום רץ של floats"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1466,7 +1752,17 @@
       ],
       "explanation": "שאלת 'מה זה deque ולמה' מתחברת כמעט תמיד ל-BFS ולתורים. התשובה: deque נותן O(1) בשני הקצוות, ו-list נותן O(n) בהוצאה מההתחלה.",
       "id": "py.data-model.q52",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "ב-n = 100,000, כמה זמן בערך לוקח BFS עם pop(0) לעומת deque, ולמה pop(0) מהיר יותר ממה שהסיבוכיות רומזת?",
+        "modelAnswer": "pop(0) מזיז את כל המצביעים שנשארו ברשימה, עם memmove. בתרחיש הגרוע התור מכיל עשרות אלפי צמתים, ולכן סך ההזזות הוא בסדר גודל של n²/2, כלומר כמה מיליארד מצביעים, אבל memmove רציף ומהיר מאוד (עשרות GB/s), ולכן בפועל זה שניות בודדות ולא דקות. עם deque כל popleft הוא O(1), וה-BFS כולו O(n + m), בעשרות מילישניות. כלומר הקבוע של pop(0) קטן כי מדובר ב-memmove של מצביעים בלי לגעת באובייקטים עצמם, אבל הסיבוכיות הריבועית עדיין מנצחת ב-n גדול. ב-interview אומרים: pop(0) הוא O(n), deque.popleft O(1), ואם צריך, אפשר גם רשימה עם אינדקס head שמתקדם (ללא הוצאה בכלל).",
+        "rubric": [
+          "pop(0) מבצע memmove של כל המצביעים שנשארו",
+          "סך העבודה ריבועי, אבל memmove מהיר ולכן הקבוע קטן",
+          "deque נותן O(n + m) לכל ה-BFS",
+          "חלופה: רשימה עם אינדקס head"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1498,7 +1794,17 @@
       ],
       "explanation": "הבאג הוא בלבול בין `sorted` (מחזיר רשימה חדשה) לבין `list.sort` (in-place, מחזיר None). השורה רצה, ממיינת עותק וזורקת אותו, ולכן הלולאה מדפיסה לפי סדר הקובץ השני. זו שגיאה נפוצה בשאלות file parsing שבהן החלק האחרון הוא מיון לפי ערך מחושב.",
       "id": "py.data-model.q53",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "הקובץ השני ענק (מיליוני שורות) ואתה צריך רק את 10 המהירים. איך היית משנה את הקוד מבחינת זיכרון וזמן?",
+        "modelAnswer": "במקום לצבור את כל השורות ב-out ולמיין (O(n log n) זמן ו-O(n) זיכרון), שומרים heap בגודל 10: `heapq.heappush` עם (speed, name), ואם הגודל עולה על 10, `heappop` מוציא את האיטי ביותר. כך הזיכרון O(10) והזמן O(n log 10). בפועל `heapq.nlargest(10, generator, key=...)` עושה בדיוק את זה, ואפשר להעביר לו generator שקורא את הקובץ שורה אחרי שורה, כך שאף פעם לא כל הקובץ בזיכרון. הקובץ הראשון (legs) עדיין צריך להיות ב-dict, כי חיפוש אורך רגל לפי שם צריך O(1); אם הוא גם ענק, אפשר לקרוא קודם את השני ולסנן רק דו-רגליים. ולתיקו: להחליט במפורש על tie-break (למשל לפי שם).",
+        "rubric": [
+          "heap בגודל k במקום מיון מלא: O(n log k)",
+          "heapq.nlargest עם generator, זיכרון O(k)",
+          "dict של הקובץ הראשון לחיפוש O(1)",
+          "tie-break מפורש"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1521,7 +1827,17 @@
       ],
       "explanation": "`reverse=True` לא שקול למיון רגיל ואז `[::-1]`: הוא שומר על יציבות, כך שאיברים עם אותו מפתח נשארים בסדר שבו הופיעו. זה חשוב כשבעיית file parsing דורשת tie-break דטרמיניסטי; אם רוצים tie-break לפי שם, כותבים מפתח מפורש כמו `key=lambda r: (-r[1], r[0])`.",
       "id": "py.data-model.q54",
-      "lesson": "py.data-model"
+      "lesson": "py.data-model",
+      "followUp": {
+        "prompt": "למה מיון יציב חשוב כשממיינים לפי כמה מפתחות, ואיך זה מאפשר למיין לפי שני מפתחות בכיוונים שונים כשאחד מהם מחרוזת?",
+        "modelAnswer": "יציבות מאפשרת מיון בכמה מעברים: ממיינים קודם לפי המפתח המשני ואז לפי הראשי, והמעבר השני שומר את הסדר המשני בתוך כל קבוצה של ערך ראשי שווה. זה חשוב כשאי אפשר להפוך סימן למפתח, למשל מחרוזת: `key=lambda r: (-r[1], r[0])` עובד כי r[1] מספרי, אבל אם רוצים שם בסדר יורד ומהירות בסדר עולה, אי אפשר לכתוב -name. הפתרון: `rows.sort(key=lambda r: r[0], reverse=True)` ואז `rows.sort(key=lambda r: r[1])`. Timsort יציב גם עם reverse=True, ובנתונים שכבר חלקית ממוינים (כמו אחרי המעבר הראשון) הוא מהיר במיוחד, קרוב ל-O(n). שני מעברים הם O(n log n) כל אחד, כך שזה רק פי 2.",
+        "rubric": [
+          "מיון בכמה מעברים: משני קודם, ראשי אחרון",
+          "יציבות שומרת את הסדר המשני בתוך קבוצות",
+          "מאפשר כיוונים שונים כשאי אפשר להפוך סימן (מחרוזת)",
+          "Timsort יציב גם עם reverse=True"
+        ]
+      }
     },
     {
       "level": 2,

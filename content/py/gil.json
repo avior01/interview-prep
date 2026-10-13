@@ -436,7 +436,16 @@
         "נכון: read-modify-write של `+=` הוא LOAD, BINARY_OP ו-STORE, והחלפת thread ביניהם מאבדת עדכונים; התוצאה לא מובטחת לשום כיוון. הפתרון: Lock.",
         "race condition לא גורם ל-RuntimeError; הוא פשוט מאבד עדכונים בשקט."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "בבדיקה אצלך התוצאה יוצאת 400,000 כמעט תמיד. איך תגרום לבאג הזה להופיע באופן אמין בבדיקה, ואיך תתקן אותו בלי Lock בכלל?",
+        "modelAnswer": "כדי לחשוף את ה-race מגדילים את תדירות החלפת ה-threads עם `sys.setswitchinterval(1e-6)`, ומרחיבים את החלון בין הקריאה לכתיבה: לפצל ל-`v = counter`, נקודת ויתור כמו `time.sleep(0)`, ואז `counter = v + 1`. עם החלון הזה התוצאה יוצאת נמוכה בהרבה כמעט בכל הרצה, וזה מוכיח שהקוד המקורי שגוי ולא רק 'בר מזל'. התיקון בלי Lock: לא לשתף מצב בכלל. כל thread סופר במשתנה מקומי ומחזיר את הספירה (למשל דרך ערך ההחזרה של `ThreadPoolExecutor`), וה-thread הראשי מחבר אחרי ה-join. זה גם מהיר יותר, כי אין contention על משתנה משותף ואין עלות נעילה בכל איטרציה. פתרונות כמו `itertools.count()` שה-next שלו 'אטומי' נשענים על פרט מימוש של CPython, ולא כדאי לבנות עליהם.",
+        "rubric": [
+          "מקטין את ה-switch interval עם sys.setswitchinterval כדי להגדיל את תדירות ההחלפות",
+          "מרחיב את החלון בין read ל-write (למשל time.sleep(0) ביניהם)",
+          "תיקון בלי Lock: מונה מקומי לכל thread וסכימה אחרי join"
+        ]
+      }
     },
     {
       "id": "py.gil.q08",
@@ -457,7 +466,17 @@
         "ProcessPoolExecutor לא \"נופל\" לביצוע בתהליך הראשי; הוא נכשל כשהסריאליזציה נכשלת.",
         "אין החזרה שקטה של None; כשל הסריאליזציה מתבטא כ-exception בזמן איסוף התוצאות."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "העברת את הפונקציה לרמת ה-module וזה עובד ב-Linux. על Windows או macOS אותו קוד נכשל, או מנסה ליצור תהליכים בלי סוף. מה ההבדל, ומה עוד מתנהג אחרת שם?",
+        "modelAnswer": "ב-Windows ברירת המחדל היא spawn, וב-macOS היא spawn מאז Python 3.8, בעוד שב-Linux היא הייתה fork (וב-3.14 הוחלפה ל-forkserver). ב-spawn תהליך הילד מתחיל interpreter נקי ומייבא את ה-module הראשי מחדש כדי למצוא את הפונקציה לפי השם שלה. אם יצירת ה-Pool לא נמצאת תחת `if __name__ == \"__main__\":`, הייבוא בילד מריץ אותה שוב, ו-multiprocessing מזהה את זה וזורק RuntimeError על bootstrapping (אחרת זו הייתה רקורסיה של תהליכים). הבדל שני: ב-fork הילד יורש עותק של כל המצב הגלובלי שהוגדר לפני ה-fork, וב-spawn הוא רואה רק מה שהייבוא מחדש יוצר, כך שהגדרות שבוצעו בזמן ריצה ב-main לא קיימות בילד. הבדל שלישי: עלות ההפעלה, כי ב-spawn כל worker מייבא מחדש את כל התלויות (NumPy וכו'), עשרות עד מאות ms לכל worker.",
+        "rubric": [
+          "ברירת המחדל ב-Windows וב-macOS היא spawn",
+          "הילד מייבא מחדש את ה-module הראשי, ולכן חובה guard של __name__ == \"__main__\"",
+          "מצב גלובלי שהוגדר בזמן ריצה לא עובר לילד ב-spawn (בניגוד ל-fork)",
+          "עלות הפעלה גבוהה יותר: כל worker מייבא מחדש את התלויות"
+        ]
+      }
     },
     {
       "id": "py.gil.q09",
@@ -478,7 +497,16 @@
         "NumPy לא יוצר תהליכים; מה שיכול להיות מרובה-threads בפנים הוא ספריית BLAS, וזה לא קשור ל-FFT כאן.",
         "זה נכון לקוד Python טהור, אבל לא לפעולות C ארוכות שמשחררות את ה-GIL."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "מדדת ו-4 threads נותנים רק פי 1.5 ולא פי 4, למרות ש-NumPy משחרר את ה-GIL. מה הסיבות הסבירות, ואיך תבדוק כל אחת?",
+        "modelAnswer": "מערך של 2^22 איברי complex128 תופס 64 MB, הרבה מעבר ל-cache, ולכן FFT כזה נוטה להיות מוגבל ב-memory bandwidth: ארבעה cores חולקים את אותו רוחב פס, וה-speedup נעצר הרבה לפני פי 4. בודקים בהשוואה: אם 4 threads על מערכים קטנים שנכנסים ל-L2 כן סקיילים, הבעיה היא זיכרון. סיבה שנייה: oversubscription, אם ספריית ה-FFT או BLAS עצמה מרובת threads (למשל MKL, או scipy.fft עם workers), ואז 4 threads כפול N threads פנימיים נלחמים על אותם cores; בודקים עם threadpoolctl או OMP_NUM_THREADS=1. סיבה שלישית: החלק של Python סביב החישוב (הקצאת מערכים, לולאות קטנות) מחזיק GIL, ולפי Amdahl גם 20% סדרתי מגביל מאוד; רואים את זה ב-`py-spy --native` או בניצולת CPU שלא מגיעה ל-400%. גם hyperthreads במקום cores פיזיים ו-turbo שיורד כשכל ה-cores עמוסים מורידים את המספר.",
+        "rubric": [
+          "מערך 2^22 complex128 הוא 64 MB, מעבר ל-cache, ולכן memory-bound",
+          "oversubscription מול threads פנימיים של הספרייה, בדיקה עם threadpoolctl או OMP_NUM_THREADS=1",
+          "החלק הסדרתי שמחזיק GIL מגביל לפי Amdahl, ונמדד ב-py-spy או בניצולת CPU"
+        ]
+      }
     },
     {
       "id": "py.gil.q10",
@@ -517,7 +545,17 @@
         "sockets עובדים היטב ב-threads ואף משחררים את ה-GIL בזמן ההמתנה.",
         "נכון: זה convoy effect: כל חזרה של ה-thread של ה-I/O מהמתנה דורשת לקבל את ה-GIL מה-thread החישובי, עד 5 ms בכל צעד, ובקשה עם כמה סבבי I/O צוברת עיכוב גדול."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "הצעת להקטין את ה-switch interval כפשרה. מה בדיוק משלמים על זה, ולמה זה לא פותר את הבעיה כשמוסיפים עוד threads חישוביים?",
+        "modelAnswer": "כל העברת GIL היא signaling דרך condition variable וכמעט תמיד context switch של מערכת ההפעלה, כמה מיקרו-שניות, ובנוסף ה-thread החישובי מאבד cache ו-branch predictor חמים. אם מקטינים מ-5 ms ל-0.5 ms, ה-thread החישובי משחרר פי 10 יותר פעמים, וה-throughput שלו יורד באחוזים בודדים עד עשרות אחוזים, תלוי בעומס. ה-latency של בקשה עדיין בערך (מספר סבבי ה-I/O) כפול (זמן ההמתנה ל-GIL), כך שבקשה עם 20 סבבים עדיין מחכה עד 10 ms. עם כמה threads חישוביים, ה-thread של ה-I/O מתחרה מול כולם, וההמתנה שלו יכולה לגדול עם מספרם. מדידה: latency של p99 כפונקציה של ה-interval, ו-`py-spy dump` או `py-spy top --gil` כדי לראות מי מחזיק את ה-GIL. התיקון האמיתי הוא להוציא את החישוב מה-GIL: תהליך נפרד, או קוד native שמשחרר אותו.",
+        "rubric": [
+          "כל החלפה עולה context switch ופגיעה ב-cache, וה-throughput החישובי יורד",
+          "latency של בקשה גדל עם מספר סבבי ה-I/O כפול זמן ההמתנה ל-GIL",
+          "עוד threads חישוביים מגדילים את ההמתנה של ה-thread של ה-I/O",
+          "תיקון אמיתי: חישוב בתהליך נפרד או ב-native שמשחרר GIL"
+        ]
+      }
     },
     {
       "id": "py.gil.q12",
@@ -538,7 +576,17 @@
         "ה-build זמין בכל הפלטפורמות הנתמכות (Linux, macOS, Windows), לא רק ב-Windows.",
         "נכון: זה build נפרד (python3.13t) שבו threads מריצים bytecode במקביל; ב-3.13 הוא ניסיוני, איטי יותר ב-single thread, והרחבות C שלא הצהירו על תמיכה מפעילות את ה-GIL מחדש."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "מבקשים ממך להחליט אם להעביר שירות production ל-free-threaded build. מה תבדוק ומה תמדוד לפני שאתה ממליץ?",
+        "modelAnswer": "קודם כל תאימות: אחרי ייבוא כל התלויות לבדוק ש-`sys._is_gil_enabled()` מחזיר False, כי הרחבה אחת שלא הצהירה על תמיכה מפעילה את ה-GIL מחדש לכל התהליך, ואז משלמים את ה-overhead בלי שום רווח. שנית, overhead ל-single thread: ב-3.13t הוא היה משמעותי, בין השאר כי ה-specializing interpreter כובה; ב-3.14t הוא קטן בהרבה (בסדר גודל של אחוזים בודדים עד כ-10%, תלוי ב-workload), אבל צריך למדוד על הקוד שלך. שלישית, scaling: benchmark עם 1, 2, 4, 8 threads על ה-workload האמיתי; אם השירות בעיקר I/O-bound או שהחישוב כבר ב-NumPy, הרווח קטן. רביעית, נכונות: races שה-GIL הסתיר יצוצו, ולכן stress tests עם הרבה threads ובדיקת invariants. חמישית, זיכרון: mimalloc ומבנים per-thread מגדילים צריכת זיכרון. ההמלצה הגיונית רק לחישוב CPU-bound ב-Python טהור שקשה להעביר ל-processes בגלל נתונים משותפים גדולים.",
+        "rubric": [
+          "בדיקה ש-sys._is_gil_enabled() הוא False אחרי ייבוא כל ההרחבות",
+          "מדידת overhead ל-single thread (גבוה ב-3.13t, קטן יותר ב-3.14t)",
+          "benchmark של scaling עם מספר threads על ה-workload האמיתי",
+          "stress tests ל-races שה-GIL הסתיר"
+        ]
+      }
     },
     {
       "id": "py.gil.q13",
@@ -566,7 +614,17 @@
         "נכון: `queue.Queue` מסונכרן פנימית ונועד בדיוק להעברת עבודה בין threads.",
         "נכון: `append` בודד הוא פעולת C אחת שמוגנת בפועל, ולא ישחית את הרשימה; הסדר בין threads כמובן לא מוגדר."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "מישהו מציע לתקן את ה-check-then-act עם `d.setdefault(key, compute())`, כי setdefault 'אטומי'. האם זה מבטיח ש-compute ירוץ לכל היותר פעם אחת? ואם לא, מה כן?",
+        "modelAnswer": "לא. הארגומנט `compute()` מחושב לפני הקריאה ל-setdefault, ולכן הוא רץ בכל קריאה, גם כשה-key כבר קיים, ושני threads יחשבו אותו במקביל. מה ש-setdefault כן נותן הוא first-writer-wins: כל ה-threads יקבלו בחזרה את אותו ערך, וזה עוזר לעקביות אבל לא ל-run-once. גם האטומיות עצמה היא פרט מימוש: היא נכונה ל-dict מובנה כשה-`__hash__` וה-`__eq__` של ה-key ממומשים ב-C (כמו str או int); אם הם כתובים ב-Python, ה-GIL יכול לעבור באמצע. הדפוס הנכון ל-run-once: `fut = d.setdefault(key, Future())` ובדיקה אם ה-Future שהוחזר הוא זה שיצרתי. אם כן, אני הבעלים, מחשב מחוץ לכל lock ועושה set_result; אחרת אני מחכה ל-`fut.result()`. כך כל key מחושב פעם אחת, ו-keys שונים לא מחכים זה לזה.",
+        "rubric": [
+          "compute() מחושב לפני הקריאה ל-setdefault, ולכן רץ בכל פעם",
+          "setdefault נותן first-writer-wins (ערך עקבי) אבל לא run-once",
+          "האטומיות תלויה בכך ש-__hash__/__eq__ של ה-key ממומשים ב-C",
+          "Future לכל key: מי שהכניס את ה-Future מחשב, האחרים מחכים ל-result()"
+        ]
+      }
     },
     {
       "id": "py.gil.q14",
@@ -587,7 +645,17 @@
         "נכון: pickle של 200 MB דרך pipe לוקח יותר זמן מ-50 ms של חישוב, וה-pipe לתהליך הראשי משותף. מעבירים רק תיאור (נתיב, offset) או משתמשים ב-`shared_memory` / `np.memmap`.",
         "יותר workers רק יעמיסו יותר על אותו צוואר בקבוק של סריאליזציה בתהליך הראשי."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "בחרת ב-`multiprocessing.shared_memory`. תאר את הפרוטוקול בפועל בין התהליך הראשי ל-workers, ומה יכול להשתבש בו.",
+        "modelAnswer": "התהליך הראשי יוצר `SharedMemory(create=True, size=...)`, בונה עליו `np.ndarray(shape, dtype, buffer=shm.buf)`, ועדיף שהנתונים ייכתבו לשם ישירות במקום להעתיק אותם אחר כך. ל-worker שולחים רק תיאור קטן: שם ה-segment, shape, dtype ו-offset, כמה עשרות בתים במקום 200 MB. ה-worker עושה `SharedMemory(name=...)`, בונה view, מחשב, ומחזיר תוצאה קטנה או כותב לאזור יעד נפרד שהוקצה לו, כדי שלא יהיו שני כותבים לאותו אזור. בסוף כל תהליך קורא ל-`close()`, ורק הבעלים קורא פעם אחת ל-`unlink()`. תקלות נפוצות: segment שדולף ב-`/dev/shm` אם התהליך קרס לפני unlink; `BufferError` ב-close כשעדיין קיים view של NumPy על ה-buffer; ו-races כשכמה workers כותבים לאותו אזור בלי סנכרון. אם הנתונים מגיעים מקובץ, `np.memmap` במצב קריאה פשוט יותר, כי ה-page cache משותף בין התהליכים ממילא.",
+        "rubric": [
+          "ל-worker נשלחים רק שם, shape, dtype ו-offset",
+          "close() בכל תהליך ו-unlink() פעם אחת אצל הבעלים",
+          "דליפת segment ב-/dev/shm אחרי קריסה",
+          "BufferError אם view עדיין חי בזמן close"
+        ]
+      }
     },
     {
       "id": "py.gil.q15",
@@ -608,7 +676,17 @@
         "switch interval משפיע רק על ה-eval loop של Python; קוד C שמחזיק את ה-GIL לא עובר בנקודות הבדיקה שלו.",
         "asyncio רץ על thread אחד; קריאה חוסמת להרחבה תקפיא גם את ה-loop."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "שחררת את ה-GIL סביב החישוב. עכשיו thread אחר יכול לשנות את ה-bytearray, או לנסות לעשות לו resize, בזמן שהחישוב רץ. מה מגן עליך? ואיך תאפשר לבטל את החישוב באמצע?",
+        "modelAnswer": "כל עוד אתה מחזיק `Py_buffer` שהושג ב-`PyObject_GetBuffer`, ל-bytearray יש export פעיל, וכל ניסיון resize נכשל ב-BufferError, ולכן המצביע נשאר תקף. אבל שום דבר לא מונע מ-thread אחר לכתוב לתוכן באותו זמן: זה data race על הבתים, והחישוב יכול לקרוא נתונים חצי-מעודכנים. לכן או מגדירים חוזה שהמשתמש לא נוגע ב-buffer, או מעתיקים לפני שחרור ה-GIL. לביטול: מחלקים את החישוב ל-chunks של כמה ms. אחרי כל chunk לוקחים את ה-GIL בחזרה (`Py_BLOCK_THREADS`), קוראים ל-`PyErr_CheckSignals()`, ואם הוא מחזיר -1 מנקים ומחזירים NULL; אחרת משחררים שוב (`Py_UNBLOCK_THREADS`). העלות של סבב כזה זניחה מול chunk של כמה ms. חשוב לזכור ש-signal handlers של Python רצים רק ב-main thread, כך שאם החישוב רץ ב-thread אחר צריך מנגנון ביטול משלך, למשל דגל אטומי ש-thread אחר מדליק.",
+        "rubric": [
+          "export פעיל של Py_buffer גורם ל-resize להיכשל ב-BufferError",
+          "כתיבה מקבילית לתוכן עדיין אפשרית, data race שדורש חוזה או העתקה",
+          "חלוקה ל-chunks: לקחת GIL, PyErr_CheckSignals, לשחרר שוב",
+          "signal handlers רצים רק ב-main thread, ובשאר צריך דגל ביטול"
+        ]
+      }
     },
     {
       "id": "py.gil.q16",
@@ -629,7 +707,17 @@
         "בעיית הרשאות הייתה מתבטאת כ-exception (PermissionError), לא כתקיעה נצחית.",
         "מצב ה-GIL כן מועתק ומאותחל מחדש בילד; ה-lock שנשאר נעול הוא lock של המשתמש או של הספרייה."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "אסור לך לעבור ל-spawn, כי טעינת המודל לפני ה-workers לוקחת דקה. אילו אפשרויות נשארו כדי להימנע מה-deadlock, ומה המחיר של כל אחת?",
+        "modelAnswer": "אפשרות ראשונה: לעשות fork לפני שנוצר thread כלשהו, כלומר ליצור את ה-Pool מיד אחרי טעינת המודל ולפני הפעלת ה-threads של logging, רשת וכו'. זה זול, אבל שביר: כל ספרייה שמפעילה thread ברקע בזמן import שוברת את ההנחה. אפשרות שנייה: forkserver עם `set_forkserver_preload([...])`. ה-server נוצר מוקדם, כשהוא עדיין single-threaded, טוען מראש את ה-modules הכבדים, וכל worker הוא fork שלו, נקי מ-locks נעולים. אפשרות שלישית: לשמור את המודל כקובץ ולטעון אותו עם mmap (למשל `np.load(..., mmap_mode='r')`); אז גם spawn זול, כי הטעינה היא מיפוי של כמה ms והדפים משותפים דרך ה-page cache. אפשרות רביעית: `os.register_at_fork` כדי לאתחל locks בילד. logging בגרסאות חדשות כבר עושה את זה לחלק מה-locks שלו, אבל זה מכסה רק קוד שבשליטתך ולא locks בתוך ספריות C (למשל של malloc או OpenSSL).",
+        "rubric": [
+          "fork לפני יצירת threads כלשהם (וזה שביר מול ספריות שמפעילות threads)",
+          "forkserver עם set_forkserver_preload",
+          "מודל בקובץ עם mmap כדי ש-spawn יהיה זול ומשותף דרך page cache",
+          "register_at_fork מכסה רק locks בקוד שבשליטתך"
+        ]
+      }
     },
     {
       "id": "py.gil.q17",
@@ -650,7 +738,17 @@
         "NumPy תומך ב-free-threaded build בגרסאות עדכניות, ובכל מקרה תמיכה חסרה גורמת להפעלת ה-GIL מחדש, לא לתוצאות שגויות.",
         "נכון: עם GIL ההחלפות נדירות ו-races כמעט לא מתגלים; בלי GIL threads באמת מבצעים read-modify-write בו-זמנית, והבאגים הסמויים מתפרצים."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "איך תמצא את ה-races האלה באופן שיטתי לפני production, ולא בזכות תוצאה שגויה שמישהו במקרה שם לב אליה?",
+        "modelAnswer": "כלי ראשון: CPython free-threaded שנבנה עם ThreadSanitizer, שמריץ את חבילת הבדיקות ומדווח על data races ברמת C, כולל בתוך הרחבות. אבל יש ניואנס חשוב: race לוגי כמו check-then-act על dict מורכב משתי פעולות שכל אחת מוגנת ב-lock פנימי, ולכן TSan לא יראה בו data race. לזה צריך stress testing: להריץ כל בדיקה מכמה threads במקביל ושוב ושוב (למשל עם pytest-run-parallel), עם assertions על invariants (סכום, ספירה, ייחודיות). ב-build עם GIL אפשר להגדיל את סיכויי החשיפה עם `sys.setswitchinterval` קטן מאוד. במקביל, code review ממוקד: למצוא כל מצב משותף שניתן לשינוי (משתנים ברמת module, class attributes, lazy init, caches) ולהגן עליו או להחליף אותו בהעברת הודעות דרך queue.",
+        "rubric": [
+          "build עם ThreadSanitizer מוצא data races ברמת C",
+          "race לוגי (check-then-act) לא ייראה ב-TSan כי כל פעולה מוגנת בנפרד",
+          "stress tests מכמה threads עם assertions על invariants",
+          "סקירה של מצב משותף ניתן לשינוי (globals, class attributes, caches)"
+        ]
+      }
     },
     {
       "id": "py.gil.q18",
@@ -666,7 +764,17 @@
         "הפרדה לתהליכים או קוד native לנתיב הקליטה כשצריך"
       ],
       "explanation": "השאלה בודקת הבנה של איך ה-GIL משפיע על latency של I/O (לא רק על throughput של חישוב), ושיקול דעת מתי Python מתאים לנתיב זמן-אמת ומתי להוציא חלק ממנו.",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "עברת לקליטה עם recv_into לתוך ring של buffers מוקצים מראש. איך מעבירים בלוקים בין thread הקליטה לעיבוד בלי העתקה ובלי לדרוס בלוק שעדיין בעיבוד? ומה עושים כשהעיבוד מפגר?",
+        "modelAnswer": "מקצים מראש N slots (מערכי NumPy בגודל בלוק, למשל 1 MB) ומחזיקים שני תורים של אינדקסים: free ו-full. thread הקליטה לוקח אינדקס מ-free, ממלא את ה-slot עם `sock.recv_into(memoryview(slot)[off:])` עד שהבלוק מלא, ומכניס את האינדקס ל-full. ה-worker לוקח מ-full, מעבד, ומחזיר ל-free. כך הבעלות על כל slot מפורשת, ואין העתקה ואין דריסה. ב-50 MB/s עם בלוקים של 1 MB יש רק 50 פעולות queue בשנייה, כך שהתקורה של queue.Queue (מיקרו-שניות) זניחה. כשהעיבוד מפגר, free מתרוקן, וצריך מדיניות מפורשת: לחסום (ואז ה-socket buffer מתמלא והקרנל זורק packets בלי שתדע), או לזרוק בלוק שלם באופן יזום עם מונה drops. ב-SDR עדיף לזרוק בלוקים שלמים עם מספר רצף או timestamp, כדי שהעיבוד ידע שיש פער ולא יחבר שני קטעים לא רציפים כאילו הם רצף אחד. גודל ה-ring קובע כמה burst אפשר לספוג: N=50 הוא שנייה אחת של נתונים.",
+        "rubric": [
+          "שני תורי אינדקסים, free ו-full, להעברת בעלות בלי העתקה",
+          "recv_into לתוך memoryview של slot מוקצה מראש",
+          "מדיניות overflow מפורשת עם מונה drops ומספרי רצף",
+          "חשבון: בלוקים גדולים הופכים את תקורת התור לזניחה (למשל 50 פעולות בשנייה)"
+        ]
+      }
     },
     {
       "id": "py.gil.q19",
@@ -847,7 +955,17 @@
         "מספר המשימות לא משנה כשכולן מחזיקות את אותו GIL; ב-B אין מקביליות אמיתית.",
         "hashlib ממומש ב-C (OpenSSL או מימוש מובנה), לא ב-Python, ומשחרר GIL על קלטים גדולים."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "איך בכל זאת היית מאיץ את מקרה B על 4 cores, ומה יעלה לך המעבר?",
+        "modelAnswer": "threads לא יעזרו, כי כל hash קצר מחזיק GIL. עם ProcessPoolExecutor חייבים לשלוח עבודה בחתיכות גדולות: לא משימה לכל מחרוזת, אלא כ-8 עד 16 משימות של מאות אלפי מחרוזות כל אחת (או chunksize גדול ב-map), כדי שתקורת ה-IPC לכל משימה תהיה זניחה. המחיר: הקלט הוא 4M כפול 64 בתים, כ-256 MB, שעובר ב-pickle לתהליכים, ובנוסף 4M digests חוזרים; זה יכול לקחת שניות, בסדר גודל של זמן החישוב הסדרתי עצמו (כ-4M כפול כמיקרו-שנייה). לכן עדיף שכל worker ייצר או יקרא את החלק שלו מהמקור בעצמו (טווח בקובץ), ולא יקבל אותו מהתהליך הראשי. חלופה יעילה יותר: פונקציה native אחת (Cython או Rust) שמקבלת את כל ה-batch כ-buffer רציף, משחררת GIL פעם אחת ומחשבת הכל; אז גם threads עובדים, כי כל קריאה ארוכה.",
+        "rubric": [
+          "threads לא עוזרים כי כל קריאה קצרה מחזיקה GIL",
+          "processes עם chunks גדולים כדי להפחית תקורת IPC",
+          "עלות העברת כ-256 MB קלט ב-pickle בסדר גודל של זמן החישוב",
+          "חלופה: קריאה native אחת על כל ה-batch שמשחררת GIL"
+        ]
+      }
     },
     {
       "id": "py.gil.q27",
@@ -871,7 +989,17 @@
         "קריאה בודדת מ-dict היא פעולה אחת שמוגנת בפועל ב-CPython ולא משחיתה את המבנה; הבעיה היא ברמת הלוגיקה.",
         "ערך שכבר נכתב ל-dict הוא הפניה שלמה לאובייקט, לא \"חלקי\"; ההחזרה מחוץ ל-lock תקינה."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "תיקנת עם בדיקה נוספת בתוך ה-lock. עכשיו expensive לוקחת 2 שניות, ובקשות ל-keys שונים מחכות זו לזו. מה הבעיה ואיך מתקנים?",
+        "modelAnswer": "ה-lock הגלובלי מוחזק לאורך כל החישוב, ולכן הוא מסדר בתור גם חישובים של keys שונים: 10 keys שונים במקביל לוקחים 20 שניות במקום 2. הפתרון: להחזיק את ה-lock רק לבדיקה ולהכנסה ל-dict, ולחשב מחוצה לו. תחת ה-lock: אם יש `futures[key]` מחזירים אותו, אחרת יוצרים Future חדש, מכניסים אותו ומסמנים את עצמי כבעלים. מחוץ ל-lock הבעלים מחשב ועושה `set_result`, וכל השאר מחכים ל-`fut.result()`. צריך לטפל בכשל: אם expensive זרקה, הבעלים עושה `set_exception` ומוחק את ה-key מה-dict (תחת lock) כדי שקריאה הבאה תנסה שוב, אחרת השגיאה נשמרת לנצח. כך הקטע הקריטי הוא מיקרו-שניות, ו-keys שונים רצים במקביל.",
+        "rubric": [
+          "lock גלובלי סביב החישוב מסדר בתור גם keys שונים",
+          "lock רק לבדיקה ולהכנסה, החישוב מחוץ ל-lock",
+          "Future לכל key: הבעלים מחשב, האחרים מחכים ל-result()",
+          "בכשל: set_exception והסרת ה-key כדי לאפשר ניסיון חוזר"
+        ]
+      }
     },
     {
       "id": "py.gil.q28",
@@ -894,7 +1022,17 @@
         "נכון: f מחזיק את ה-lock, g מנסה לתפוס אותו שוב ונחסם לנצח; `join(timeout=1)` חוזר אחרי שנייה וה-thread עדיין חי. daemon מאפשר לתוכנית לצאת.",
         "זה היה נכון עם `threading.RLock`, שמאפשר לאותו thread לתפוס אותו שוב."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "החלפת ל-RLock והקוד עובד. מה RLock שומר בפנים שמאפשר את זה, ובאיזה מצב RLock דווקא מסתיר באג?",
+        "modelAnswer": "RLock שומר את ה-thread id של הבעלים ומונה רקורסיה. acquire מאותו thread רק מגדיל את המונה, וה-lock משתחרר באמת רק כשמספר ה-release שווה למספר ה-acquire. release מ-thread שאינו הבעלים זורק RuntimeError, בניגוד ל-Lock רגיל, שכל thread יכול לשחרר (ולכן לפעמים משתמשים בו כאות בין threads). הבאג ש-RLock מסתיר: הפונקציה החיצונית מחזיקה את ה-lock בדיוק כי היא באמצע עדכון שבו ה-invariants שבורים זמנית, והקריאה הפנימית נכנסת ורואה את המצב הלא עקבי, למשל callback שנקרא באמצע עדכון. עם Lock רגיל זה היה נתקע ומתגלה מיד, ועם RLock זה עובר בשקט. העיצוב הנקי: פונקציה פנימית `_g_unlocked` שמניחה שה-lock כבר מוחזק, ונעילה רק בשכבה החיצונית.",
+        "rubric": [
+          "RLock שומר בעלים ומונה רקורסיה",
+          "release מ-thread אחר זורק RuntimeError, בניגוד ל-Lock",
+          "כניסה חוזרת יכולה לראות invariants שבורים באמצע עדכון",
+          "חלופה: גרסה פנימית בלי נעילה ונעילה רק בשכבה החיצונית"
+        ]
+      }
     },
     {
       "id": "py.gil.q29",
@@ -948,7 +1086,17 @@
         "הוא לא מבטל את ה-GIL אלא נותן GIL לכל interpreter; ביטול ה-GIL הוא build ה-free-threaded, מנגנון נפרד.",
         "ה-workers רצים באותו תהליך, לא בתהליכים נפרדים, ואובייקטי Python אינם משותפים ביניהם."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "מתי תבחר InterpreterPoolExecutor על פני ProcessPoolExecutor, ומתי דווקא לא?",
+        "modelAnswer": "יתרונות: יצירת subinterpreter זולה יותר מהפעלת תהליך, הכל באותו address space, והעברת נתונים לא עוברת דרך pipe של מערכת ההפעלה. זה מתאים להרבה משימות CPU-bound קצרות יחסית ב-Python טהור, כשהתקורה של processes מורגשת. חסרונות: אין בידוד מקריסה, כי segfault בהרחבה אחת מפיל את כל ה-interpreters, בעוד ש-ProcessPoolExecutor מאבד רק worker (ומקבלים BrokenProcessPool). כל הרחבת C שבשימוש חייבת לתמוך ב-subinterpreters (multi-phase init ו-module state), ובחלק מהספריות הנפוצות התמיכה עדיין חלקית, ולכן חייבים לבדוק. גם הזיכרון לא חינם: כל interpreter מייבא את ה-modules שלו בנפרד, כך שכל worker עדיין עולה כמה MB עד עשרות MB. ואם הנתונים גדולים, עדיין צריך shared memory או buffers, כי אובייקטים רגילים לא משותפים.",
+        "rubric": [
+          "תקורת הפעלה ו-IPC נמוכה יותר כי הכל באותו תהליך",
+          "אין בידוד מקריסה: segfault מפיל את כל התהליך",
+          "הרחבות C צריכות לתמוך ב-subinterpreters",
+          "כל interpreter מייבא modules בנפרד, ולכן יש עלות זיכרון לכל worker"
+        ]
+      }
     },
     {
       "id": "py.gil.q32",
@@ -978,7 +1126,17 @@
         "reference counting נשמר (בגרסה biased); tracing GC בלבד היה שובר את השחרור המיידי ש-CPython מספק בפועל.",
         "נכון: ב-3.13t ה-specializing adaptive interpreter (PEP 659) כובה כי עוד לא היה thread-safe, וזו סיבה מרכזית לאיטיות ב-single thread; ב-3.14 הוא הופעל מחדש."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "ב-biased reference counting, מה קורה כש-thread שאינו הבעלים מוריד את מונה ההפניות לאפס? ולמה זה עדיף על מונה אטומי אחד פשוט?",
+        "modelAnswer": "לכל אובייקט יש מונה מקומי (ob_ref_local) שרק thread הבעלים מעדכן בלי פעולות אטומיות, מונה משותף (ob_ref_shared) שמעודכן אטומית, ו-ob_tid של הבעלים. הספירה האמיתית היא סכום שניהם. thread זר מוריד מהמונה המשותף, ואם הוא נעשה שלילי, הוא לא יכול להחליט לבד שהאובייקט מת. במקום זה האובייקט מוכנס לתור של thread הבעלים, שממזג את שני המונים בנקודה בטוחה ומשחרר את האובייקט אם הסכום הוא אפס. אם הבעלים כבר הסתיים, המונים ממוזגים ביציאה שלו. היתרון: רוב העדכונים נעשים על ידי הבעלים, ופעולת RMW אטומית עולה בערך פי כמה מ-increment רגיל, וגרוע מזה, כשכמה cores מעדכנים אותו אובייקט ה-cache line קופץ ביניהם. לאובייקטים שכולם נוגעים בהם (None, small ints) יש immortality ואין עדכון בכלל, ולפונקציות, modules ו-code objects יש deferred reference counting.",
+        "rubric": [
+          "שני מונים: local לא אטומי ל-owner, shared אטומי, ו-ob_tid",
+          "כשה-shared נעשה שלילי, האובייקט נשלח לתור של ה-owner למיזוג",
+          "פעולה אטומית יקרה יותר ו-cache line קופץ בין cores",
+          "immortal objects ו-deferred refcount לאובייקטים חמים משותפים"
+        ]
+      }
     },
     {
       "id": "py.gil.q33",
@@ -1007,7 +1165,16 @@
         "נכון: `memcpy` לזיכרון גולמי של bytearray שה-`Py_buffer` מחזיק הוא פעולת C טהורה שלא נוגעת במצב ה-interpreter.",
         "קריאה ל-callback של Python מריצה bytecode ולכן חייבת GIL; קודם צריך `Py_END_ALLOW_THREADS` (או `PyGILState_Ensure`)."
       ],
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "ה-`read()` בתוך האזור בלי GIL נכשל. איך מדווחים את השגיאה ל-Python בצורה נכונה, ומה עושים אם ה-errno הוא EINTR?",
+        "modelAnswer": "מיד אחרי ה-syscall שנכשל שומרים `int err = errno` במשתנה C מקומי, עוד לפני כל קריאה אחרת. CPython אמנם משמר את errno בזמן לקיחת ה-GIL מחדש, אבל זה פרט מימוש, וכל קריאה לפונקציית ספרייה בדרך יכולה לדרוס אותו. אחרי `Py_END_ALLOW_THREADS` (עם GIL) מחזירים את הערך ל-errno וקוראים ל-`PyErr_SetFromErrno(PyExc_OSError)`, שיוצר את ה-subclass המתאים (למשל FileNotFoundError), ומחזירים NULL. ב-EINTR מתנהגים לפי PEP 475: לוקחים GIL, קוראים ל-`PyErr_CheckSignals()`; אם ה-handler זרק exception (למשל KeyboardInterrupt) מחזירים NULL, ואחרת משחררים שוב את ה-GIL ומנסים את ה-read מחדש. כך Ctrl+C עובד, אבל signal אחר לא מפיל את הקריאה בטעות.",
+        "rubric": [
+          "שמירת errno למשתנה מקומי מיד אחרי ה-syscall",
+          "הרמת ה-exception רק אחרי Py_END_ALLOW_THREADS, עם PyErr_SetFromErrno",
+          "ב-EINTR: PyErr_CheckSignals עם GIL, ואם אין exception ניסיון חוזר (PEP 475)"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1042,7 +1209,16 @@
       ],
       "explanation": "ה-GIL מגביל רק הרצה מקבילית של bytecode. הוא לא נותן atomicity לפעולות מורכבות, משתחרר ב-I/O ובקוד native שמבקש זאת, ולא חוצה גבולות של תהליכים.",
       "id": "py.gil.q34",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "אם רק thread אחד מריץ bytecode בכל רגע, למה threads בכלל מאיצים שירות I/O-bound? תן חשבון לדוגמה, ואמור איפה התקרה.",
+        "modelAnswer": "בזמן קריאה חוסמת (recv, sleep) ה-thread משחרר את ה-GIL, וההמתנות של threads שונים חופפות. דוגמה: 100 בקשות, כל אחת 50 ms המתנה לרשת ו-1 ms עבודת CPU ב-Python. סדרתית זה בערך 100 כפול 51 ms, כ-5.1 שניות. עם 100 threads ההמתנות חופפות, וה-CPU, שעדיין סדרתי בגלל ה-GIL, מצטבר ל-100 ms, כך שהכל לוקח בערך 150 ms. התקרה: ה-speedup המקסימלי הוא בערך (זמן המתנה + זמן CPU) חלקי זמן CPU, כאן כ-51. אחרי זה ה-GIL הוא צוואר הבקבוק, כי החלק החישובי לא מתמקבל. אם עבודת ה-CPU לכל בקשה גדלה ל-25 ms, התקרה יורדת לפי 3.",
+        "rubric": [
+          "ה-GIL משתחרר בזמן syscall חוסם, וההמתנות חופפות",
+          "חשבון דוגמה: סדרתי כ-5.1 שניות מול כ-150 ms",
+          "תקרת speedup בערך (wait + cpu) / cpu, כי החלק החישובי סדרתי"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1063,7 +1239,17 @@
       ],
       "explanation": "במעבר ל-free-threaded חשוב לבדוק שכל ההרחבות תומכות; אחרת ה-GIL חוזר בשקט והביצועים לא משתפרים. `sys._is_gil_enabled()` הוא הבדיקה המהירה.",
       "id": "py.gil.q35",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "איך תוודא אוטומטית ב-CI שה-GIL לא חזר בשקט אחרי שמישהו הוסיף תלות חדשה?",
+        "modelAnswer": "בדיקה ייעודית שמייבאת את כל ה-modules של האפליקציה ואז עושה `assert not sys._is_gil_enabled()`. בנוסף, ההפעלה מחדש של ה-GIL מלווה ב-RuntimeWarning, ולכן מריצים את הבדיקות עם `-W error::RuntimeWarning` (או filterwarnings ב-pytest) כדי שהיא תכשיל את ה-build ותציין איזה module גרם לה. חשוב לא להגדיר `PYTHON_GIL=0` ב-CI, כי זה מכריח את ה-GIL להישאר כבוי ומסתיר בדיוק את הבעיה שרוצים לתפוס (ועלול לגרום לקריסות של הרחבה לא בטוחה). להרחבות שלך מצהירים על תמיכה עם slot של `Py_mod_gil` בערך `Py_MOD_GIL_NOT_USED` אחרי שבדקת שהן באמת thread-safe. בדיקה משלימה: benchmark קצר של scaling, כי GIL שחזר מתבטא מיד בכך ש-4 threads לא מהירים מ-1.",
+        "rubric": [
+          "assert על sys._is_gil_enabled() אחרי ייבוא כל ה-modules",
+          "ה-RuntimeWarning הופך ל-error בבדיקות",
+          "לא להגדיר PYTHON_GIL=0 ב-CI כי זה מסתיר את הבעיה",
+          "הרחבות שלך מצהירות Py_MOD_GIL_NOT_USED"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1084,7 +1270,17 @@
       ],
       "explanation": "שלוש דרכים למקביליות CPU ב-CPython מודרני: multiprocessing (בידוד מלא), subinterpreters עם GIL נפרד (בידוד בתוך תהליך), ו-free-threaded build (שיתוף מלא בלי GIL).",
       "id": "py.gil.q36",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "מה היה צריך לשנות בתוך CPython כדי ש-GIL לכל interpreter יעבוד, ולמה הרחבות C ישנות לא יכולות לרוץ ב-subinterpreter כזה?",
+        "modelAnswer": "הבעיה הייתה מצב גלובלי ב-C: static types, singletons, מצב ה-allocator, interned strings, ה-cache של small ints ומצב של modules מובנים. כל אלה היו משותפים לכל ה-interpreters, ובלי GIL משותף שני interpreters היו נוגעים בהם במקביל. החלק הארי עבר ל-state per-interpreter, ואובייקטים שחייבים להיות משותפים (None, True, small ints) נעשו immortal (PEP 683), כך שה-refcount שלהם לא משתנה ואין race עליו. הרחבות C עם single-phase init שומרות מצב במשתנים static ומניחות interpreter אחד, ולכן ייבוא שלהן ב-subinterpreter עם GIL נפרד נכשל ב-ImportError. כדי לתמוך, הרחבה צריכה multi-phase init (PEP 489), להחזיק את המצב ב-module state ולא ב-static, ולהצהיר על כך עם `Py_mod_multiple_interpreters`. בגלל זה התהליך לקח כמה גרסאות.",
+        "rubric": [
+          "מצב גלובלי ב-C הועבר ל-state per-interpreter",
+          "immortal objects (PEP 683) לאובייקטים משותפים כמו None",
+          "הרחבות single-phase init נכשלות בייבוא ב-ImportError",
+          "תמיכה דורשת multi-phase init (PEP 489) ו-module state"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1107,7 +1303,17 @@
       ],
       "explanation": "השאלה פשוטה לשאול וקשה לענות עליה טוב. מה שמבדיל תשובה של סניור: הסבר למה ה-GIL קיים, שהוא לא מחליף synchronization, ותרגום שלו להחלטות ארכיטקטורה.",
       "id": "py.gil.q37",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "המראיין שואל: 'אז למה לא הסירו את ה-GIL כבר לפני 25 שנה?' מה היה המחיר אז, ומה השתנה שאפשר את PEP 703?",
+        "modelAnswer": "ניסיון מוקדם (ה-patch של Greg Stein מסוף שנות ה-90) החליף את ה-GIL ב-locks עדינים ובעדכוני refcount מוגנים, וקוד single-threaded נעשה איטי בערך פי 2. Guido הציב תנאי: אסור להאט קוד single-threaded, שהוא רוב הקוד, וזה חסם את הרעיון. המחיר המרכזי הוא ש-refcount משתנה בכמעט כל פעולה, ופעולה אטומית על כל INCREF/DECREF יקרה. הדבר השני הוא תאימות: אלפי הרחבות C מניחות GIL. מה שהשתנה: biased reference counting (רוב העדכונים לא אטומיים), immortal objects ו-deferred refcount לאובייקטים חמים, mimalloc שמאפשר קריאות בלי lock, וגישה של build נפרד ואופציונלי שנותן לאקוסיסטם זמן להסתגל. בנוסף, מכונות עם עשרות cores ו-workloads של ML הגדילו מאוד את הביקוש. התוצאה היא overhead של אחוזים בודדים עד כ-10% ב-3.14t, ולא פי 2.",
+        "rubric": [
+          "ניסיון מוקדם עם locks עדינים האט קוד single-threaded בערך פי 2",
+          "refcount בכל פעולה דורש atomics, וזה היה המחיר המרכזי",
+          "biased refcount, immortal objects ו-mimalloc הורידו את ה-overhead",
+          "תאימות הרחבות C, ולכן build נפרד ואופציונלי"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1140,7 +1346,17 @@
       ],
       "explanation": "שאלה שמבדילה בין 'Python' לבין 'CPython'. התשובה מראה שאתה מבין שה-GIL הוא החלטת מימוש שקשורה ל-reference counting.",
       "id": "py.gil.q39",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "אם Jython ו-IronPython מסתדרים בלי GIL, למה CPython לא יכול פשוט לעשות מה שהם עושים?",
+        "modelAnswer": "Jython ו-IronPython יושבים על JVM ו-.NET, שיש להם tracing GC ומודל זיכרון thread-safe מוגדר. אין עדכון מונה בכל העברת הפניה, ומבני הנתונים ממומשים עם מבנים concurrent של הפלטפורמה. CPython בנוי על reference counting: כל השמה, קריאה לפונקציה ו-return עושים INCREF או DECREF, ובלי GIL כל אחד מאלה היה צריך להיות אטומי. מעבר ל-tracing GC היה שובר את ה-C API: הרחבות מנהלות refcount ידנית, משתמשות ב-borrowed references ומניחות שאובייקט חי כל עוד יש לו הפניה. הוא גם היה שובר התנהגות שקוד רב מסתמך עליה בפועל, כמו סגירה מיידית של קובץ כשה-refcount יורד לאפס. ושווה לציין ש-PyPy, למרות שיש לו tracing GC, דווקא כן עם GIL, כלומר ה-GIL הוא בחירה הנדסית של המימוש ולא של השפה.",
+        "rubric": [
+          "JVM/.NET עם tracing GC, בלי עדכון מונה בכל הפניה",
+          "ב-CPython כל INCREF/DECREF היה צריך להיות אטומי",
+          "C API: refcount ידני ו-borrowed references בהרחבות",
+          "PyPy דווקא כן עם GIL"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1191,7 +1407,17 @@
       ],
       "explanation": "תהליכים לא חולקים state. מה שצריך לחזור מגיע בערכי ההחזרה; שיתוף אמיתי דורש `multiprocessing.Value`, `Manager` או shared memory, וכל אלה עם סנכרון.",
       "id": "py.gil.q41",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "איך תשנה את הקוד כך שיודפס 4, בשתי דרכים שונות, ומה המחיר של כל אחת?",
+        "modelAnswer": "דרך ראשונה, ועדיפה: בלי מצב משותף. כל קריאה מחזירה 1, והתהליך הראשי מחשב `sum(p.map(f, range(4)))`. זה map-reduce: אין סנכרון, ומשלמים רק pickle של ערכי ההחזרה. דרך שנייה: `multiprocessing.Value('i', 0)` שמועבר ל-workers דרך `initializer` של ה-Pool (העברה שלו כארגומנט ל-map זורקת RuntimeError, כי אובייקט מסונכרן משותף רק דרך ירושה). ההגדלה חייבת להיות `with v.get_lock(): v.value += 1`, כי `+=` על `.value` הוא קריאה וכתיבה נפרדות גם כשה-Value עם lock. המחיר: lock בין תהליכים בכל עדכון, ו-contention כשיש הרבה עדכונים. אפשרות שלישית, `Manager().Value`, עובדת דרך proxy לתהליך server, וכל פעולה היא round-trip של IPC, פי כמה סדרי גודל יותר איטי.",
+        "rubric": [
+          "צבירת ערכי החזרה (sum על תוצאות map) בלי מצב משותף",
+          "Value מועבר דרך initializer ולא כארגומנט ל-map",
+          "חובה get_lock() סביב +=, כי הוא לא אטומי",
+          "Manager proxy עולה round-trip של IPC לכל פעולה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1212,7 +1438,17 @@
       ],
       "explanation": "שאלת 'threads או processes' ברמת סניור כוללת את מחיר הזיכרון: ב-CPython, refcounting הופך קריאות לכתיבות ושובר שיתוף דפים. נתונים גדולים משתפים כ-buffers רציפים, לא כמבני Python.",
       "id": "py.gil.q42",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "איך תבנה את השירות כך שהזיכרון באמת יישאר משותף בין ה-workers, ואיך תמדוד שזה עובד?",
+        "modelAnswer": "קודם כל לשמור את המודל כ-buffers רציפים (מערכי NumPy) ולא כמיליוני אובייקטי Python קטנים. ל-ndarray יש header אחד עם refcount, ולכן נגיעה בו מלכלכת דף אחד, ו-gigabytes של נתונים לא נכתבים. שנית, לקרוא ל-`gc.freeze()` לפני ה-fork: האובייקטים הקיימים מועברים ל-permanent generation, וה-GC לא סורק וכותב אליהם. זה לא עוצר את כתיבות ה-refcount, אבל מוריד הרבה מהן. שלישית, לטעון את המודל מקובץ עם mmap במצב קריאה: הדפים שייכים ל-page cache ומשותפים לכל התהליכים, גם עם spawn. מדידה: לא לפי RSS, שסופר כל דף משותף בכל תהליך מחדש, אלא לפי PSS ו-USS (למשל `/proc/<pid>/smaps_rollup` או smem). אם ה-USS של כל worker קטן ויציב לאורך זמן, השיתוף עובד.",
+        "rubric": [
+          "נתונים גדולים כ-buffers רציפים ולא כאובייקטי Python רבים",
+          "gc.freeze() לפני fork",
+          "mmap של קובץ במצב קריאה, משותף דרך page cache",
+          "מדידה לפי PSS/USS ולא לפי RSS"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1243,7 +1479,17 @@
       ],
       "explanation": "ה-GIL לא מונע deadlocks ולא races ברמת הלוגיקה. כללי אצבע: סדר נעילה קבוע, להחזיק lock כמה שפחות זמן, ולהעדיף העברת הודעות דרך `queue.Queue` על state משותף.",
       "id": "py.gil.q43",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "אי אפשר לקבוע סדר נעילה קבוע בקוד, כי העברה יכולה להיות בין כל שני חשבונות, בכל כיוון. איך מונעים deadlock?",
+        "modelAnswer": "קובעים סדר לפי מפתח יציב של האובייקט עצמו: בכל העברה ממיינים את שני ה-locks לפי מספר החשבון (או id ייחודי) ונועלים תמיד את הקטן קודם, וכך בפועל יש סדר גלובלי בלי קשר לכיוון ההעברה. צריך לטפל במקרה שבו המקור והיעד הם אותו חשבון: עם Lock רגיל, נעילה פעמיים תיתקע, ולכן בודקים את זה מראש. חלופה: try-lock. נועלים את הראשון ומנסים את השני עם `acquire(timeout=...)`; אם נכשל, משחררים את הראשון, מחכים זמן אקראי (backoff) ומנסים שוב. זה מונע deadlock אבל עלול ליצור livelock תחת עומס. חלופה שלישית: לא לשתף בכלל, אלא thread אחד שמחזיק את כל החשבונות ומקבל פקודות דרך queue. זה פשוט ונכון, והמחיר הוא throughput של thread יחיד.",
+        "rubric": [
+          "מיון ה-locks לפי מפתח יציב (מספר חשבון) ונעילה בסדר הזה",
+          "טיפול במקרה שהמקור והיעד הם אותו חשבון",
+          "try-lock עם timeout, שחרור ו-backoff, עם סיכון ל-livelock",
+          "חלופה: owner thread יחיד עם queue"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1264,7 +1510,17 @@
       ],
       "explanation": "producer/consumer עם `queue.Queue` הוא הדרך הבטוחה לשתף עבודה בין threads, אבל עצירה מסודרת דורשת sentinel לכל צרכן, או `q.task_done()` + `q.join()`, או Event.",
       "id": "py.gil.q44",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "ה-producer לא יודע כמה workers יש, ו-worker יכול לקרוס באמצע פריט. איך תעצב עצירה מסודרת ומעקב אחרי סיום העבודה?",
+        "modelAnswer": "אפשרות פשוטה: worker שקורא את ה-sentinel מחזיר אותו לתור לפני שהוא יוצא, ואז sentinel אחד מספיק לכל מספר של workers. מ-Python 3.13 יש `Queue.shutdown()`: אחרי הקריאה `put` נכשל, ו-`get` זורק ShutDown כשהתור מתרוקן, וזה מחליף sentinels לגמרי. אפשרות נוספת: Event של עצירה ו-`q.get(timeout=0.5)` בלולאה, כך שה-worker בודק את הדגל מדי פעם. למעקב אחרי סיום: `q.task_done()` לכל פריט ו-`q.join()` אצל ה-producer. אבל אם worker זורק exception לפני task_done, ה-join ייתקע לנצח, ולכן task_done חייב להיות ב-finally. exception ב-thread לא מגיע לתהליך הראשי מעצמו (הוא רק מודפס דרך threading.excepthook), ולכן כדאי לתפוס, לרשום, ולהחליט אם להמשיך לפריט הבא.",
+        "rubric": [
+          "worker מחזיר את ה-sentinel לתור, ואז אחד מספיק",
+          "Queue.shutdown() מ-3.13",
+          "task_done ב-finally, אחרת q.join() נתקע",
+          "exception ב-thread מודפס דרך excepthook ולא מגיע לראשי"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1288,7 +1544,17 @@
       ],
       "explanation": "Lock רגיל לא יודע מי מחזיק אותו, ולכן נעילה חוזרת מאותו thread נתקעת. `RLock` פותר את זה במחיר קטן, אבל לרוב עדיף לתכנן את הקוד כך שנעילה תתבצע רק בשכבה החיצונית.",
       "id": "py.gil.q45",
-      "lesson": "py.gil"
+      "lesson": "py.gil",
+      "followUp": {
+        "prompt": "נניח שה-deadlock הזה קרה ב-production בתהליך שרץ שעות. איך תגלה שהוא תקוע, ואיך תמצא בדיוק איפה, בלי להרוג אותו?",
+        "modelAnswer": "סימן ראשון: התהליך חי אבל ה-CPU שלו קרוב ל-0 ואין התקדמות במדדים (תור שגדל, heartbeat שלא מתעדכן). כדי לראות איפה הוא תקוע: `py-spy dump --pid <pid>` מדפיס את ה-stack של כל ה-threads מבחוץ, בלי לעצור את התהליך ובלי שינוי קוד. מראש אפשר להכין `faulthandler.register(signal.SIGUSR1, all_threads=True)`, ואז `kill -USR1` מדפיס traceback של כל ה-threads. ב-dump רואים thread שמחכה ב-`acquire` בתוך `add`, שנקראה מתוך `add_many` שכבר מחזיקה את אותו lock, וזה מזהה self-deadlock. לגילוי אוטומטי בעתיד: `lock.acquire(timeout=...)` במקומות קריטיים, עם log ו-stack trace כשה-timeout פג, ו-watchdog שמתריע כשה-heartbeat נעצר.",
+        "rubric": [
+          "סימן: CPU כמעט 0 בלי התקדמות",
+          "py-spy dump על ה-pid בלי לעצור את התהליך",
+          "faulthandler.register על signal להדפסת כל ה-threads",
+          "acquire(timeout) או watchdog לגילוי אוטומטי"
+        ]
+      }
     }
   ]
 }

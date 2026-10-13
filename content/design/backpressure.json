@@ -398,7 +398,16 @@
         "400 מתקבל מטעות בסדר גודל (למשל 20k × 0.02); החישוב הנכון הוא 20k × 0.2.",
         "נכון: בזמן ה-burst התור גדל ב-120k − 100k = 20k פריטים בשנייה, למשך 0.2 שניות: 4,000 פריטים."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "ה-bursts בתרחיש הזה חוזרים: 200 ms של 120k בשנייה, ואחריהם רק 100 ms של 80k בשנייה, שוב ושוב. האם תור של 4,000 מספיק עכשיו? ומה ה-latency המקסימלי שפריט יחווה בתור מלא של 4,000?",
+        "modelAnswer": "לא, ושום תור סופי לא יספיק. במחזור של 300 ms מגיעים 24,000 + 8,000 = 32,000 פריטים, וה-consumer מעבד רק 30,000, כלומר התור גדל ב-2,000 בכל מחזור. במונחי קצב ממוצע: 32,000 / 0.3 ≈ 106.7k בשנייה, מעל 100k, ולכן ρ > 1 והתור מתבדר. ה-buffer סופג רק פערים זמניים כשהממוצע מתחת לקיבולת; כשהממוצע מעליה צריך backpressure או drop. ה-latency של פריט בסוף תור של 4,000 הוא 4,000 / 100k = 40 ms, ולכן גודל תור הוא גם תקציב latency.",
+        "rubric": [
+          "מחשב קצב ממוצע של כ-106.7k בשנייה (32,000 ל-300 ms) מול 100k",
+          "מסיק שהתור גדל ב-2,000 למחזור ושאין גודל תור שמספיק",
+          "latency מקסימלי בתור מלא: 4,000 / 100k = 40 ms"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q09",
@@ -426,7 +435,17 @@
         "נכון: ה-receive window של TCP מגביל כמה bytes השולח רשאי לשלוח לפני ACK, ו-window של 0 עוצר אותו.",
         "נכון: ב-pull הצרכן מבקש רק כשהוא פנוי, ולכן backpressure מובנה."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "נתמקד ב-receive window של TCP. האפליקציה בצד המקבל פשוט מפסיקה לקרוא מה-socket. תאר צעד אחרי צעד איך זה מגיע עד ל-producer בצד השולח, ובמה זה שונה מה-congestion window.",
+        "modelAnswer": "ה-receive buffer של ה-socket אצל המקבל מתמלא, וה-rwnd שהוא מפרסם ב-ACKs יורד עד 0 (zero window). השולח מפסיק לשלוח data ושולח מדי פעם zero-window probes (persist timer) כדי לגלות מתי החלון נפתח. בינתיים ה-send buffer של השולח מתמלא, ואז `write()` נחסם, או מחזיר `EAGAIN` ב-socket non-blocking, וכך האפליקציה השולחת מרגישה את ה-backpressure. ה-cwnd הוא הערכה של השולח לקיבולת הרשת ונקבע לפי drops או ECN, בעוד rwnd הוא מגבלה מפורשת של המקבל; השולח מוגבל ל-min(rwnd, cwnd).",
+        "rubric": [
+          "receive buffer מתמלא ו-rwnd מפורסם יורד ל-0",
+          "השולח שולח zero-window probes עד שהחלון נפתח",
+          "send buffer מתמלא ו-write נחסם או מחזיר EAGAIN אצל האפליקציה השולחת",
+          "חלון אפקטיבי הוא min(rwnd, cwnd); cwnd מייצג את הרשת ולא את המקבל"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q10",
@@ -447,7 +466,16 @@
         "נכון: זה bufferbloat: ה-buffer מתמלא, כל פקטה ממתינה עד שתי שניות, ה-throughput כמעט לא משתנה, ו-TCP מגלה גודש מאוחר מדי. הפתרון: AQM כמו CoDel.",
         "TCP מזהה גודש לפי drops או ECN, ולכן גודל ה-buffer משפיע ישירות על ההתנהגות שלו."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "אז מה כן הגודל הנכון ל-buffer בנתב, ואיך היית מוכיח בשטח שיש bufferbloat בקישור מסוים?",
+        "modelAnswer": "הכלל הקלאסי הוא BDP: buffer ≈ C × RTT, כלומר בקישור של 1 Gbps עם RTT של 100 ms זה 12.5 MB, בעוד 2 s באותו קישור הם 250 MB. כשעוברים בקישור הרבה זרמי TCP לא מסונכרנים מספיק בערך C × RTT / √N, ולכן בנתבי core ה-buffer הנדרש קטן בהרבה. כדי להוכיח bufferbloat מודדים latency under load: מריצים ping ברקע, ואז מרווים את הקישור בהעלאה או הורדה גדולה. אם ה-RTT קופץ מ-20 ms למאות ms או שניות בזמן שה-throughput נשאר זהה, יש תור עומד. הפתרון הוא AQM (CoDel או fq_codel) ולא buffer קטן מאוד שגורם ל-drops מיותרים ב-bursts.",
+        "rubric": [
+          "כלל BDP: buffer ≈ קצב הקישור × RTT, עם דוגמה מספרית",
+          "עם N זרמים מספיק בערך C×RTT/√N",
+          "מדידה: ping תוך כדי רוויית הקישור, RTT קופץ בזמן שה-throughput לא משתנה"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q11",
@@ -468,7 +496,17 @@
         "נכון: retry amplification: (1+3)×(1+3) = 16 ניסיונות לבקשה אחת. פותרים עם retries בשכבה אחת, exponential backoff עם jitter, retry budget ו-deadline propagation.",
         "UDP לא פותר את הבעיה; retries יכולים להתקיים גם מעליו, והבעיה היא מדיניות ה-retry, לא הפרוטוקול."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "אמרת retry budget ו-jitter. איך בדיוק מממשים retry budget של 10%, ולמה backoff בלי jitter עדיין מסוכן?",
+        "modelAnswer": "מימוש פשוט: token bucket לכל client או לכל יעד, שבו כל בקשה רגילה שמצליחה מוסיפה 0.1 token וכל retry צורך token אחד. כשאין tokens לא מנסים שוב אלא נכשלים מיד, ולכן בסך הכול retries מוגבלים לכ-10% מהתעבורה, וה-amplification המקסימלי לשכבה הוא בערך פי 1.1 במקום פי 4. בלי jitter, כל ה-clients שנכשלו באותו רגע (למשל בגלל restart של B) ינסו שוב בדיוק אחרי 100 ms, 200 ms, 400 ms, וייצרו גלי עומס מסונכרנים. full jitter מגריל המתנה אחידה בין 0 ל-min(cap, base × 2^attempt) ומפזר את הגל לאורך כל החלון. בנוסף עושים retry רק לבקשות idempotent או עם idempotency key.",
+        "rubric": [
+          "מנגנון budget קונקרטי: הצלחות צוברות כ-0.1 token ו-retry צורך token",
+          "כשה-budget נגמר: fail fast בלי retry",
+          "בלי jitter ה-clients מסונכרנים ויוצרים גלים בזמנים קבועים",
+          "full jitter: המתנה אקראית בין 0 ל-min(cap, base×2^n)"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q12",
@@ -489,7 +527,17 @@
         "זה התיאור של RED, הדור הקודם, שקשה לכוונן.",
         "CoDel לא מתעדף לפי גודל פקטה; תעדוף כזה שייך לתזמון (scheduling), לא ל-AQM."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "למה CoDel משתמש במינימום של ה-sojourn time בחלון ולא בממוצע? ואחרי שהוא נכנס למצב dropping, איך הוא קובע כמה מהר לזרוק?",
+        "modelAnswer": "ממוצע מושפע מ-burst בודד: burst גדול מעלה אותו גם אם התור התרוקן אחריו. מינימום גבוה מה-target לאורך כל ה-interval אומר שהתור לא התרוקן אפילו פעם אחת, כלומר זה standing queue אמיתי. ערכי ברירת המחדל הם target של 5 ms ו-interval של 100 ms. במצב dropping הזריקה הבאה מתוזמנת אחרי interval / √count, כך שקצב הזריקות עולה כמו √count. הבחירה בשורש נובעת מכך שה-throughput של TCP פרופורציוני בערך ל-1/√p, ולכן הגדלה כזו מורידה את קצב השולחים באופן הדרגתי. אותו רעיון עובד גם לתורי בקשות בשרתים: מודדים כמה זמן בקשה חיכתה ולא כמה בקשות יש.",
+        "rubric": [
+          "ממוצע מושפע מ-bursts; מינימום מעל target לאורך החלון = התור לא התרוקן",
+          "ערכי ברירת מחדל: target 5 ms, interval 100 ms",
+          "הזריקה הבאה אחרי interval/√count",
+          "הקשר ל-throughput של TCP שפרופורציוני ל-1/√p"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q13",
@@ -529,7 +577,17 @@
         "pull משלם round trip או polling, ולכן הוא לא תמיד מהיר יותר; ב-latency push לרוב מנצח.",
         "נכון: ב-push פריט יוצא מיד כשהוא מוכן, בלי לחכות לבקשה מהצרכן."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "consumer של Kafka הוא pull. איך הוא מקבל latency כמעט כמו push בלי busy polling, ומה קורה ל-consumer שמעבד לאט מדי ולא קורא ל-poll בזמן?",
+        "modelAnswer": "Kafka משתמש ב-long polling: ה-fetch request נשאר פתוח אצל ה-broker עד שיש לפחות `fetch.min.bytes` של data או עד `fetch.max.wait.ms`, ולכן הודעה חדשה מגיעה כמעט מיד ואין בקשות ריקות בלולאה. polling רגיל במרווח T היה מוסיף בממוצע T/2 latency ועולה בבקשות סרק. ה-consumer שולט בקצב דרך `max.poll.records` ופשוט לא מבקש עוד, וזה ה-backpressure. אם הוא לא קורא ל-`poll()` בתוך `max.poll.interval.ms` (ברירת מחדל 5 דקות), הוא מוצא מה-consumer group ומתבצע rebalance, כך שעיבוד איטי מדי הופך לתקלה. הנתונים שלא נמשכו נשארים ב-log לפי ה-retention, וזה התור.",
+        "rubric": [
+          "long polling: הבקשה מוחזקת עד fetch.min.bytes או fetch.max.wait.ms",
+          "polling במרווח T מוסיף בממוצע T/2 latency",
+          "max.poll.records שולט בכמות למשיכה",
+          "חריגה מ-max.poll.interval.ms גורמת להוצאה מה-group ול-rebalance"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q15",
@@ -550,7 +608,17 @@
         "פי 2 הוא ניחוש של גידול \"מתון\"; בפועל הגורם 1/(1 − ρ) קופץ מ-5 ל-20, כי ליד ρ=1 ההתנהגות חריפה מאוד.",
         "15 הוא הפרש האחוזים (95 − 80), לא יחס זמנים."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "זה הממוצע. מה קורה ל-p99 באותו מודל, ומה משתנה אם זמן השירות כמעט קבוע ולא אקספוננציאלי?",
+        "modelAnswer": "ב-M/M/1 זמן השהייה במערכת מתפלג אקספוננציאלית עם ממוצע S/(1−ρ), ולכן p99 = ln(100) × ממוצע ≈ 4.6 × ממוצע. עם S = 1 ms ו-ρ = 0.95: ממוצע 20 ms ו-p99 של כ-92 ms, לעומת כ-23 ms ב-ρ = 0.8. כשזמן השירות קבוע (M/D/1) נוסחת Pollaczek-Khinchine נותנת זמן המתנה בתור Wq = ρS(1+Cs²) / (2(1−ρ)), ועם Cs² = 0 זה חצי מזמן ההמתנה של M/M/1. כלומר שונות בזמן השירות מגדילה את התור, אבל הפיצוץ ליד ρ = 1 נשאר בכל מקרה. מסקנה מעשית: מגדירים headroom לפי ה-p99 של ה-SLO, לא לפי הממוצע.",
+        "rubric": [
+          "ב-M/M/1 זמן השהייה אקספוננציאלי ולכן p99 ≈ 4.6 × ממוצע",
+          "דוגמה מספרית: ב-ρ=0.95 ו-S=1ms, p99 של כ-92 ms",
+          "M/D/1: זמן ההמתנה בתור חצי מ-M/M/1 (Pollaczek-Khinchine)",
+          "הפיצוץ ב-1/(1−ρ) נשאר גם עם שירות קבוע"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q16",
@@ -571,7 +639,17 @@
         "סדר השירות לא משנה את גודל התור; אותו מספר בקשות ממתין.",
         "נכון: ב-FIFO עם 3 שניות בתור, כל בקשה שמעובדת כבר עברה את ה-timeout של 1 s, ו-goodput יורד לאפס; LIFO משרת קודם בקשות טריות שמישהו עוד מחכה להן."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "LIFO משאיר בקשות ישנות לנצח בתחתית התור. איך מונעים starvation והצטברות זיכרון, ומתי חוזרים ל-FIFO?",
+        "modelAnswer": "משלבים LIFO עם timeout קצר לבקשות בתור, בסגנון CoDel: במצב רגיל התור FIFO עם timeout נדיב, ואם התור לא התרוקן לאורך חלון (למשל 100 ms) עוברים ל-LIFO ומקצרים את ה-timeout לעשרות ms. בקשות ישנות לא מורעבות בשקט אלא נזרקות מהר עם שגיאה, כך שה-client מקבל תשובה ויכול להחליט אם לנסות שוב במסגרת ה-retry budget. כשהתור מתרוקן שוב חוזרים ל-FIFO, כי בעומס רגיל FIFO הוגן ונותן tail latency טוב יותר. המדד שמנטרים הוא goodput, כלומר בקשות שהושלמו לפני ה-deadline שלהן, ולא throughput גולמי.",
+        "rubric": [
+          "LIFO משולב עם timeout קצר בתור שזורק בקשות ישנות עם שגיאה מהירה",
+          "המעבר מותנה בכך שהתור לא התרוקן לאורך חלון זמן",
+          "חזרה ל-FIFO כשהתור מתרוקן",
+          "מודדים goodput (הושלמו בתוך ה-deadline) ולא throughput"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q17",
@@ -587,7 +665,17 @@
         "מדדים ובדיקת fault injection"
       ],
       "explanation": "התשובה החזקה מחשבת מספרים, מבדילה בין מנגנון ומדיניות לכל קצה, ומתכננת degradation הדרגתי במקום התנהגות בינארית של 'עובד/קורס'.",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "נניח ש-capture הוא 100 MS/s של complex int16. כמה זיכרון צריך כדי לספוג stall של 2 שניות בדיסק, כמה זמן ייקח להתאושש אם הדיסק כותב 600 MB/s, ומה קורה אם ה-stall נמשך 5 שניות?",
+        "modelAnswer": "כל דגימה complex int16 היא 4 bytes, ולכן הקצב הוא 400 MB/s, ו-stall של 2 שניות דורש 800 MB, בפועל כ-1 GB עם מרווח. אחרי ה-stall הדיסק מרוקן בקצב נטו של 600 − 400 = 200 MB/s, כלומר 4 שניות להתאוששות, ו-stall נוסף בתוך החלון הזה דורש עוד מקום. את ה-buffer מקצים מראש כ-ring של בלוקים קבועים, נועלים ב-`mlock` (ועדיף hugepages) כדי שלא יהיו page faults ב-path של ה-capture. ב-stall של 5 שניות (2 GB) ה-buffer מתמלא, ואז מדיניות drop פועלת בצד הכותב ולא ב-capture: זורקים בלוקים שלמים, רושמים מספר רצף ו-timestamp לכל בלוק כדי שהפער יהיה מתועד, ומונה drops גלוי. אפשר גם degradation: לשמור רק את תוצאות ה-DSP או לבצע decimation עד שהדיסק חוזר.",
+        "rubric": [
+          "400 MB/s, ולכן 800 MB לשתי שניות (כ-1 GB עם מרווח)",
+          "התאוששות: קצב נטו 200 MB/s, כ-4 שניות",
+          "buffer מוקצה מראש ונעול (mlock/hugepages), בלי הקצאות ב-capture",
+          "בהצפה: drop של בלוקים שלמים בצד הכותב עם מספרי רצף ומונה drops"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q18",
@@ -723,7 +811,16 @@
         "retries בלי הגבלה רק מוסיפים עומס על B, ושום retry לא יחזור בזמן אחרי שה-deadline עבר.",
         "הגדלת timeout ב-B לא עוזרת ל-client שכבר ויתר אחרי 300 ms; B רק יבזבז עבודה."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "איך ה-deadline עובר בפועל בין שירותים על מכונות שונות? מעבירים זמן מוחלט או זמן שנותר, ומה הבעיה בכל אחד?",
+        "modelAnswer": "זמן מוחלט (timestamp של הסיום) תלוי בכך שהשעונים מסונכרנים: clock skew של 50 ms בין מכונות מזיז את ה-deadline באותה כמות, וגרוע מזה, skew לא מוגבל יכול לגרום לוויתור מיידי או לעבודה ארוכה מדי. לכן gRPC, למשל, מעביר timeout יחסי בכותרת `grpc-timeout`, וכל hop ממיר אותו ל-deadline מקומי לפי השעון המונוטוני שלו. החיסרון של יחסי הוא שזמן ההעברה ברשת ובתורים לפני שהבקשה נקראה לא מנוכה, ולכן נהוג להפחית מרווח קטן לכל hop. בכל hop בודקים לפני עבודה יקרה אם הזמן שנותר מספיק, ומעבירים הלאה את מה שנותר פחות מרווח.",
+        "rubric": [
+          "deadline מוחלט רגיש ל-clock skew בין מכונות",
+          "timeout יחסי (כמו grpc-timeout) מומר ל-deadline מקומי לפי שעון monotonic",
+          "זמן ההעברה ברשת לא נספר ביחסי, ולכן מפחיתים מרווח לכל hop"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q26",
@@ -744,7 +841,17 @@
         "Little's law תקף לממוצעים בלי קשר להתפלגות, ולכן אפשר לחשב: 100 לפני, 1,000 אחרי.",
         "נכון: L = 2,000 × 0.05 = 100 לפני, ו-2,000 × 0.5 = 1,000 אחרי. concurrency limit של 100 היה מוריד את הקצב ל-200 בשנייה, אות backpressure טבעי שמגן על שני הצדדים."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "concurrency limit סטטי של 100 נקבע לפי ה-latency הרגיל. איך היית קובע אותו באופן אדפטיבי, כשה-latency התקין של B משתנה בין deploys ובין שעות?",
+        "modelAnswer": "גישה אחת היא AIMD כמו ב-TCP: כל תשובה מוצלחת מגדילה את ה-limit בקצת (למשל +1 לכל limit תשובות), ו-timeout או קפיצה ב-latency מורידים אותו בכפל, למשל × 0.9. גישה שנייה היא gradient בסגנון TCP Vegas: מודדים RTT מינימלי (latency בלי תור) ואת ה-RTT הנוכחי, ומעדכנים limit חדש ≈ limit × minRTT / RTT + מרווח קטן, כך שכשהתור אצל B גדל ה-limit יורד לבד. נקודת המוצא הסטטית היא Little's law: throughput יעד × latency תקין × מרווח, כלומר 2,000 × 0.05 × 1.5 = 150. חשוב למדוד minRTT מחדש מדי פעם, אחרת שינוי קבוע ב-B ייראה כעומס לנצח.",
+        "rubric": [
+          "AIMD: עלייה אדיטיבית בהצלחה, ירידה כפלית ב-timeout או latency גבוה",
+          "gradient: limit מתעדכן לפי היחס minRTT/RTT",
+          "נקודת מוצא לפי Little's law עם מרווח (כ-150 בדוגמה)",
+          "צריך לרענן את minRTT מדי פעם"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q27",
@@ -789,7 +896,17 @@
         "retries מהירים מגבירים את העומס על השירות העמוס בדיוק כשהוא חלש.",
         "נכון: shedding מוקדם, ב-gateway, לפי עדיפות ולפי אות עומס שמתפשט מה-downstream (429/503, latency, concurrency limit), חוסך את העבודה שהייתה מתבזבזת בשכבות הביניים."
       ],
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "כדי לזרוק לפי עדיפות, כל שירות בשרשרת צריך לדעת את העדיפות. איך מעבירים אותה, ומה עוד אפשר לעשות כבר ב-client כדי שבקשות שיידחו ממילא לא יגיעו לשרת בכלל?",
+        "modelAnswer": "מעבירים criticality ככותרת שעוברת לאורך כל השרשרת, בדיוק כמו deadline: בקשה ש-fan-out ממנה יורשת את העדיפות של בקשת האב, וכל שירות שמגיע ל-limit שלו זורק קודם את המחלקה הנמוכה ביותר. בלי זה שירות פנימי זורק באקראי ועלול להפיל checkout בזמן שהוא משרת prefetch. בצד ה-client אפשר adaptive throttling כמו בספר ה-SRE של Google: כל client סופר requests ו-accepts בחלון של כמה דקות, ודוחה מקומית בהסתברות max(0, (requests − K × accepts) / (requests + 1)), עם K בערך 2. כך כשהשרת דוחה הרבה, ה-client מפסיק לשלוח רוב הבקשות בעצמו, ועלות הדחייה יורדת לאפס בשרת.",
+        "rubric": [
+          "criticality ככותרת שמתפשטת ונורשת ב-fan-out, כמו deadline",
+          "כל שירות זורק קודם את העדיפות הנמוכה ביותר",
+          "client-side adaptive throttling לפי היחס בין requests ל-accepts",
+          "נוסחה: max(0, (requests − K×accepts)/(requests+1)) עם K≈2"
+        ]
+      }
     },
     {
       "id": "design.backpressure.q30",
@@ -805,7 +922,17 @@
         "מדדים ובדיקות עומס/תקלות"
       ],
       "explanation": "תשובה חזקה מתחילה במספרים, מזהה איפה ה-buffer הגדול צריך לשבת (ה-log, לא ה-gateway), מפרידה זרמים לפי חשיבות, ומטפלת גם ב-client ולא רק בשרת.",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "תן מספרים: מה הקצב הנכנס בבתים, כמה נפח log צריך כדי לשרוד שעה שבה הצרכנים עצורים לגמרי, ואיך מונעים מ-2 מיליון מכשירים להתחבר באותה שנייה אחרי התקלה?",
+        "modelAnswer": "2M / 10 s = 200k אירועים בשנייה, כפול 1 KB = 200 MB/s, כ-1.6 Gbps לפני overhead של HTTPS. שעה של צרכנים עצורים היא 200 MB/s × 3,600 = 720 GB, ועם replication factor 3 כ-2.2 TB, ולכן ה-retention של ה-log צריך לכסות את זה בנוחות, וזה ה-buffer האמיתי. לחיבור מחדש: ב-client exponential backoff עם full jitter, ובשרת rate limit על handshakes חדשים של TLS (הם יקרים ב-CPU) ותשובות 503 עם Retry-After מפוזר. המכשירים שולחים את מה שצברו מקומית בקצב מוגבל, ואפשר להעדיף אירועים חדשים או alerts על פני היסטוריה. ה-gateway עצמו נשאר stateless עם buffer קטן, כי buffer שם רק מסתיר את הבעיה ומאבד מידע כשה-node נופל.",
+        "rubric": [
+          "200k אירועים בשנייה, 200 MB/s (כ-1.6 Gbps)",
+          "שעה עצירה: כ-720 GB, וכ-2.2 TB עם replication 3",
+          "backoff עם jitter ב-client ו-Retry-After מפוזר מהשרת",
+          "הגבלת קצב של TLS handshakes חדשים, כי הם יקרים ב-CPU"
+        ]
+      }
     },
     {
       "level": 5,
@@ -829,7 +956,17 @@
       ],
       "problem": "Amazon SDE-2 interview: upgrade the existing system for the Great Indian sale",
       "id": "design.backpressure.q31",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "מוצר אחד במבצע הבזק מקבל 50,000 ניסיונות קנייה בשנייה, וכולם מעדכנים את אותה שורת מלאי ב-DB. מה נשבר ואיך תתכנן את זה?",
+        "modelAnswer": "כל עדכון של אותה שורה לוקח row lock, והעדכונים מסודרים בטור; עם transaction של כמה ms זה תקרה של מאות עד אלפים בודדים בשנייה, וכל השאר ממתינים, צורכים connections ומתחילים timeouts. פתרון אחד הוא sharded counter: מחלקים את המלאי ל-N תתי-מונים (למשל 1,000 יחידות ל-50 שורות של 20) וכל בקשה מנסה תת-מונה אקראי, כך ש-contention יורד פי N. פתרון אחר הוא להחזיק את המלאי ב-Redis עם `DECR` אטומי או סקריפט Lua, להחזיר מיד הצלחה או sold out, ולכתוב את ההזמנה ל-DB בצורה אסינכרונית דרך תור. ההזמנה עצמה היא reservation עם TTL, כך שמי שלא שילם משחרר את היחידה. ובכל מקרה, אחרי שהמלאי נגמר, ה-sold out מוגש מ-cache או CDN בלי לגעת ב-DB.",
+        "rubric": [
+          "row lock על שורה חמה מסדר עדכונים בטור ומגביל את הקצב",
+          "sharded counter: פיצול המלאי ל-N תתי-מונים",
+          "מונה אטומי בזיכרון (Redis DECR/Lua) עם כתיבה אסינכרונית ל-DB",
+          "reservation עם TTL ששוחרר אם אין תשלום"
+        ]
+      }
     },
     {
       "level": 5,
@@ -844,7 +981,17 @@
       ],
       "explanation": "וריאציה על מכירת הבזק: כאן ההיצע קטן מאוד ביחס לביקוש, ולכן admission control והוגנות חשובים יותר מ-throughput.",
       "id": "design.backpressure.q32",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "נתמקד ב-waiting room. איך הופכים אותו להוגן גם מול מי שפותח 20 טאבים או מריץ bot, ובאיזה קצב משחררים אנשים מהתור לרכישה?",
+        "modelAnswer": "כדי שמהירות הלחיצה לא תכריע, כל מי שהגיע בחלון שלפני 10:00 מקבל מיקום אקראי (הגרלה), ורק מי שמגיע אחר כך נכנס לסוף לפי סדר הגעה. המיקום הוא token חתום (HMAC) שקשור ל-account מאומת, כך ש-20 טאבים או ניסיון לזייף מיקום לא עוזרים, ומגבילים מספר tokens לכל account, כרטיס אשראי או device. קצב השחרור נגזר מקיבולת ה-checkout: אם המערכת מחזיקה 6,000 סשנים פעילים וכל רכישה לוקחת כ-3 דקות, משחררים כ-6,000 / 180 = 33 אנשים בשנייה, ומכווננים לפי latency בזמן אמת. כל מושב שנבחר נשמר כ-hold עם TTL של כמה דקות, וכשמלאי + holds מגיע ל-50,000 אומרים לשאר בכנות שנגמר.",
+        "rubric": [
+          "הגרלת מיקום לכל מי שהגיע לפני 10:00 במקום סדר הגעה במילישניות",
+          "token חתום הקשור ל-account מאומת, עם הגבלה לכל account",
+          "קצב שחרור = קיבולת סשנים / משך רכישה (חישוב מספרי)",
+          "hold עם TTL על מושב ועדכון המשתמשים כשנגמר"
+        ]
+      }
     },
     {
       "level": 5,
@@ -859,7 +1006,17 @@
       ],
       "explanation": "וריאציה על אירוע השיא, מזווית של תלות חיצונית מוגבלת. ה-backpressure צריך להגיע עד למשתמש, ולא להיעצר בתור שגדל בלי סוף.",
       "id": "design.backpressure.q33",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "הקריאה לספק התשלומים נגמרה ב-timeout. האם החיוב בוצע? איך מטפלים בזה בלי לחייב את המשתמש פעמיים ובלי לחרוג מ-2,000 בשנייה?",
+        "modelAnswer": "timeout הוא מצב לא ידוע ולא כישלון: ייתכן שהספק חייב והתשובה פשוט לא הגיעה. לכן כל ניסיון תשלום נשלח עם idempotency key קבוע לאותה הזמנה, והספק מזהה ניסיון חוזר ומחזיר את התוצאה המקורית במקום לחייב שוב. אם הספק לא תומך בזה, שואלים קודם את ה-status של העסקה ורק אז מנסים שוב. ההזמנה נשמרת ב-state machine כמו PENDING_PAYMENT, ותהליך reconciliation מול דוחות הספק סוגר מקרים שנשארו פתוחים. retries נספרים בתוך ה-rate limit: token bucket מקומי של כ-1,800 בשנייה (מרווח של 10%) שכולל ניסיונות חוזרים, כדי שגל timeouts לא יהפוך לגל חריגות.",
+        "rubric": [
+          "timeout = מצב לא ידוע, ייתכן שהחיוב בוצע",
+          "idempotency key קבוע להזמנה כך שהספק מבצע dedup",
+          "state machine עם PENDING ו-reconciliation לסגירת מקרים פתוחים",
+          "retries נספרים בתוך ה-rate limit, עם מרווח מתחת ל-2,000"
+        ]
+      }
     },
     {
       "level": 4,
@@ -930,7 +1087,17 @@
       ],
       "problem": "Google L5 interview: implement a rate limiter (fixed window, sliding window, token bucket)",
       "id": "design.backpressure.q37",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "איך מממשים token bucket בלי timer שממלא tokens, ומה משתנה כשה-limit הוא לכל משתמש אבל הבקשות שלו מגיעות ל-50 שרתי gateway שונים?",
+        "modelAnswer": "מימוש lazy: לכל key שומרים רק (tokens, last_ts), ובכל בקשה מחשבים tokens = min(capacity, tokens + rate × (now − last_ts)), ואז מנסים להוריד 1. זה O(1) בזמן ובזיכרון לכל key ואין צורך ב-timer. בסביבה מבוזרת אפשר לשמור את ה-state ב-Redis ולבצע את החישוב בסקריפט Lua אטומי, עם שעון של ה-Redis עצמו כדי לא להיות תלוי ב-skew, אבל כל בקשה משלמת round trip של כחצי ms ו-Redis הופך לתלות קריטית. החלופה היא bucket מקומי בכל gateway עם rate/50, שמהיר אבל לא מדויק כשה-load balancer לא מפזר את המשתמש באופן שווה. פשרה נפוצה היא מונים מקומיים שמסונכרנים מדי כמה עשרות ms, עם חריגה קטנה ומוגבלת.",
+        "rubric": [
+          "lazy refill: tokens = min(cap, tokens + rate×Δt) בכל בקשה, בלי timer",
+          "state מרכזי (Redis + Lua אטומי) מדויק אבל מוסיף round trip ותלות",
+          "bucket מקומי עם rate/N מהיר אבל לא מדויק כשהפיזור לא שווה",
+          "שימוש בשעון אחד (של ה-store) כדי להימנע מ-skew"
+        ]
+      }
     },
     {
       "level": 3,
@@ -951,7 +1118,17 @@
         "שגוי: אין מנגנון שמגביל את החלון החדש לפי מה שקרה בחלון הקודם. זה בדיוק מה ש-sliding window counter מוסיף."
       ],
       "id": "design.backpressure.q38",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "כדי לפתור את הבעיה הזו מציעים sliding window log. כמה זיכרון זה עולה למיליון משתמשים עם מגבלה של 100 לדקה, לעומת sliding window counter?",
+        "modelAnswer": "sliding window log שומר timestamp לכל בקשה בחלון, כלומר עד 100 ערכים למשתמש. ב-8 bytes לכל timestamp זה 800 bytes למשתמש ו-800 MB למיליון משתמשים, ובפועל ב-Redis sorted set עם overhead של מבנה הנתונים פי כמה מזה. בנוסף כל בקשה מוחקת ישנים ומוסיפה חדש, כלומר O(log n) ב-sorted set. sliding window counter שומר שני מונים ו-timestamp של החלון, כ-16 עד 24 bytes למשתמש, כלומר עשרות MB בסך הכול ו-O(1) לבקשה. ה-log מדויק לגמרי, וה-counter הוא קירוב, ולכן בוחרים log רק כשהמגבלה קטנה או כשדיוק חוזי באמת חשוב.",
+        "rubric": [
+          "log: עד 100 timestamps × 8 bytes = 800 bytes למשתמש, כ-800 MB למיליון",
+          "overhead של sorted set מגדיל את זה פי כמה",
+          "counter: שני מונים, עשרות bytes למשתמש, O(1) לבקשה",
+          "log מדויק, counter הוא קירוב"
+        ]
+      }
     },
     {
       "level": 3,
@@ -972,7 +1149,16 @@
         "שגוי: זה fixed window שמתעלם מהדקה הקודמת, וזה בדיוק מה שמאפשר burst בגבול החלון."
       ],
       "id": "design.backpressure.q39",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "זה קירוב. מתי הוא טועה הכי הרבה, ובכמה בקשות במקרה הגרוע?",
+        "modelAnswer": "הקירוב מניח שבקשות הדקה הקודמת התפזרו באופן אחיד. הוא טועה הכי הרבה כשכל הבקשות של הדקה הקודמת התרכזו בשניות האחרונות שלה: אז כולן עדיין בחלון האמיתי, אבל ההערכה נותנת להן משקל קטן. למשל 100 בקשות בשנייה 59 של הדקה הקודמת, ועכשיו עברו 45 שניות מהדקה הנוכחית: ההערכה היא cur + 100 × 0.25 = cur + 25, ולכן יותרו עוד 75 בקשות, בעוד שבחלון האמיתי יהיו 175. ככל שמתקדמים בדקה המשקל יורד לאפס, ולכן במקרה הקיצוני החלון האמיתי מכיל כמעט פי 2 מהמגבלה. בתנועה אמיתית, שהיא מפוזרת, הטעות קטנה, ולכן זו בחירה סבירה כשהמגבלה היא הגנה ולא חוזה.",
+        "rubric": [
+          "הטעות הגדולה כשבקשות הדקה הקודמת מרוכזות בסופה",
+          "דוגמה מספרית שבה ההערכה נמוכה מהספירה האמיתית",
+          "במקרה הקיצוני החלון האמיתי יכול להגיע כמעט לפי 2 מהמגבלה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1000,7 +1186,17 @@
       ],
       "problem": "Microsoft interview: design a scalable web service for real-time stock market data",
       "id": "design.backpressure.q40",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "איך שרת ה-fan-out מזהה ש-client איטי, ואיך מממשים conflation כך שעדכון מחיר יעלה O(1) והזיכרון לא יהיה תלוי בקצב העדכונים?",
+        "modelAnswer": "הזיהוי הוא דרך ה-socket: כש-`send()` מחזיר `EAGAIN` או שכמות ה-bytes שממתינים לשליחה עוברת סף, ה-client מוגדר איטי, או לפי ack אפליקטיבי שמפגר. לכל client שומרים map של symbol → ערך אחרון, ותור dirty של symbols עם flag לכל symbol שאומר אם הוא כבר בתור. עדכון כותב את הערך ב-map, ואם ה-flag כבוי מכניס את ה-symbol לתור ומדליק אותו, כלומר O(1) ו-symbol מופיע בתור פעם אחת לכל היותר. כשה-socket נעשה writable מוציאים symbols מהתור ושולחים את הערך העדכני. הזיכרון חסום במספר ה-symbols שה-client רשום אליהם, לא בקצב, ו-client שהתור שלו לא מתרוקן כמה שניות מנותק.",
+        "rubric": [
+          "זיהוי לפי EAGAIN או bytes ממתינים מעל סף ב-socket",
+          "map של ערך אחרון לכל symbol + תור dirty עם flag",
+          "עדכון O(1), כל symbol לכל היותר פעם אחת בתור",
+          "זיכרון חסום במספר ה-symbols ולא בקצב העדכונים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1021,7 +1217,17 @@
         "שגוי: UDP לא מבטיח הגעה או סדר, כלומר בדיוק ההפך ממה שצריך כאן."
       ],
       "id": "design.backpressure.q41",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "ה-client חוזר אחרי 10 דקות ומתחבר לשרת אחר לגמרי. איך ה-replay עובד, איפה נשמרים האירועים, ואיך מונעים כפילות?",
+        "modelAnswer": "ה-fills נכתבים ל-store עמיד ומשותף, למשל partition ב-Kafka לפי account או טבלה עם מפתח (account, seq), ולא ל-buffer בזיכרון של שרת ספציפי. ה-client שולח בחיבור את ה-seq האחרון שאישר, והשרת החדש קורא מ-seq + 1 ושולח את הפער לפני אירועים חיים. המסירה היא at-least-once, ולכן ה-client מבצע dedup לפי seq ומתעלם ממה שכבר ראה, וכך ההשפעה היא effectively exactly-once. אם ה-client מזהה קפיצה ב-seq בזמן חיבור פעיל, הוא מבקש replay של הפער. ה-retention מוגבל (למשל כמה ימים), ו-client שחוזר אחרי זמן ארוך יותר מקבל snapshot של מצב החשבון ואז ממשיך מה-seq של ה-snapshot.",
+        "rubric": [
+          "האירועים ב-store עמיד ומשותף לפי account ולא בזיכרון של שרת",
+          "ה-client שולח seq אחרון והשרת עושה replay מ-seq+1",
+          "dedup ב-client לפי seq (at-least-once + idempotent)",
+          "מעבר ל-retention: snapshot ואז המשך"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1057,7 +1263,17 @@
       ],
       "problem": "Meta L5 onsite system design: a web crawler that parses over 1B+ web pages",
       "id": "design.backpressure.q43",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "נתמקד ב-dedup של URLs. בסריקה של מיליארד דפים מתגלים בערך 10 מיליארד URLs. כמה זיכרון צריך כדי לדעת אם כבר ראינו URL, ומה המחיר של Bloom filter?",
+        "modelAnswer": "שמירת ה-URLs עצמם (בממוצע כ-80 bytes) היא כ-800 GB, ולכן שומרים fingerprint של 8 bytes לכל URL מנורמל: כ-80 GB, מפוצל לפי hash בין nodes. Bloom filter עם 1% false positives צריך כ-9.6 bits לאיבר, כלומר 10 מיליארד × 1.2 bytes ≈ 12 GB. אין בו false negatives, אז לא נוריד דף פעמיים, אבל false positive אומר שנדלג על כ-1% מה-URLs החדשים בלי להוריד אותם, וזה בדרך כלל מקובל ב-crawler. לפני הבדיקה מנרמלים את ה-URL (lowercase של host, הסרת fragment, סדר פרמטרים), אחרת אותו דף ייספר כמה פעמים. בנוסף יש dedup של תוכן (למשל simhash) לדפים זהים בכתובות שונות.",
+        "rubric": [
+          "fingerprint של 8 bytes: כ-80 GB ל-10 מיליארד, מפוצל לפי hash",
+          "Bloom filter ב-1% FP: כ-9.6 bits לאיבר, כ-12 GB",
+          "Bloom: אין false negatives; FP = דילוג על URL שלא נסרק",
+          "נרמול URL לפני הבדיקה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1090,7 +1306,17 @@
       ],
       "explanation": "ב-crawler ה-backpressure מגיע מהאתרים: הקצב לכל host מוגבל, והמקביליות באה מכמות האתרים.",
       "id": "design.backpressure.q45",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "יש מיליוני hosts, לכל אחד תור משלו והשהיה מינימלית בין בקשות. איך 10,000 workers בוחרים ביעילות את ה-host הבא שמותר לגשת אליו?",
+        "modelAnswer": "מחזיקים min-heap של (next_allowed_time, host) על כל ה-hosts שיש להם URLs ממתינים, כמו ב-design של Mercator. worker מוציא את ה-host עם הזמן המוקדם ביותר; אם הזמן עוד לא הגיע הוא ממתין, אחרת הוא מוריד URL אחד מהתור של ה-host. אחרי ההורדה מחזירים את ה-host ל-heap עם now + delay, כשה-delay נגזר מה-crawl-delay ב-robots.txt או מכפולה של זמן התגובה האחרון של האתר (אתר איטי מקבל פחות). כל בחירה עולה O(log H). מעל זה יש front queues לפי עדיפות שמזינות את התורים לפי host, ו-cache של DNS כדי שה-resolver לא יהפוך לצוואר בקבוק.",
+        "rubric": [
+          "min-heap לפי זמן הגישה המותר הבא לכל host",
+          "אחרי fetch מחזירים את ה-host עם now + delay",
+          "delay לפי robots crawl-delay או זמן התגובה של האתר",
+          "O(log H) לבחירה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1113,7 +1339,17 @@
       ],
       "problem": "Meta E5 system design: notification system (alert 1M users for a flash sale), fan-out service and queues",
       "id": "design.backpressure.q46",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "worker של ה-push נפל באמצע batch ותהליך אחר לקח את ההודעות מחדש. איך מונעים התראה כפולה, ומה עושים עם תשובות שגיאה מ-APNs או FCM?",
+        "modelAnswer": "התור נותן at-least-once, ולכן worker חדש יקבל שוב הודעות שחלקן כבר נשלחו. לכל התראה יש מפתח (campaign_id, user_id), וה-worker מסמן אותו ב-store משותף לפני השליחה בפעולה אטומית כמו SET NX; מפתח שכבר קיים מדולג. זה מצמצם כפילויות לחלון קטן סביב קריסה ברגע השליחה, ולהתראת שיווק כפילות נדירה מקובלת. תשובת rate limit (429) מהספק גורמת ל-backoff לפי Retry-After ול-token bucket לכל ספק. token לא תקף (APNs מחזיר 410, FCM מחזיר UNREGISTERED) גורם למחיקת ה-token כדי לא לבזבז עליו קיבולת. שגיאות זמניות חוזרות לתור עם השהיה, והתראה שנכשלה יותר מדי פעמים עוברת ל-dead letter queue.",
+        "rubric": [
+          "התור at-least-once, ולכן צריך dedup לפי (campaign, user)",
+          "סימון אטומי ב-store משותף (כמו SET NX) לפני שליחה",
+          "429 מהספק: backoff לפי Retry-After ו-rate limit לכל ספק",
+          "token לא תקף (410 / UNREGISTERED) נמחק"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1134,7 +1370,17 @@
       ],
       "explanation": "שליחה בבת אחת יוצרת thundering herd אצל מי שמקבל את הלחיצות. פיזור מבוקר הוא backpressure מתוכנן מראש.",
       "id": "design.backpressure.q47",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "האתר יכול לספוג עוד 3,000 בקשות בשנייה מעבר לעומס הרגיל, וכל לחיצה גורמת ל-5 בקשות API. באיזה קצב שולחים את ההתראות, כמה זמן זה ייקח, ואיך הופכים את זה ללולאה סגורה?",
+        "modelAnswer": "במצב יציב קצב הלחיצות הוא בערך קצב השליחה כפול 10%, וכל לחיצה היא 5 בקשות, כלומר עומס של send_rate × 0.5. כדי לא לעבור 3,000 בשנייה שולחים לכל היותר 6,000 התראות בשנייה, ומיליון התראות לוקחות כ-170 שניות, פחות משלוש דקות. כדאי להתחיל לאט יותר ולעלות בהדרגה, כי שיעור הלחיצה בפועל לא ידוע מראש. לולאה סגורה: שירות השליחה קורא את ה-latency וה-error rate של אתר המכירה ומאט או עוצר את השליחה כשה-p99 עובר סף, כלומר ה-backpressure מגיע מהאתר אל ה-fan-out. את סדר המשתמשים מגרילים כדי שלא אותם משתמשים יקבלו תמיד ראשונים.",
+        "rubric": [
+          "עומס ≈ send_rate × 0.1 × 5, ולכן לכל היותר כ-6,000 התראות בשנייה",
+          "מיליון התראות בכ-170 שניות",
+          "לולאה סגורה: השליחה מאטה או נעצרת לפי latency/errors של האתר",
+          "ramp-up הדרגתי כי שיעור הלחיצה לא ידוע מראש"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1155,7 +1401,17 @@
       ],
       "explanation": "בידוד משאבים לפי עדיפות הוא העיקרון. תור משותף אחד הופך כל גל ל-head-of-line blocking לכולם.",
       "id": "design.backpressure.q48",
-      "lesson": "design.backpressure"
+      "lesson": "design.backpressure",
+      "followUp": {
+        "prompt": "הפרדת את התורים וה-workers, אבל OTP ושיווק עדיין יוצאים דרך אותו ספק SMS עם מגבלה של 500 הודעות בשנייה. הבעיה נפתרה?",
+        "modelAnswer": "לא, צוואר הבקבוק פשוט עבר לספק. ה-workers של הקמפיין צורכים את כל ה-500 בשנייה, ו-OTP מקבלים 429 מהספק או ממתינים ל-rate limiter המשותף. צריך לחלק את ה-quota עצמו: token bucket לכל מחלקה, למשל 100 בשנייה שמורים ל-OTP, והקמפיין מקבל את השאר ויכול לשאול רק קיבולת OTP שלא בשימוש באותו רגע. חלופה היא account או sender נפרד אצל הספק, או ספק שני ל-OTP. מה שמוכיח שזה עובד הוא מדד end-to-end לכל מחלקה, כמו p99 מיצירת ה-OTP עד אישור המסירה, עם SLO של שניות בודדות ו-alert עליו.",
+        "rubric": [
+          "צוואר הבקבוק עבר ל-quota המשותף של הספק",
+          "חלוקת quota: קיבולת שמורה ל-OTP, הקמפיין מקבל את השאר",
+          "שאילת קיבולת לא מנוצלת רק בכיוון מהקמפיין מ-OTP פנוי, לא להפך",
+          "מדד latency מקצה לקצה לכל מחלקה עם SLO"
+        ]
+      }
     },
     {
       "level": 3,

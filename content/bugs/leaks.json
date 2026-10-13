@@ -389,7 +389,16 @@
         "שגוי: buf הוקצה ב-new[], ולכן delete[] הוא הנכון; delete היה UB."
       ],
       "explanation": "exception מדלג על כל הקוד עד ה-catch הקרוב, כולל ה-delete[]. עם vector או unique_ptr<char[]>, ה-destructor רץ במהלך ה-stack unwinding. try/catch ידני יעבוד אבל מסורבל ושביר. new של מערך באורך 0 הוא חוקי.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "החלפת את buf ב-`std::vector<char>`. הפונקציה נקראת 100,000 פעמים בשנייה ב-hot path. מה העלות של התיקון, ואיך היית מבטל אותה בלי לוותר על exception safety?",
+        "modelAnswer": "vector מקצה ומשחרר מה-heap בכל קריאה, כמו ה-new המקורי, כך שהעלות זהה ולא גדלה; אבל vector גם מאפס את התוכן (value-initialization), וזה memset מיותר אם serialize דורס הכל. כדי לבטל את ההקצאה בכל קריאה מחזיקים buffer שחי מחוץ לפונקציה, למשל member של ה-sender או `thread_local std::vector<char>`, וקוראים ל-`resize` שלא מקצה מחדש כשה-capacity מספיק. כך יש הקצאה אחת בהתחלה ו-RAII עדיין משחרר. אפשר גם `std::unique_ptr<char[]>(new char[n])` שלא מאפס, או `make_unique_for_overwrite` מ-C++20. מודדים עם perf או עם מונה הקצאות (hook על operator new) לפני ואחרי.",
+        "rubric": [
+          "vector לא מוסיף הקצאה מעבר ל-new המקורי, אבל מאפס את הזיכרון",
+          "buffer שחי מעבר לקריאה (member או thread_local) עם resize שמנצל capacity",
+          "חלופה בלי איפוס: unique_ptr<char[]> או make_unique_for_overwrite"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q08",
@@ -413,7 +422,16 @@
         "שגוי: float לא מאותחל הוא בעיית ערך, לא בעיית שחרור."
       ],
       "explanation": "shared_ptr הוא reference counting, וזה לא מטפל במעגלים. כשה-head החיצוני משתחרר, ה-head עדיין מוחזק על ידי `prev` של האיבר השני. weak_ptr לא מעלה את ה-count ושובר את המעגל. unique_ptr בשני הכיוונים בלתי אפשרי, כי לאובייקט יכול להיות רק בעלים אחד. בפועל, רשימה כזו לרוב עדיפה עם unique_ptr ל-next ו-raw pointer ל-prev.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "החלפת את prev ב-weak_ptr. מה העלות בזמן ריצה של מעבר אחורה ברשימה, ולמה בכל זאת רוב המימושים מעדיפים unique_ptr ל-next ו-raw pointer ל-prev?",
+        "modelAnswer": "כל גישה דרך weak_ptr דורשת `lock()`, שמייצר shared_ptr זמני: קריאה אטומית של ה-strong count ו-compare-exchange להגדלה, ואחר כך הקטנה אטומית בהריסה. במעבר על מיליון איברים זה מיליון זוגות פעולות אטומיות. בנוסף, כל Node מחזיק control block עם strong ו-weak count, ושני shared_ptr של 16 בתים כל אחד. עם unique_ptr ל-next הבעלות ברורה (כל node בבעלות קודמו), ו-prev כ-raw pointer הוא תצפית בלבד שתוקפה מובטח כי הקודם תמיד חי יותר. סכנה אחת עם unique_ptr: destructor רקורסיבי על רשימה ארוכה יכול להפיל את ה-stack, ולכן כותבים destructor איטרטיבי.",
+        "rubric": [
+          "lock() על weak_ptr הוא פעולות אטומיות בכל גישה",
+          "unique_ptr ל-next ו-raw ל-prev: בעלות יחידה ברורה, prev תמיד חי",
+          "הריסה רקורסיבית של רשימה ארוכה עלולה לגרום stack overflow"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q09",
@@ -437,7 +455,16 @@
         "נכון: ה-return המוקדם יוצא בלי unlock, וה-mutex נשאר נעול לנצח. כל lock הבא נתקע (ומאותו thread זה UB). lock_guard משחרר בכל מסלול."
       ],
       "explanation": "lock הוא משאב בדיוק כמו זיכרון. התיקון: `std::lock_guard<std::mutex> g(m);` שמשחרר ב-destructor בכל מסלול, כולל exception. נעילה חוזרת של std::mutex מאותו thread היא UB. -1 כ-sentinel הוא בעיית API (עדיף std::optional), אבל לא הסיבה לתקיעה.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "עברת ל-lock_guard. עכשיו מוסיפים פונקציה `popTwo` שקוראת פעמיים ל-pop מתוך מקטע שכבר נועל את אותו m. מה קורה, ומה הפתרונות הנכונים?",
+        "modelAnswer": "נעילה חוזרת של std::mutex מאותו thread היא undefined behavior, ובפועל ב-Linux זה deadlock מיידי. הפתרון הנקי הוא להפריד בין API ציבורי שנועל לבין פונקציה פנימית, למשל `pop_locked`, שמניחה שהנעילה כבר מוחזקת, ו-popTwo נועל פעם אחת וקורא לה פעמיים. std::recursive_mutex יפתור את הסימפטום אבל מטשטש את גבולות ה-invariant ומאט מעט, ולכן נחשב code smell. בנוסף, popTwo צריך להחזיק את הנעילה לאורך שתי הפעולות אם רוצים ששני האיברים יהיו עוקבים, אחרת thread אחר יכול להיכנס באמצע.",
+        "rubric": [
+          "נעילה חוזרת של std::mutex היא UB, בפועל deadlock",
+          "פיצול לפונקציה פנימית שמניחה נעילה מוחזקת",
+          "recursive_mutex עובד אבל נחשב פתרון פחות טוב"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q10",
@@ -460,7 +487,16 @@
         "שגוי: אין כאן רקורסיה; ה-GC עובר על המעגל בלי לקרוא לפונקציות רקורסיביות של המשתמש."
       ],
       "explanation": "reference counting לבד לא משחרר מעגלים. ה-cyclic GC של CPython רץ מדי פעם (לפי ספי הקצאות) ומוצא קבוצות שלא נגישות מבחוץ. `gc.collect()` מחזיר את מספר האובייקטים הלא נגישים שנמצאו, כאן לפחות 2. מ-Python 3.4 גם מעגלים עם `__del__` משתחררים. בקוד real-time אפשר לשקול `gc.disable()` ולשבור מעגלים עם weakref.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "בשירות real-time ב-Python מישהו מציע `gc.disable()` כדי להימנע מ-pauses של ה-cyclic GC. מה זה שובר, ואיך היית מוודא שהשירות לא דולף בלי ה-GC?",
+        "modelAnswer": "gc.disable מכבה רק את ה-cyclic collector; reference counting ממשיך לשחרר כל אובייקט שאינו בתוך מעגל. כל מעגל שנוצר, כמו בתרחיש הזה, יישאר לנצח. כדי לוודא אפשר להריץ עם `gc.set_debug(gc.DEBUG_SAVEALL)` ולבדוק את `gc.garbage` אחרי collect ידני, או לעקוב אחרי `len(gc.get_objects())` לאורך זמן. דרך ביניים נפוצה: `gc.freeze()` אחרי האתחול כדי שהאובייקטים הקבועים לא ייסרקו, או להגדיל ספים עם `gc.set_threshold`, או לקרוא ל-`gc.collect()` ידנית בנקודה שקטה. את המעגלים עצמם שוברים עם weakref או ניקוי מפורש.",
+        "rubric": [
+          "refcounting ממשיך לעבוד, רק מעגלים לא משתחררים",
+          "מדידה: gc.get_objects או DEBUG_SAVEALL ו-gc.garbage",
+          "חלופה: collect ידני בנקודה שקטה, gc.freeze או שינוי ספים"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q11",
@@ -481,7 +517,16 @@
         "שגוי: file objects נסגרים כשהם נהרסים, לא רק ביציאה מהתהליך."
       ],
       "explanation": "הסגירה האוטומטית היא תוצאה של reference counting של CPython ולא הבטחה של השפה. במימושים עם tracing GC (PyPy) האובייקט חי עד ה-collection הבא, וב-1000 קריאות בשנייה זה יכול להיגמר ב-'Too many open files'. גם ב-CPython, exception שמחזיק traceback יכול להשאיר את הקובץ פתוח. `python -X dev` מציג ResourceWarning על קבצים לא סגורים.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "נניח שהשירות כן רץ על PyPy והגיע ל-EMFILE. מה המגבלה שנפגעה, איך רואים אותה בזמן ריצה, ולמה הגדלה של המגבלה היא לא תיקון?",
+        "modelAnswer": "EMFILE הוא חריגה ממגבלת ה-fds לתהליך, `RLIMIT_NOFILE`, שבהרבה הפצות היא 1024 soft כברירת מחדל. רואים אותה עם `ulimit -n` או ב-`/proc/<pid>/limits`, ואת מספר ה-fds הפתוחים עם `ls /proc/<pid>/fd | wc -l` או lsof. הגדלת המגבלה רק דוחה את הקריסה: קצב הפתיחה הוא 1000 בשנייה ומועד הסגירה תלוי ב-GC, כך שבעומס או ב-GC שמתעכב שוב נגיע לתקרה. בנוסף, כל fd פתוח מחזיק מבני קרנל, ובקובץ שנמחק גם מקום בדיסק. התיקון הוא `with open(...)` שסוגר דטרמיניסטית ב-`__exit__`.",
+        "rubric": [
+          "EMFILE = חריגה מ-RLIMIT_NOFILE (לרוב 1024 soft)",
+          "בדיקה דרך /proc/<pid>/fd או lsof, והמגבלה ב-ulimit -n או /proc/<pid>/limits",
+          "הגדלת המגבלה דוחה בלבד; with סוגר דטרמיניסטית"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q12",
@@ -505,7 +550,16 @@
         "שגוי: new[] ו-std::copy הם חלופה, אבל הבאג הוא בטיפול בכשלון של realloc, לא בבחירת realloc."
       ],
       "explanation": "בכשלון realloc משאיר את הבלוק המקורי בתוקף. idiom נכון: `float* p = static_cast<float*>(realloc(buf, ...)); if (!p) return false; buf = p;`. גם `newSize * sizeof(float)` יכול לגלוש, שזו בדיקה נוספת. ב-C++ מודרני `std::vector::resize` חוסך את כל זה.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "תיקנת את ה-idiom של realloc. עכשיו grow נקרא בכל פעם שמגיעה דגימה חדשה, עם newSize = size + 1. מה הסיבוכיות הכוללת להכנסת n דגימות, ואיך מתקנים?",
+        "modelAnswer": "realloc לא יכול תמיד להגדיל במקום; כשאין מקום פנוי אחרי הבלוק הוא מקצה חדש ומעתיק את כל התוכן. בהגדלה באיבר אחד כל פעם זה עלול להיות O(n) לכל הכנסה, כלומר O(n²) בסך הכל, ובמיליון דגימות זה כ-5·10¹¹ העתקות בתרחיש הגרוע. הפתרון הוא גידול גיאומטרי: להחזיק capacity נפרד מה-size ולהכפיל אותו (פי 1.5 או 2) כשהוא מתמלא, ואז העלות הממוצעת להכנסה היא O(1) amortized. זה בדיוק מה ש-std::vector עושה. במערכת real-time עדיף בכלל להקצות מראש את הגודל המקסימלי ולא לגדול בזמן ריצה.",
+        "rubric": [
+          "realloc עלול להעתיק את כל הבלוק, ולכן +1 בכל פעם הוא O(n²)",
+          "גידול גיאומטרי עם capacity נותן O(1) amortized",
+          "ב-real-time: הקצאה מראש של המקסימום"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q13",
@@ -529,7 +583,16 @@
         "שגוי: release לא מוחק; הוא רק מוותר על הבעלות ומחזיר את המצביע."
       ],
       "explanation": "ארגומנטים מוערכים לפני הכניסה לפונקציה, ולכן ה-unique_ptr מוותר על הבעלות לפני שידוע שה-push_back הצליח. תיקון: `q.push_back(f.get()); f.release();` (push_back מספק strong guarantee), או עדיף `std::vector<std::unique_ptr<Frame>>`. אם initFrame זורק, f עדיין בעלים ומשחרר כרגיל. release לא מוחק, רק מוותר על בעלות.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "עברת ל-`std::vector<std::unique_ptr<Frame>>`. עכשיו ה-consumer רץ ב-thread אחר. איך מעבירים בעלות על Frame בין threads בצורה בטוחה, ומה הקשר בין move של unique_ptr לבין synchronization?",
+        "modelAnswer": "move של unique_ptr מעביר בעלות לוגית אבל לא מסנכרן שום דבר: אם ה-producer עושה push_back וה-consumer עושה pop בלי נעילה, זה data race על ה-vector עצמו. צריך תור מוגן ב-mutex (או lock-free SPSC queue) שבו ה-push מתבצע תחת הנעילה וה-pop מוציא את ה-unique_ptr עם move. ה-unlock של ה-producer וה-lock של ה-consumer יוצרים happens-before, ולכן כל מה ש-initFrame כתב גלוי ל-consumer. אחרי ה-move, ל-producer נשאר nullptr ואסור לו לגעת ב-Frame, וזה מה שהופך את חלוקת הבעלות לברורה. ב-SPSC lock-free אותו happens-before מושג עם release ב-push ו-acquire ב-pop.",
+        "rubric": [
+          "move לבדו לא מסנכרן; צריך תור מוגן",
+          "unlock/lock (או release/acquire) יוצרים happens-before לנתוני ה-Frame",
+          "אחרי move ה-producer מחזיק nullptr ולא נוגע ב-Frame"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q14",
@@ -556,7 +619,16 @@
         "שגוי: tracemalloc הוא מודול של Python ועוקב רק אחרי הקצאות של ה-interpreter, לא של תהליך C++."
       ],
       "explanation": "LSan ו-memcheck מדווחים ביציאה על בלוקים שאין אליהם הפניה, עם stack של ההקצאה. fds הם לא זיכרון, ולכן עוקבים אחריהם דרך /proc או lsof. TSan מיועד ל-races. tracemalloc הוא מודול של Python ועוקב רק אחרי הקצאות של ה-interpreter.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "LeakSanitizer ו-Valgrind שניהם מוצאים את הדליפה. ריצה עם Valgrind לוקחת שעה במקום שתי דקות. למה הפער, ואיזה כלי היית מריץ ב-CI ואיזה רק בחקירה?",
+        "modelAnswer": "Valgrind מריץ את התוכנית על מעבד וירטואלי ומתרגם כל הוראה דינמית, עם מעקב shadow לכל בית, ולכן האטה טיפוסית של פי 20 עד 50. ASan/LSan מוסיף instrumentation בזמן קומפילציה, וההאטה הטיפוסית היא בערך פי 2, עם צריכת זיכרון גדולה יותר בגלל shadow memory ו-redzones. לכן ב-CI מריצים build עם `-fsanitize=address` על כל הטסטים. Valgrind שימושי כשאין אפשרות לקמפל מחדש (ספרייה סגורה, binary קיים) או לבדיקות נוספות כמו קריאה של זיכרון לא מאותחל, שב-clang עושים עם MSan נפרד. בשני המקרים מקבלים stack של ההקצאה, ולכן צריך `-g` ו-frame pointers לסטאקים אמינים.",
+        "rubric": [
+          "Valgrind: תרגום בינארי דינמי, האטה של פי 20-50",
+          "ASan/LSan: instrumentation בקומפילציה, האטה של בערך פי 2",
+          "CI עם sanitizers; Valgrind כשאי אפשר לקמפל מחדש"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q15",
@@ -598,7 +670,16 @@
         "נכון: Tuner מחזיק את timer_, ה-timer מחזיק את ה-callback, וה-callback מחזיק shared_ptr ל-Tuner: מעגל שה-refcount שלו לא מגיע ל-0. לוכדים weak_ptr ובודקים lock()."
       ],
       "explanation": "'self capture' נועד להבטיח שהאובייקט חי בזמן callback אסינכרוני, אבל כשה-callback נשמר בתוך האובייקט עצמו זה מעגל. LeakSanitizer ידווח עליו ביציאה (מעגל לא נגיש הוא leak), אבל בזמן ריצה האובייקט ממשיך 'לחיות' ולפעול. תיקון: `[w = weak_from_this()] { if (auto s = w.lock()) s->retune(); }`, או לבטל את ה-timer ב-stop מפורש. shared_from_this חוקי אחרי שהאובייקט כבר בבעלות shared_ptr.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "תיקנת עם `weak_from_this` ו-lock ב-callback. עכשיו ה-Timer מפעיל callbacks מ-thread משלו. מה יכול עדיין להשתבש כשה-shared_ptr האחרון משתחרר בדיוק באמצע tick, ואיך מבטיחים כיבוי נקי?",
+        "modelAnswer": "אם ה-lock הצליח, ה-callback מחזיק shared_ptr זמני, ולכן ה-Tuner ייהרס דווקא ב-thread של ה-Timer כשה-callback יסתיים. אז ~Tuner רץ על thread ה-timer והורס את timer_, כלומר את ה-Timer שמריץ אותו כרגע; אם ה-destructor של Timer עושה join ל-thread שלו, זה deadlock או UB. גם אם לא, retune עלול לרוץ במקביל לעבודה אחרת על האובייקט. הפתרון הוא כיבוי מפורש: `stop()` שמבטל את ה-timer ומחכה שכל callback פעיל יסתיים, נקרא מה-thread הבעלים לפני שחרור ה-shared_ptr. כלל אצבע: אובייקט שמחזיק thread לא צריך להיהרס מתוך ה-thread הזה.",
+        "rubric": [
+          "ה-lock ב-callback עלול להפוך את ה-callback לבעלים האחרון",
+          "הריסה מתוך thread ה-timer: join לעצמו = deadlock או UB",
+          "stop מפורש שמחכה לסיום callbacks לפני השחרור"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q17",
@@ -622,7 +703,16 @@
         "שגוי: fds הם משאב של הקרנל ולא מגדילים את ה-RSS של התהליך באופן משמעותי."
       ],
       "explanation": "LSan מדווח רק על זיכרון שאין אליו מסלול מה-roots (globals, stacks, registers). cache שגדל נגיש, ולכן נחשב 'still reachable'. זיכרון שהוחזר ל-malloc אבל לא ל-OS (fragmentation, arenas, trimming) מגדיל RSS בלי leak בכלל; מאבחנים עם malloc_stats, heaptrack, או החלפה ל-jemalloc/tcmalloc. מעגל shared_ptr אינו נגיש מה-roots, ולכן LSan כן מדווח עליו. fds הם משאב של הקרנל ולא מגדילים את ה-RSS באופן משמעותי.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "חשדת ב-fragmentation של glibc. איך היית מוכיח את זה בפועל על השירות החי, ומה היית משנה כדי לבדוק את ההשערה?",
+        "modelAnswer": "ראשית משווים בין זיכרון בשימוש של ה-allocator לבין RSS: `malloc_info` או `mallinfo2` מראים כמה זיכרון מוקצה בפועל לעומת כמה ה-arenas מחזיקים; פער גדול מעיד על fragmentation או על זיכרון פנוי שלא הוחזר. קריאה ל-`malloc_trim(0)` (למשל דרך gdb) שמורידה RSS משמעותית מחזקת את ההשערה. בדיקה נוספת: ספירת arenas (בברירת מחדל עד 8 כפול מספר הליבות ב-64 ביט) והגבלתם עם `MALLOC_ARENA_MAX=2`. ניסוי מכריע הוא להריץ עם jemalloc או tcmalloc דרך LD_PRELOAD ולראות אם ה-RSS מתייצב. ולבסוף, heaptrack מראה אם יש גידול בזיכרון נגיש, כמו cache שלא מוגבל.",
+        "rubric": [
+          "השוואת malloc_info/mallinfo2 מול RSS",
+          "malloc_trim(0) או MALLOC_ARENA_MAX כניסוי",
+          "החלפה ל-jemalloc/tcmalloc דרך LD_PRELOAD לבדיקה"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q18",
@@ -638,7 +728,16 @@
         "תיקון ומניעה: גבולות, weakref, ניטור"
       ],
       "explanation": "מראיין מצפה לשיטה: מדידה, הפרדה בין שכבות, השוואה לאורך זמן, ורשימת חשודים מוכרת, ולא ניחוש.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "מצאת שהגידול מגיע מה-extension ב-C, ו-tracemalloc יציב. ה-extension מחזיר אובייקטי Python. אילו שתי טעויות refcount טיפוסיות ב-C API גורמות לדליפה, ואיך מאתרים אותן?",
+        "modelAnswer": "הטעות הנפוצה היא Py_INCREF מיותר או אי-קריאה ל-Py_DECREF על new reference: פונקציות כמו `PyList_New` או `PyLong_FromLong` מחזירות new reference, ואם מכניסים אותו לרשימה עם `PyList_Append` (שלא גונב את ההפניה) בלי DECREF, האובייקט לא ישתחרר לעולם. השנייה היא מסלולי שגיאה: return NULL מוקדם בלי DECREF לאובייקטים שכבר נוצרו. בנוסף, malloc ישיר בתוך ה-extension בלי free לא נראה ל-tracemalloc בכלל. מאתרים עם debug build של Python (`sys.gettotalrefcount` שעולה בלולאה), Valgrind עם suppressions של Python, או heaptrack שמראה את ה-stack של ההקצאה ב-C.",
+        "rubric": [
+          "new reference שלא שוחרר (למשל PyList_Append לא גונב הפניה)",
+          "מסלולי שגיאה שחוזרים בלי DECREF",
+          "כלי: sys.gettotalrefcount ב-debug build, או Valgrind/heaptrack"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q19",
@@ -796,7 +895,16 @@
         "שגוי: delete[] מתאים רק ל-new[]; s הוקצה כאובייקט בודד."
       ],
       "explanation": "`delete` דרך מצביע לבסיס בוחר destructor לפי הטיפוס הסטטי, אלא אם ה-destructor וירטואלי. כאן נקרא רק `~Source`, ה-members של FileSource לא נהרסים: partial destruction. התיקון: `virtual ~Source() = default;`. GCC מזהיר עם `-Wdelete-non-virtual-dtor` (חלק מ-`-Wall`). vector משחרר את עצמו ב-destructor שלו, אם רק ירוץ; default member initializer מאתחל את buf גם בלי סוגריים; delete[] מתאים רק ל-new[].",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "הוספת `virtual ~Source() = default;`. מה עוד השתנה במחלקה בעקבות הצהרה מפורשת על destructor, ולמה זה רלוונטי ל-move של FileSource?",
+        "modelAnswer": "הצהרה מפורשת על destructor, גם `= default`, מבטלת את ה-implicit move constructor ו-move assignment של Source; העתקה עדיין נוצרת (deprecated). מחלקה נגזרת שה-move שלה דורש move של הבסיס תיפול בשקט להעתקה של הבסיס, ובמקרה של members כבדים בבסיס זה העתקה במקום move. לכן כלל ה-rule of five: אם מצהירים על destructor, מצהירים במפורש גם `Source(Source&&) = default` ושאר החברים לפי הצורך, או מוחקים העתקה בבסיס פולימורפי כדי למנוע slicing. ל-FileSource עצמו, שלא מצהיר על destructor, ה-move שלו עדיין נוצר ומזיז את ה-vector, אבל חלק הבסיס מועתק.",
+        "rubric": [
+          "destructor מוצהר מבטל implicit move של המחלקה",
+          "move נופל בשקט להעתקה",
+          "rule of five: להצהיר במפורש או למחוק העתקה בבסיס פולימורפי"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q26",
@@ -819,7 +927,16 @@
         "שגוי: הביטוי r() is None הוא bool, ולכן מודפס True או False ולא None."
       ],
       "explanation": "`del b` מוחק שם, לא אובייקט: הוא מוריד את ה-refcount ב-1, אבל `cache` עדיין מחזיק הפניה חזקה. weakref לא משתתף בספירה, ולכן `r()` מחזיר את האובייקט. זו בדיוק הדליפה הנפוצה ב-Python: הפניה שנשכחה ב-container. מופעים של מחלקות רגילות תומכים ב-weakref (רק טיפוסים כמו int ו-list לא). הביטוי `r() is None` הוא bool, ולכן לא יודפס None.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "מחליפים את `cache` ב-`weakref.WeakValueDictionary`. מה משתנה בהתנהגות, ואיזה מלכודת יש כש-cache כזה אמור לשמור תוצאות חישוב יקרות?",
+        "modelAnswer": "WeakValueDictionary מחזיק הפניות חלשות לערכים: ברגע שאין הפניה חזקה אחרת לאובייקט, ה-refcount יורד ל-0, האובייקט משתחרר והרשומה נעלמת מהמילון אוטומטית. זה מונע את הדליפה, אבל גם אומר שה-cache לא שומר כלום: אם הקורא לא מחזיק את התוצאה, היא תיעלם מיד ובפעם הבאה נחשב שוב, כך שה-hit rate עלול להיות אפסי. בנוסף, טיפוסים כמו int, list ו-dict לא תומכים ב-weakref ישירות. ל-cache של חישובים יקרים מתאים יותר cache חזק עם גבול, כמו `functools.lru_cache(maxsize=...)`, שמגביל זיכרון במפורש.",
+        "rubric": [
+          "רשומה נעלמת כשאין הפניה חזקה אחרת",
+          "cache כזה לא שומר תוצאות שאיש לא מחזיק, hit rate נמוך",
+          "חלופה: cache חזק מוגבל כמו lru_cache(maxsize)"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q27",
@@ -835,7 +952,16 @@
         "מעביר פרמטרים לא-בעלים כ-reference או raw pointer"
       ],
       "explanation": "תשובה טובה לא רק מגדירה את שלושת הטיפוסים, אלא מראה שיקול דעת: מתי לא להשתמש ב-shared_ptr, מה העלות, ואיך נוצרת דליפה למרות smart pointers.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "אמרת ש-make_shared עדיף. באיזה מצב דווקא make_shared מחזיק זיכרון גדול הרבה יותר זמן ממה שהיית מצפה, ולמה?",
+        "modelAnswer": "make_shared מקצה את האובייקט ואת ה-control block בהקצאה אחת. כשה-strong count מגיע ל-0 ה-destructor של האובייקט רץ, אבל הזיכרון עצמו לא משתחרר כל עוד ה-weak count גדול מ-0, כי ה-control block חייב לחיות בשביל ה-weak_ptr ושניהם באותו בלוק. אם האובייקט גדול, למשל מערך של 10MB כ-member, ו-weak_ptr אחד נשכח ב-cache או ב-observer list, 10MB נשארים מוקצים. עם `shared_ptr<T>(new T)` יש שתי הקצאות, והאובייקט משתחרר מיד כשה-strong count מתאפס, רק ה-control block הקטן נשאר. לכן לאובייקטים גדולים עם weak_ptr ארוכי חיים יש סיבה להעדיף את ההקצאה הנפרדת.",
+        "rubric": [
+          "make_shared = הקצאה אחת לאובייקט ול-control block",
+          "הזיכרון משתחרר רק כש-weak count מגיע ל-0 (ה-destructor רץ קודם)",
+          "לאובייקט גדול עם weak_ptr ארוכי חיים עדיף shared_ptr(new T)"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q28",
@@ -859,7 +985,16 @@
         "נכון: בלי O_CLOEXEC הילד יורש את ה-fd ב-fork ו-exec משאיר אותו פתוח. כל helper מחזיק עותק, והקובץ שנמחק לא משתחרר עד שכולם נסגרים. O_CLOEXEC ב-open עצמו נמנע גם מ-race מול fork."
       ],
       "explanation": "קובץ שנמחק משתחרר רק כשה-fd האחרון אליו נסגר, וה-helpers מחזיקים fd שהם בכלל לא יודעים עליו. התיקון: `O_CLOEXEC` כבר ב-open (וכך גם `SOCK_CLOEXEC`, `accept4`, `pipe2`). `fcntl(FD_CLOEXEC)` אחרי open הוא race בתהליך multi-threaded: thread אחר יכול לעשות fork ביניהם. `_exit` הוא דווקא הנכון בילד אחרי fork, כדי לא לעשות flush כפול ל-buffers של stdio. zombie כבר שחרר את כל ה-fds שלו, ובכל מקרה ה-helper כאן חי ורץ.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "הוספת O_CLOEXEC ל-open. אבל ספרייה צד-שלישי שאתה לא שולט בה פותחת sockets בלי הדגל. איך מגנים על ה-helpers מירושת fds במצב כזה?",
+        "modelAnswer": "האפשרות הכי חזקה היא להחליף fork+exec ב-`posix_spawn` עם file actions, או לסגור ב-child, אחרי fork ולפני exec, את כל ה-fds מעל 2. ב-Linux חדש (5.9 ומעלה) יש `close_range(3, ~0U, 0)` שסוגר את כולם בקריאה אחת, ובגרסאות ישנות עוברים על `/proc/self/fd` או על כל הטווח עד RLIMIT_NOFILE. ב-child של תהליך multi-threaded מותר לקרוא רק לפונקציות async-signal-safe עד ה-exec, ו-close ו-close_range עומדים בזה, אבל opendir ו-malloc לא. גישה חלופית היא תהליך עזר קטן שנוצר בתחילת הריצה, לפני שנפתחו fds, ומשמש fork-server ל-helpers.",
+        "rubric": [
+          "לסגור ב-child אחרי fork את כל ה-fds מעל 2 (close_range)",
+          "אחרי fork ב-multi-threaded רק פונקציות async-signal-safe",
+          "חלופה: posix_spawn או fork-server שנוצר מוקדם"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q29",
@@ -897,7 +1032,16 @@
         "שגוי: __del__ רץ ב-thread שבו ירד ה-refcount האחרון או שהריץ את ה-GC, לא ב-thread ייעודי."
       ],
       "explanation": "ב-CPython `__del__` רץ כשה-refcount מגיע ל-0, אבל כל הפניה שנשארה (list גלובלי, exception שמור, closure) דוחה את זה, ובמימושים עם tracing GC המועד שרירותי. exceptions בתוכו מודפסים כ-'Exception ignored in' ונבלעים, ובכיבוי ה-interpreter globals עלולים להיות None. לכן מספקים `close()` ו-`__enter__/__exit__`, ומשאירים `__del__` או `weakref.finalize` כרשת ביטחון. מאז Python 3.4 (PEP 442) מעגלים עם `__del__` כן משתחררים. `__del__` רץ ב-thread שבו ירד ה-refcount האחרון או שהריץ את ה-GC, לא ב-thread ייעודי.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "הוספת close() ו-context manager, והשארת `__del__` כרשת ביטחון. למה `weakref.finalize` עדיף על `__del__` לתפקיד הזה, ומה צריך להיזהר ממנו כשכותבים את ה-callback שלו?",
+        "modelAnswer": "weakref.finalize רושם callback שרץ כשהאובייקט נאסף, אבל ה-callback עצמו לא חלק מהאובייקט, ולכן אין סיכון של resurrection, הוא רץ לכל היותר פעם אחת (גם אם close קרא לו ידנית), ונקרא גם ביציאת ה-interpreter כברירת מחדל (atexit). המלכודת: ה-callback והארגומנטים שלו אסור שיחזיקו הפניה לאובייקט עצמו, למשל bound method כמו `self.close`, אחרת הם יוצרים הפניה חזקה והאובייקט לעולם לא ייאסף. מעבירים רק את המשאב, למשל `weakref.finalize(self, sock.close)`. ב-close המפורש קוראים ל-finalizer עצמו, כך שהניקוי מתבצע בדיוק פעם אחת.",
+        "rubric": [
+          "finalize רץ לכל היותר פעם אחת ונקרא גם ביציאה",
+          "ה-callback לא יכול להחזיק הפניה לאובייקט (לא self.close)",
+          "close המפורש קורא ל-finalizer"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q31",
@@ -918,7 +1062,16 @@
         "שגוי: new לא תמיד רץ לפני computePrio; ומ-C++17, אם computePrio רץ ראשון, new עוד לא רץ, ואם new רץ ראשון ה-unique_ptr כבר נבנה."
       ],
       "explanation": "לפני C++17 הערכות של ארגומנטים שונים היו unsequenced, והקומפיילר יכול היה לשזור תת-ביטויים: להקצות את ה-Job, לקרוא ל-computePrio, ורק אז להריץ את ה-constructor של unique_ptr. מ-C++17 ארגומנטים הם indeterminately sequenced: כל אחד מוערך במלואו, אבל הסדר ביניהם עדיין לא מוגדר. C++17 קבע סדר רק לאופרטורים מסוימים (משמאל לימין ב-`<<`, `>>`, `[]` וגישה ל-member; בהשמה הצד הימני קודם), לא לארגומנטים. אם computePrio רץ קודם, new עוד לא רץ ואין מה לדלוף. `make_unique` עדיין מועדף: אין new גלוי, ובטוח גם ב-C++14.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "ב-C++17 אין דליפה כאן. עכשיו הפונקציה היא `submit(std::shared_ptr<Job>, std::shared_ptr<Log>)` ושני הארגומנטים נבנים עם `shared_ptr<T>(new T)`. האם C++17 מספיק כדי שזה יהיה בטוח, ולמה make_shared עדיין עדיף?",
+        "modelAnswer": "ב-C++17 כל ארגומנט מוערך במלואו לפני שמתחילים את השני, ולכן `new Job` והבנייה של ה-shared_ptr שלו קורים ברצף בלי שזירה. אם הבנייה של השני זורקת, הראשון כבר בבעלות shared_ptr זמני שנהרס, כך שאין דליפה. אבל אם constructor של shared_ptr עצמו לא מצליח להקצות control block הוא זורק bad_alloc, והתקן מבטיח שהוא קורא ל-delete על המצביע, כך שגם זה בטוח. make_shared עדיין עדיף: הקצאה אחת במקום שתיים, cache locality טובה יותר, ואין new גלוי שמישהו יכול להעתיק לקוד C++14 או לביטוי מורכב יותר. היוצא מן הכלל הוא אובייקטים גדולים עם weak_ptr ארוכי חיים או custom deleter.",
+        "rubric": [
+          "C++17: כל ארגומנט מוערך במלואו, בלי שזירה",
+          "constructor של shared_ptr שנכשל משחרר את המצביע",
+          "make_shared: הקצאה אחת ואין new גלוי"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q32",
@@ -942,7 +1095,16 @@
         "שגוי: rule of three חסר באמת (העתקה תגרום ל-double free), אבל זו בעיה נפרדת שלא קשורה לזריקה ב-constructor."
       ],
       "explanation": "כש-constructor זורק, רק sub-objects שכבר נבנו במלואם נהרסים. a_ נבנה, אבל ה-'destructor' של int* לא עושה כלום, ו-`~Pair` עצמו לא רץ כי האובייקט מעולם לא הושלם. עם `std::unique_ptr<int[]>` ה-member הראשון היה משחרר את עצמו במהלך ה-unwinding. סדר האתחול הוא לפי סדר ההצהרה, ולכן a_ ראשון. rule of three חסר באמת (העתקה תגרום ל-double free), אבל זו בעיה נפרדת שלא קשורה לזריקה.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "החלפת את a_ ו-b_ ב-`std::vector<int>`. מה ההבדל בעלות בין `std::vector<int>(n)` לבין `new int[n]` עבור n של מאה מיליון, ומתי זה משנה?",
+        "modelAnswer": "`new int[n]` בלי סוגריים משאיר את הערכים לא מאותחלים, ובהקצאה גדולה glibc משתמש ב-mmap, כך שהקרנל לא מקצה דפים פיזיים עד הגישה הראשונה. `std::vector<int>(n)` מאפס כל איבר, כלומר כותב 400MB, וזה גורם ל-page fault על כל דף (כ-100,000 דפים של 4KB) ומקצה את כל ה-RSS מיד. הזמן הוא סדר גודל של עשרות עד מאות מילישניות, ובמערכת real-time זה גם jitter. אם הערכים ממילא יידרסו, אפשר `std::unique_ptr<int[]>(new int[n])` או `make_unique_for_overwrite<int[]>(n)` מ-C++20. אם צריך דווקא אפסים, calloc או mmap אנונימי מקבלים דפים מאופסים מהקרנל בלי לכתוב אותם בעצמם.",
+        "rubric": [
+          "vector(n) מאפס = כתיבה של כל 400MB ו-page faults מיידיים",
+          "new int[n] בלי אתחול: דפים פיזיים רק בגישה הראשונה",
+          "חלופה: make_unique_for_overwrite או calloc לדפים מאופסים מהקרנל"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q33",
@@ -965,7 +1127,16 @@
         "נכון: saved מחזיק את ה-exception, שמחזיק __traceback__, שמחזיק את ה-frame של work ואת המשתנים המקומיים שלו, כולל buf. לכן buf חי ו-w() is None הוא False."
       ],
       "explanation": "השרשרת היא saved אל exception, אל traceback, אל frame, אל locals. כל עוד ה-exception שמור, buf חי, ובקוד אמיתי buf יכול להיות מערך NumPy ענק. Python אכן מוחק את השם `e` בסוף ה-except (כדי למנוע מעגל frame/traceback), אבל זה מוחק שם, לא את האובייקט שכבר ב-saved. ה-append רץ בתוך הבלוק, כש-e עוד מוגדר. תיקון: לשמור `str(e)` או `traceback.format_exc()`, או לקרוא `traceback.clear_frames(e.__traceback__)`.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "אתה כותב worker שמעבד frames ושומר רשימה של שגיאות לדיווח. איך היית בונה את הדיווח כך שהוא שומר מספיק מידע לדיבאג, אבל לא מחזיק frames וזיכרון גדול בחיים?",
+        "modelAnswer": "שומרים ייצוג מנותק של השגיאה ולא את אובייקט ה-exception עצמו: `traceback.format_exception(e)` מייצר רשימת מחרוזות עם כל ה-stack ושורות הקוד, בלי הפניות ל-frames. אם צריך מבנה, `traceback.TracebackException.from_exception(e)` שומר מידע מובנה, וכברירת מחדל לא את ה-locals (capture_locals=False). אם חייבים לשמור את ה-exception, קוראים ל-`traceback.clear_frames(e.__traceback__)` שמנקה את ה-locals של ה-frames שכבר סיימו. בנוסף מגבילים את הרשימה, למשל `collections.deque(maxlen=1000)`, כדי שגם המחרוזות לא יגדלו בלי גבול.",
+        "rubric": [
+          "לשמור מחרוזות (format_exception) או TracebackException במקום ה-exception",
+          "traceback.clear_frames אם חייבים לשמור את ה-exception",
+          "רשימה מוגבלת (deque עם maxlen)"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q34",
@@ -1016,7 +1187,16 @@
         "נכון: free חייב לקבל בדיוק pointer ש-malloc החזיר. כל כתובת אחרת היא UB, ו-glibc מזהה את רוב המקרים ומפילה את התוכנית. הכתובת המקורית נשמרה בדיוק בשביל השלב הזה."
       ],
       "explanation": "כל allocator שמזיז pointers צריך לשחזר את הכתובת המקורית בשחרור. אותו עיקרון מסביר למה אסור לקרוא ל-free על pointer לאמצע בלוק, ולמה delete[] צריך את ה-pointer שחזר מ-new[].",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "תיקנת את aligned_free. למה ב-C++17 ומעלה עדיף בכלל לא לכתוב aligned_malloc בעצמך, ואילו שני כלים מהספרייה הסטנדרטית מחליפים אותו?",
+        "modelAnswer": "C11 ו-C++17 מספקים `std::aligned_alloc(alignment, size)`, שמשוחרר עם free רגיל; המגבלה היא ש-size חייב להיות כפולה של ה-alignment, ובגרסאות קודמות של MSVC הוא לא קיים (שם יש `_aligned_malloc` ו-`_aligned_free`). ב-C++17 גם `new` מכבד `alignas`: `struct alignas(64) Block {...}` והקצאה רגילה עם new קוראת ל-`operator new(size_t, std::align_val_t)`, ו-delete המתאים נקרא אוטומטית. לכן `std::vector` של טיפוס עם alignas(64) מיושר נכון בלי allocator מיוחד. כך נמנעים מבאגים כמו בקוד הזה, ומקבלים תאימות עם ASan שמכיר את הפונקציות האלה.",
+        "rubric": [
+          "std::aligned_alloc משוחרר ב-free, size כפולה של alignment",
+          "C++17: new מכבד alignas דרך align_val_t",
+          "ב-MSVC: _aligned_malloc ו-_aligned_free"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q36",
@@ -1037,7 +1217,16 @@
         "שגוי: היישור נקבע בחישוב העיגול. מיקום ה-pointer הוא רק מקום נוח לשמור אותו."
       ],
       "explanation": "metadata ליד הבלוק (header) הוא הדפוס הנפוץ ב-allocators: מוצאים אותו מתוך ה-pointer בפעולה אחת. החיסרון: דריסה של ה-header על ידי underflow של באפר הורסת את ה-allocator, ולכן כלים כמו ASan מוסיפים אזורי הגנה (redzones).",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "ב-header של aligned_malloc שמור רק ה-pointer המקורי. מה היית מוסיף ל-header כדי לתפוס בזמן ריצה קריאה ל-aligned_free על pointer שלא הגיע מ-aligned_malloc, או double free, ומה העלות?",
+        "modelAnswer": "מוסיפים ל-header ערך magic קבוע (למשל 0xA11C0DE5) ליד ה-pointer המקורי; aligned_free בודק אותו לפני השחרור, ואם הוא לא תואם עושה abort עם הודעה ברורה. אחרי שחרור תקין דורסים את ה-magic בערך אחר, כך ש-double free שני ימצא ערך שגוי. אפשר להוסיף גם את הגודל ו-canary בסוף הבלוק כדי לזהות buffer overflow. העלות: עוד 8 עד 16 בתים להקצאה (בתוך מקום שלרוב ממילא מבוזבז על ה-alignment) ובדיקה של כמה cycles. זו הגנה הסתברותית, לא מוחלטת: double free אחרי שהבלוק כבר הוקצה מחדש עלול למצוא magic תקין.",
+        "rubric": [
+          "magic value ב-header שנבדק ב-free",
+          "דריסת ה-magic אחרי free לזיהוי double free",
+          "ההגנה הסתברותית: הקצאה מחדש של הבלוק יכולה להסתיר double free"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q37",
@@ -1067,7 +1256,16 @@
         "https://geeksforgeeks.org/qualcomm-interview-experience-off-campus-2021"
       ],
       "problem": "NVIDIA / Qualcomm: what happens when free() is called, how does it know the size",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "אם ה-header נמצא ממש לפני הכתובת שהוחזרה, מה קורה כשקוד כותב לאינדקס -1 של מערך שהוקצה ב-malloc, ולמה הקריסה מופיעה לעיתים קרובות הרבה יותר מאוחר?",
+        "modelAnswer": "כתיבה ל-p[-1] דורסת את ה-header של ה-chunk הנוכחי (שדה הגודל והדגלים), או את סוף ה-chunk הקודם. כלום לא קורה ברגע הכתיבה, כי זה זיכרון ממופה וחוקי מבחינת החומרה. הנזק מתגלה רק כשה-allocator קורא את ה-header: ב-free של הבלוק הזה או בהקצאה שמאחדת chunks שכנים, ואז glibc מזהה חוסר עקביות ומדפיס משהו כמו 'free(): invalid size' או 'corrupted size vs. prev_size' ועושה abort. לכן ה-stack trace של הקריסה מצביע על free תמים ולא על הכתיבה הבעייתית. ASan מוצא את זה מיד, כי סביב כל בלוק יש redzone מורעל ב-shadow memory.",
+        "rubric": [
+          "p[-1] דורס את ה-header (גודל ודגלים)",
+          "הזיהוי רק ב-free או באיחוד, ולכן ה-stack מצביע על מקום אחר",
+          "ASan תופס מיד דרך redzones"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q38",
@@ -1088,7 +1286,16 @@
         "שגוי: free מחזיר זיכרון ל-allocator, לא בהכרח למערכת ההפעלה."
       ],
       "explanation": "צריך להבחין בין דליפה (זיכרון בלי בעלים) לבין זיכרון שה-allocator שומר לשימוש חוזר. fragmentation של ה-heap יכולה לגרום ל-RSS גבוה גם בלי דליפה. במקרה כזה בודקים allocator אחר (jemalloc, tcmalloc) או מאגרים של אובייקטים בגודל קבוע.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "התוכנית בתרחיש הזה תעבור למצב של allocation/free של מיליון בלוקים כל שנייה, ב-8 threads. איך glibc מונע מזה להפוך לצוואר בקבוק של נעילות, ומה ה-trade-off?",
+        "modelAnswer": "glibc משתמש בשתי שכבות: tcache, cache פרטי לכל thread עם עד 7 chunks כברירת מחדל לכל size class קטן, שמאפשר malloc ו-free בלי שום נעילה; ומספר arenas, כל אחת עם mutex משלה, ו-threads מתפזרים ביניהן כדי להקטין contention. ה-trade-off הוא זיכרון: כל arena מחזיקה heap משלה וזיכרון פנוי בה לא זמין ל-arenas אחרות, ולכן RSS גבוה יותר ו-fragmentation. בנוסף, בלוק ששוחרר ב-thread אחר מזה שהקצה אותו חוזר ל-arena המקורית, וזה דורש את הנעילה שלה. allocators כמו jemalloc ו-tcmalloc בנויים במיוחד ל-workloads כאלה, עם caches גדולים יותר לכל thread.",
+        "rubric": [
+          "tcache: cache לכל thread בלי נעילה",
+          "כמה arenas עם mutex נפרד כל אחת",
+          "מחיר: יותר RSS ו-fragmentation"
+        ]
+      }
     },
     {
       "id": "bugs.leaks.q39",
@@ -1188,7 +1395,16 @@
         "נכון: פונקציה שנכשלת צריכה להשאיר את העולם כמו שקיבלה אותו. ב-C, נקודת ניקוי אחת עם goto שמשחררת בסדר הפוך היא הדפוס המקובל (גם בקרנל של Linux)."
       ],
       "explanation": "מסלולי שגיאה הם המקום הכי נפוץ לדליפות, כי הם כמעט לא נבדקים. בודקים אותם עם fault injection (malloc שנכשל בקריאה ה-k), וכותבים אותם עם ניקוי מרוכז או RAII.",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "אמרת שבודקים מסלולי שגיאה עם fault injection. איך היית מממש את זה בפועל בקוד C בלי לשנות את init, ואיך מבטיחים שכל מסלול כשל נבדק?",
+        "modelAnswer": "עוטפים את malloc: ב-Linux אפשר עם `-Wl,--wrap=malloc` שמפנה קריאות ל-`__wrap_malloc`, או עם LD_PRELOAD של ספרייה שמגדירה malloc. ה-wrapper סופר קריאות ומחזיר NULL בקריאה מספר k, ומעביר את השאר ל-`__real_malloc`. הטסט מריץ את init בלולאה עם k=1,2,3... עד שריצה מסתיימת בהצלחה, כך שכל נקודת כשל נבדקת בדיוק פעם אחת; כאן זה שתי ריצות כשל ואחת מוצלחת. כל ריצה רצה תחת ASan/LSan או Valgrind, ואחרי הכשל מוודאים שאין זיכרון שנשאר מוקצה ושה-struct במצב עקבי. זו בדיוק הטכניקה שבה SQLite ו-glibc בודקים את מסלולי ה-OOM שלהם.",
+        "rubric": [
+          "עטיפת malloc (--wrap או LD_PRELOAD) שנכשלת בקריאה ה-k",
+          "לולאה על k עד שהריצה מצליחה, כל נקודת כשל פעם אחת",
+          "כל ריצה תחת LSan/Valgrind לבדיקת דליפה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1211,7 +1427,16 @@
       ],
       "problem": "Google phone interview: memory leaks, memory allocation and how processes manage memory",
       "id": "bugs.leaks.q43",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "אמרת שהדפים הפיזיים מוקצים רק בגישה הראשונה. מה המשמעות של זה לתהליך real-time שמקצה buffer של 1GB בהתחלה, ואיך מבטלים את ה-page faults בזמן הריצה?",
+        "modelAnswer": "בגישה הראשונה לכל דף של 4KB יש minor page fault שעולה בערך מיקרו-שנייה או יותר, ובבאפר של 1GB זה כ-262,000 faults. אם הם קורים בתוך הלולאה הקריטית, מקבלים jitter ו-deadline misses בהתחלה. בנוסף, תחת לחץ זיכרון הקרנל יכול להוציא דפים ל-swap ולגרום ל-major faults. הפתרון: `mlockall(MCL_CURRENT | MCL_FUTURE)` שנועל דפים בזיכרון, ו-prefault מפורש בזמן האתחול, כתיבה לכל דף או `MAP_POPULATE` ב-mmap. huge pages (2MB) מקטינות את מספר ה-faults ואת ה-TLB misses פי 512. כל זה בשלב האתחול, לפני הלולאה של real-time.",
+        "rubric": [
+          "page fault לכל דף בגישה הראשונה: jitter",
+          "mlockall ו-prefault (כתיבה לכל דף או MAP_POPULATE) באתחול",
+          "huge pages מקטינות faults ו-TLB misses"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1232,7 +1457,16 @@
       ],
       "explanation": "הקטגוריות של valgrind: definitely lost (אין מצביע), indirectly lost (נגיש רק דרך בלוקים אבודים), possibly lost (רק interior pointers), still reachable (יש מצביע ביציאה). מתקנים קודם את definitely lost.",
       "id": "bugs.leaks.q44",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "ה-still reachable הזה לא מזיק, אבל ה-destructor של Cache כותב נתונים לדיסק. מה הסכנה אם משנים אותו ל-`static Cache g;` רגיל, ואיך פותרים בלי להחזיר את הדליפה?",
+        "modelAnswer": "אובייקט static נהרס ביציאה בסדר הפוך לבנייה, וזה מכניס את static destruction order fiasco: אם ~Cache משתמש ב-logger או באובייקט static אחר שכבר נהרס, זה UB. בנוסף, אם threads עדיין רצים ב-exit וניגשים ל-g, הם ניגשים לאובייקט הרוס. לכן הדפוס `new` בלי delete (leaky singleton) נפוץ בכוונה בקוד כמו Chromium. אם צריך את הכתיבה לדיסק, עושים flush מפורש ב-shutdown מסודר לפני היציאה, לא ב-destructor של static. אפשרות נוספת היא Meyers singleton בתוך פונקציה, שמבטיח אתחול thread-safe אבל עדיין חשוף לבעיית סדר ההריסה.",
+        "rubric": [
+          "static נהרס ביציאה: סדר הריסה בין static-ים (fiasco)",
+          "threads שעדיין רצים עלולים לגשת לאובייקט הרוס",
+          "flush מפורש ב-shutdown במקום להסתמך על destructor"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1253,7 +1487,16 @@
       ],
       "explanation": "RSS הוא מדד גס: הוא כולל זיכרון שה-allocator מחזיק לשימוש חוזר. כדי להבחין בין leak ל-fragmentation מריצים את אותו workload כמה פעמים: leak גדל כל פעם, ו-fragmentation מתייצב. פתרונות ל-fragmentation: pools לפי גודל, arenas לפי אורך חיים, jemalloc/tcmalloc.",
       "id": "bugs.leaks.q45",
-      "lesson": "bugs.leaks"
+      "lesson": "bugs.leaks",
+      "followUp": {
+        "prompt": "החלטת לפתור את ה-fragmentation עם pool. אובייקטים בגודל 100 בתים, ואורך החיים שלהם משתנה. איך תתכנן את ה-pool, ואיך תמנע ממנו לסבול מאותה בעיה של אובייקט שורד אחד שמחזיק דף שלם?",
+        "modelAnswer": "pool בגודל קבוע מחלק בלוקים גדולים (slabs) לתאים של 104 או 128 בתים עם free list פנימית, כך שהקצאה ושחרור הם O(1) ובלי header לכל אובייקט. אבל אם השורדים מפוזרים, כל slab עם שורד אחד לא יכול לחזור, בדיוק כמו קודם. הפתרון העיקרי הוא להפריד לפי אורך חיים: pool נפרד לאובייקטים קצרי חיים, ואת אלה שישרדו להקצות ממקום אחר. אם אורך החיים לא ידוע מראש, אפשר להקצות מה-slab הכי מלא קודם, כמו slab allocator בקרנל, כדי לרכז שורדים ולרוקן slabs אחרים. אפשרות אחרונה היא compaction, אבל ב-C++ עם pointers גולמיים אי אפשר להזיז אובייקטים בלי שכבת handles.",
+        "rubric": [
+          "slab של תאים קבועים עם free list, O(1)",
+          "הפרדה לפי אורך חיים (arenas נפרדות)",
+          "הקצאה מה-slab המלא ביותר כדי לרכז שורדים"
+        ]
+      }
     }
   ]
 }

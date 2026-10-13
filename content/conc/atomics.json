@@ -368,7 +368,17 @@
         "שגוי: ה-copy constructor וה-copy assignment של std::atomic מחוקים, כי העתקה מ-atomic אחד לאחר היא load ו-store נפרדים ולא פעולה אטומית אחת.",
         "שגוי: std::string אינו trivially copyable (יש לו destructor ו-copy constructor לא טריוויאליים, ו-SSO עם pointer פנימי), ולכן זה לא מתקמפל.",
         "נכון: weak רשאי להיכשל spuriously, בעיקר בארכיטקטורות LL/SC שבהן ה-reservation יכול ללכת לאיבוד, ולכן משתמשים בו בתוך לולאה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-x86 אין הוראה של lock fadd. איך `fetch_add` של `std::atomic<double>` ממומש בפועל, ומה ההשלכות כש-16 threads סוכמים אליו ערכים במקביל?",
+        "modelAnswer": "המימוש הוא CAS loop: טוענים את הערך, מחשבים old + v ב-FPU, ומנסים compare_exchange_weak. אם thread אחר שינה את הערך בינתיים, ה-CAS נכשל, old מתעדכן, ומחשבים שוב. בניגוד ל-`lock xadd` על int, שתמיד מצליח בניסיון אחד, כאן תחת תחרות יש retries, וכל כישלון עולה עוד העברה של ה-cache line, כך שזה lock-free אבל לא wait-free. בעיה שנייה: חיבור floating-point אינו אסוציאטיבי, והסדר שבו ה-threads מצליחים משתנה מריצה לריצה, ולכן הסכום הסופי שונה בביטים האחרונים בין ריצות (לא דטרמיניסטי). הפתרון הסטנדרטי: סכום חלקי פר-thread, ובסוף reduction בסדר קבוע, שהוא גם מהיר יותר וגם דטרמיניסטי. (ב-GPU, לעומת זאת, יש atomicAdd על float בחומרה, אבל אותה בעיית אי-דטרמיניזם קיימת.)",
+        "rubric": [
+          "מימוש כ-CAS loop, כי אין הוראת FP atomic add ב-x86",
+          "retries תחת תחרות: lock-free ולא wait-free, בניגוד ל-lock xadd שמצליח תמיד",
+          "חיבור FP לא אסוציאטיבי, ולכן התוצאה משתנה בין ריצות",
+          "סכומים חלקיים פר-thread ו-reduction בסדר קבוע"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q08",
@@ -392,7 +402,17 @@
         "שגוי: ה-load הוא כבר seq_cst כברירת מחדל, שחזק יותר מ-acquire. הבעיה אינה ב-memory order אלא בחלון שבין הבדיקה להורדה.",
         "נכון: check-then-act. שני threads יכולים לבצע load ולראות 1 לפני שאחד מהם מוריד, ואז שניהם מורידים ושניהם מחזירים true. צריך שהבדיקה וההורדה יהיו RMW אחד, כלומר CAS loop.",
         "שגוי: fetch_sub הוא RMW אטומי. כל פעולה בנפרד תקינה; הבאג הוא בכך שהצירוף של שתיהן אינו אטומי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שזה counting semaphore עם N slots. מימוש חלופי ל-CAS loop הוא `if (slots.fetch_sub(1) > 0) return true; slots.fetch_add(1); return false;`. מה היתרון שלו, ומה הבעיה העדינה שהוא יוצר?",
+        "modelAnswer": "היתרון: פעולה אחת של RMW שתמיד מצליחה (lock xadd ב-x86), בלי לולאת retries שמתארכת תחת תחרות. הבעיה: המונה יורד זמנית מתחת ל-0. thread שנכשל הוריד את המונה ל-1- ועוד לא החזיר אותו, ובחלון הזה thread שלישי יכול להיכשל למרות ש-slot באמת התפנה (מישהו שחרר והחזיר את המונה רק ל-0). כלומר יש כישלונות שגויים זמניים, וכל מי שקורא את המונה למוניטורינג רואה ערכים שליליים. ה-CAS loop אף פעם לא מוריד מתחת ל-0, אבל משלם ב-retries כשיש הרבה threads. ב-C++20 יש `std::counting_semaphore` עם try_acquire מוכן, שגם יודע לחסום בלי busy-wait.",
+        "rubric": [
+          "fetch_sub ואז undo: RMW יחיד שתמיד מצליח, בלי לולאה",
+          "המונה עובר זמנית לערך שלילי",
+          "תוצאה: try_acquire יכול להיכשל למרות שיש slot פנוי",
+          "CAS loop לא יורד מתחת ל-0 אבל עושה retries תחת תחרות"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q09",
@@ -413,7 +433,17 @@
         "שגוי: mutex מחמיר את המצב: גם ה-lock עצמו הוא cache line מתחרה, ובנוסף יש serialization ואולי sleep.",
         "שגוי: volatile לא אטומי, ולכן יאבדו הגדלות ויהיה data race. הוא גם לא פותר את קפיצות ה-cache line.",
         "נכון: sharding. כל thread מגדיל מונה ב-cache line משלו (alignas(64)), כך שאין תחרות, והקורא סוכם את כולם. הסכום אולי לא snapshot עקבי, וזה מקובל לסטטיסטיקה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן הערכה כמותית: למה מונה atomic משותף אחד לא מתרחב עם מספר ה-threads? מה בערך התקרה של הגדלות בשנייה לכל המכונה, ואיך תאשר את האבחנה ב-production?",
+        "modelAnswer": "כל הגדלה דורשת בעלות בלעדית על ה-cache line, והבעלות עוברת בין cores באופן סדרתי: רק core אחד יכול להחזיק אותה במצב Modified בכל רגע. העברה של line בין cores באותו socket עולה בסדר גודל של עשרות ננו-שניות, ובין sockets יותר (בערך 100 ns ומעלה). לכן התקרה של כל המכונה היא בערך 1 חלקי זמן ההעברה, בסדר גודל של 10 עד 30 מיליון הגדלות בשנייה, בלי קשר למספר ה-threads, ולרוב הביצועים אפילו יורדים כשמוסיפים threads בגלל תורים בפרוטוקול ה-coherence. לעומת זאת, הגדלה על line שנמצאת ב-L1 של ה-core עצמו היא כמה ננו-שניות ומתרחבת לינארית. לאבחון: `perf c2c` מראה cache lines עם הרבה HITM (גישות שפגעו ב-line במצב Modified אצל core אחר) ואת ה-offset של השדה, ו-`perf stat` מראה עלייה ב-cycles לכל פריט כשמוסיפים threads.",
+        "rubric": [
+          "בעלות על ה-line סדרתית: core אחד בכל רגע",
+          "עלות העברה בסדר עשרות ns בתוך socket ויותר בין sockets",
+          "תקרה גלובלית בסדר 10-30 מיליון בשנייה, לא תלויה במספר ה-threads",
+          "אבחון עם perf c2c ואירועי HITM"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q10",
@@ -452,7 +482,17 @@
         "נכון: x86 הוא TSO, כל load כבר בעל סמנטיקת acquire, וה-fence של seq_cst ממומש בצד ה-store. לכן seq_cst load הוא `mov` רגיל.",
         "שגוי: relaxed משחרר רק את הסדר, לא את האטומיות. RMW חייב `lock xadd` כדי שאף core לא יכתוב באמצע, וב-x86 lock prefix הוא ממילא full barrier.",
         "שגוי: כל CAS ב-x86 הוא `lock cmpxchg`, ללא תלות ב-memory order. הטעות היא לחשוב ש-relaxed מוריד את ה-lock prefix."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה המיפוי ב-x86 שם את המחסום דווקא על ה-seq_cst store (`xchg`) ולא על ה-seq_cst load? האם מיפוי הפוך (store רגיל, `mfence` לפני כל seq_cst load) היה נכון?",
+        "modelAnswer": "הדרישה של seq_cst ב-x86 היא רק שבין seq_cst store לבין seq_cst load מאוחר יותר יהיה מחסום מלא, כי StoreLoad הוא הסידור מחדש היחיד ש-TSO מתיר. לכן גם המיפוי ההפוך, mov ל-store ו-mfence לפני כל load, נכון לחלוטין. הקומפיילרים בחרו לשים את המחסום על ה-store כי בקוד טיפוסי יש הרבה יותר loads מ-stores, אז משלמים על הפעולה הנדירה. המחיר של המחסום הוא ריקון ה-store buffer, בסדר של עשרות cycles. חשוב: המיפוי חייב להיות עקבי בכל הקוד שבתוכנית, כמו ABI. ספרייה אחת שמקומפלת עם fence-on-store וספרייה אחרת עם fence-on-load יכולות יחד להשאיר store ו-load בלי שום מחסום ביניהם, וה-seq_cst נשבר.",
+        "rubric": [
+          "מיפוי הפוך (fence לפני loads) גם הוא נכון",
+          "הבחירה נובעת מכך ש-loads שכיחים יותר מ-stores",
+          "המיפוי חייב להיות עקבי בכל יחידות הקומפילציה, כמו ABI",
+          "מחיר המחסום: ריקון ה-store buffer"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q12",
@@ -473,7 +513,16 @@
         "שגוי: ה-memory order נבחר בנפרד דרך פרמטרים, ושתי הגרסאות מקבלות אותם פרמטרים. ההבחנה weak/strong נוגעת ל-spurious failure, לא לסדר.",
         "נכון: ב-LL/SC ה-store-conditional יכול להיכשל גם כשאף אחד לא שינה את הערך (reservation אבד). strong חייב לולאה פנימית שמסתירה את זה, ובתוך לולאת CAS חיצונית weak חוסך את הלולאה המקוננת.",
         "שגוי: שתיהן lock-free באותה מידה על טיפוס lock-free. strong רק עוטף את ה-LL/SC בלולאה, שעדיין lock-free."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מתי `compare_exchange_strong` עדיף גם כשיש לולאה, ומתי weak בלי לולאה הוא באג ממש?",
+        "modelAnswer": "weak בלי לולאה הוא באג כשלכישלון יש משמעות סמנטית: למשל `try_hold` או 'רק אחד מבצע את האתחול', שם כישלון spurious יגרום ל-thread לחשוב שמישהו אחר תפס או שהמשאב לא פנוי, למרות שהערך שווה ל-expected. strong עדיף גם בתוך לולאה כשהחישוב של ה-desired יקר (הקצאה, חישוב כבד), כי כישלון spurious ב-weak מחייב לחשב מחדש את כל גוף הלולאה, בעוד strong חוזר רק על זוג ה-LL/SC בפנים. ב-x86 (`lock cmpxchg`) וב-ARMv8.1 עם LSE (הוראת CAS) שתיהן מתקמפלות לאותה הוראה, כך שההבדל קיים רק ב-LL/SC כמו ARMv8.0, POWER ו-RISC-V. כלל: לולאה זולה, weak. ניסיון יחיד או desired יקר, strong.",
+        "rubric": [
+          "ניסיון יחיד עם משמעות לכישלון: weak נותן false negative",
+          "desired יקר לחישוב: strong חוסך חישוב מחדש בכישלון spurious",
+          "ב-x86 וב-ARMv8.1 LSE אין הבדל בקוד המיוצר"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q13",
@@ -494,7 +543,17 @@
         "נכון: ה-reference count ב-control block אטומי, אבל אובייקט ה-shared_ptr (pointer לאובייקט ו-pointer ל-control block) לא. כתיבה וקריאה מקבילות לאותו אובייקט הן data race, והקורא עלול להגדיל count של control block שכבר שוחרר.",
         "שגוי: const על Config מגן על התוכן של האובייקט המוצבע, לא על אובייקט ה-shared_ptr הגלובלי שמוחלף. ה-race הוא על ה-pointers עצמם.",
         "שגוי: זו הטעות הנפוצה. אטומיות ה-count מבטיחה רק ש-threads עם עותקים שונים יכולים להעתיק ולהרוס בלי סנכרון, לא שאפשר לכתוב ולקרוא את אותו עותק במקביל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-config מתעדכן פעם בדקה, אבל נקרא מיליוני פעמים בשנייה מ-32 threads. למה גם `std::atomic<std::shared_ptr<Config>>` נכון יתקשה להתרחב כאן, ומה הייתה עושה במקום?",
+        "modelAnswer": "כל קורא שמעתיק את ה-shared_ptr מגדיל ואחר כך מקטין את ה-reference count ב-control block. אלה כתיבות (RMW) לאותה cache line מכל 32 ה-threads, ולכן גם קריאה טהורה גורמת ל-cache line bouncing. בנוסף, המימוש לרוב לא lock-free (spinlock או lock bit פנימי). חלופה נפוצה: מונה גרסה `std::atomic<uint64_t> version`. כל thread שומר עותק thread_local של ה-shared_ptr ואת הגרסה שראה, ובכל קריאה רק טוען את version (קריאה בלבד, ה-line נשארת במצב Shared בכל ה-caches ואין תעבורה). רק כשהגרסה השתנתה, פעם בדקה, לוקחים mutex ומעתיקים את ה-pointer החדש. חלופה שנייה היא RCU: pointer גולמי עם load acquire, ושחרור מושהה של הגרסה הישנה (epoch או hazard pointers).",
+        "rubric": [
+          "כל העתקה כותבת ל-refcount: הקוראים עצמם יוצרים bouncing",
+          "atomic<shared_ptr> לרוב לא lock-free",
+          "version counter עם עותק thread_local, ו-mutex רק כשהגרסה השתנתה",
+          "או RCU: pointer גולמי ושחרור מושהה (epoch או hazard pointers)"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q14",
@@ -509,7 +568,17 @@
         "מתייחס לעקביות בין כמה מונים: seqlock או double buffer, והכותב לא נחסם"
       ],
       "explanation": "התשובה החלשה: atomic גלובלי עם seq_cst. התשובה החזקה מבינה את מחיר ה-cache coherence ומפרידה בין דרישת האטומיות לבין דרישת הסדר.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "אותה מערכת רצה על מעבד ARM של 32 ביט. מה קורה למונה `uint64_t` רגיל, מה עולה `std::atomic<uint64_t>` שם, ואיזה טריק עם מונה של 32 ביט פותר את זה?",
+        "modelAnswer": "על מעבד 32 ביט כתיבה וקריאה של 64 ביט רגילים יכולות להתפצל לשתי גישות של 32 ביט, והמוניטור יכול לקרוא חצי עליון ישן וחצי תחתון חדש (tearing), למשל בדיוק כשהחצי התחתון גולש. `std::atomic<uint64_t>` מונע את זה: ב-ARMv7-A הוא ממומש עם exclusives של doubleword (ldrexd/strexd), שהם יקרים יותר מגישה רגילה, ובליבות בלי תמיכה כזו הוא נופל ל-lock דרך libatomic (is_lock_free מחזיר false). הטריק: מונה של 32 ביט, שהגישה אליו אטומית ממילא, והמוניטור מחשב הפרש `uint32_t delta = now - prev` שהוא נכון מודולו 2^32 גם אחרי גלישה, וצובר אותו ב-64 ביט אצלו. התנאי: פחות מגלישה אחת בין שתי קריאות. ב-5 מיליון פריטים בשנייה, 2^32 נגמר אחרי כ-860 שניות (כ-14 דקות), הרבה מעבר לקריאה של פעם בשנייה.",
+        "rubric": [
+          "tearing של 64 ביט על פלטפורמת 32 ביט",
+          "atomic<uint64_t>: ldrexd/strexd או lock ב-libatomic",
+          "מונה 32 ביט עם הפרש unsigned שנכון מודולו 2^32",
+          "חישוב זמן גלישה (בערך 4.29e9 חלקי הקצב) שחייב להיות ארוך מתקופת הקריאה"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q15",
@@ -530,7 +599,17 @@
         "שגוי: התקן מחייב אטומיות גם כשאין lock-free, ולכן אין tearing. המימוש פשוט משיג אותה דרך lock.",
         "שגוי: בין threads של אותו process הוא אכן בטוח, אבל לא בכל הקשר: ב-signal handler ובין processes ה-lock הפנימי הופך לבעיה.",
         "נכון: libatomic משתמש בטבלת locks לפי hash של הכתובת. signal handler שניגש לאובייקט בזמן שה-thread שנקטע מחזיק את ה-lock יגיע ל-deadlock, ו-process אחר שממפה את אותו shared memory משתמש בטבלת locks נפרדת, כך שאין הדדיות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה צריך CAS של 16 בתים {pointer, tag} ל-stack שמוגן מ-ABA על x86-64, ו-`is_lock_free()` מחזיר false. איך משיגים בכל זאת CAS של 16 בתים, מה המחיר, ואיך נמנעים מהצורך בו לגמרי?",
+        "modelAnswer": "יש הוראה `cmpxchg16b`, שדורשת יישור ל-16 בתים. אפשר להגיע אליה עם `-mcx16` ו-builtins של הקומפיילר, ותלוי בגרסה ש-libatomic ישתמש בה בזמן ריצה, אבל is_lock_free עדיין עלול לדווח false. המחיר: ההוראה איטית יותר מ-cmpxchg רגיל, ואין load אטומי זול של 16 בתים, כך ש-load ממומש לעיתים כ-cmpxchg16b, כלומר כתיבה. לכן גם קוראים לוקחים בעלות על ה-line ומתחרים זה בזה. חלופות שנמנעות מ-16 בתים: לדחוס את ה-tag לביטים העליונים של pointer של 64 ביט (ב-x86-64 עם 48 ביט כתובת וירטואלית נשארים 16 ביט, אבל עם 5-level paging יש רק 57 ביט כתובת), לעבוד עם אינדקס של 32 ביט לתוך מערך ו-tag של 32 ביט באותה מילה, או לבטל את בעיית ה-ABA דרך hazard pointers או epoch-based reclamation, ואז לא צריך tag בכלל.",
+        "rubric": [
+          "cmpxchg16b עם יישור 16, דרך -mcx16 או builtins",
+          "load דרך cmpxchg16b הוא כתיבה: תחרות גם בין קוראים",
+          "tag בביטים העליונים של pointer (48 ביט VA) או אינדקס 32 ביט ו-tag 32 ביט",
+          "hazard pointers או epochs מבטלים את הצורך ב-tag"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q16",
@@ -556,7 +635,17 @@
         "שגוי: store relaxed לא יוצר synchronizes-with, ולכן הכתיבה לבאפר לא happens-before הקריאה שלו. זה data race על הבאפר; צריך release ב-store ו-acquire בקריאה.",
         "שגוי: B קורא את אותו משתנה, ולכן coherence חל: אחרי שראה 2 (מאוחר יותר ב-modification order) הוא לא יכול לראות 1.",
         "נכון: relaxed לא נותן שום סדר בין משתנים שונים. B יכול לראות את הכתיבה ל-y לפני הכתיבה ל-x, למשל בגלל reordering של הקומפיילר או של החומרה (ARM, POWER)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בתרחיש שבו B רואה y==1 ואחר כך x==0: איזה מנגנון בחומרה של ARM מייצר את זה, והאם זה יכול לקרות גם ב-x86?",
+        "modelAnswer": "ב-ARM יש שני מקורות: בצד הכותב, ה-stores ל-x ול-y יכולים להפוך גלויים ל-cores אחרים בסדר שונה מסדר התוכנית (ה-store buffer לא חייב לרוקן לפי הסדר), ובצד הקורא, ה-load של x יכול להתבצע ספקולטיבית לפני ה-load של y. שניהם מותרים במודל החלש. ב-x86 (TSO) החומרה שומרת על סדר store-store ועל סדר load-load, ולכן החומרה לא תייצר את התוצאה הזו. אבל הקומפיילר רשאי להחליף בין שתי פעולות relaxed על משתנים שונים, כך שגם ב-x86 זה חוקי, ותלוי באופטימיזציות. התיקון: release על ה-store של y ו-acquire על ה-load שלו. ב-AArch64 זה stlr ו-ldar, וב-x86 זה לא מוסיף שום הוראה, רק מגביל את הקומפיילר.",
+        "rubric": [
+          "ARM: stores נעשים גלויים לא לפי הסדר ו/או loads מתבצעים לא לפי הסדר",
+          "x86 TSO לא מסדר מחדש store-store או load-load בחומרה",
+          "הקומפיילר רשאי לסדר מחדש גם ב-x86",
+          "release/acquire על y: stlr/ldar ב-AArch64, בלי הוראה נוספת ב-x86"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q17",
@@ -579,7 +668,17 @@
         "נכון: ההשוואה לפי bits נכשלת (ביט הסימן שונה), ולכן ok הוא 0, a נשאר -0.0 ש-cout מדפיס כ-`-0`, ו-e מקבל את הערך הנוכחי -0.0 כך ש-signbit(e) הוא 1.",
         "שגוי: מניח הצלחה לפי `==`, ובנוסף מניח ש-e מתעדכן גם בהצלחה. בפועל ה-CAS נכשל, ובכל מקרה expected לא משתנה בהצלחה.",
         "שגוי: נכון שה-CAS נכשל ו-a נשאר -0, אבל שוכח שבכישלון e מתעדכן לערך הנוכחי של a, כלומר -0.0, ולכן signbit(e) הוא 1."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה התקן מגדיר את ההשוואה של CAS לפי ייצוג הביטים ולא לפי `==`? ומה זה אומר ל-`atomic_max` על float שממומש כ-CAS loop?",
+        "modelAnswer": "CAS חייב להיות הוראת חומרה אחת (או LL/SC), והחומרה משווה ביטים. אי אפשר להריץ operator== של משתמש, או השוואת floating-point, בתוך הפעולה האטומית. ב-atomic_max בצורה `while (v > cur && !a.compare_exchange_weak(cur, v)) {}` הלולאה עדיין מתכנסת עם -0.0, כי בכישלון cur מתעדכן לביטים האמיתיים בזיכרון, והניסיון הבא משווה מול הביטים הנכונים. הבעיה האמיתית היא NaN: כל השוואה עם NaN מחזירה false, כך שאם NaN נכנס למשתנה, `v > cur` תמיד false וה-max תקוע על NaN, ואם NaN מגיע כקלט הוא פשוט מתעלם. צריך להחליט מדיניות מפורשת עם isnan. נקודה נוספת: ב-struct עם padding, לפני C++20 ביטי ה-padding השתתפו בהשוואה ויכלו לגרום לכישלונות מיותרים. C++20 קבע שהם לא משתתפים.",
+        "rubric": [
+          "CAS הוא הוראת חומרה שמשווה ביטים, אין דרך להריץ == בתוכה",
+          "הלולאה מתכנסת כי בכישלון expected מקבל את הביטים מהזיכרון",
+          "NaN: כל השוואה false, max נתקע או מתעלם, צריך מדיניות isnan",
+          "padding: לפני C++20 השתתף בהשוואה, מ-C++20 לא"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q18",
@@ -729,7 +828,17 @@
         "נכון: struct עם alignas(64) גדל ל-64 בתים לפחות, כך שכל איבר במערך יושב ב-line נפרדת וה-cores לא מתחרים. במעבדים שמביאים זוגות lines עדיף 128.",
         "נכון: `std::hardware_destructive_interference_size` נוסף ב-C++17 (ב-<new>), וערכו implementation-defined (למשל 64 ב-x86, לפעמים 128 ב-ARM).",
         "שגוי: זו בדיוק הטעות שמובילה ל-false sharing. החומרה לא יודעת שהמשתנים נפרדים לוגית; היא עוקבת אחרי בעלות על line שלמה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה יש המלצות לרפד ל-128 בתים ולא ל-64 גם במעבדי Intel שה-line שלהם 64 בתים, ואיך תאשר false sharing במערכת שרצה?",
+        "modelAnswer": "ב-Intel יש spatial prefetcher ב-L2 (adjacent line prefetch) שמביא lines בזוגות, כלומר chunk מיושר של 128 בתים. כשמונה של thread אחד יושב ב-line הסמוכה ל-line של thread אחר, ה-prefetch יוצר תעבורת coherence ביניהן גם בלי שיתוף אמיתי. בנוסף, ב-Apple M1 ומעבדים דומים ה-line עצמה היא 128 בתים. המחיר של 128 זניח כאן: 8 מונים כפול 128 הם 1KB. `std::hardware_destructive_interference_size` נוח, אבל ערכו תלוי במימוש וב-flags של הקומפיילר, ו-GCC אף מזהיר (-Winterference-size) מפני שימוש בו ב-layout שהוא חלק מ-ABI. לאישור: `perf c2c` מצביע על cache lines עם HITM רבים ומראה מאילו offsets ומאילו threads הגישות, ובדיקה פשוטה היא גרף throughput מול מספר threads עם ובלי padding.",
+        "rubric": [
+          "adjacent line prefetcher מביא זוגות lines (128 בתים)",
+          "יש מעבדים (Apple M1) עם line של 128",
+          "ערך הקבוע תלוי במימוש ו-GCC מזהיר עליו",
+          "perf c2c / HITM, או גרף throughput מול threads עם ובלי padding"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q25",
@@ -752,7 +861,16 @@
         "שגוי: שוכח ש-e מתעדכן ל-10 אחרי הכישלון הראשון. בפועל ה-CAS השני רואה expected תואם ומצליח.",
         "שגוי: מניח ש-expected מתעדכן גם בהצלחה, לערך החדש. בהצלחה expected לא נוגעים בו, ולכן e נשאר 10.",
         "שגוי: מניח שה-CAS הראשון מצליח למרות ש-a (10) שונה מ-e (7), ושוכח את העדכון של e. בפועל הראשון נכשל ו-e הופך ל-10."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-CAS loop טיפוסי (`old = a.load(); do { nw = f(old); } while (!a.compare_exchange_weak(old, nw));`) למה לא צריך load נוסף בתוך הלולאה, ומה יכול לגרום ל-thread מסוים להיתקע בה זמן רב?",
+        "modelAnswer": "בכישלון, ה-CAS כותב ל-expected את הערך העדכני שקרא אטומית כחלק מאותה פעולה, ולכן בסיבוב הבא מחשבים f על הערך הנכון בלי load נוסף. הלולאה היא lock-free: בכל רגע לפחות thread אחד מתקדם, כי ה-CAS של מישהו מצליח. אבל היא לא wait-free: thread מסוים יכול להיכשל שוב ושוב אם אחרים מצליחים לפניו כל פעם (starvation). תחת תחרות גבוהה כל כישלון עולה עוד העברת cache line. הפתרונות: exponential backoff בין ניסיונות, או, כשהפעולה היא חיבור או OR, להשתמש ב-fetch_add/fetch_or, שהן RMW יחיד שמצליח תמיד ב-x86 בלי retries.",
+        "rubric": [
+          "בכישלון expected מתעדכן לערך הנוכחי, אין צורך ב-load",
+          "lock-free (התקדמות של המערכת) אבל לא wait-free (thread בודד יכול להיתקע)",
+          "backoff או RMW ייעודי (fetch_add) במקום CAS loop"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q26",
@@ -776,7 +894,17 @@
         "שגוי: atomic_flag הוא הבסיס הקלאסי ל-spinlock והוא lock-free. החלפה ל-atomic<bool> עם אותו relaxed לא תתקן כלום.",
         "נכון: ה-release של המשחרר הקודם מסתנכרן רק עם קריאה של הדגל ב-acquire. ב-relaxed אין happens-before, ולכן על ARM הגישה ל-balance יכולה להתבצע לפני שהתפיסה הושלמה ולראות ערך ישן. צריך `test_and_set(std::memory_order_acquire)`.",
         "שגוי: release מספיק בצד המשחרר. הבעיה היא בצד התופס, ו-seq_cst ב-clear לא היה עוזר בלי acquire בתפיסה. \"להגיע לזיכרון\" היא גם תפיסה שגויה, כי הנושא הוא סדר ונראות ולא flush."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אחרי התיקון ל-acquire ה-spinlock נכון, אבל עם 16 threads ו-critical section קצר הביצועים גרועים. אילו שיפורים תכניס, ולמה כל אחד עוזר?",
+        "modelAnswer": "1. test-and-test-and-set: מסתובבים על load relaxed, ומנסים test_and_set או exchange רק כשרואים שה-lock פנוי. load משאיר את ה-line במצב Shared אצל כל הממתינים, בלי RFO, ואילו RMW בלולאה גורם לכל ממתין לחטוף את ה-line בכל סיבוב, כולל מהמחזיק. (ב-atomic_flag אפשר לעשות את זה עם `test()` מ-C++20.) 2. הוראת pause ב-x86 (או yield ב-ARM) בתוך הלולאה: מורידה צריכת חשמל ומשאבי SMT ומונעת את ה-pipeline flush ביציאה מהלולאה. ב-Skylake ואילך pause ארוך, כ-140 cycles. 3. exponential backoff כדי שלא כולם יקפצו יחד ברגע השחרור. 4. אם המחזיק יכול לקבל preemption, ממתינים שמסתובבים שורפים time slice שלם, ולכן אחרי זמן קצר עוברים לחסימה (futex או `atomic::wait`). להוגנות ולפחות תעבורה: ticket lock או MCS, שבו כל ממתין מסתובב על line משלו.",
+        "rubric": [
+          "TTAS: סיבוב על load, ה-line במצב Shared, RMW רק כשפנוי",
+          "pause/yield ו-backoff",
+          "מעבר לחסימה (futex או atomic::wait) כי המחזיק יכול לקבל preemption",
+          "MCS או ticket lock להוגנות ולסיבוב על line פרטית"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q27",
@@ -803,7 +931,17 @@
         "שגוי: במימושים נפוצים (libstdc++, libc++ על Linux) wait מסתובב מעט ואז נרדם על futex או מקבילה, ולכן הוא כן חוסך CPU.",
         "נכון: התקן מבטיח שחרור רק דרך notify (או spurious). כתיבה לערך בלבד לא מעירה את הממתין, ולכן תמיד מצמידים notify לשינוי.",
         "שגוי: wait משווה value representation, כמו compare_exchange, ולא operator==. זה משנה למשל ב--0.0 מול 0.0."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך `wait`/`notify_one` ממומשים ב-Linux, איך נמנעת התעוררות שהולכת לאיבוד, ואיך הספרייה נמנעת מ-syscall ב-notify כשאף אחד לא ממתין?",
+        "modelAnswer": "הבסיס הוא futex. `FUTEX_WAIT` מקבל כתובת וערך צפוי, והקרנל בודק אטומית (תחת lock פנימי של ה-bucket) שהערך עדיין שווה לצפוי לפני שהוא מרדים את ה-thread. לכן אם notify קרה בין הבדיקה של ה-thread לבין הקריאה ל-syscall, הקרנל יראה ערך אחר ויחזור מיד, וה-wakeup לא הולך לאיבוד. futex עובד על מילה של 32 ביט, ולכן לטיפוסים אחרים libstdc++ משתמשת בטבלת waiters לפי hash של הכתובת, עם מונה proxy של 32 ביט. syscall של `FUTEX_WAKE` עולה בסדר גודל של מאות ננו-שניות ומעלה, ולכן הספרייה מחזיקה מונה ממתינים, ו-notify בודק אותו ומדלג על ה-syscall אם הוא 0. ב-Windows המקבילה היא WaitOnAddress ו-WakeByAddressSingle.",
+        "rubric": [
+          "futex: הקרנל בודק את הערך מול הצפוי אטומית לפני השינה, ולכן אין lost wakeup",
+          "futex על 32 ביט, טיפוסים אחרים דרך טבלת waiters לפי hash",
+          "מונה ממתינים כדי לדלג על syscall ב-notify",
+          "Windows: WaitOnAddress"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q28",
@@ -826,7 +964,17 @@
         "שגוי: אין רוויה (saturation) באף פעולה אטומית בתקן. הגלישה עוטפת.",
         "שגוי: התוצאה אינה תלוית מימוש: התקן מגדיר במפורש wrap-around של two's complement.",
         "נכון: החישוב מוגדר כאילו בוצע ב-unsigned והומר חזרה (two's complement), ולכן INT_MAX+1 עוטף ל-INT_MIN, כלומר -2147483648, בלי UB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בהינתן זה, היית בוחר `std::atomic<int>` או `std::atomic<uint32_t>` למספר סידורי שעלול לגלוש? ואיך משווים נכון בין שני מספרים סידוריים מעבר לגלישה?",
+        "modelAnswer": "uint32_t: הגלישה מוגדרת בו גם ב-atomic וגם בחשבון רגיל, ואילו עם int, כל קוד שמעתיק את הערך ל-int רגיל ועושה עליו `+ 1` מגיע ל-UB באותו מקום שבו ה-atomic היה בסדר. להשוואה מעבר לגלישה משתמשים ב-serial number arithmetic, כמו ב-TCP: a לפני b אם `(int32_t)(a - b) < 0`. ההפרש מחושב ב-unsigned מודולו 2^32, וההמרה ל-signed מפרשת אותו כמרחק בטווח של ±2^31. זה נכון כל עוד המרחק האמיתי בין השניים קטן מ-2^31. ההמרה של unsigned מחוץ לטווח ל-int32_t הייתה implementation-defined עד C++20, ומ-C++20 היא מוגדרת מודולו 2^32 (two's complement).",
+        "rubric": [
+          "unsigned: גלישה מוגדרת גם מחוץ ל-atomic",
+          "השוואה: (int32_t)(a - b) < 0",
+          "תקף רק כשהמרחק קטן מ-2^31",
+          "המרה ל-signed מוגדרת מ-C++20, לפני כן implementation-defined"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q29",
@@ -847,7 +995,17 @@
         "שגוי: מותר ליצור ולהרוס atomic_ref זמניים רבים לאותו אובייקט. האטומיות נובעת מכך שכל הגישות אטומיות, לא מאורך החיים של אובייקט ref מסוים.",
         "שגוי: קריאה ישירה לא-אטומית במקביל לכתיבה דרך atomic_ref היא data race ו-UB. גם הקוראים חייבים לעבור דרך atomic_ref בשלב המקבילי.",
         "שגוי: אין שום דרישה על storage duration. atomic_ref עובד על כל אובייקט מתאים ומיושר, כולל מערך סטטי או על ה-stack."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מבחינת ביצועים: 16 threads עם atomic_ref על ה-histogram המשותף, לעומת histogram פרטי לכל thread ו-merge בסוף. מה יקרה בכל גישה, ומתי atomic_ref בכל זאת עדיף?",
+        "modelAnswer": "1024 int הם 4KB, כלומר 64 cache lines עם 16 bins בכל line. גם בפיזור אחיד, threads שונים מגדילים bins שונים באותה line, וכל הגדלה דורשת RFO, כך שה-lines קופצות כל הזמן. בנתונים מוטים (bin אחד חם, למשל רצפת הרעש או DC) כל ה-threads נתקעים על line אחת. histogram פרטי: 16 כפול 4KB הם 64KB, נכנס ב-L1/L2, אין atomics בכלל, וה-merge בסוף הוא 16 כפול 1024 חיבורים, זניח. atomic_ref עדיף כשמספר ה-bins עצום (נגיד 2^24 bins, עותק פרטי של 64MB לכל thread), וכשההתנגשויות נדירות כי הנתונים מפוזרים. ב-GPU עושים את אותו דבר: privatization של ה-histogram ב-shared memory לכל block, ורק בסוף atomicAdd לזיכרון הגלובלי.",
+        "rubric": [
+          "16 bins בכל line: RFO בכל הגדלה, false sharing ו-true sharing",
+          "bin חם במוטה מרכז את כל התחרות על line אחת",
+          "histogram פרטי + merge של O(threads x bins), בלי atomics",
+          "atomic_ref עדיף כשמספר ה-bins עצום וההתנגשויות נדירות"
+        ]
+      }
     },
     {
       "id": "conc.atomics.q30",
@@ -862,7 +1020,17 @@
         "קשר ל-packed structs, atomic_ref ומצביעים לא מיושרים, ו-alignment fault ב-ARM"
       ],
       "explanation": "תשובה חלשה עוצרת ב-\"ה-lock prefix נועל את ה-bus\", מה שנכון רק במקרה הלא מיושר. תשובה חזקה מבחינה בין cache lock ל-bus lock ומבינה את ההשפעה הרוחבית.",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "על שרת עם 2 sockets: מה בערך ה-latency של `lock xadd` כשה-line ב-L1 של ה-core עצמו, כשהיא אצל core אחר באותו socket, וכשהיא ב-socket השני? ואיך זה משנה את התכנון של מונה גלובלי?",
+        "modelAnswer": "בסדרי גודל: line שכבר ב-L1 במצב Modified, ההוראה עולה בערך 20 cycles (כמה ns), בעיקר בגלל ריקון ה-store buffer. line שנמצאת במצב Modified אצל core אחר באותו socket דורשת העברה דרך ה-LLC/interconnect, בסדר של עשרות ns. line ב-socket השני עוברת דרך ה-interconnect בין ה-sockets (UPI או Infinity Fabric), בסדר של 100 ns ומעלה. כלומר רוב העלות היא תנועת ה-line, לא ההוראה עצמה. לכן מונה גלובלי שכל ה-threads בשני ה-sockets מגדילים מוגבל בקצב ההעברות בין sockets. התכנון: היררכי, מונה פר-thread, צבירה פר-socket (NUMA node), וקורא שסוכם את הצמתים. ב-`perf c2c` רואים את זה כ-remote HITM לעומת local HITM.",
+        "rubric": [
+          "סדרי גודל: כמה ns מקומי, עשרות ns באותו socket, 100 ns ומעלה בין sockets",
+          "העלות היא תנועת ה-line, לא ההוראה",
+          "צבירה היררכית: thread, socket (NUMA), גלובלי",
+          "perf c2c מבחין בין local ל-remote HITM"
+        ]
+      }
     },
     {
       "level": 4,
@@ -892,7 +1060,16 @@
         "https://leetcode.com/discuss/post/318583/microsoft-sde-2-pune-by-anonymous_user-bc6p/"
       ],
       "id": "conc.atomics.q31",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "הערך 1 כמעט אף פעם לא יופיע בבדיקה. האם ThreadSanitizer יתפוס את הבאג הזה, ואיך היית מוכיח שהתרחיש אפשרי?",
+        "modelAnswer": "TSan לא יתריע: כל הגישות ל-i הן atomic, ולכן אין data race לפי התקן. הבאג הוא atomicity violation (race condition לוגי), כלומר רצף של שתי פעולות אטומיות שהיה אמור להיות פעולה אחת, ו-TSan לא מבין כוונה. כדי להוכיח: להכניס בבילד מיוחד yield או sleep בין ה-load ל-store, ולהצמיד את ה-threads ל-cores שונים, ואז החלון גדל ואפשר לראות ערכים נמוכים. או להשתמש ב-model checker (Relacy, CDSChecker, GenMC) שמריץ את כל ה-interleavings האפשריים של הקוד הקטן ומוצא את התרחיש באופן דטרמיניסטי. תיקון: fetch_add, או CAS loop אם הפעולה מורכבת יותר.",
+        "rubric": [
+          "TSan לא יתפוס: אין data race, כל הגישות אטומיות",
+          "זה atomicity violation: load ו-store נפרדים",
+          "הגדלת החלון עם yield/sleep בבילד מיוחד, או model checker שמכסה interleavings"
+        ]
+      }
     },
     {
       "level": 4,
@@ -915,7 +1092,17 @@
         "שגוי: 3 מניח שההגדלות של thread אחד לפחות שורדות. התרחיש שבו כל thread דורס את השני מוביל ל-2."
       ],
       "id": "conc.atomics.q32",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "הכלל: N threads, כל אחד מבצע k פעמים `i.store(i.load() + 1)`. מה הערך הסופי המינימלי כפונקציה של N ו-k, ולמה?",
+        "modelAnswer": "לכל N ≥ 2 ו-k ≥ 2 המינימום הוא 2, לא משנה כמה threads יש. החסם התחתון: ה-store האחרון ב-modification order בא מהגדלה של thread כלשהו, ואם זו לא ההגדלה הראשונה שלו, ה-load שלה בא אחרי store קודם של אותו thread, ולפי coherence הוא רואה ערך של לפחות 1, ולכן כותב לפחות 2. (עם k = 1 המינימום הוא 1.) הבנייה מכלילה את זו של שני threads: T1 טוען 0 ונעצר, T2 מבצע k-1 הגדלות, כל שאר ה-threads רצים עד הסוף, T1 כותב 1, T2 טוען 1 ונעצר, T1 משלים את כל ההגדלות שלו, ו-T2 כותב 2 אחרון. המקסימום הוא N כפול k כשאין חפיפה.",
+        "rubric": [
+          "המינימום 2 לכל N ≥ 2 ו-k ≥ 2, ו-1 כש-k = 1",
+          "חסם תחתון דרך coherence: ה-load רואה לפחות את הכתיבה הקודמת של אותו thread",
+          "בנייה: שאר ה-threads רצים בחלון שבו T1 עצור",
+          "מקסימום N כפול k"
+        ]
+      }
     },
     {
       "level": 3,
@@ -936,7 +1123,16 @@
         "שגוי: כל thread כבר ביצע 3 הגדלות שלא אבדו, ו-load אחרי RMW של אותו thread לא יכול לראות ערך מוקדם יותר בסדר השינויים."
       ],
       "id": "conc.atomics.q33",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "ואם כל thread היה מדפיס את ערך ההחזרה של ה-fetch_add האחרון שלו ועוד 1, במקום `i.load()`? מה מובטח אז?",
+        "modelAnswer": "fetch_add מחזיר את הערך שקדם לו ב-modification order, ולכן שש הקריאות מחזירות בדיוק את 0 עד 5, כל ערך פעם אחת (פרמוטציה). ה-thread שקיבל 5 מדפיס 6, וה-thread השני מקבל ב-fetch_add האחרון שלו ערך בין 2 ל-4, כי שלוש ההחזרות שלו שונות ועולות, ולכן מדפיס בין 3 ל-5. כלומר בדיוק thread אחד מדפיס 6 והשני תמיד מדפיס ערך אחר. עם load, לעומת זאת, שני ה-threads יכולים להדפיס 6 אם שניהם קוראים אחרי שכל ההגדלות הסתיימו. ערך ההחזרה של RMW הוא snapshot שמחובר לפעולה עצמה, בעוד load נפרד רואה מצב מאוחר יותר.",
+        "rubric": [
+          "ערכי ההחזרה הם פרמוטציה של 0 עד 5",
+          "בדיוק thread אחד מדפיס 6, השני בין 3 ל-5",
+          "עם load שניהם יכולים להדפיס 6"
+        ]
+      }
     },
     {
       "level": 3,
@@ -964,7 +1160,17 @@
         "https://leetcode.com/discuss/post/1054063/amazon-sde-reject-by-anonymous_user-949w/"
       ],
       "id": "conc.atomics.q34",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "עכשיו ה-IDs צריכים להיות ייחודיים גם בין 10 שרתים וגם אחרי restart של התהליך. מה נשבר במימוש הזה, ואיך היית מתכנן?",
+        "modelAnswer": "המונה בזיכרון מתאפס ב-restart ומתחיל שוב מ-0, ובין שרתים אין שום תיאום, אז יהיו כפילויות. אפשרות אחת: הקצאת בלוקים מתמידה. השרת שומר במסד נתונים או בקובץ high-water mark ומבקש בלוק (נגיד מיליון IDs), וב-restart מתחיל מהבלוק הבא, וזורק את מה שלא השתמש בו. אפשרות שנייה: Snowflake, 64 ביט שמורכבים מ-41 ביט זמן במילי-שניות, 10 ביט מזהה מכונה ו-12 ביט רצף בתוך המילי-שנייה. הסיכון שם: שעון שזז אחורה (NTP), שצריך לזהות ולחכות או לסרב. UUIDv4 אקראי (122 ביט) כמעט לא מתנגש, אבל הוא לא ממוין ותופס 128 ביט. גלישה של מונה 64 ביט היא לא בעיה: ב-10^9 IDs בשנייה זה כ-584 שנה.",
+        "rubric": [
+          "restart מאפס את המונה: צריך high-water mark מתמיד בבלוקים",
+          "ביטים של מזהה מכונה (Snowflake: זמן, machine id, רצף)",
+          "סכנת שעון שזז אחורה",
+          "גלישת 64 ביט לא רלוונטית (בערך 584 שנה ב-10^9 בשנייה)"
+        ]
+      }
     },
     {
       "level": 4,
@@ -985,7 +1191,16 @@
         "שגוי: על x86 כל RMW הוא lock prefix בכל מקרה. relaxed לא מבטל את המעבר של ה-cache line בין cores."
       ],
       "id": "conc.atomics.q35",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "איך היית בוחר את גודל הבלוק, ומה המחירים של בלוקים גדולים מדי?",
+        "modelAnswer": "קצב הפעולות על המונה המשותף הוא הקצב הכולל חלקי גודל הבלוק B. למשל 64 threads כפול 10 מיליון IDs בשנייה הם 640 מיליון בשנייה, ועם B = 1000 נשארים 640 אלף fetch_add בשנייה, הרבה מתחת לתקרה של line מתחרה (בסדר של עשרות מיליונים בשנייה), כך שה-contention זניח. בלוק גדול מדי: thread שמסיים או נהרס זורק עד B-1 IDs, וה-IDs רחוקים מלהיות מסודרים בזמן, כי ID גבוה מבלוק אחד יכול להינתן לפני ID נמוך מבלוק אחר. אם הצרכנים מניחים ש-ID גדול יותר אומר 'מאוחר יותר', זה שובר אותם. אפשר גם גודל בלוק אדפטיבי: threads שצורכים מהר מקבלים בלוקים גדולים יותר.",
+        "rubric": [
+          "קצב משותף = קצב כולל חלקי B, להשוות לתקרה של line מתחרה",
+          "בזבוז של עד B-1 IDs לכל thread שמסתיים",
+          "אובדן סדר מונוטוני בזמן בין threads"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1006,7 +1221,17 @@
         "נכון: ייחודיות נובעת מאטומיות ה-RMW, לא מה-ordering."
       ],
       "id": "conc.atomics.q36",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "עכשיו ה-ID משמש כאינדקס: ה-producer מקבל id, כותב ל-`slot[id]` נתונים רגילים, וה-consumer קורא אותם. איזה memory order צריך ואיפה?",
+        "modelAnswer": "ה-fetch_add שמקצה את האינדקס נשאר relaxed: התפקיד שלו הוא רק ייחודיות. הנתונים נכתבים **אחרי** ה-fetch_add, ולכן גם seq_cst עליו לא היה מפרסם אותם. הפרסום צריך דגל פר-slot: ה-producer כותב את הנתונים ואז `ready[id].store(1, release)`, וה-consumer עושה `ready[id].load(acquire)`, ורק אם ראה 1 קורא את הנתונים. ה-release וה-acquire על אותו דגל יוצרים את ה-happens-before. הטעות הנפוצה היא להחמיר את ה-order של המונה ולחשוב שזה מסנכרן את הנתונים.",
+        "rubric": [
+          "fetch_add נשאר relaxed",
+          "release על דגל ready פר-slot אחרי כתיבת הנתונים",
+          "acquire בצד הצרכן לפני קריאת הנתונים",
+          "order חזק על המונה לא עוזר כי הנתונים נכתבים אחריו"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1035,7 +1260,16 @@
         "https://leetcode.com/discuss/post/4544611/meta-infra-e5-onsite-by-anonymous_user-kl5c/"
       ],
       "id": "conc.atomics.q37",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "המערכת גדלה: מיליון מושבים, המצב במסד נתונים, הרבה שרתי אפליקציה. איך ה-CAS מתורגם לשם, ומה קורה כש-client שתפס מושב קורס?",
+        "modelAnswer": "ה-CAS הופך ל-conditional update: `UPDATE seats SET state = HELD, holder = ? WHERE id = ? AND state = FREE`, ובודקים ש-affected rows שווה 1. זו optimistic concurrency, והמסד מבטיח שבדיוק בקשה אחת מצליחה. client שקורס משאיר את המושב HELD לנצח, ולכן ה-hold חייב להיות lease עם זמן תפוגה: שומרים `expires_at`, ומשחררים או ב-job רקע או בעצלות בתנאי עצמו: `WHERE state = FREE OR (state = HELD AND expires_at < now)`. בלי TTL, כל crash דולף מושבים.",
+        "rubric": [
+          "UPDATE עם WHERE state = FREE ובדיקת affected rows = 1",
+          "hold כ-lease עם expires_at",
+          "שחרור ב-job רקע או בתנאי של ה-UPDATE עצמו"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1056,7 +1290,17 @@
         "שגוי: exchange היה גרוע יותר: הוא היה משחרר גם מושב שכבר נמכר."
       ],
       "id": "conc.atomics.q38",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "ארזת (state, holdId) במילה של 64 ביט, ו-holdId בן 32 ביט מגיע ממונה גלובלי. האם 32 ביט מספיקים, ואיך היית עושה את אותו דבר כשהמצב נמצא במסד נתונים?",
+        "modelAnswer": "כדי שיקרה ABA על holdId, צריך שבין הקריאה של A ל-CAS שלו יינתנו 2^32 holds, והאחרון יחזור בדיוק לאותו מושב עם אותו ID. גם במיליון holds בשנייה, גלישה לוקחת כ-4.29e9 / 1e6, כלומר כ-72 דקות, הרבה מעבר לחיים של hold (דקות) ולחלון בין הקריאה ל-CAS. לכן זה מספיק בפועל, אבל כדאי לרשום את החישוב. במסד נתונים: עמודת hold_id או version בתנאי עצמו, `UPDATE ... SET state = SOLD WHERE id = ? AND state = HELD AND hold_id = ?`, ובדיקת affected rows. זה בדיוק הרעיון של fencing token: כל בעלות מקבלת מזהה עולה, והמשאב מסרב לפעולה עם מזהה ישן.",
+        "rubric": [
+          "ABA דורש 2^32 holds בחלון ושיחזור אותו ID לאותו מושב",
+          "חישוב זמן גלישה, כ-72 דקות במיליון בשנייה",
+          "hold_id או version בתנאי ה-WHERE",
+          "fencing token: מזהה עולה, ופעולה עם מזהה ישן נדחית"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1077,7 +1321,17 @@
         "נכון: hold זמני ו-rollback, בסדר קבוע כדי למנוע livelock ותלות מעגלית."
       ],
       "id": "conc.atomics.q39",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "בשורה יש 64 מושבים, והחלטת לשמור אותה כ-bitmask ב-`std::atomic<uint64_t>`. איך תופסים 3 מושבים צמודים אטומית, איך מוצאים 3 פנויים צמודים מהר, ומה המחיר?",
+        "modelAnswer": "תפיסה: `mask = 0b111 << i`. לולאה: old = load. אם `old & mask` שונה מ-0 נכשלים (או מחפשים מקום אחר), אחרת מנסים compare_exchange_weak(old, old | mask). אם מישהו שינה ביט אחר בשורה, ה-CAS נכשל ומחשבים מחדש. שחרור: `fetch_and(~mask)`, RMW יחיד. למציאת מקום: `free = ~old`, ואז `free & (free >> 1) & (free >> 2)` משאיר ביט דולק בכל מיקום שממנו מתחילים 3 פנויים, ו-`std::countr_zero` (C++20) נותן את הראשון ב-O(1). המחיר: כל ההזמנות בשורה מתחרות על מילה אחת, וכל שינוי במושב אחר בשורה מכשיל את ה-CAS, כך שבשורה פופולרית יש retries. אבל התחרות מוגבלת לשורה, וכל המצב של השורה עקבי תמיד.",
+        "rubric": [
+          "mask ו-CAS loop שמתחשב בשינויים בביטים אחרים",
+          "שחרור עם fetch_and(~mask)",
+          "free & (free >> 1) & (free >> 2) ו-countr_zero למציאת מקום",
+          "תחרות מרוכזת על מילה אחת לכל שורה"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1137,7 +1391,17 @@
         "שגוי: שתי הצורות זהות. הבעיה בצד הקורא."
       ],
       "id": "conc.atomics.q41",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "השווה בין שני התיקונים: כיבוי interrupts סביב הקריאה, וקריאה כפולה עד שמתקבל אותו ערך. מה המחיר והמלכודת של כל אחד?",
+        "modelAnswer": "כיבוי interrupts: דטרמיניסטי ופשוט, וה-critical section כאן קצר מאוד (4 קריאות של byte, כמה cycles), אבל הוא מוסיף את האורך שלו ל-latency של כל interrupt אחר. המלכודת: אסור להדליק interrupts בסוף באופן עיוור, כי אם הפונקציה נקראה כש-interrupts כבר כבויים (מתוך ISR אחר או critical section חיצוני), הדלקה שוברת את הקוד הקורא. צריך לשמור את מצב הדגל ולשחזר אותו, כמו `ATOMIC_BLOCK(ATOMIC_RESTORESTATE)` ב-AVR. קריאה כפולה: לא משפיעה על interrupt latency, אבל נשענת על כך שה-ISR רץ לעיתים רחוקות ביחס לזמן הקריאה (מילי-שנייה מול מיקרו-שניות), כך ששתי קריאות זהות לא יכולות להיות שתיהן torn באותו אופן. המשתנה חייב להיות volatile כדי שהקומפיילר באמת יקרא פעמיים, ואם ה-ISR היה תכוף מאוד הלולאה הייתה יכולה להסתובב זמן רב.",
+        "rubric": [
+          "כיבוי interrupts מוסיף ל-interrupt latency",
+          "לשמור ולשחזר את מצב ה-interrupts, לא להדליק עיוור",
+          "קריאה כפולה תקפה כי תקופת ה-ISR ארוכה בהרבה מזמן הקריאה",
+          "volatile נדרש כדי שהקריאה הכפולה לא תבוטל"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1189,7 +1453,16 @@
         "https://leetcode.com/discuss/post/2432962/apple-onsite-london-reject-by-anonymous_-pozj/"
       ],
       "id": "conc.atomics.q43",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "תיקנת עם mutex לכל bucket. עכשיו מגיעים מיליון hits בשנייה מ-32 threads. למה 300 buckets לא מפזרים את העומס, ואיך היית מתרחב?",
+        "modelAnswer": "בכל רגע כל ה-hits שייכים לאותה שנייה, ולכן כולם הולכים לאותו bucket ולאותו mutex. 300 buckets מפזרים בזמן, לא בין threads, כך שזה בפועל מונה גלובלי אחד בכל שנייה. mutex מתחרה גרוע אפילו מ-atomic, כי הוא מגיע ל-futex syscalls ולהחלפות הקשר. ההתרחבות: sharding לפי thread או לפי core. לכל thread יש ring של 300 buckets משלו (מרופד ל-cache lines), הכתיבה מקומית ובלי תחרות, ו-get_hits סוכם את כל ה-rings, O(threads × 300), שזה זול כי קריאות נדירות. זה הרעיון של LongAdder ב-Java: striping של מונה לכמה תאים.",
+        "rubric": [
+          "כל ה-hits באותה שנייה הולכים לאותו bucket: hot spot",
+          "mutex מתחרה מגיע ל-futex syscalls",
+          "ring פרטי לכל thread או core, וקריאה שסוכמת O(threads × 300)"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1210,7 +1483,17 @@
         "נכון: ההחלטה והעדכון קורים אטומית יחד. כישלון של CAS מחזיר את הערך העדכני ומנסים שוב."
       ],
       "id": "conc.atomics.q44",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "ה-CAS loop נכון, אבל כש-32 threads מכים באותה שנייה הוא סובל מ-retries. איך אפשר להשתמש ב-fetch_add במסלול השכיח, ולמה זה עדיין נכון?",
+        "modelAnswer": "מסלול היברידי: טוענים את המילה. אם השנייה בה שווה ל-sec, מבצעים `fetch_add(1)` על המילה כולה, שמגדיל את 32 הביטים התחתונים. זה RMW יחיד שתמיד מצליח, בלי retries. רק כשהשנייה שונה (פעם בשנייה לכל bucket) עוברים ל-CAS שמאפס ל-`(sec << 32) | 1`. למה זה נכון: בין ה-load ל-fetch_add, המילה יכולה להתאפס רק על ידי thread עם שנייה ששייכת לאותו bucket, כלומר sec ± 300. זה קורה רק ל-hit שמאחר ב-5 דקות, ובמקרה כזה ה-hit פשוט נספר בשנייה החדשה, שגיאה זניחה. צריך גם לוודא שה-count לא גולש לביטים של השנייה: 2^32 hits בשנייה אחת לא ריאלי.",
+        "rubric": [
+          "fetch_add כשהשנייה תואמת, CAS רק במעבר שנייה",
+          "fetch_add תמיד מצליח, CAS נכשל ומנסה שוב תחת תחרות",
+          "חלון ה-race דורש thread עם שנייה רחוקה ב-300, ולכן זניח",
+          "גלישה של ה-count ל-32 הביטים העליונים לא ריאלית"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1231,7 +1514,17 @@
         "שגוי: הסכום יכול להיות גם גדול מהערך ברגע ההתחלה, כי hits חדשים נספרים בזמן הסכימה."
       ],
       "id": "conc.atomics.q45",
-      "lesson": "conc.atomics"
+      "lesson": "conc.atomics",
+      "followUp": {
+        "prompt": "get_hits צריך גם להחריג buckets ישנים מ-5 דקות. איך הוא עושה את זה נכון עם המילה הארוזה, ומה היה נשבר עם `time` ו-`count` כשני atomics נפרדים?",
+        "modelAnswer": "לכל bucket עושים load אחד של המילה, ומאותו ערך מחלצים גם את השנייה וגם את ה-count, כך שהזוג תמיד עקבי. כוללים את ה-bucket רק אם `now - 300 < sec <= now`. ה-bucket של now-300 ושל now ממופים לאותו אינדקס, וה-sec בתוך המילה מבחין ביניהם. עם שני atomics נפרדים, הקורא יכול לקרוא time של השנייה החדשה ו-count שעדיין שייך לישנה (או להפך), כי כותב איפס בין שתי הקריאות, וכך לספור ספירה ישנה בתור עדכנית. התוצאה הכוללת עדיין מקורבת, כי hits שמגיעים בזמן הסכימה נכללים או לא, אבל כל bucket לבדו נכון.",
+        "rubric": [
+          "load יחיד של המילה נותן זוג (sec, count) עקבי",
+          "סינון לפי now - 300 < sec <= now",
+          "שני atomics נפרדים: זיווג של time חדש עם count ישן",
+          "הסכום הכולל עדיין לא snapshot מדויק"
+        ]
+      }
     }
   ]
 }

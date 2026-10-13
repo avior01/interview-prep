@@ -384,7 +384,16 @@
         "שגוי: new[] עם אותו גודל עטוף היה מקצה באותו גודל שגוי. הבעיה היא חישוב הגודל, לא פונקציית ההקצאה."
       ],
       "explanation": "המכפלה ב-uint32_t עוטפת מודולו 2^32 בלי שום אזהרה, וההקצאה קטנה בהרבה ממה שהלולאה כותבת. זה דפוס קלאסי של CVE. `total * sizeof(float)` מחושב ב-size_t (64 ביט) ולכן הוא לא הגורם. תיקון: לבדוק `frameLen != 0 && nFrames > SIZE_MAX / sizeof(float) / frameLen`, או `__builtin_mul_overflow`, ולהגביל גודל מקסימלי הגיוני.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "תיקנת את הבדיקה של המכפלה. הקובץ הזדוני עדיין יכול להפיל את השירות גם בלי overflow, רק עם nFrames ו-frameLen גדולים ולגיטימיים אריתמטית. מה ההתקפה, ומה עוד צריך לבדוק מול ה-header?",
+        "modelAnswer": "גם בלי גלישה, header שמבקש למשל 2^31 frames של 4096 דגימות מוביל לניסיון להקצות טרה-בתים: malloc ייכשל, או ב-Linux עם overcommit יצליח ואחר כך ה-OOM killer יהרוג את התהליך באמצע הקריאה. זו denial of service. לכן מגבילים לגודל מקסימלי הגיוני לפורמט (למשל 1GB בסך הכל), ובודקים שהגודל המוצהר לא עולה על גודל הקובץ בפועל: nFrames*frameLen*sizeof(sample) חייב להיות קטן או שווה לבתים שנותרו אחרי ה-header, שאותם יודעים מ-fstat. בנוסף, readFrame צריך לבדוק את הערך המוחזר של כל קריאה ולטפל בקובץ קצוע. fuzzing עם libFuzzer תחת ASan מוצא בדיוק סוג כזה של בעיות parsing.",
+        "rubric": [
+          "הקצאה ענקית חוקית = DoS (כשל malloc או OOM killer)",
+          "גבול מקסימלי לפורמט ובדיקה מול גודל הקובץ האמיתי",
+          "בדיקת קריאה קצרה ו-fuzzing תחת ASan"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q08",
@@ -408,7 +417,16 @@
         "שגוי: int16_t מקודם ל-int בהשוואה, וזו השוואה חוקית לחלוטין."
       ],
       "explanation": "`++i` מקדם ל-int, מחשב 32768, וממיר חזרה ל-int16_t: 32768- (מודולו, מוגדר מ-C++20 ו-implementation-defined לפני). זה לא signed overflow ולכן לא UB, אבל הלולאה לא נגמרת ו-`x[-32768]` חורג. ההשוואה מקדמת את i ל-int והיא תקינה. תיקון: אינדקס מסוג size_t או int.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "החלפת ל-size_t. למה אינדקס int דווקא יכול לייצר קוד מהיר יותר מ-unsigned של 32 ביט בלולאה הזו ב-x86-64, ולמה size_t לא סובל מהבעיה?",
+        "modelAnswer": "ב-x86-64 הכתובת x + i מחושבת ב-64 ביט. עם int, signed overflow הוא UB, ולכן הקומפיילר רשאי להניח ש-i לא עוטף ולהחליף אותו במצביע או במונה של 64 ביט, בלי sign-extension בכל איטרציה, ולחשב מראש את מספר האיטרציות לטובת vectorization. עם uint32_t העטיפה מוגדרת: אחרי 2^32-1 הוא חוזר ל-0, והקומפיילר חייב לשמר את האפשרות הזו, מה שעלול לחייב zero-extension בכל גישה ולסבך את ה-vectorization. size_t כבר ברוחב הכתובת, ולכן אין המרה בכלל ואין עטיפה רלוונטית בטווח שבו מערך יכול להתקיים. לכן הבחירות הטובות הן size_t או ptrdiff_t, ו-unsigned של 32 ביט הוא הגרוע מביניהן.",
+        "rubric": [
+          "int: UB מאפשר להניח שאין wrap ולקדם ל-64 ביט",
+          "uint32_t: wrap מוגדר מחייב zero-extension או מגביל אופטימיזציה",
+          "size_t ברוחב הכתובת, בלי המרה"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q09",
@@ -432,7 +450,16 @@
         "נכון: seconds * 200'000'000 הוא int * int, ו-4e9 גדול מ-INT_MAX. הטיפוס של צד שמאל לא משפיע על חישוב צד ימין; התיקון int64_t{seconds} * 200'000'000."
       ],
       "explanation": "הטיפוס של צד שמאל לא משפיע על חישוב צד ימין. `seconds * 200'000'000` הוא int*int, ו-4e9 גדול מ-INT_MAX (בערך 2.147e9). תיקון: `int64_t{seconds} * 200'000'000` או `200'000'000LL`. מפרידי ספרות `'` חוקיים מ-C++14, ו-int64_t מחזיק עד 9.2e18.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "שעון ה-200 MHz סופר ב-int64_t. כמה זמן לוקח עד שהמונה גולש, ומה הבעיה אם ממירים ticks לננו-שניות על ידי `ticks * 1'000'000'000 / 200'000'000`?",
+        "modelAnswer": "int64_t מגיע עד כ-9.2·10¹⁸. ב-200 MHz זה כ-4.6·10¹⁰ שניות, כלומר כ-1,460 שנים, כך שהמונה עצמו לא יגלוש. אבל ב-`ticks * 10⁹` המכפלה הביניים גולשת כש-ticks עובר כ-9.2·10⁹, כלומר אחרי כ-46 שניות בלבד, וזה signed overflow. התיקון הוא לצמצם את השבר מראש: 10⁹ / 2·10⁸ = 5, ולכן `ticks * 5`, מדויק ובלי גלישה במשך מאות שנים. כשהיחס לא שלם, מפצלים לשניות ושארית: `(ticks / f) * 10⁹ + (ticks % f) * 10⁹ / f`, או משתמשים ב-__int128 לביניים. std::chrono::duration עם ratio עושה את הצמצום הזה בזמן קומפילציה.",
+        "rubric": [
+          "המונה עצמו גולש רק אחרי ~1,460 שנים",
+          "ticks * 10⁹ גולש אחרי ~46 שניות",
+          "צמצום ל-ticks * 5, או פיצול שניות ושארית / chrono"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q10",
@@ -459,7 +486,16 @@
         "שגוי: -O0 רק משנה את ההתנהגות (פחות ניצול של UB), אבל לא מדווח על שום דבר."
       ],
       "explanation": "UBSan מדווח בזמן ריצה, ה-builtin מחזיר true כשיש overflow ונותן תוצאה עטופה, ו-`-ftrapv` גורם ל-abort על signed overflow בפעולות שהוא מכסה. `-fwrapv` דווקא מגדיר signed overflow כ-wrap: ה-UB נעלם אבל הבאג מוסתר. `-O0` משנה התנהגות ולא מזהה כלום.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "היית מפעיל UBSan עם signed-integer-overflow על כל ה-build של production? מה העלות, ובאיזה מצב (`-fsanitize-trap` או runtime מלא) היית משתמש איפה?",
+        "modelAnswer": "UBSan מוסיף בדיקה לכל פעולה אריתמטית signed: הוראת השוואה וקפיצה אחרי כל חיבור או כפל. העלות הטיפוסית היא 10% עד 50% תלוי בקוד, ובלולאות DSP היא יכולה למנוע vectorization ולהיות גבוהה יותר. עם ה-runtime המלא מקבלים הודעה עם קובץ ושורה והתוכנית ממשיכה, וזה מתאים ל-CI ולבדיקות. עם `-fsanitize-trap=signed-integer-overflow` (או `-fsanitize-minimal-runtime`) הבדיקה הופכת להוראת trap בלי ספרייה, הקוד קטן יותר ונופל מיד, וזה מתאים לבינארי hardened או embedded שבו עדיף לקרוס מאשר להמשיך עם ערך עטוף. אני הייתי מריץ runtime מלא ב-CI ובפאזינג, ושוקל trap ב-production רק במודולים של parsing קלט חיצוני.",
+        "rubric": [
+          "עלות של עשרות אחוזים ועלולה לשבור vectorization",
+          "runtime מלא: הודעה וממשיך, ל-CI",
+          "trap mode: בלי runtime, נופל מיד, מתאים ל-hardening"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q11",
@@ -482,7 +518,16 @@
         "שגוי: NumPy לא עושה saturation לאפס; העטיפה מודולו 256 נותנת 246."
       ],
       "explanation": "פעולות על מערכי NumPy נשארות ב-dtype של הקלט: 10-20 ב-uint8 עוטף ל-246, בלי אזהרה. `np.abs` על unsigned לא עושה כלום, כי הערך כבר 246. זה באג נפוץ בעיבוד תמונה ובדגימות ADC. תיקון: `a.astype(np.int16) - b`.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "התיקון הוא astype(np.int16). אם צריך את ההפרש המוחלט בין שתי תמונות uint8 של 4K, בלי להכפיל את צריכת הזיכרון פי 2, איך היית עושה את זה, ומה הגרסה ב-SIMD שעושה את זה ב-8 ביט?",
+        "modelAnswer": "הטריק הוא לחשב את ההפרש המוחלט בלי לצאת מ-uint8: `np.maximum(a, b) - np.minimum(a, b)`, שתמיד אי-שלילי ולכן לא עוטף. כך כל מערך ביניים הוא uint8, בלי הרחבה ל-int16. אפשר גם להשתמש ב-`out=` כדי לכתוב את התוצאה לתוך מערך קיים ולחסוך הקצאה. ב-SIMD יש הוראות saturating: `_mm_subs_epu8(a, b)` מחסיר עם saturation ל-0, ו-OR בין subs(a,b) ל-subs(b,a) נותן את ההפרש המוחלט ב-16 בייטים בהוראה אחת לכל צעד; ב-AVX2 יש גם `_mm256_sad_epu8` שסוכם הפרשים מוחלטים. OpenCV עושה בדיוק את זה ב-`cv2.absdiff`.",
+        "rubric": [
+          "max(a,b) - min(a,b) נשאר ב-uint8 בלי עטיפה",
+          "saturating subtract בשני הכיוונים ו-OR",
+          "cv2.absdiff או psadbw לאותה מטרה"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q12",
@@ -506,7 +551,16 @@
         "שגוי: b == 0 אף פעם לא גולש, וההחזרה true עבורו נכונה."
       ],
       "explanation": "מאחר ש-signed overflow 'לא יכול לקרות', `a + b < a` שקול מתמטית ל-`b < 0`, ו-GCC/Clang עושים את הפישוט הזה. בדיקה נכונה לפני הפעולה: `if (b > 0 && a > INT_MAX - b)` ו-`if (b < 0 && a < INT_MIN - b)`, או `__builtin_add_overflow`. b==0 אף פעם לא גולש.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "החלפת לבדיקה מראש מול INT_MAX - b. איך היית כותב בדיקת overflow לכפל של שני int signed בלי טיפוס רחב יותר ובלי builtins, ולמה זה הרבה יותר מסובך מחיבור?",
+        "modelAnswer": "בכפל יש ארבעה צירופי סימנים, ולכל אחד גבול שונה, כי הטווח אסימטרי: INT_MIN הוא -2^31 ו-INT_MAX הוא 2^31-1. לשני חיוביים: overflow אם a > INT_MAX / b. לשני שליליים: התוצאה חיובית, overflow אם a < INT_MAX / b. לסימנים מעורבים, עם a חיובי ו-b שלילי: overflow אם b < INT_MIN / a. בנוסף צריך להיזהר ש-INT_MIN / -1 עצמו גולש, כך שגם החילוק בבדיקה עלול להיות UB. לכן בפועל כותבים `__builtin_mul_overflow(a, b, &r)` ב-GCC ו-Clang, או ckd_mul מ-C23, או מחשבים ב-int64_t ובודקים טווח, שהוא הכי פשוט ומהיר כשקיים טיפוס רחב.",
+        "rubric": [
+          "ארבעה מקרי סימנים עם גבולות שונים",
+          "טווח אסימטרי; INT_MIN / -1 עצמו UB",
+          "בפועל: __builtin_mul_overflow, ckd_mul או int64_t"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q13",
@@ -530,7 +584,16 @@
         "שגוי: חוסר rounding יוצר הטיה של עד LSB, לא שגיאה 'תמיד', ובוודאי לא את קפיצת הסימן שהשאלה מתארת."
       ],
       "explanation": "המכפלה המקסימלית בערך מוחלט היא 2^30, שנכנסת ב-int32. אבל +1 לא ייצוגי ב-Q15, ולכן המקרה היחיד 1- כפול 1- עוטף ל-1-. תיקון: saturation לפני ההמרה. גם הוראות SIMD נבדלות כאן: `SQRDMULH` ב-ARM עושה saturation ל-0x7FFF, ואילו `_mm_mulhrs_epi16` ב-x86 מחזיר 0x8000 בדיוק באותו מקרה. shift ימינה של שלילי הוא implementation-defined לפני C++20 ומוגדר כ-arithmetic מ-C++20. חוסר rounding הוא הטיה של חצי LSB, לא באג נכונות.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "הוספת saturation. אבל `p >> 15` גם קוטם במקום לעגל. מה ההטיה שזה מכניס בשרשרת של אלפי כפלים, ואיך מתקנים בלי לאבד את ה-saturation?",
+        "modelAnswer": "shift ימינה של שלם signed הוא עיגול כלפי מינוס אינסוף (floor), ולכן כל כפל מוסיף שגיאה ממוצעת של בערך חצי LSB לכיוון שלילי, כלומר -2^-16 בערך. השגיאה לא ממוצעת לאפס, ובשרשרת של מסנן IIR או מצבר היא מצטברת להיסט DC שגדל עם מספר הפעולות. התיקון הוא round-to-nearest: להוסיף חצי LSB לפני ה-shift, כלומר `(p + (1 << 14)) >> 15`, ואחר כך saturation ל-[-32768, 32767]. החיבור לא גולש ב-int32 כי p לכל היותר 2^30. זה בדיוק מה ש-SQRDMULH עושה ב-ARM, כשה-R בשם מסמן rounding. לשרשראות רגישות במיוחד משתמשים גם ב-convergent rounding או ב-dither.",
+        "rubric": [
+          "shift = floor, הטיה של ~חצי LSB כלפי מטה",
+          "ההטיה מצטברת ל-DC בשרשרת",
+          "(p + (1<<14)) >> 15 ואז saturation"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q14",
@@ -554,7 +617,16 @@
         "שגוי: np.int16(q) מבצע את אותה המרה ונופל באותה צורה; הבעיה בערך 32768 עצמו."
       ],
       "explanation": "int16 מגיע רק עד 32767. ההמרה של 32768.0 ל-int16 ב-NumPy לא מוגדרת וב-C++ היא UB; בפועל לרוב מתקבל 32768-, כלומר glitch מקסימלי. תיקון: `np.clip(np.round(x * 32767), -32768, 32767)` או סקאלה של 32767. round-half-to-even נכון ולא רלוונטי כאן. np.int16(q) היה נכשל באותה צורה.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "עברת לסקאלה 32767 עם clip. מה המחיר ב-SNR לעומת 32768, ואם האות שלך בפועל מגיע ל-1.0 רק לעיתים נדירות, מה עדיף ל-DAC: סקאלה מלאה עם clipping מדי פעם, או backoff?",
+        "modelAnswer": "ההבדל בין 32767 ל-32768 הוא 20·log10(32768/32767), בערך 0.0003 dB, זניח לחלוטין. השאלה האמיתית היא backoff: כל 6 dB של backoff עולים בערך ביט אחד של רזולוציה, כלומר כ-6 dB של SNR מול רעש הקוונטיזציה. מנגד, clipping אפילו של דגימות בודדות יוצר עיוות לא-ליניארי רחב-סרט, ובשידור RF זה spectral regrowth שפוגע ב-ACLR ויכול לחרוג ממסכה רגולטורית. באותות עם PAPR גבוה כמו OFDM, נהוג לקבוע backoff לפי ה-PAPR בהסתברות נמוכה (למשל 10-12 dB) ולהשתמש ב-crest factor reduction מבוקר במקום clipping גולמי. בכל מקרה ה-clip חייב להישאר כרשת ביטחון, כי עטיפה ל-32768- היא הגרועה מכולן.",
+        "rubric": [
+          "32767 מול 32768: ~0.0003 dB, זניח",
+          "6 dB backoff ≈ ביט אחד של SNR",
+          "clipping = spectral regrowth; backoff לפי PAPR ו-CFR"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q15",
@@ -596,7 +668,16 @@
         "שגוי: start שלילי (או 0) נכשל בתנאי כבר בכניסה, והפונקציה מחזירה 0 מיד."
       ],
       "explanation": "הלוגיקה של הפונקציה כולה נשענת על wrap שהתקן מגדיר כ-UB. אחרי ש-i>0 ומוסיפים לו חיובי, 'ידוע' ש-i נשאר חיובי, והתנאי מתקפל ל-true. ב-`-O0` אין את הניתוח הזה ולכן מתקבל wrap בחומרה. start שלילי פשוט מחזיר 0. תיקון: לחשב ב-unsigned או ב-int64_t ולבדוק מול INT_MAX במפורש.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "המטרה המקורית הייתה לחשב כמה צעדים של 1,000,000 נכנסים לפני INT_MAX. איך היית כותב את זה נכון ב-O(1), ומה הלקח לגבי בדיקת התנהגות של UB עם ניסוי ב-O0?",
+        "modelAnswer": "מספר הצעדים שבהם i נשאר חיובי הוא בדיוק הכמות שבה start + n·10⁶ <= INT_MAX, ובתוספת הצעד הראשון: אם start <= 0 התשובה 0, אחרת n = (INT_MAX - start) / 1'000'000 + 1. החישוב לא גולש כי INT_MAX - start אי-שלילי. אם רוצים לולאה, מחשבים ב-int64_t ובודקים מול INT_MAX במפורש. הלקח: ניסוי ב-O0 מראה מה החומרה עושה, לא מה השפה מבטיחה, ולכן הוא לא הוכחה שקוד נכון. הקומפיילר באופטימיזציה מנצל את ההנחה שאין UB, וקוד שעבד שנים יכול להישבר בגרסת קומפיילר חדשה או ברמת אופטימיזציה אחרת. הדרך לבדוק היא UBSan, לא ריצה.",
+        "rubric": [
+          "נוסחה: (INT_MAX - start) / 10⁶ + 1 עבור start > 0",
+          "O0 מראה את החומרה, לא את חוזה השפה",
+          "UBSan לבדיקה, קוד עלול להישבר בקומפיילר חדש"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q17",
@@ -619,7 +700,16 @@
         "שגוי: narrowing נבדק רק ב-brace-initialization; השמה רגילה מתקמפלת."
       ],
       "explanation": "integer promotion ממיר uint16_t ל-int (כי int מכיל את כל הערכים של uint16_t), ולא ל-unsigned. הכפל הוא int*int וגולש: signed overflow, UB. בפועל כנראה יודפס 4294836225, אבל UBSan ידווח, והקומפיילר רשאי לנצל את זה. תיקון: `uint32_t(a) * b`. השמה רגילה (לא brace-init) לא בודקת narrowing.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "התיקון הוא `uint32_t(a) * b`. כתבת את אותו קוד על פלטפורמה embedded שבה int הוא 16 ביט. מה משתנה בהתנהגות של הקוד המקורי שם, ולמה?",
+        "modelAnswer": "כשה-int הוא 16 ביט, הוא לא מכיל את כל הערכים של uint16_t (65535 גדול מ-32767), ולכן uint16_t מקודם ל-unsigned int ולא ל-int. הכפל הופך ל-unsigned של 16 ביט ועוטף מודולו 2^16: 65535 · 65535 mod 65536 = 1, כך ש-p מקבל 1. זה כבר לא UB, אבל זו תוצאה שגויה. כלומר אותה שורה היא UB על 32 ביט ועטיפה מוגדרת עם תשובה אחרת על 16 ביט: integer promotion תלוי ברוחב של int בפלטפורמה. ההמרה המפורשת `uint32_t(a) * b` נכונה בשתי הפלטפורמות, ולכן בקוד נייד תמיד מרחיבים במפורש לפני פעולה שיכולה לגדול.",
+        "rubric": [
+          "int של 16 ביט: uint16_t מקודם ל-unsigned int",
+          "הכפל עוטף מודולו 2^16, p = 1",
+          "promotion תלוי פלטפורמה; הרחבה מפורשת נכונה בשתיהן"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q18",
@@ -640,7 +730,16 @@
         "נכון: t1 − t0 ב-unsigned נותן את ההפרש מודולו 2^32, וההמרה ל-int32_t (מודולו מ-C++20) מפרשת הפרש קטן מ-2^31 ticks (כ-10.7 שניות) כחיובי. זה serial-number arithmetic."
       ],
       "explanation": "המונה עוטף כל 2^32/200e6 ≈ 21.5 שניות. `t1 - t0` ב-unsigned נותן את ההפרש הנכון מודולו 2^32, והמרה ל-int32_t (מוגדרת כמודולו מ-C++20) מפרשת אותו כחיובי אם הוא קטן מ-2^31 ticks, בערך 10.7 שניות. זה serial-number arithmetic (RFC 1982), ואותו טריק משמש ב-Linux `time_after`. `t1 > t0` ו-int64 נכשלים כשהמונה עוטף בין האירועים, ו-`t1 - t0 > 0` ב-unsigned נכון לכל t1 != t0.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "`int32_t(t1 - t0) > 0` עובד עד הפרש של כ-10.7 שניות. בתרחיש שבו ה-host עלול להיתקע בעומס ל-15 שניות בין דגימות, מה יקרה, ואיך היית מגלה את המצב הזה בזמן ריצה?",
+        "modelAnswer": "אם ההפרש האמיתי גדול מ-2^31 ticks (כ-10.7 שניות), הפרשנות כ-signed נותנת מספר שלילי, וההשוואה אומרת ש-t1 קודם ל-t0, כלומר הזמן כאילו הלך אחורה. אם ההפרש מעל 21.5 שניות, הוא מאבד מחזור שלם ונראה קטן וחיובי, וזו שגיאה שקטה לגמרי. לזיהוי, משווים מול שעון בלתי תלוי ב-host, למשל CLOCK_MONOTONIC: אם עברו יותר מ-10 שניות מאז הדגימה הקודמת לפי ה-host, ההנחה נשברה ויש לסנכרן מחדש במקום לסמוך על ה-delta. פתרון מבני הוא להבטיח דגימה תכופה יותר מהחצי מחזור, למשל thread נפרד שקורא את המונה כל שנייה, או לבקש מה-FPGA מונה של 64 ביט.",
+        "rubric": [
+          "מעל 2^31 ticks ההשוואה מתהפכת",
+          "מעל 2^32 ticks מאבדים מחזור בשקט",
+          "בדיקה מול CLOCK_MONOTONIC או דגימה תכופה / מונה 64 ביט"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q19",
@@ -838,7 +937,16 @@
         "נכון: std::midpoint מוגדר ללא overflow ומעגל לכיוון הארגומנט הראשון, כלומר למטה כש-lo <= hi."
       ],
       "explanation": "`hi - lo` אי-שלילי ולא גדול מ-INT_MAX, ולכן `lo + (hi - lo) / 2` בטוח. הסכום ב-unsigned הוא לכל היותר 2^32-2, שנכנס ב-unsigned של 32 ביט, והחצי שלו קטן מ-INT_MAX. `std::midpoint` מוגדר ללא overflow ומעגל לכיוון הארגומנט הראשון, כלומר למטה כש-lo<=hi. שתי הגרסאות עם `lo + hi` ב-int גולשות (UB) כשהסכום עובר את INT_MAX; ה-shift לא עוזר כי הגלישה קורית בחיבור.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "עכשיו lo ו-hi יכולים להיות גם שליליים, כל טווח int. איזו מהגרסאות עדיין בטוחה, ומה הבעיה של `lo + (hi - lo) / 2` כשהם בסימנים שונים?",
+        "modelAnswer": "כשהסימנים שונים, `hi - lo` יכול לגלוש: עם lo = INT_MIN ו-hi = INT_MAX ההפרש הוא 2^32-1, הרבה מעל INT_MAX, ולכן הנוסחה הקלאסית היא UB. הגרסה עם `unsigned(lo) + unsigned(hi)` כבר לא נכונה, כי המרה של שלילי ל-unsigned משנה את הערך והחלוקה ב-2 נותנת תוצאה לא קשורה. `std::midpoint` מוגדר נכון לכל טווח int בלי overflow, ומעגל לכיוון הארגומנט הראשון. דרך ידנית: לחשב ב-int64_t, `(int64_t(lo) + hi) >> 1`, שנותן floor נכון. דרך בלי טיפוס רחב: `(lo & hi) + ((lo ^ hi) >> 1)`, שנותנת floor של הממוצע גם לשליליים ב-C++20 שבו shift ימינה של שלילי מוגדר כאריתמטי.",
+        "rubric": [
+          "hi - lo גולש כשהסימנים שונים",
+          "הגרסה ב-unsigned שגויה לשליליים",
+          "std::midpoint, int64_t, או (lo & hi) + ((lo ^ hi) >> 1)"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q28",
@@ -862,7 +970,16 @@
         "נכון: w ו-h הם np.uint16, ופעולה ביניהם נשארת uint16: 307200 mod 65536 = 45056, ו-45056 × 3 עוטף ל-4096. רק RuntimeWarning; התיקון int(w) * int(h)."
       ],
       "explanation": "פעולה בין שני NumPy scalars נשארת ב-dtype שלהם, ו-NumPy רק מוציא `RuntimeWarning: overflow encountered in scalar multiply`. 307200 mod 65536 = 45056, ו-135168 mod 65536 = 4096, כך שנקראים 4096 בתים במקום 921600. תיקון: `npix = int(w) * int(h)` (Python int לא גולש). מערך read-only לא מפריע ל-unpacking, הפורמט תואם את ההגדרה (little-endian), ו-unpacking של מערך חד-ממדי נותן scalars.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "עברת ל-int(w) * int(h). מה עוד חסר בפונקציה כדי שקובץ פגום לא יפיל אותה, ואיך NumPy מתנהג כש-count גדול מהבאפר?",
+        "modelAnswer": "np.frombuffer עם count גדול ממה שיש בבאפר זורק ValueError ולא קורא מחוץ לזיכרון, כך שב-Python אין buffer overflow, אבל יש exception לא מטופל. צריך לבדוק במפורש ש-len(buf) - 4 >= npix * 3 ולתת שגיאה ברורה, ולוודא ש-w ו-h אינם 0 ובגבולות סבירים. בנוסף, המערך מוחזר כ-1D; כדאי `reshape(h, w, 3)` כדי שמבנה התמונה יהיה מפורש ויתפוס אי-התאמה. המערך מ-frombuffer הוא read-only ומשתף זיכרון עם buf, כך שאם צריך לשנות אותו או לשחרר את buf, צריך `.copy()`. ב-C או C++ אותה פונקציה בלי בדיקת גודל הייתה heap overflow קלאסי.",
+        "rubric": [
+          "frombuffer זורק ValueError כש-count גדול מהבאפר",
+          "בדיקה מפורשת של len(buf) מול npix*3 ושל w,h",
+          "reshape(h,w,3); המערך read-only ומשתף זיכרון"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q29",
@@ -878,7 +995,16 @@
         "מציין UBSan ב-CI עם בדיקות ערכי קצה ואזהרות קומפיילר"
       ],
       "explanation": "תשובה חזקה מפרידה בין 'איך המספר מיוצג' ל'מה מותר לקומפיילר להניח', ומראה שהפתרון הוא תכנון טיפוסים ובדיקות, לא דגל שמכבה את הבעיה.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "אמרת ש-UB מאפשר לקומפיילר לקדם מונה int ל-64 ביט. תן דוגמה קונקרטית של לולאה שבה `-fwrapv` מאט את הקוד בצורה מדידה, ולמה.",
+        "modelAnswer": "דוגמה: `for (int i = 0; i < n; i += 2) sum += a[i];` או לולאה עם אינדקס כמו `a[i + k]`. בלי fwrapv הקומפיילר מניח ש-i לא עוטף, ולכן אפשר להחזיק מצביע של 64 ביט שמתקדם ב-8 בתים, לחשב מראש trip count של (n+1)/2, ולבצע vectorization. עם fwrapv, i יכול לעטוף מ-INT_MAX ל-INT_MIN, ולכן הקומפיילר חייב לחשב את האינדקס ב-32 ביט ולעשות sign-extension לפני כל גישה, וגם לא יכול להוכיח שהלולאה מסתיימת אם n קרוב ל-INT_MAX, מה שעלול לחסום vectorization. הפער יכול להיות אחוזים בודדים או פי כמה, תלוי בלולאה. אפשר לראות את זה ב-Compiler Explorer כהוראות movsxd נוספות בתוך הלולאה.",
+        "rubric": [
+          "לולאה עם i += 2 או a[i + k] כדוגמה",
+          "fwrapv מחייב sign-extension בכל איטרציה",
+          "קשה להוכיח trip count, פוגע ב-vectorization"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q30",
@@ -902,7 +1028,16 @@
         "שגוי: std::abs(int) מחזיר int; הגרסה שמחזירה double היא std::fabs או abs על double."
       ],
       "explanation": "הטווח של int32 אסימטרי, ולערך המינימלי אין נגדי. `std::abs(INT32_MIN)` הוא UB, ובפועל לרוב מחזיר INT32_MIN עצמו, שלילי, ולכן השיא האמיתי לא נספר. תיקון: להחזיר `uint32_t` ולחשב `x < 0 ? 0u - uint32_t(x) : uint32_t(x)`, שמוגדר ונותן 2147483648. peak=0 תקין לערך מוחלט, size_t הוא האינדקס הנכון, ו-`std::abs(int)` מחזיר int.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "החזרה ב-uint32_t פותרת את INT32_MIN. הלולאה הזו רצה על 100 מיליון דגימות. איך היית כותב אותה כך שהקומפיילר יעשה vectorization, ומה ההוראות שמתאימות לזה ב-AVX2?",
+        "modelAnswer": "כדי לאפשר vectorization צריך גוף לולאה בלי קפיצות מותנות: מחשבים את הערך המוחלט כ-unsigned בלי if, ומחזיקים peak עם max, למשל `peak = std::max(peak, m)`. הקומפיילר יהפוך את זה להוראות SIMD: ב-AVX2 יש `vpabsd` לערך מוחלט של int32 (שמחזיר 0x80000000 עבור INT32_MIN, שהוא בדיוק 2^31 כשמפרשים אותו כ-unsigned) ו-`vpmaxud` למקסימום unsigned. כך מעבדים 8 דגימות בכל הוראה, ובסוף עושים reduction של 8 המקסימומים. כדי לוודא, מקמפלים עם `-O3 -mavx2` ובודקים ב-`-fopt-info-vec` או ב-Compiler Explorer. ב-100 מיליון דגימות הלולאה תהיה מוגבלת ע״י רוחב הפס לזיכרון (400MB) ולא ע״י החישוב.",
+        "rubric": [
+          "גוף בלי branch: abs כ-unsigned ו-max",
+          "vpabsd + vpmaxud, 8 דגימות להוראה, reduction בסוף",
+          "בפועל memory-bound על 400MB"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q31",
@@ -926,7 +1061,16 @@
         "שגוי: static_cast מ-const void* ל-const Det* חוקי כשהמצביע באמת מצביע על Det."
       ],
       "explanation": "comparator בחיסור עובד רק כשההפרש תמיד נכנס ב-int. עם sentinel של INT_MIN כל השוואה מול ערך אי-שלילי גולשת, והסימן ההפוך שובר את הסדר ואף את העקביות שהמיון מניח. תיקון: `return (pa > pb) - (pa < pb);`. qsort דורש רק את הסימן של התוצאה, אי-יציבות לא משנה את הסדר לפי power, וה-static_cast מ-`const void*` שמצביע על Det חוקי.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "תיקנת את ה-comparator. מעבר מ-qsort ל-std::sort עם lambda: מה ההבדל בביצועים, ולמה comparator שאינו strict weak ordering יכול לגרום ל-std::sort לקרוס ולא רק למיון שגוי?",
+        "modelAnswer": "qsort קורא ל-comparator דרך function pointer עם void*, ולכן הקומפיילר לא יכול לעשות inline, וכל השוואה עולה קריאה עקיפה. std::sort הוא template, ה-lambda נכנסת inline, ובדרך כלל זה מהיר פי 2 עד 3. הסכנה: מימושים של std::sort, כמו introsort של libstdc++, מניחים strict weak ordering ומשתמשים בזה כדי לחסוך בדיקות גבול בלולאה הפנימית (unguarded partition), למשל שהם יעצרו כי ה-pivot נמצא בטווח. comparator לא עקבי, כמו החיסור שגולש, שובר את ההנחה, והלולאה יכולה לרוץ מעבר לסוף המערך ולקרוס. ב-libstdc++ עם _GLIBCXX_ASSERTIONS ובגרסאות חדשות של libc++ יש בדיקות שתופסות comparator לא תקין.",
+        "rubric": [
+          "qsort: קריאה עקיפה, בלי inline; std::sort מהיר פי 2-3",
+          "std::sort מניח strict weak ordering",
+          "comparator לא עקבי = קריאה מחוץ למערך (unguarded loop)"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q32",
@@ -956,7 +1100,16 @@
         "נכון: |INT_MIN| = 2^31 לא ייצוגי ב-int, ולכן std::abs(INT_MIN) הוא UB."
       ],
       "explanation": "המנה INT_MIN/-1 היא 2^31, לא ייצוגית, ולכן UB (ב-x86 ההוראה idiv זורקת SIGFPE). התקן קובע במפורש שאם המנה לא ייצוגית, גם `a % b` הוא UB, למרות שהשארית המתמטית היא 0. `-INT_MIN` ו-`std::abs(INT_MIN)` הם signed overflow. `UINT_MAX + 1u` הוא אריתמטיקה unsigned ומוגדר כ-0. `static_cast<int16_t>(40000)` הוא conversion ולא אריתמטיקה: מ-C++20 מוגדר כמודולו 2^16 ונותן 25536- (לפני C++20 implementation-defined, אבל אף פעם לא UB).",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "ב-x86, `INT_MIN / -1` גורם ל-SIGFPE. אבל ב-ARM64 אותו קוד לא קורס. מה מחזירה הוראת SDIV שם, ולמה זה הופך את הבאג למסוכן יותר דווקא בפלטפורמה שלא קורסת?",
+        "modelAnswer": "ב-x86, הוראת idiv מעלה exception כשהמנה לא נכנסת ברגיסטר, וזה מגיע לתהליך כ-SIGFPE, קריסה מיידית וגלויה. ב-ARM64 הוראת SDIV מוגדרת להחזיר INT_MIN במקרה הזה ואינה זורקת דבר, וחילוק ב-0 מחזיר 0. כלומר אותו UB נותן קריסה בפלטפורמה אחת וערך שגוי שקט בשנייה. השקט מסוכן יותר: הערך השגוי ממשיך להתפשט בחישוב בלי סימן, ואם המקור הוא קלט חיצוני זה גם וקטור התקפה. בנוסף, גם ב-x86 הקומפיילר רשאי לייצר קוד שלא קורס, כי UB. לכן הבדיקה צריכה להיות מפורשת לפני החילוק: `if (b == 0 || (a == INT_MIN && b == -1))`.",
+        "rubric": [
+          "x86 idiv: exception = SIGFPE",
+          "ARM64 SDIV: מחזיר INT_MIN, חילוק ב-0 מחזיר 0, בלי trap",
+          "בדיקה מפורשת של b==0 ו-INT_MIN/-1 לפני החילוק"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q33",
@@ -979,7 +1132,16 @@
         "שגוי: ההשוואה האחרונה לא ממירה ל-unsigned: long long מכיל את כל ערכי unsigned int, ולכן ההשוואה signed ו-−1 < 0 true."
       ],
       "explanation": "`-1 < 0u`: int מול unsigned באותו rank, ה-int מומר ל-unsigned (4294967295) והתוצאה false. `-1 < us`: integer promotion הופך את unsigned short ל-int, כי int מכיל את כל ערכיו, וההשוואה היא 1- < 0, true. `ll < 0u`: ל-long long rank גבוה יותר והוא מכיל את כל ערכי unsigned int, ולכן ה-unsigned מומר ל-long long, ו-1- < 0 הוא true. 'unsigned תמיד מנצח' נכון רק כשה-rank שלו לא נמוך יותר.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "C++20 הוסיף את std::cmp_less. הסבר איך הוא משווה int ל-unsigned נכון בלי טיפוס רחב יותר, ולמה אי אפשר להשתמש בו עם char או bool.",
+        "modelAnswer": "std::cmp_less(t, u) בודק את הסימנים לפני ההשוואה: אם T signed ו-U unsigned, הוא מחזיר true כש-t שלילי, ואחרת משווה את t כ-unsigned מול u, שהיא השוואה נכונה כי t אי-שלילי. במקרה ההפוך הוא סימטרי, וכששני הטיפוסים באותה signedness הוא פשוט משווה. אין צורך בטיפוס רחב יותר, רק בבדיקת סימן אחת, כך שהעלות זניחה. הפונקציות האלה מוגבלות לטיפוסי שלמים סטנדרטיים, ונכשלות בקומפילציה עבור bool, char, char8_t, char16_t, char32_t ו-wchar_t, כי לטיפוסים האלה אין משמעות מספרית חד-משמעית (char יכול להיות signed או unsigned לפי הפלטפורמה). יחד איתן יש std::in_range שבודק אם ערך נכנס בטיפוס היעד לפני המרה.",
+        "rubric": [
+          "בדיקת סימן ואז השוואה כ-unsigned, בלי טיפוס רחב",
+          "לא מתקמפל עם bool וטיפוסי char",
+          "std::in_range לבדיקת המרה"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q34",
@@ -1013,7 +1175,16 @@
         "מחשב או מעריך טווחים: 21.5 שניות ל-32 ביט, אלפי שנים ל-64 ביט ב-200 MHz"
       ],
       "explanation": "השאלה בודקת אם המועמד יודע להפוך מונה עוטף לזמן מוחלט באופן בטוח, לנסח את ההנחה שבלעדיה האלגוריתם לא מוגדר, ולהכליל לבעיות מוכרות כמו Y2038 ו-GetTickCount.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "ה-unwrapper שלך רץ ב-thread שמקבל חבילות מכמה sockets במקביל, וכל אחד מגיע מ-FPGA אחר עם שעון משלו. מה ההנחות שנשברות, ואיך היית מתכנן את זה?",
+        "modelAnswer": "ה-unwrapper מניח רצף יחיד של דגימות מאותו מונה, עם הפרש קטן מ-2^31 ticks בין עוקבות. כשמערבבים מקורות, כל FPGA מתחיל ממונה אחר ואין קשר בין הערכים, כך ש-delta בין חבילות ממקורות שונים הוא חסר משמעות ויגרום לקפיצות. לכן מחזיקים state נפרד (lastRaw ומצבר 64 ביט) לכל מקור, לפי מזהה ה-device או ה-socket. בנוסף, כל מונה נסחף ביחס לאחרים ב-ppm, ולכן כדי להשוות זמנים בין מקורות צריך מודל של offset ו-drift לכל FPGA מול שעון ייחוס, למשל PPS משותף או רגרסיה ליניארית מול זמן ה-host. אם החבילות מגיעות ב-threads שונים, ה-state של כל מקור צריך להיות מוגן, או שכל מקור מטופל ב-thread אחד בלבד.",
+        "rubric": [
+          "state נפרד (lastRaw, מצבר) לכל מקור",
+          "drift ו-offset בין שעונים, צריך ייחוס משותף (PPS)",
+          "הגנה על ה-state או thread אחד לכל מקור"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q36",
@@ -1037,7 +1208,16 @@
         "נכון: x ** 2 נשאר int16 ועוטף: 30000² = 9e8, ו-9e8 mod 65536 מתפרש כ-−5888. ההרחבה ב-np.sum מגיעה אחרי הנזק; צריך astype(np.int64) לפני הריבוע."
       ],
       "explanation": "פעולה על מערך int16 עם Python int נשארת int16, ו-900,000,000 mod 65536 מתפרש כ-5888-, בלי אזהרה. `np.sum` על int16 אכן מרחיב את המצבר לשלם ברירת המחדל של הפלטפורמה, אבל הריבועים כבר עטופים. תיקון: `x.astype(np.int64) ** 2` או `x.astype(np.float64) ** 2`. ב-Python 3 האופרטור `/` הוא חלוקה אמיתית, ו-np.mean היה נופל באותו באג.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "עברת ל-int64 לריבועים. למערך של 100 מיליון דגימות, מה ההבדל בזיכרון ובזמן בין `x.astype(np.int64) ** 2` לבין `np.dot(x, x)` או einsum, ואיזה טיפוס צבירה כל אחד משתמש?",
+        "modelAnswer": "astype יוצר מערך חדש של 800MB (100 מיליון כפול 8 בתים), ו-** 2 יוצר עוד אחד באותו גודל, כך שיש 1.6GB של מערכים זמניים ושלושה מעברים על הזיכרון. `np.dot(x, x)` על int16 עושה את המכפלה הפנימית במעבר אחד, אבל הצבירה נעשית ב-dtype של הקלט, int16, ולכן הוא גולש בדיוק כמו הקוד המקורי. הדרך החסכונית היא `np.einsum('i,i->', x, x, dtype=np.int64)` או לעבד בבלוקים של מיליון דגימות: astype של בלוק קטן שנכנס ב-cache, ריבוע, וסכום ב-int64. כך הזיכרון הנוסף קטן והמעבר יחיד. כש-float מספיק, `np.dot(x.astype(np.float32), ...)` משתמש ב-BLAS ומהיר מאוד, אבל צבירה ב-float32 מאבדת דיוק בסכומים ארוכים.",
+        "rubric": [
+          "astype ו-** יוצרים ~1.6GB זמניים",
+          "np.dot על int16 צובר ב-int16 וגולש",
+          "einsum עם dtype=int64 או עיבוד בבלוקים"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q37",
@@ -1090,7 +1270,16 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
       ],
       "problem": "NVIDIA: output of a signed vs unsigned int comparison",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "אמרת ש-std::cmp_greater פותר את זה. אבל למה בכלל size() מחזיר unsigned ב-C++, ומה ההמלצה הנוכחית של חלק מחברי הוועדה בעניין, עם std::ssize?",
+        "modelAnswer": "size_t נבחר כי גודל אובייקט לא יכול להיות שלילי, וכי בזמן שהספרייה תוכננה זה הרחיב את הטווח המקסימלי פי 2, מה שהיה חשוב במערכות 16 ביט. בפועל זה יוצר מלכודות: `size() - 1` על מכל ריק עוטף, השוואה מול int שלילי מתהפכת, ולולאות יורדות לא נגמרות. רבים בוועדה, כולל Stroustrup, אמרו שזו הייתה טעות, ו-C++20 הוסיף `std::ssize(c)` שמחזיר ptrdiff_t signed. ההמלצה של חלק מהמדריכים (למשל Core Guidelines ES.107) היא להעדיף signed לאינדקסים וחשבון, ולהשתמש ב-unsigned רק למניפולציית ביטים. בכל מקרה, להפעיל `-Wsign-compare` ולטפל בכל אזהרה.",
+        "rubric": [
+          "size_t כי גודל לא שלילי וטווח כפול בזמנו",
+          "std::ssize מחזיר ptrdiff_t signed",
+          "-Wsign-compare וההמלצה: signed לחשבון, unsigned לביטים"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q39",
@@ -1113,7 +1302,16 @@
         "שגוי: זה ההפך מהתוצאה, כי טיפוסים צרים מ-int עוברים קודם promotion ל-int ולא ל-unsigned."
       ],
       "explanation": "טיפוסים צרים מ-int (char, short, וגם ה-unsigned שלהם) עוברים promotion ל-int לפני כל פעולה, ושומרים על הערך. רק unsigned int ומעלה גורמים ל-signed להפוך ל-unsigned. זה ההבדל בין השאלה הזו לבין השוואה של int ל-unsigned.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "בקוד הזה c הוא unsigned char. אם היה `char c = 255;` במקום, מה הייתה התוצאה של `i == c` ב-x86 וב-ARM Linux, ולמה זה שונה?",
+        "modelAnswer": "הסימן של char רגיל הוא implementation-defined. ב-x86 (Linux ו-Windows) char הוא signed, ולכן `char c = 255` נותן -1 (המרה מוגדרת מודולו מ-C++20), ו-`i == c` אחרי promotion ל-int הוא -1 == -1, כלומר 1. ב-ARM Linux וב-PowerPC, char הוא unsigned, c שומר 255, וההשוואה היא -1 == 255, כלומר 0. אותו קוד נותן תוצאה הפוכה בין פלטפורמות. זה רלוונטי במיוחד לקוד שקורא בתים מקבצים או מ-sockets, ולכן ל-bytes גולמיים משתמשים תמיד ב-uint8_t, unsigned char או std::byte, ואפשר לבדוק התנהגות עם `-fsigned-char` או `-funsigned-char`.",
+        "rubric": [
+          "סימן של char הוא implementation-defined",
+          "x86: signed, c = -1, תוצאה 1; ARM Linux: unsigned, תוצאה 0",
+          "לבתים: uint8_t, unsigned char או std::byte"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q40",
@@ -1137,7 +1335,16 @@
         "שגוי: התוצאה של `>` כבר bool. הבעיה היא בחיסור."
       ],
       "explanation": "`x - y > 0` שקול ל-`x > y` רק בטיפוסים signed בלי overflow. עם unsigned הוא שקול ל-`x != y`. זה באג נפוץ גם עם `v.size() - 1` כשהווקטור ריק.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "`strlen(a) > strlen(b)` נכון, אבל סורק את שתי המחרוזות במלואן. אם המחרוזות באורך מגה-בייט כל אחת ורוצים רק לדעת מי ארוכה יותר, איך היית עושה את זה ביעילות?",
+        "modelAnswer": "אין צורך לדעת את האורכים המלאים, רק איזו נגמרת קודם. סורקים את שתיהן במקביל עד שאחת מגיעה ל-'\\0': `while (*a && *b) { ++a; ++b; } return *a != 0;`. העלות היא O(min(|a|, |b|)) במקום O(|a| + |b|), כך שאם אחת קצרה החיסכון עצום. אבל strlen של glibc משתמש ב-SIMD וקורא 16 או 32 בתים בבת אחת, ולכן לולאה תו-אחר-תו עלולה להיות איטית יותר כששתיהן ארוכות ובאורך דומה. במקרה כזה אפשר לקרוא ל-`strnlen(a, lenB + 1)` אחרי strlen של הקצרה המשוערת, שמגביל את הסריקה וגם משתמש ב-SIMD. ובכלל, ב-C++ עדיף לשמור את האורך עם המחרוזת (std::string, string_view) ולא לחשב אותו שוב.",
+        "rubric": [
+          "סריקה מקבילה עד \\0 הראשון: O(min)",
+          "strlen של glibc וקטורי, לולאה פשוטה לא תמיד מהירה יותר",
+          "strnlen מוגבל, או לשמור אורך (string_view)"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q41",
@@ -1165,7 +1372,16 @@
         "https://www.geeksforgeeks.org/?p=477855"
       ],
       "problem": "Qualcomm: detect overflow when multiplying two integers",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "הבדיקה `a > INT_MAX / b` כוללת חילוק. בלולאה חמה שמבצעת אותה מיליוני פעמים, מה העלות, ומה הקומפיילר מייצר עבור `__builtin_mul_overflow` ב-x86?",
+        "modelAnswer": "חילוק שלם של 32 ביט ב-x86 עולה בערך 10 עד 30 cycles latency, תלוי בדור המעבד, לעומת cycle או שלושה לכפל, ולכן בדיקה עם חילוק בלולאה חמה יכולה להכפיל את זמן הלולאה. `__builtin_mul_overflow` מתורגם ל-imul ואחריו בדיקה של דגל ה-overflow (jo או seto), כי המעבד ממילא מחשב אם התוצאה התאימה. כלומר הבדיקה עולה כמעט כלום מעבר לכפל עצמו. כשיש טיפוס רחב, `int64_t(a) * b` ובדיקת טווח היא גם זולה. אם b קבוע בזמן קומפילציה, INT_MAX / b מחושב מראש והחילוק נעלם, כך שהבעיה רלוונטית רק ל-b משתנה.",
+        "rubric": [
+          "חילוק שלם ~10-30 cycles מול כפל ~3",
+          "builtin = imul ובדיקת דגל OF",
+          "b קבוע: החילוק מחושב בקומפילציה"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q42",
@@ -1186,7 +1402,16 @@
         "שגוי: unsigned overflow מוגדר בתקן כ-wraparound. רק signed overflow הוא UB."
       ],
       "explanation": "עם unsigned אפשר לבצע את הפעולה ואז לבדוק, כי העטיפה מוגדרת. עם signed חייבים לבדוק מראש. זו אחת הסיבות שקוד שמחשב גדלים (n * sizeof(T)) עובד עם size_t.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "הבדיקה `p / b != a` נכונה, אבל כוללת חילוק. איך מחשבים n * sizeof(T) עבור הקצאה בצורה בטוחה ומהירה ב-64 ביט, ומה calloc עושה שם שאולי לא ידעת?",
+        "modelAnswer": "הדרך המהירה היא `__builtin_mul_overflow(n, sizeof(T), &bytes)` שמתורגמת לכפל ובדיקת דגל, או בדיקה מול קבוע: `n > SIZE_MAX / sizeof(T)` כש-sizeof(T) קבוע בזמן קומפילציה, ואז החילוק מחושב מראש וזו השוואה אחת. calloc(n, size) מבצע את בדיקת ה-overflow של המכפלה בעצמו ומחזיר NULL אם היא גולשת, וזה אחד ההבדלים החשובים בינו לבין `malloc(n * size)`. בנוסף, להקצאות גדולות calloc מקבל דפים מאופסים מהקרנל דרך mmap ולא כותב אפסים בעצמו, כך שהוא לא איטי מ-malloc. ב-C++, `new T[n]` גם בודק overflow וזורק std::bad_array_new_length.",
+        "rubric": [
+          "builtin או השוואה מול SIZE_MAX / sizeof(T) קבוע",
+          "calloc בודק overflow של n*size בעצמו",
+          "new T[n] זורק bad_array_new_length"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q43",
@@ -1280,7 +1505,16 @@
         "https://www.teamblind.com/post/apple-emdedded-swe-interview-7ewyjstw"
       ],
       "problem": "NVIDIA / Qualcomm / Apple: set, clear and toggle a bit",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "תיקנת ל-`1ULL << k`. הקוד הזה כותב לרגיסטר של FPGA דרך pointer `volatile uint32_t*`, וה-mask כן 64 ביט. מה יכול להשתבש בכתיבה, ואיך כותבים read-modify-write לרגיסטר חומרה כמו שצריך?",
+        "modelAnswer": "השמה של ערך 64 ביט לרגיסטר של 32 ביט קוטמת את 32 הביטים העליונים, ולכן ביט k >= 32 פשוט נעלם בשקט; צריך לוודא שהרוחב של המסכה תואם את הרגיסטר, או לפצל לשני רגיסטרים. בנוסף, `reg |= mask` על volatile הוא קריאה ואחריה כתיבה, לא פעולה אטומית: אם thread אחר, interrupt או החומרה עצמה משנים ביטים אחרים ביניהן, השינוי נדרס. ברגיסטרים עם ביטים מסוג write-1-to-clear, קריאה וכתיבה חזרה של אותו ערך יכולה לנקות דגלים שלא התכוונת לגעת בהם. הפתרון: להגן על RMW בנעילה, להשתמש ברגיסטרי set/clear נפרדים אם החומרה מספקת אותם, ולקרוא את ה-datasheet לגבי סוג כל שדה.",
+        "rubric": [
+          "השמה לרגיסטר 32 ביט קוטמת ביטים עליונים",
+          "RMW על volatile אינו אטומי",
+          "W1C: כתיבה חוזרת מנקה דגלים; set/clear registers או נעילה"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q48",
@@ -1303,7 +1537,16 @@
         "שגוי: זה מה שיתקבל עם `1u << 31`: unsigned מורחב עם אפסים."
       ],
       "explanation": "הבעיה היא לא רק UB: גם כשהתוצאה מוגדרת, sign extension של int שלילי למשתנה רחב מדליק את כל הביטים העליונים. כשבונים מסכות לרגיסטרים, תמיד מתחילים מקבוע unsigned ברוחב היעד.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "ב-C++ לפני C++20, מה היה הסטטוס של `1 << 31` כש-int הוא 32 ביט, ומה השתנה ב-C++20 לגבי shift שמאלה של ערכים signed?",
+        "modelAnswer": "ב-C++11, shift שמאלה של signed אי-שלילי היה מוגדר רק אם התוצאה ניתנת לייצוג בטיפוס, ולכן 1 << 31 היה UB. C++14 (CWG 1457) ריכך: מספיק שהתוצאה ניתנת לייצוג ב-unsigned המתאים, והיא מומרת חזרה ל-signed, כך ש-1 << 31 הפך ל-implementation-defined. shift שמאלה של ערך שלילי, כמו -1 << 1, נשאר UB עד C++20. ב-C++20, עם קביעת two's complement (P1236), shift שמאלה של signed מוגדר כ-x · 2^k מודולו 2^N, כולל ערכים שליליים, ו-1 << 31 הוא בדיוק INT_MIN. מה שנשאר UB הוא כמות shift שלילית או גדולה או שווה לרוחב. כלומר הקוד בתרחיש הזה מוגדר ב-C++20, והבעיה בו היא sign extension לוגי ולא UB.",
+        "rubric": [
+          "C++11: 1 << 31 UB; C++14/17: implementation-defined; shift של שלילי UB",
+          "C++20: shift שמאלה מוגדר מודולו 2^N",
+          "עדיין UB: כמות שלילית או >= רוחב"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q49",
@@ -1355,7 +1598,16 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-fw-developer/"
       ],
       "problem": "NVIDIA: count the set bits in a number, two ways",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "עברת ל-unsigned. הלולאה עדיין עוברת על כל 32 הביטים. מה הסיבוכיות של Kernighan (`u &= u - 1`), ומה מהיר מכולם בפועל על מעבד מודרני?",
+        "modelAnswer": "הלולאה עם shift רצה עד הביט הדלוק הגבוה ביותר, עד 32 איטרציות. Kernighan מוחק את הביט הדלוק הנמוך בכל צעד, ולכן מספר האיטרציות הוא מספר הביטים הדלוקים, טוב במיוחד למילים דלילות. יש גם גרסה בלי לולאה (SWAR): סכימה במקביל של זוגות, רביעיות ובתים עם מסכות 0x55555555, 0x33333333, 0x0F0F0F0F ובסוף כפל ב-0x01010101 והזזה ב-24, כ-12 פעולות קבועות. הכי מהיר הוא הוראת popcnt של החומרה, latency של 3 cycles בערך ב-x86, שמתקבלת מ-`std::popcount` (C++20) או `__builtin_popcount` כשמקמפלים עם `-mpopcnt` או `-march` מתאים. בלי הדגל, הקומפיילר עלול לייצר קריאה לפונקציית ספרייה איטית יותר.",
+        "rubric": [
+          "Kernighan: איטרציה לכל ביט דלוק",
+          "SWAR: מספר קבוע של פעולות עם מסכות",
+          "popcnt בחומרה דרך std::popcount עם -mpopcnt / -march"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q51",
@@ -1387,7 +1639,16 @@
         "שגוי: ב-INT_MIN דלוק רק ביט הסימן."
       ],
       "explanation": "כל טריק ביטים שכולל חיסור או הוספה (x - 1, x + 1, -x) צריך unsigned כדי להיות מוגדר בכל הערכים. גם `x & -x` (הביט הנמוך) הוא UB עבור INT_MIN ב-signed.",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "אמרת שגם `x & -x` הוא UB עבור INT_MIN ב-signed. לשם מה הביטוי הזה משמש בפועל, ואיך מממשים אותו נכון ב-C++20?",
+        "modelAnswer": "`x & -x` מבודד את הביט הדלוק הנמוך ביותר: ב-two's complement, -x הוא ~x + 1, וכך כל הביטים מעל הביט הנמוך מתהפכים והוא עצמו נשאר. זה הבסיס של Fenwick tree (מעבר בין צמתים עם i += i & -i), של איטרציה על ביטים דלוקים במסכה ושל allocators מבוססי bitmap. המימוש הנכון הוא ב-unsigned: `u & (0u - u)`, מוגדר לכל ערך. ב-C++20 יש `std::countr_zero(u)` שנותן את המיקום של הביט הזה, והקומפיילר מתרגם אותו ל-tzcnt או bsf; אם צריך את הערך עצמו, `1u << std::countr_zero(u)` עבור u שאינו 0. ב-x86 עם BMI1 יש גם הוראה ייעודית, blsi, שהקומפיילר מייצר מ-`u & -u`.",
+        "rubric": [
+          "מבודד את הביט הדלוק הנמוך (Fenwick, iteration על מסכה)",
+          "unsigned: u & (0u - u)",
+          "std::countr_zero / tzcnt / blsi"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q53",
@@ -1415,7 +1676,16 @@
         "https://www.teamblind.com/post/firmware-interview-full-loop-at-meta-reality-labs-uqmfofhd"
       ],
       "problem": "Meta firmware screen: bit manipulation with a lookup table (longest run of 1 bits)",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "הטבלה עם 256 כניסות עובדת. מה גודלה בזיכרון, מה קורה לביצועים כשהיא לא ב-L1, ומתי הפתרון של `x &= x << 1` בלי טבלה עדיף?",
+        "modelAnswer": "כל כניסה צריכה שלושה ערכים בין 0 ל-8, כך שאפשר לארוז אותה ב-3 בתים או ב-uint16 עם שדות של 4 ביט, כלומר בערך 512 עד 768 בתים, שנכנסים בקלות ב-L1 של 32KB. כשהטבלה ב-L1, כל lookup עולה כ-4 cycles, וארבעה lookups עם החיבור כ-20 cycles. אבל אם הקוד הזה נקרא רק מדי פעם, הטבלה תפונה מה-cache, וכל lookup יכול לעלות cache miss של עשרות עד מאות cycles. הפתרון של `x &= x << 1` רץ מספר איטרציות כמו אורך הרצף הארוך, עד 32, ובלי שום גישה לזיכרון, ולכן עדיף כשהרצפים קצרים או כשהפונקציה לא חמה. מדידה עם קלט אמיתי היא שמכריעה.",
+        "rubric": [
+          "טבלה של מאות בתים, נכנסת ב-L1",
+          "cache miss כשהקוד לא חם הופך lookup ליקר",
+          "x &= x << 1: איטרציות כאורך הרצף, בלי זיכרון"
+        ]
+      }
     },
     {
       "id": "bugs.overflow.q54",
@@ -1475,7 +1745,16 @@
       ],
       "problem": "Meta embedded interview: bit manipulation and its effect on assembly / CPU cycles",
       "id": "bugs.overflow.q56",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "הצעת לחשב ב-64 ביט. איך היית כותב את low_mask בלי branch ובלי טיפוס רחב, כך שיעבוד לכל n בין 0 ל-32?",
+        "modelAnswer": "הבעיה היא shift ברוחב המלא, ולכן בונים את המסכה כך שה-shift תמיד קטן מ-32. גרסה בלי branch: `((1u << (n & 31)) - 1) | (0u - uint32_t(n >> 5))`. עבור n < 32 החלק השני הוא 0 והחלק הראשון הוא המסכה הרגילה. עבור n = 32, `n & 31` הוא 0 ולכן החלק הראשון 0, ו-`n >> 5` הוא 1 ולכן החלק השני 0xFFFFFFFF. ב-x86 עם BMI2 יש הוראת bzhi שעושה בדיוק את זה (`_bzhi_u32(~0u, n)`), כולל n = 32 שמשאיר את כל הביטים. בפועל, `n >= 32 ? ~0u : (1u << n) - 1` מתורגם לרוב ל-cmov בלי branch אמיתי, כך שהגרסה הקריאה בדרך כלל מספיקה.",
+        "rubric": [
+          "אסור shift ברוחב 32; בונים כך שה-shift קטן מהרוחב",
+          "דוגמה: ((1u << (n & 31)) - 1) | (0u - (n >> 5))",
+          "bzhi ב-BMI2, או ternary שמתורגם ל-cmov"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1498,7 +1777,16 @@
       ],
       "explanation": "אופרנדים קטנים מ-int (char, uint8_t, short) מקודמים ל-int לפני כל פעולה אריתמטית או shift. כדי לקבל התנהגות של 8 ביט צריך לחתוך במפורש: `(uint8_t)(x << 4) >> 4` נותן 0.",
       "id": "bugs.overflow.q57",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "אמרת ש-uint8_t מקודם ל-int. מה זה אומר על vectorization של לולאה שמחברת שני מערכי uint8_t ושומרת ב-uint8_t: האם הקומפיילר צריך לעבוד ב-32 ביט, ואיך הוא יוצא מזה?",
+        "modelAnswer": "סמנטית, `c[i] = a[i] + b[i]` מחושב ב-int ואז נקטם ל-uint8_t בהשמה. אבל הקומפיילר יודע שהקטימה ל-8 ביט שקולה לחיבור modulo 256, ולכן הוא מותר להשתמש בהוראת SIMD של 8 ביט, כמו paddb ב-SSE או vpaddb ב-AVX2, ולעבד 32 בתים בהוראה אחת. זה עובד כי התוצאה הסופית לא תלויה בביטים העליונים. כשהביטוי כולל פעולה שתלויה בהם, כמו shift ימינה אחרי חיבור, `(a[i] + b[i]) >> 1`, הקומפיילר חייב לשמור ביט נוסף, ואז או מרחיב ל-16 ביט (חצי מהמקביליות) או מזהה דפוס מיוחד: לממוצע מעוגל `(a[i] + b[i] + 1) >> 1` יש הוראת pavgb שמחשבת אותו ב-8 ביט עם ביט תשיעי פנימי. לכן כתיבה מודעת לטיפוסים משפיעה ישירות על ה-throughput.",
+        "rubric": [
+          "קטימה ל-8 ביט מאפשרת paddb, 32 בתים להוראה",
+          "פעולה שתלויה בביטים עליונים מחייבת הרחבה ל-16 ביט",
+          "דפוסים מיוחדים כמו pavgb לממוצע מעוגל"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1519,7 +1807,16 @@
       ],
       "explanation": "C++20 (P1236) הגדיר את ה-shifts על שלמים עם סימן לפי two's complement, וביטל הרבה מקרים של UB. אבל overflow אריתמטי (`INT_MAX + 1`) וכמות shift מחוץ ל-[0, width) נשארו UB.",
       "id": "bugs.overflow.q58",
-      "lesson": "bugs.overflow"
+      "lesson": "bugs.overflow",
+      "followUp": {
+        "prompt": "שינוי ב-C++20 הגדיר shift של signed. למה דווקא כמות shift מחוץ ל-[0, width) נשארה UB, ומה ההבדל בהתנהגות החומרה בין x86 ל-ARM בעניין הזה?",
+        "modelAnswer": "הסיבה היא שהחומרה לא מסכימה. ב-x86, SHL על 32 ביט ממסכת את כמות ההזזה ל-5 ביטים, כך ש-x << 32 שווה x << 0, כלומר x. ב-ARM64, LSLV על רגיסטר 32 ביט ממסכת גם היא, אבל ב-ARM32 הוראת LSL עם רגיסטר לוקחת את 8 הביטים הנמוכים, ולכן shift של 32 נותן 0. ב-SIMD של x86, כמו psllq, כמות גדולה מהרוחב נותנת 0. אילו התקן היה מגדיר תוצאה אחת, הקומפיילר היה צריך להוסיף בדיקה והוראה נוספת לכל shift במשתנה, בכל ארכיטקטורה שלא תואמת. לכן זה נשאר UB, וקוד נכון חייב להבטיח שהכמות בטווח או לטפל במקרה הקצה במפורש.",
+        "rubric": [
+          "x86 SHL ממסכת ל-5 ביטים: x << 32 = x",
+          "ARM32 LSL / SIMD: shift של 32 נותן 0",
+          "הגדרה אחידה הייתה מחייבת בדיקה בכל shift"
+        ]
+      }
     }
   ]
 }

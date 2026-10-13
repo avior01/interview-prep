@@ -364,7 +364,16 @@
         "שגוי. ה-move operations לא מוגדרות כ-deleted אלא לא מוצהרות כלל, ולכן אין שגיאה: overload resolution נופל בשקט ל-copy.",
         "שגוי. זה שה-member תומך ב-move לא עוזר אם המחלקה עצמה לא מקבלת move constructor. ה-copy constructor המרומז מעתיק את ה-vector.",
         "שגוי. `= default` נחשב user-declared (אם כי לא user-provided), ולכן הוא כן מבטל את ה-move המרומז."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מגלה את ירידת הביצועים השקטה הזו בבסיס קוד גדול לפני שהיא מגיעה ל-production? ואיזו מדיניות היית קובע לצוות כדי שזה לא יקרה שוב?",
+        "modelAnswer": "גילוי: `static_assert(std::is_nothrow_move_constructible_v<Data>)` ליד המחלקה תופס את זה בקומפילציה, כי בלי move מוצהר, ה-trait בודק את ה-copy constructor של vector, שאינו noexcept, והאסרט נכשל. clang-tidy עם `cppcoreguidelines-special-member-functions` מזהיר כשמוגדרת רק חלק מחמש הפונקציות המיוחדות, ו-`performance-move-const-arg` מזהיר כש-std::move לא באמת מזיז. ב-profiler רואים הקצאות ו-memcpy גדולים במקום שהיה אמור להיות move. מדיניות: rule of zero כברירת מחדל, בלי destructor אם אין משאב לנהל; אם חייבים להצהיר על אחת מהחמש, מצהירים במפורש על כולן (גם = default), ומוסיפים static_assert על nothrow move לטיפוסים שנכנסים לקונטיינרים.",
+        "rubric": [
+          "static_assert עם is_nothrow_move_constructible_v",
+          "clang-tidy special-member-functions",
+          "מדיניות: rule of zero, או להצהיר על כל החמש"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q09",
@@ -387,7 +396,16 @@
         "שגוי. האיבר החדש נבנה ב-default constructor ישירות בזיכרון החדש, בלי copy ובלי move. רק האיבר הישן מועבר, וזה מודפס פעם אחת.",
         "שגוי. ה-reallocation מעביר את האיבר הישן ל-buffer החדש, וזה בהכרח עובר דרך copy או move constructor שמדפיסים.",
         "נכון. ב-reallocation vector משתמש ב-std::move_if_noexcept: ה-move לא noexcept ויש copy, ולכן נבחר copy כדי לשמור על strong guarantee. האיבר החדש נבנה ב-default ctor ולא מדפיס."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שאתה לא יכול לשנות את Widget (ספרייה חיצונית) וה-move שלו לא noexcept. אילו אפשרויות יש לך כדי להימנע מההעתקות ב-vector, ומה המחיר של כל אחת?",
+        "modelAnswer": "אפשרות ראשונה: reserve עם הגודל המקסימלי הצפוי, כך שאין reallocation בכלל; מחיר: זיכרון מוקצה מראש, ולא תמיד יודעים את הגודל. אפשרות שנייה: `std::vector<std::unique_ptr<Widget>>`, שאז ה-reallocation מזיז רק pointers (ו-move של unique_ptr הוא noexcept); מחיר: הקצאה לכל איבר ואובדן locality. אפשרות שלישית: std::deque, שלא מזיז איברים קיימים בהוספה בקצוות, ולכן אין העתקות; מחיר: גישה אקראית מעט יקרה יותר וזיכרון לא רציף. אפשרות רביעית: wrapper שלך עם move constructor noexcept שקורא ל-move של Widget; זה משקר להבטחה, ואם ה-move של Widget באמת זורק, התוצאה היא std::terminate, ולכן מקובל רק אם יודעים שהוא לא זורק בפועל.",
+        "rubric": [
+          "reserve מראש",
+          "vector של unique_ptr או deque, עם מחיר locality",
+          "wrapper עם noexcept מסוכן: זריקה = terminate"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q10",
@@ -408,7 +426,17 @@
         "שגוי. ה-return value מאותחל לפני שהמשתנים המקומיים נהרסים, ולכן ה-move מתבצע מ-v חי.",
         "נכון. NRVO חל רק כשה-return מקבל id-expression של משתנה מקומי; std::move(v) הוא קריאה לפונקציה, ולכן ה-elision אבד ומתבצע move. `return v;` נותן NRVO או implicit move.",
         "שגוי. ה-move \"מובטח\" ממילא דרך implicit move ב-`return v;`. std::move רק מוסיף עבודה (-Wpessimizing-move)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש מקרים שבהם `return std::move(x)` כן נכון ונדרש. תן שתי דוגמאות, ותסביר למה שם הקומפיילר לא יעשה את ה-move לבד (לפחות לפני C++20).",
+        "modelAnswer": "דוגמה ראשונה: החזרה של member, `return std::move(member_);` במתודה של rvalue-qualified (`T get() &&`), כי member אינו משתנה מקומי ולכן implicit move לא חל. דוגמה שנייה: החזרה של חלק מאובייקט מקומי, למשל `return std::move(pair.first);` או `return std::move(s.field);`, כי הביטוי אינו id-expression של משתנה שלם. דוגמה שלישית לפני C++20: פרמטר מסוג rvalue reference, `T f(T&& x) { return std::move(x); }`, כי implicit move עד C++17 חל רק על משתנים מקומיים ופרמטרים by value. בכל המקרים האלה NRVO לא אפשרי ממילא, ולכן std::move לא חוסם שום אופטימיזציה. ב-C++20 ו-C++23 (P2266) הרחיבו את implicit move, וחלק מהמקרים כבר לא צריכים אותו.",
+        "rubric": [
+          "החזרת member (למשל במתודה &&)",
+          "החזרת subobject של מקומי",
+          "פרמטר T&& לפני C++20",
+          "שם NRVO ממילא לא אפשרי"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q11",
@@ -443,7 +471,16 @@
         "נכון. make מחזירה prvalue ולכן elision מובטח (c בלבד). ב-make2, `b ? x : y` הוא lvalue: אין NRVO ואין implicit move, ולכן C, ואז y ו-x נהרסים. בסוף b ו-a.",
         "שגוי. ב-C++17 `R a = make()` עם `return R{}` הוא guaranteed copy elision: אין move ואין destructor של temporary.",
         "שגוי. החזרה של `b ? x : y` חייבת לבנות את ערך ההחזרה מאובייקט אחר, ולכן יש constructor נוסף. NRVO אפשרי רק עם return של שם משתנה אחד."
-      ]
+      ],
+      "followUp": {
+        "prompt": "שכתבת את make2 ל-if/else עם שני return. איזה move או copy מתבצע עכשיו בכל ענף, ולמה הקומפיילר לא יכול לעשות NRVO כאן גם אחרי התיקון?",
+        "modelAnswer": "אחרי התיקון, כל ענף מחזיר id-expression של משתנה מקומי (`return x;` או `return y;`), ולכן implicit move חל, וכל ענף מבצע M במקום C. NRVO לא אפשרי כי לשם כך הקומפיילר צריך לבנות את המשתנה ישירות בזיכרון של ערך ההחזרה מרגע הבנייה שלו, אבל כאן שני משתנים שונים חיים במקביל ורק בזמן ריצה ידוע איזה יוחזר. אם היה רק משתנה אחד שמוחזר מכל ה-return, NRVO היה אפשרי. לכן מתכננים פונקציה עם משתנה תוצאה אחד שמשנים אותו, ומחזירים אותו בכל הנתיבים. NRVO גם לא מובטח בתקן, בניגוד ל-elision של prvalue מ-C++17.",
+        "rubric": [
+          "אחרי התיקון: move (M) בכל ענף בזכות implicit move",
+          "NRVO לא אפשרי כששני משתנים שונים חיים ובחירה בזמן ריצה",
+          "משתנה תוצאה יחיד מאפשר NRVO, שאינו מובטח"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q13",
@@ -464,7 +501,16 @@
         "שגוי. T&& בתבנית עם T מוסק הוא forwarding reference, ולכן הוא כן נקשר ל-lvalue בזכות כלל ההסקה המיוחד.",
         "שגוי. אם T היה int בשני המקרים, x היה int&& ולא היה נקשר ל-i. ההסקה ל-int& עבור lvalue היא בדיוק מה שמאפשר perfect forwarding.",
         "שגוי. התיאור הפוך: עבור lvalue T הוא int&, ועבור rvalue T הוא int (לא int&&)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה std::forward דורש שתכתוב את T במפורש (`std::forward<T>(x)`) ואילו std::move לא? תאר בקצרה איך forward ממומש ומה הוא מחזיר בכל אחד משני המקרים.",
+        "modelAnswer": "בתוך הפונקציה x הוא תמיד lvalue, כי יש לו שם, ולכן מהטיפוס של הביטוי x לבד אי אפשר לדעת אם במקור הועבר lvalue או rvalue. המידע הזה נשמר רק ב-T: T = int& אם הועבר lvalue, ו-T = int אם rvalue. לכן forward צריך את T במפורש, ו-deduction שם חסום בכוונה (הפרמטר הוא `std::remove_reference_t<T>&`). המימוש הוא בעצם `static_cast<T&&>(x)`: עם T = int&, T&& מתקפל ל-int&, ומוחזר lvalue; עם T = int, מוחזר int&&, כלומר rvalue. std::move לא תלוי בהקשר: הוא תמיד מבצע `static_cast<std::remove_reference_t<T>&&>`, ולכן מספיק לו להסיק מהארגומנט.",
+        "rubric": [
+          "x תמיד lvalue בתוך הפונקציה, המידע נשמר רק ב-T",
+          "forward הוא static_cast<T&&>(x) עם reference collapsing",
+          "deduction חסום בכוונה; move תמיד מחזיר rvalue"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q14",
@@ -492,7 +538,16 @@
         "נכון. ה-trait בודק אם הביטוי של move construction הוא noexcept; בלי noexcept הוא false (אלא אם הקומפיילר הסיק noexcept ל-= default).",
         "שגוי. vector דורש רק MoveInsertable; move constructor שזורק לא מונע שימוש ב-vector, רק משפיע על איך מתבצע reallocation.",
         "נכון. move constructor עם `= default` מקבל exception specification מרומזת, שהיא noexcept אם כל ה-members וה-bases noexcept ב-move."
-      ]
+      ],
+      "followUp": {
+        "prompt": "Widget מכיל member של ספרייה שלישית שה-move שלו לא noexcept, אבל אתה יודע שהוא לא זורק בפועל. האם היית כותב `Widget(Widget&&) noexcept = default;`? מה קורה בקומפיילר ובזמן ריצה, ומה הסיכון?",
+        "modelAnswer": "מ-C++20 מותר להוסיף noexcept ל-defaulted function גם כשהמפרט המרומז היה noexcept(false), וההצהרה המפורשת קובעת. עד C++20 הכלל היה שונה (בגרסאות מסוימות זה נחשב deleted או ill-formed), ולכן כדאי לבדוק את הקומפיילר. בזמן ריצה, vector יבחר move ב-reallocation, וזה מה שרצינו. הסיכון: אם ה-move של ה-member בכל זאת זורק (למשל אחרי שדרוג של הספרייה), ה-exception יגיע לגבול noexcept ותיקרא std::terminate. כך החלפנו כשל אפשרי ב-basic guarantee בקריסה. לכן עושים את זה רק כשבדקנו את המימוש או שה-member מתעד שהוא לא זורק, ומוסיפים הערה ובדיקה שתזכיר לבדוק מחדש בשדרוג.",
+        "rubric": [
+          "noexcept מפורש על defaulted move מותר ב-C++20 וגובר",
+          "vector יבחר move",
+          "אם בכל זאת זורק: std::terminate"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q15",
@@ -531,7 +586,16 @@
         "שגוי ב-C++20. P1825 הרחיב את implicit move גם ל-rvalue reference למשתנה אוטומטי, ולכן מ-C++20 מתבצע move.",
         "שגוי. elision חל רק על אובייקט מקומי של הפונקציה (או prvalue). s מתייחס לאובייקט שבבעלות הקורא, ולכן חייבים לבנות ממנו את ערך ההחזרה.",
         "נכון. ב-C++17 implicit move חל רק על אובייקטים אוטומטיים מקומיים ופרמטרים by value, ולכן copy. P1825 ב-C++20 הוסיף rvalue references, ולכן move."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה C++23 (P2266, simpler implicit move) שינה מעבר ל-C++20, ותן דוגמה של קוד שהתקמפל ב-C++20 ונשבר ב-C++23 בגלל זה.",
+        "modelAnswer": "P2266 קבע שבביטוי return (ו-co_return ו-throw) שהוא id-expression של משתנה אוטומטי או פרמטר שמותר להזיז, הביטוי הוא xvalue באופן ישיר, ולא שני שלבים של overload resolution כמו קודם. זה מפשט את הכללים ומאפשר גם להחזיר rvalue reference: `T&& f(T&& x) { return x; }` מתקמפל ב-C++23, כי x הוא xvalue שנקשר ל-T&&. השבירה: פונקציה שמחזירה lvalue reference למשתנה לוקלי או לפרמטר rvalue, למשל `int& f(int&& x) { return x; }`, התקמפלה ב-C++20 (x lvalue), וב-C++23 x הוא xvalue ולא נקשר ל-int&, ולכן שגיאה. זה בכוונה, כי החזרה כזו כמעט תמיד באג (dangling).",
+        "rubric": [
+          "C++23: ה-id-expression ב-return הוא xvalue ישירות",
+          "החזרת T&& מפרמטר T&& מתקמפלת עכשיו",
+          "שבירה: החזרת lvalue reference לפרמטר rvalue/משתנה מקומי לא מתקמפלת"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q17",
@@ -552,7 +616,16 @@
         "שגוי. ההבדל הוא ב-reuse של capacity: copy assignment לתוך name_ קיים לא מקצה, ואילו A תמיד מקצה ומשחרר.",
         "נכון. עם lvalue, copy assignment ב-B כותב לתוך ה-buffer הקיים של name_ בלי malloc כשה-capacity מספיק. A בונה string חדש (malloc), מבצע move ומשחרר את ה-buffer הישן (free).",
         "שגוי. self-assignment מטופל נכון בשתי הגרסאות, ו-aliasing איננו הבדל משמעותי כאן. השיקול הוא עלות ההקצאה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו אותו setter נקרא בעיקר עם rvalues (מחרוזות זמניות מ-parser). האם ההמלצה משתנה? ומה החיסרון של B כשיש לך setter עם 3 פרמטרים מאותו סוג?",
+        "modelAnswer": "עם rvalues, A עושה move לפרמטר ואז move לתוך name_, כלומר שני moves (כמה העתקות של pointer), ו-B עושה move אחד. ההבדל זניח, וב-A אין הקצאה. כלומר עם rvalues שתיהן טובות, עם יתרון קל ל-B. החיסרון של B הוא פיצוץ קומבינטורי: עם 3 פרמטרים צריך 2^3 = 8 overloads כדי לכסות כל צירוף של lvalue ו-rvalue. הפתרונות: perfect forwarding עם template (`template<class S> void set(S&& s)`), שמכסה הכל בגרסה אחת אבל מעביר את הקוד ל-header, מקבל טיפוסים לא צפויים ומקשה על הודעות שגיאה, ודורש constraint (requires std::convertible_to); או לקבל את ה-by-value הפשוט (A) כשהקריאות הן בעיקר rvalues או לא בנתיב חם.",
+        "rubric": [
+          "עם rvalues: A עושה שני moves, B אחד, בלי הקצאה בשתיהן",
+          "B עם n פרמטרים דורש 2^n overloads",
+          "חלופה: template עם forwarding ו-constraint"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q18",
@@ -581,7 +654,16 @@
         "forwarding reference. `auto&&` משתמש באותם כללי הסקה כמו T&&, ולכן נקשר גם ל-lvalues וגם ל-rvalues.",
         "לא. `std::vector<T>&&` הוא rvalue reference ל-vector; הצורה חייבת להיות בדיוק T&&.",
         "forwarding reference. generic lambda עם auto&& היא template עם operator() מוסתר, ו-auto&& בפרמטר שקול ל-T&&."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-`Box<T>::put(T&& x)` מישהו רוצה לקבל גם lvalues וגם rvalues ולעשות perfect forwarding. איך תשנה את החתימה, ולמה `auto&&` ב-range-for (`for (auto&& e : v)`) הוא בחירה טובה בקוד גנרי?",
+        "modelAnswer": "הופכים את put ל-member template עם פרמטר שמוסק בקריאה: `template<class U> void put(U&& x) { data_ = std::forward<U>(x); }`, ורצוי להוסיף constraint כמו `requires std::constructible_from<T, U>` כדי לא לקבל כל טיפוס. כך U מוסק בכל קריאה ו-U&& הוא forwarding reference. אפשרות פשוטה יותר היא שני overloads, `put(const T&)` ו-`put(T&&)`, כמו ב-vector::push_back. ב-range-for, `auto&&` נקשר לכל מה שה-iterator מחזיר: lvalue reference רגיל ב-vector<int>, וגם proxy object זמני כמו ב-`vector<bool>`, שעליו `auto&` לא היה מתקמפל (temporary לא נקשר ל-non-const lvalue ref). וזה בלי העתקה, בניגוד ל-`auto`.",
+        "rubric": [
+          "member template עם U&& ו-std::forward<U>",
+          "constraint (constructible_from) או שני overloads כחלופה",
+          "auto&& ב-range-for נקשר גם ל-proxy (vector<bool>) בלי העתקה"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q19",
@@ -596,7 +678,17 @@
         "דן ב-trade-off בין בטיחות ה-invariant לעלות הביצועים"
       ],
       "explanation": "זו שאלת עיצוב קלאסית לסניור: move הוא לא רק אופטימיזציה, יש לו השפעה על החוזה של המחלקה.",
-      "lesson": "cpp.move-semantics"
+      "lesson": "cpp.move-semantics",
+      "followUp": {
+        "prompt": "בחרת להפוך את Channel ל-move-only עם מצב ריק מוצהר. איך היית מבטיח שהקוד שמשתמש ב-Channel לא ניגש בטעות לאובייקט moved-from, הן בזמן קומפילציה והן בזמן ריצה?",
+        "modelAnswer": "בזמן קומפילציה: clang-tidy `bugprone-use-after-move` מזהה גישה למשתנה אחרי std::move באותה פונקציה, ו-Clang מספק attributes כמו `[[clang::consumable]]` לניתוח typestate. בזמן ריצה: assert בכל מתודה ש-handle_ לא null (בבניית debug), כך שגישה לאובייקט ריק נכשלת מיד ולא גורמת ל-crash מאוחר. אפשר גם לתכנן את ה-API כך שהשימוש אחרי move לא טבעי: פונקציות שצורכות את ה-Channel מקבלות אותו by value (sink), כך שהקורא חייב לכתוב std::move במפורש ולראות אותו. בנוסף, מתעדים שהפעולות היחידות שמותרות על moved-from הן destruction, השמה ו-is_valid(). זו בדיוק המדיניות של הספרייה הסטנדרטית.",
+        "rubric": [
+          "clang-tidy bugprone-use-after-move",
+          "assert על handle_ במתודות (debug)",
+          "API עם sink by value שמחייב std::move מפורש",
+          "מותרות רק destruction, השמה ו-is_valid"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q20",
@@ -724,7 +816,16 @@
         "מבטל. copy assignment שהוצהר גם הוא בין התנאים שמונעים move constructor מרומז ([class.copy.ctor]).",
         "לא מבטל. default constructor לא שייך לרשימת התנאים; הוא לא קשור להעתקה או העברה.",
         "לא מבטל. unique_ptr הוא move-only, ולכן ה-copy המרומז של Data הופך ל-deleted, אבל ה-move נשאר ומחלקה נהיית move-only."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש מחלקה שמחזיקה std::vector ו-std::mutex, ואתה צריך שהיא תהיה movable. למה ה-defaulted move לא עובד, ומה הדרך הנכונה לכתוב move constructor כש-member הוא non-movable?",
+        "modelAnswer": "std::mutex הוא non-copyable ו-non-movable, ולכן ה-move constructor שהקומפיילר היה מייצר מוגדר כ-deleted. כותבים move constructor ידני: נועלים את ה-mutex של המקור (`std::lock_guard lk(other.m_)`), מזיזים את ה-vector (`data_(std::move(other.data_))` לא ניתן לעשות ב-initializer לפני הנעילה, ולכן מזיזים בגוף), ומשאירים ל-mutex של האובייקט החדש להיבנות כ-default. move assignment צריך לנעול את שני ה-mutexes בבת אחת עם `std::scoped_lock lk(m_, other.m_)` כדי למנוע deadlock, ולבדוק self-assignment. ההחלטה לסמן noexcept תלויה בכך שנעילה (lock) יכולה לזרוק std::system_error. חלופה פשוטה יותר: להחזיק את ה-mutex ב-unique_ptr, או להוציא את הסנכרון מהמחלקה.",
+        "rubric": [
+          "mutex non-movable ולכן defaulted move הוא deleted",
+          "move ידני: נעילת המקור, הזזת הנתונים, mutex חדש",
+          "move assignment: scoped_lock על שני ה-mutexes ובדיקת self-assignment"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q26",
@@ -747,7 +848,16 @@
         "נכון. push_back(S(1)): c ואז M. emplace_back(2): בנייה במקום (c). push_back(3): המרה מרומזת ל-temporary (c) ואז move (M). reserve מונע reallocation.",
         "שגוי. ה-temporary הוא rvalue, ולכן נבחר `push_back(S&&)` שמבצע move ולא copy.",
         "שגוי. emplace_back מעביר את 2 ישירות ל-constructor של S בזיכרון של ה-vector, ולכן אין temporary ואין move עבורו."
-      ]
+      ],
+      "followUp": {
+        "prompt": "emplace_back חסך את ה-move כאן. תן מקרה שבו emplace_back דווקא מסוכן או מפתיע לעומת push_back, ומקרה שבו הוא לא חוסך כלום.",
+        "modelAnswer": "מקרה מסוכן: `std::vector<std::unique_ptr<T>> v; v.emplace_back(new T);` אם ה-vector צריך reallocation וההקצאה זורקת bad_alloc לפני שה-unique_ptr נבנה, ה-pointer הגולמי דולף; עם push_back(std::make_unique<T>()) הבעלות כבר בתוך unique_ptr. מקרה מפתיע: emplace_back משתמש ב-direct initialization, ולכן קורא גם ל-explicit constructors: `std::vector<std::vector<int>> v; v.emplace_back(1000000);` בונה vector של מיליון אפסים, כש-push_back(1000000) לא היה מתקמפל. מקרה שבו הוא לא חוסך: כשמעבירים לו אובייקט מוכן מאותו טיפוס, `v.emplace_back(s)` או `v.emplace_back(std::move(s))`, זה בדיוק copy או move כמו push_back.",
+        "rubric": [
+          "emplace_back(new T) עלול לדלוף אם ההקצאה של ה-vector זורקת",
+          "emplace_back קורא ל-explicit constructors (direct init)",
+          "עם אובייקט מוכן מאותו טיפוס אין חיסכון"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q27",
@@ -771,7 +881,16 @@
         "שגוי. הבעיה אינה עותק כפול אלא שימוש באובייקט אחרי שכבר הועבר ממנו.",
         "נכון. עם rvalue, T הוא std::string ושתי הקריאות ל-forward מחזירות rvalue; push עושה move מ-msg, ו-audit מקבל אובייקט moved-from. forward רק בשימוש האחרון.",
         "שגוי. T&& עם T מוסק הוא forwarding reference, ולכן dispatch מקבלת גם lvalues. דווקא עם lvalues הבאג לא מופיע."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איזה כלי היה תופס את הבאג הזה, ולמה הוא הופיע רק בחלק מהקריאות? ואם push מקבל `const std::string&` ולא עושה move, האם הקוד המקורי בטוח?",
+        "modelAnswer": "clang-tidy עם `bugprone-use-after-move` מזהה שימוש ב-msg אחרי std::forward שלו, כי forward מטופל כמו move. הבאג מופיע רק עם rvalue, כי עם lvalue T הוא std::string& ו-forward מחזיר lvalue, אז push לא יכול להזיז. ואם הוא מופיע עם rvalue, זה עדיין תלוי ב-overload של push: אם יש overload ל-std::string&& שמזיז, msg מתרוקן. אם push מקבל רק const std::string&, הקוד המקורי לא מזיז בפועל ולכן כרגע עובד, אבל זה בטוח רק במקרה: מספיק שמישהו יוסיף overload של && ל-push, והבאג חוזר בלי שינוי בקוד של dispatch. הכלל: forward או move על אותו שם פעם אחת בלבד, בשימוש האחרון.",
+        "rubric": [
+          "clang-tidy bugprone-use-after-move",
+          "רק עם rvalue forward מחזיר rvalue",
+          "עם push(const&) עובד במקרה, ונשבר כשמוסיפים overload של &&"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q28",
@@ -798,7 +917,16 @@
         "לא מובטח, ולמעשה שגוי. move של optional מבצע move של הערך הפנימי, אבל המקור נשאר עם has_value() == true ו-string במצב moved-from.",
         "לא מובטח. std::string הוא valid but unspecified אחרי move; בפועל הוא ריק במימושים הנפוצים, אבל התקן לא מתחייב (למשל עם SSO).",
         "מובטח. thread שהוא מקור של move לא מייצג thread ריצה ולכן `joinable()` הוא false."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם std::string במצב moved-from הוא רק valid but unspecified, אילו פעולות מותר לבצע עליו בבטחה, ואיך כותבים לולאה שמשתמשת שוב ושוב באותו משתנה string אחרי move בצורה נכונה?",
+        "modelAnswer": "על אובייקט במצב valid but unspecified מותר לבצע כל פעולה שאין לה precondition: destruction, השמה של ערך חדש, clear(), size(), empty() ו-append. אסור להניח מה הערך, ולכן `s[0]`, `front()` או `back()` (שדורשים שהמחרוזת לא ריקה) לא בטוחים בלי בדיקה. בלולאה כמו `while (read_line(line)) { out.push_back(std::move(line)); }`, הקריאה הבאה צריכה להתחיל במצב ידוע: `line.clear();` מיד אחרי ה-move, או ש-read_line עצמו מבצע השמה מלאה. בפועל move משאיר את המחרוזת ריקה בכל המימושים, אבל התקן לא מבטיח את זה. יתרון נוסף: clear() על המחרוזת שוב מאפשר לה לגדול מחדש, אבל ה-capacity הלך עם ה-move, כך שכל איטרציה מקצה מחדש מעבר ל-SSO.",
+        "rubric": [
+          "מותר: destruction, השמה, clear, size, empty",
+          "אסור להניח ערך: front/[0] דורשים precondition",
+          "בלולאה: clear() או השמה מלאה אחרי move"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q29",
@@ -819,7 +947,16 @@
         "נכון. ב-return של שם משתנה מקומי, overload resolution נעשה קודם כאילו הוא rvalue, גם כשטיפוס ההחזרה שונה (CWG 1579), ולכן נבחר `unique_ptr<Base>(unique_ptr<Derived>&&)`.",
         "שגוי. NRVO דורש שטיפוס המשתנה יהיה זהה לטיפוס ההחזרה; unique_ptr<Derived> ו-unique_ptr<Base> הם טיפוסים שונים.",
         "שגוי. unique_ptr לא מעתיק את האובייקט המוצבע לעולם, וה-copy constructor שלו deleted. הבעלות מועברת ב-move."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-C++11 ישן (לפני ה-DR), הקוד לא התקמפל ונהגו לכתוב `return std::move(d);`. היום, מה ההבדל בין `return d;` ל-`return std::move(d);` כאן, ובמה כן עדיף לכתוב `return std::unique_ptr<Base>(std::move(d));`?",
+        "modelAnswer": "היום אין הבדל בקוד המכונה בין `return d;` ל-`return std::move(d);` כאן: NRVO ממילא לא אפשרי (טיפוסים שונים), ובשניהם נבחר ה-converting move constructor. `return d;` עדיף בגלל אחידות: הוא לא מעורר את האזהרה -Wredundant-move של GCC, ולא מתרגל אנשים לכתוב std::move ב-return במקומות שבהם הוא כן חוסם NRVO. הצורה המפורשת `std::unique_ptr<Base>(std::move(d))` מועילה כשרוצים להבהיר לקורא שיש המרה בין טיפוסים, או כשטיפוס ההחזרה הוא auto ורוצים לכפות unique_ptr<Base> ולא unique_ptr<Derived>. נקודה חשובה: כדי שמחיקה דרך unique_ptr<Base> תהיה נכונה, ל-Base חייב להיות virtual destructor.",
+        "rubric": [
+          "אין הבדל בקוד: NRVO לא אפשרי ונבחר converting move",
+          "return d; עדיף (אין -Wredundant-move, הרגל טוב)",
+          "Base חייב virtual destructor"
+        ]
+      }
     },
     {
       "id": "cpp.move-semantics.q30",
@@ -840,7 +977,16 @@
         "שגוי. std::forward עובד עם כל טיפוס, כולל initializer_list. הכשל קורה לפני כן, בהסקת A.",
         "שגוי. forwarding reference נקשר ל-temporaries מצוין; `wrap(std::vector<int>{1,2,3})` עובד.",
         "שגוי. perfect forwarding עובד גם כשהפונקציה היעד מקבלת by value; הארגומנט מועבר ל-constructor של הפרמטר. הבעיה היא רק ההסקה מ-{...}."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מלבד braced-init-list, מה עוד נשבר ב-perfect forwarding? תן לפחות שתי דוגמאות נוספות עם הסבר קצר למה ה-forwarding נכשל.",
+        "modelAnswer": "0 או NULL כ-null pointer: wrap(0) מסיק int, ו-target(int*) מקבל int ולא מתקמפל; nullptr פותר. שם של overloaded function או function template: wrap(process) נכשל כי אין לו טיפוס יחיד להסיק, וצריך static_cast לחתימה המתאימה או lambda. static const data member בלי הגדרה (ב-C++14): הקשירה ל-reference היא odr-use וגורמת ל-undefined reference ב-link, בעוד קריאה ישירה מעבירה את הערך; C++17 פתר עם inline variables. bit-field: אי אפשר לקשור non-const reference ל-bit-field, ולכן wrap(s.flags) לא מתקמפל, ופותרים בהעתקה לערך מקומי (או `+s.flags`) לפני ההעברה.",
+        "rubric": [
+          "0/NULL מוסק כ-int; nullptr פותר",
+          "overloaded function name אין לו טיפוס יחיד",
+          "static const member בלי הגדרה (odr-use) או bit-field"
+        ]
+      }
     },
     {
       "level": 2,
@@ -899,7 +1045,16 @@
         "שגוי: גם capacity עבר דרך std::exchange ואופס ל-0."
       ],
       "id": "cpp.move-semantics.q32",
-      "lesson": "cpp.move-semantics"
+      "lesson": "cpp.move-semantics",
+      "followUp": {
+        "prompt": "למה כדאי שה-move constructor יאפס את המקור, ולא רק יעתיק את ה-pointer? ומה היה קורה אם היה מאפס רק את data ומשאיר את size ו-capacity?",
+        "modelAnswer": "אם המקור לא מאופס, שני אובייקטים מחזיקים את אותו pointer, ושני ה-destructors יקראו ל-delete[]: double free. לכן חייבים להעביר בעלות, כלומר להציב nullptr במקור. אם מאפסים רק את data ומשאירים size ו-capacity, ה-destructor בטוח (delete[] nullptr מותר), אבל ה-invariant של המחלקה נשבר: a.size() מחזיר 1 בעוד שאין buffer, וכל גישה כמו `a[0]` או push_back שבודק `size < capacity` יכתוב דרך nullptr. במצב moved-from האובייקט חייב להיות valid: ה-destructor וההשמה חייבים לעבוד, וגם מתודות בלי precondition. std::exchange על כל שלושת השדות שומר על invariant עקבי של buffer ריק.",
+        "rubric": [
+          "בלי איפוס: double free",
+          "איפוס חלקי שובר invariant: size 1 בלי buffer",
+          "moved-from חייב להיות valid, כל השדות עקביים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -923,7 +1078,16 @@
         "שגוי: קריאה מפורשת ל-destructor על *this בתוך assignment מסיימת את חיי האובייקט ויוצרת בעיות חדשות. זה לא התיקון."
       ],
       "id": "cpp.move-semantics.q33",
-      "lesson": "cpp.move-semantics"
+      "lesson": "cpp.move-semantics",
+      "followUp": {
+        "prompt": "התיקון הנפוץ הוא `if (this != &other)`. מה עוד אפשר לעשות במקום בדיקה מפורשת, ולמה move-and-swap או copy-and-swap פותרים את self-move באופן טבעי? מה המחיר שלהם?",
+        "modelAnswer": "move-and-swap: `Buf& operator=(Buf other) noexcept { swap(*this, other); return *this; }`, שמקבל by value. בקריאה עם rvalue, other נבנה ב-move מהמקור, ואז swap מחליף, וה-buffer הישן משוחרר כש-other נהרס. ב-self-move, other נבנה מ-*this (שעכשיו ריק), ואז swap מחזיר את ה-buffer ל-*this; אין delete של buffer שעדיין בשימוש. גרסה נוספת היא לבצע את הפעולות בסדר בטוח: לשמור את ה-pointer של המקור במשתנה זמני, לאפס את המקור, ורק אז לשחרר את הישן. המחיר של swap: move construction נוסף ו-swap של 3 שדות, כמה הוראות, ונוסף לכך עם copy-and-swap ההשמה מלvalue תמיד מקצה buffer חדש ולא מנצלת capacity קיים, בדומה ל-setter by value.",
+        "rubric": [
+          "move-and-swap עם פרמטר by value ו-swap",
+          "ב-self-move ה-buffer חוזר ל-*this ולא משוחרר בשימוש",
+          "מחיר: move נוסף, ו-copy-and-swap לא מנצל capacity קיים"
+        ]
+      }
     },
     {
       "level": 3,
@@ -953,7 +1117,16 @@
       ],
       "problem": "NVIDIA onsite: explain move semantics and const-correctness",
       "id": "cpp.move-semantics.q34",
-      "lesson": "cpp.move-semantics"
+      "lesson": "cpp.move-semantics",
+      "followUp": {
+        "prompt": "אם const מבטל move, למה בכלל יש לספרייה הסטנדרטית overloads שמקבלים `const T&&`, למשל ב-std::optional::value() או ב-std::ref? מה הם עושים?",
+        "modelAnswer": "const T&& משמש בעיקר כדי לזהות rvalues שהם const ולטפל בהם במפורש, לא כדי להזיז מהם. ב-std::ref ו-std::cref, `ref(const T&&) = delete;` מונע ליצור reference_wrapper ל-temporary, כי הוא היה dangling מיד; בלי ה-overload הזה, const T& היה נקשר ל-temporary בשקט. ב-optional::value() יש ארבעה overloads (&, const&, &&, const&&) כדי שהערך שמוחזר ישמר את ה-value category ואת ה-const של ה-optional: אם קוראים ל-value() על const optional זמני, מקבלים const T&& ולא lvalue. ה-move constructor לא יכול להשתמש בו, ולכן הוא נבחר רק ל-copy בפועל. בקוד רגיל כמעט אף פעם לא כותבים const T&&.",
+        "rubric": [
+          "const T&& מזהה const rvalues ולא מזיז מהם",
+          "std::ref(const T&&) = delete מונע reference ל-temporary",
+          "optional::value() שומר value category ו-const"
+        ]
+      }
     },
     {
       "level": 3,
@@ -977,7 +1150,16 @@
         "שגוי: const member היה מונע את ההשמה לגמרי."
       ],
       "id": "cpp.move-semantics.q35",
-      "lesson": "cpp.move-semantics"
+      "lesson": "cpp.move-semantics",
+      "followUp": {
+        "prompt": "שינית את set_name לקבל `std::string s` by value ו-`name_ = std::move(s)`. עכשיו הקורא עושה `obj.set_name(cfg.name)` בלולאה של מיליון קריאות. מה קורה בכל קריאה ומה המחיר בהשוואה למצב שבו set_name מקבל const& ועושה copy assignment?",
+        "modelAnswer": "עם by value וקורא שמעביר lvalue: בכל קריאה הפרמטר s נבנה ב-copy מ-cfg.name, כלומר הקצאה (אם מעל SSO) והעתקה, ואז move assignment ל-name_ שמשחרר את ה-buffer הקודם של name_. כלומר malloc ו-free בכל קריאה, מיליון זוגות. עם const& ו-copy assignment, אם ה-capacity של name_ כבר מספיק (כמו שקורה אחרי הקריאה הראשונה כשהאורכים דומים), ההשמה היא רק memcpy בלי הקצאה. ההבדל יכול להיות פי כמה, כי malloc ו-free עולים עשרות ננו-שניות. המסקנה: by value מתאים ל-constructors או כשרוב הקריאות עם rvalue; ל-setter שנקרא שוב ושוב עם lvalues, overload של const& ו-&& עדיף.",
+        "rubric": [
+          "by value עם lvalue: copy construction עם הקצאה ושחרור של הישן בכל קריאה",
+          "const& עם capacity קיים: memcpy בלי הקצאה",
+          "by value עדיף ל-constructors או rvalues"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1000,7 +1182,16 @@
         "שגוי: b אינו const, ולכן std::move(b) בוחר את ה-move constructor."
       ],
       "id": "cpp.move-semantics.q36",
-      "lesson": "cpp.move-semantics"
+      "lesson": "cpp.move-semantics",
+      "followUp": {
+        "prompt": "ב-code review אתה רואה `const std::vector<int> result = compute(); return result;` בפונקציה שמחזירה std::vector<int>. מה הבעיה, ומה בדיוק הקומפיילר יכול ולא יכול לעשות כאן?",
+        "modelAnswer": "NRVO עדיין מותר על משתנה const, כי elision לא תלוי ב-const, ובפועל GCC ו-Clang כנראה יבצעו אותו ולא תהיה העתקה. הבעיה מתחילה כש-NRVO לא מתבצע (למשל כשיש כמה return עם משתנים שונים, או בבנייה בלי אופטימיזציות בקומפיילרים מסוימים): implicit move הופך את result ל-rvalue מסוג `const vector&&`, שלא נקשר ל-move constructor, ולכן נבחר copy, העתקה מלאה של ה-vector. כלומר const על משתנה מקומי שמוחזר הופך את ה-fallback מ-move ל-copy. ההמלצה: לא לשים const על משתנים מקומיים שמחזירים או שמתכוונים להזיז מהם, למרות שבדרך כלל const על locals הוא הרגל טוב. clang-tidy מזהיר על זה (performance-no-automatic-move).",
+        "rubric": [
+          "NRVO עדיין אפשרי על משתנה const",
+          "כש-NRVO לא מתבצע, const מונע implicit move ונבחר copy",
+          "clang-tidy performance-no-automatic-move"
+        ]
+      }
     }
   ]
 }

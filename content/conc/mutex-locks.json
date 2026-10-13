@@ -407,7 +407,17 @@
         "לא נכון: lock ללא תחרות הוא CAS ב-user space בלבד. syscall קורה רק כשיש תחרות, ולכן mutex בלי תחרות זול יחסית.",
         "נכון: זה המסלול המהיר של futex: compare-and-swap על מילה בזיכרון, בלי כניסה ל-kernel כשה-mutex פנוי.",
         "נכון: כשה-mutex תפוס, הממתין קורא ל-FUTEX_WAIT ונרדם ב-kernel, וה-unlock מעיר אותו עם FUTEX_WAKE."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה חושד שב-production יש contention על mutex מסוים. איך תוכיח את זה בלי לשנות קוד, ולמה ספירת syscalls בכלל אומרת משהו על תחרות?",
+        "modelAnswer": "בגלל שה-lock בלי תחרות נשאר כולו ב-user space (CAS על מילת ה-futex), כל קריאה ל-`futex` שמופיעה היא אירוע של המסלול האיטי: FUTEX_WAIT של ממתין או FUTEX_WAKE של משחרר שראה ממתינים. לכן `strace -f -c` או `perf trace -s` על התהליך שמראים אלפי קריאות futex לשנייה הם סימן ישיר לתחרות. כדי לדעת על איזה lock מדובר, מסתכלים על ה-call stack של futex_wait: `perf lock contention` (בקרנלים חדשים, מבוסס BPF) נותן זמן המתנה מצטבר לכל lock, וכלי off-CPU כמו `offcputime` מ-bcc מראה כמה זמן threads ישנו ומאיזה stack. שימו לב ש-strace עצמו מאט מאוד את התהליך ומשנה את התזמון, ולכן ב-production עדיף perf או eBPF.",
+        "rubric": [
+          "המסלול בלי תחרות לא עושה syscall, ולכן כל futex syscall מעיד על תחרות",
+          "כלי ספירה: strace -c או perf trace על קריאות futex",
+          "שיוך ל-lock ספציפי דרך call stack: perf lock contention או off-CPU profiling (offcputime)",
+          "strace מוסיף overhead כבד ולכן עדיף perf/eBPF ב-production"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q08",
@@ -428,7 +438,17 @@
         "לא נכון: עם oversubscription המחזיק עלול לעבור preemption, והממתינים מסתובבים time slice שלם לחינם. זה המקרה הגרוע ביותר ל-spinlock.",
         "נכון: spinlock משתלם כשההמתנה הצפויה קצרה מעלות השינה וההתעוררות, כלומר critical section של עשרות ns, וכשהמחזיק בטוח רץ על core אחר ולא יעבור preemption.",
         "לא נכון: גם mutex לא עושה syscall כשאין תחרות. ב-user space החשש מ-preemption של המחזיק הופך spinlock למסוכן, ולכן מעדיפים mutex או adaptive mutex."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן כלל כמותי: כמה זמן כדאי להסתובב לפני שנרדמים, ולמה דווקא הכמות הזו?",
+        "modelAnswer": "המחיר של הירדמות והתעוררות הוא בערך שני syscalls (FUTEX_WAIT ו-FUTEX_WAKE) ושני context switches, יחד כמה מיקרו-שניות, ועוד זיהום של cache ו-TLB. הכלל הקלאסי (spin-then-block) הוא להסתובב לכל היותר זמן ששווה בערך לעלות החסימה, ואז להירדם. אם ה-lock משתחרר במהלך ה-spin, חסכנו את כל עלות השינה. אם לא, בזבזנו לכל היותר פי 2 מהאופטימום, ולכן האסטרטגיה 2-competitive ללא קשר להתפלגות זמני ההמתנה. ה-spin שווה משהו רק כשהמחזיק רץ כרגע על core אחר; אם הוא עבר preemption, כל ה-spin מבוזבז.",
+        "rubric": [
+          "עלות שינה+התעוררות בסדר גודל של מיקרו-שניות (syscalls ו-context switches)",
+          "להסתובב בערך כמשך עלות החסימה ואז להירדם",
+          "האסטרטגיה מבטיחה לכל היותר פי 2 מהאופטימלי (2-competitive)",
+          "spin רלוונטי רק אם המחזיק רץ על core אחר"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q09",
@@ -452,7 +472,16 @@
         "נכון: `std::lock_guard<std::mutex>{m};` יוצר temporary בלי שם, שנהרס ב-`;` של אותה שורה. ה-mutex משוחרר לפני `++counter`, וההגדלה רצה בלי הגנה.",
         "לא נכון: תחת lock אמיתי אין צורך ב-atomic, כי ה-mutex כבר נותן גם הדדיות וגם סדר. הבעיה היא שה-lock לא מוחזק בזמן ההגדלה.",
         "לא נכון: brace initialization עובד מצוין עם lock_guard, למשל `std::lock_guard<std::mutex> lk{m};`. מה שחסר הוא השם, לא סוג האתחול."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה היה קורה אילו המפתח היה כותב `std::lock_guard<std::mutex>(m);` עם סוגריים עגולים? ואיך תתפוס את משפחת הבאגים הזו אוטומטית ב-CI?",
+        "modelAnswer": "עם סוגריים עגולים, `T(m);` מתפרש כהצהרה של משתנה מקומי חדש בשם m מטיפוס lock_guard, שמסתיר את ה-mutex הגלובלי. ל-lock_guard אין בנאי ברירת מחדל, ולכן זו שגיאת קומפילציה, כלומר דווקא הסוגריים המסולסלים הם שהפכו את הבאג לשקט. לתפיסה סטטית יש בדיקת clang-tidy בשם `bugprone-unused-raii` שמזהה אובייקט RAII זמני בלי שם. בזמן ריצה ThreadSanitizer מדווח על data race על counter עם שני ה-stacks, גם אם התוצאה במקרה יוצאת נכונה. כלל סגנון שמונע את זה: תמיד לתת שם, למשל `std::scoped_lock lk{m};`.",
+        "rubric": [
+          "סוגריים עגולים = הצהרה על משתנה מקומי בשם m, ושגיאת קומפילציה כי אין בנאי ברירת מחדל",
+          "בדיקה סטטית: clang-tidy bugprone-unused-raii",
+          "בדיקה דינמית: ThreadSanitizer מדווח race על counter"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q10",
@@ -494,7 +523,17 @@
         "לא נכון: אין שום רמז שהבנאי של Widget קורא ל-get. גם אם היה, recursive_mutex היה מסתיר בעיית עיצוב ולא פותר את ה-race.",
         "לא נכון: הבדיקה הכפולה היא בדיוק מה שהופך את double-checked locking לזול במסלול החם. הבעיה היא שהבדיקה החיצונית לא מסונכרנת, לא שהיא מיותרת.",
         "נכון: הקריאה של inst בשורה 5 בלי lock מתחרה בכתיבה בשורה 7, וזה data race ו-UB. בפועל thread אחר יכול לראות pointer לא-null לפני שהבנייה נראית לו. התיקון: static מקומי, `std::call_once`, או `std::atomic<Widget*>` עם acquire/release."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שתיקנת עם `std::atomic<Widget*>` (acquire בקריאה, release בכתיבה). מה עולה המסלול המהיר על x86 ועל ARM, ולמה static מקומי בפונקציה עולה בערך אותו דבר?",
+        "modelAnswer": "על x86 (מודל TSO) load עם acquire מתקמפל ל-`mov` רגיל, כך שהמחיר הוא רק מניעת סידור מחדש בידי ה-compiler. על ARMv8 הוא מתקמפל ל-`ldar`, שזול בהרבה מ-fence מלא. static מקומי ממומש בעזרת guard variable: בכל קריאה הקוד טוען את ה-guard עם acquire, ורק אם האתחול לא הושלם קורא ל-`__cxa_guard_acquire`, שמטפל בנעילה ובהמתנה. לכן המסלול המהיר של שתי הגרסאות הוא load אחד וענף. היתרון של static מקומי הוא פשטות ונכונות מובנית, כולל טיפול ב-exception בבנאי, וגם הריסה מסודרת ביציאה מהתוכנית, בעוד ש-`new` בלי delete דולף בכוונה.",
+        "rubric": [
+          "x86: acquire load הוא mov רגיל; ARMv8: ldar",
+          "static מקומי: בדיקת guard עם acquire, ו-__cxa_guard_acquire רק במסלול האיטי",
+          "המסלול המהיר בשתי הגרסאות הוא load אחד וענף",
+          "הבדל בהריסה: static נהרס ביציאה, new לא"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q12",
@@ -515,7 +554,17 @@
         "לא נכון: recursive_mutex הוא עדיין lock בלעדי יחיד, ואפילו כבד יותר. הוא לא מחלק את התחרות.",
         "נכון: lock striping מחלק את ה-buckets ל-N קבוצות עם mutex לכל אחת, כך ש-threads שניגשים למפתחות שונים לא מתחרים. הריפוד ל-cache line (alignas(64)) מונע false sharing בין ה-mutexes.",
         "לא נכון: הגדלת הטבלה מקצרת שרשראות התנגשות, אבל כל הגישות עדיין עוברות דרך אותו mutex. צוואר הבקבוק הוא ה-lock, לא ה-hash."
-      ]
+      ],
+      "followUp": {
+        "prompt": "כמה stripes תבחר ל-32 threads, ומה המחיר של מספר stripes גדול מדי?",
+        "modelAnswer": "רוצים שההסתברות ששני threads פעילים יפלו על אותו stripe תהיה קטנה, ולכן בוחרים N גדול כמה פעמים ממספר ה-threads, למשל 128 או 256, וחזקה של 2 כדי שהמיפוי יהיה mask זול. בדומה לפרדוקס יום ההולדת, גם עם N=128 ו-32 threads ההסתברות לאיזושהי התנגשות ברגע נתון לא זניחה, אבל כל התנגשות מאטה רק שני threads, לא את כולם. המחיר של N גדול: כל mutex מרופד ל-64 בתים, כך ש-256 stripes הם 16KB; ופעולות גלובליות כמו resize או size מדויק צריכות לנעול את כל ה-N, כלומר O(N) נעילות. בנוסף, אם פונקציית ה-hash חלשה, מפתחות מתרכזים ב-stripes מעטים וה-N האפקטיבי קטן בהרבה.",
+        "rubric": [
+          "N גדול כמה פעמים ממספר ה-threads, חזקה של 2 למיפוי עם mask",
+          "עלות זיכרון: N כפול 64 בתים בגלל ריפוד",
+          "פעולות גלובליות (resize, size) נועלות את כל ה-N, עלות O(N)",
+          "hash חלש מרכז מפתחות ב-stripes מעטים"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q13",
@@ -536,7 +585,17 @@
         "לא נכון: לוגית הקוראים כן רצים במקביל, וזה כל הרעיון של shared_mutex. ההאטה מגיעה מהעדכון של מונה משותף, לא מ-serialization לוגי.",
         "לא נכון: starvation של הכותב היה גורם לעדכונים להתעכב, לא להאטה כללית של קוראים במבנה שכמעט לא נכתב.",
         "נכון: כל shared_lock ו-unlock מבצעים RMW אטומי על מונה הקוראים, אז ה-cache line שלו קופץ בין 32 cores. כשה-critical section הוא 50ns, עלות ה-coherence הזו שולטת, ו-shared_mutex גם כבד יותר ממוטקס רגיל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הצעת seqlock כחלופה. איך הוא עובד, למה הוא מתרחב כשה-shared_mutex לא, ומה המגבלות שלו?",
+        "modelAnswer": "ב-seqlock יש מונה גרסה: הכותב (תחת lock משלו) מגדיל אותו לאי-זוגי, כותב, ומגדיל שוב לזוגי. הקורא קורא את המונה, מעתיק את הנתונים, קורא את המונה שוב, ואם הוא אי-זוגי או השתנה, מנסה מחדש. הקוראים לא כותבים לשום זיכרון משותף, ולכן ה-cache line נשאר במצב shared בכל ה-cores ואין bouncing, וזה ההבדל מול shared_lock שעושה RMW על מונה הקוראים. המגבלות: הקורא עלול לראות נתונים קרועים לפני שהוא מגלה שצריך לנסות שוב, ולכן אסור לו לעשות dereference ל-pointers מתוכם, והנתונים צריכים להיות קטנים וניתנים להעתקה. כותבים תכופים מרעיבים את הקוראים. ב-C++ פורמלית העתקה רגילה במקביל לכתיבה היא data race, ולכן מימוש תקני משתמש ב-atomics עם relaxed ו-fences מתאימים.",
+        "rubric": [
+          "מונה גרסה: אי-זוגי בזמן כתיבה, הקורא בודק לפני ואחרי ומנסה שוב",
+          "קוראים לא כותבים לזיכרון משותף, ולכן אין cache line bouncing",
+          "קורא יכול לראות נתונים קרועים: אסור לעקוב אחרי pointers, נתונים קטנים בלבד",
+          "כתיבות תכופות מרעיבות קוראים"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q14",
@@ -551,7 +610,17 @@
         "מקצר את ה-critical section: מעתיקים ומשחררים, לא מציירים תחת lock"
       ],
       "explanation": "הנקודה המרכזית: thread זמן-אמת לא צריך לחכות לעולם ל-thread שאינו זמן-אמת. פתרון שרק משנה עדיפויות בלי להוציא את ה-lock מהמסלול הקריטי חלקי.",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "נניח שהחלטת להוציא את ה-lock מה-RX thread לגמרי. איך תעביר ל-GUI snapshot עקבי של הסטטיסטיקות כך שאף צד לא ייחסם אף פעם, ומה קורה אם ה-GUI איטי בהרבה מה-RX?",
+        "modelAnswer": "פתרון קלאסי הוא triple buffer: שלושה עותקים של מבנה הסטטיסטיקות. ה-RX כותב לעותק back, ובסיום מחליף אותו אטומית (exchange עם release) עם אינדקס ה-middle ומסמן ביט fresh. ה-GUI, כשהוא רוצה לצייר, מחליף (exchange עם acquire) את ה-front שלו עם ה-middle אם fresh דלוק. בגלל שיש שלושה עותקים, לכותב תמיד יש buffer פנוי, ולכן אף צד לא מחכה לשני. אם ה-GUI איטי, הוא פשוט מפספס snapshots ביניים ותמיד מקבל את האחרון, וזה בדיוק מה שרוצים בתצוגה. במסלול ה-RX אין syscall, אין הקצאה ואין lock, רק העתקה ופעולה אטומית אחת.",
+        "rubric": [
+          "triple buffer: שלושה עותקים, החלפת אינדקס אטומית (exchange) עם release/acquire",
+          "לכותב תמיד יש buffer פנוי, ולכן אף צד לא נחסם",
+          "GUI איטי מפספס snapshots ביניים ומקבל תמיד את האחרון",
+          "אין syscall, הקצאה או lock במסלול ה-RX"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q15",
@@ -572,7 +641,16 @@
         "נכון: אם B ראה ready == true, ה-lock שלו בא אחרי ה-unlock של A בסדר הכולל של m, וה-unlock synchronizes-with ה-lock. לכן `data = 42` happens-before `use(data)`. אם ready == false, B לא קורא את data בכלל.",
         "לא נכון: התשובה נובעת ממודל הזיכרון של C++ ונכונה על כל ארכיטקטורה, כי ה-mutex עצמו מספק את ה-release/acquire. TSO לא רלוונטי כאן.",
         "לא נכון: volatile לא יוצר happens-before ולא נדרש כאן, כי ה-mutex כבר יוצר סדר. אילו היה race, volatile לא היה מבטל אותו."
-      ]
+      ],
+      "followUp": {
+        "prompt": "שתי וריאציות: (א) B קורא את data אחרי שיצא מה-block הנעול, כשראה ready == true בתוכו. (ב) A כותב `data = 42` אחרי ה-block הנעול שלו. באיזו מהן יש data race ולמה?",
+        "modelAnswer": "בווריאציה (א) אין race: הקריאה של data ב-B היא sequenced-after ה-lock של B, שה-unlock של A מסתנכרן איתו, והכתיבה ל-data היא sequenced-before ה-unlock של A. שרשרת ה-happens-before נשמרת גם אחרי שה-lock של B שוחרר, כל עוד אף אחד לא כותב ל-data אחר כך. בווריאציה (ב) יש race: הכתיבה ל-data באה אחרי ה-unlock של A, ולכן אין שום קשת happens-before בינה לבין הקריאה ב-B. B יכול לראות ready == true ולקרוא את data במקביל לכתיבה, וזה UB. העיקרון: מה שקובע הוא סדר הפעולות ביחס לנקודות הסנכרון, לא אם הגישה פיזית בתוך ה-block.",
+        "rubric": [
+          "(א) אין race: הקריאה sequenced-after ה-lock של B, והשרשרת נשמרת",
+          "(ב) יש race: הכתיבה אחרי ה-unlock של A ולכן אין happens-before",
+          "מה שקובע הוא sequenced-before ו-synchronizes-with, לא מיקום פיזי בתוך ה-block"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q16",
@@ -593,7 +671,16 @@
         "לא נכון: ה-kernel לא מפרש את הערך 2 כבקשת עדיפות. priority inheritance דורש פרוטוקול נפרד (FUTEX_LOCK_PI) עם TID בתוך המילה.",
         "לא נכון: FUTEX_WAIT רק בודק שהמילה שווה לערך הצפוי ברגע הכניסה לשינה; אין לו דרישה על הערך לאורך ה-critical section.",
         "לא נכון: ההבדל בביצועים זניח; הבחירה ב-exchange(2) היא בגלל נכונות, כדי לא לאבד wake-up, לא בגלל מהירות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "FUTEX_WAIT מקבל את הערך שה-thread מצפה למצוא בזיכרון (2). למה הבדיקה הזו בתוך ה-kernel הכרחית, ואיזה race היא מונעת?",
+        "modelAnswer": "יש חלון בין הרגע שבו הממתין קרא 2 והחליט לישון לבין הרגע שבו הוא באמת בתור של ה-kernel. אם בחלון הזה הבעלים עושה unlock, כותב 0 וקורא ל-FUTEX_WAKE, ה-wake לא מוצא אף אחד בתור, והממתין היה נרדם לנצח. לכן ה-kernel, תחת ה-lock של ה-hash bucket של ה-futex, משווה את הערך בזיכרון לערך הצפוי ורק אז מכניס את ה-thread לתור. אם הערך השתנה, FUTEX_WAIT חוזר מיד עם EAGAIN, וה-thread חוזר ללולאה ומנסה לקחת את ה-lock שוב. זו אותה בעיה ש-condition_variable פותר בכך שהוא משחרר את ה-mutex ונרדם באופן אטומי.",
+        "rubric": [
+          "חלון בין קריאת הערך לבין ההירדמות: unlock ו-wake בחלון הזה הולכים לאיבוד",
+          "ה-kernel משווה את הערך ומכניס לתור באופן אטומי תחת lock של ה-hash bucket",
+          "אם הערך השתנה, חוזר EAGAIN והלולאה מנסה שוב"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q17",
@@ -620,7 +707,17 @@
         "נכון: try_lock שנכשל לא רכש שום דבר, ולכן התקן לא נותן ממנו שום הבטחת סנכרון. אסור לבנות על כישלון כאות שמישהו אחר עשה משהו.",
         "נכון: התקן מתיר במפורש ל-try_lock להיכשל ספורדית גם כשה-mutex פנוי. לכן כישלון לא מוכיח שמישהו מחזיק את ה-lock.",
         "לא נכון: try_lock על std::mutex שכבר מוחזק ע״י אותו thread הוא הפרת precondition ו-UB, לא false מובטח. רק recursive_mutex מגדיר את המקרה הזה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה התקן בכלל מתיר ל-try_lock להיכשל באופן ספורדי? מה המימוש מרוויח, ומה זה אוסר עליך לעשות בקוד?",
+        "modelAnswer": "הסיבה העיקרית (מהעבודה של Hans Boehm על מודל הזיכרון): אילו try_lock שנכשל היה מבטיח שה-mutex באמת מוחזק, אפשר היה להשתמש בכישלון כדי להסיק שה-lock של thread אחר כבר קרה, וזה היה מחייב את lock() לסידור חזק יותר מ-acquire, כלומר fence יקר בכל נעילה. ההיתר לכישלון ספורדי משאיר את lock עם acquire בלבד, ובנוסף מאפשר מימוש עם CAS חלש (למשל LL/SC ב-ARM שיכול להיכשל בלי סיבה). המשמעות לקוד: אסור להשתמש ב-try_lock כשאילתה של מצב ה-lock, למשל assert שה-lock מוחזק או לוגיקה של אם נכשל אז thread אחר באמצע עבודה. וכישלון לא נותן שום סנכרון, ולכן אסור לבנות עליו העברת נתונים.",
+        "rubric": [
+          "בלי ההיתר, כישלון היה מאפשר להסיק סדר ומחייב lock עם סידור חזק מ-acquire",
+          "מאפשר מימוש עם CAS חלש / LL/SC",
+          "אסור להשתמש ב-try_lock כשאילתה אם ה-lock מוחזק",
+          "כישלון לא נותן סנכרון"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q18",
@@ -770,7 +867,17 @@
         "נכון: recursive_mutex הוא לרוב סימפטום של API ציבורי שנועל וקורא ל-API ציבורי אחר שנועל. הפתרון המקובל הוא פונקציה פרטית שמניחה שה-lock כבר מוחזק.",
         "לא נכון: recursive_mutex בלעדי מול threads אחרים בכל רמה. רמות נוספות שייכות רק לבעלים, ו-thread אחר חוסם עד שהמונה מגיע ל-0.",
         "נכון: התקן משאיר את מספר הרמות המקסימלי unspecified, ומגדיר שמעבר לו `lock()` זורק `std::system_error` ו-`try_lock()` נכשל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "פיצלת לפונקציה ציבורית שנועלת ולפונקציה פרטית שמניחה שה-lock מוחזק. איך תאכוף את ההנחה הזו, רצוי כבר בזמן קומפילציה?",
+        "modelAnswer": "יש שלוש רמות. הזולה: לקרוא לפונקציות הפרטיות בשם עם סיומת כמו `_locked` ולהוסיף assert בגרסת debug. החזקה יותר: lock token, כלומר הפונקציה הפרטית מקבלת פרמטר `const std::unique_lock<std::mutex>&` (או lock_guard), כך שאי אפשר לקרוא לה בלי להחזיק אובייקט נעילה, ו-assert על `lk.owns_lock()` ו-`lk.mutex() == &m_` בודק שזה ה-mutex הנכון. הכי חזקה: Clang Thread Safety Analysis, מסמנים את השדה `GUARDED_BY(m_)` ואת הפונקציה הפרטית `REQUIRES(m_)`, ו-`-Wthread-safety` נותן שגיאת קומפילציה על קריאה בלי ה-lock. כלל נוסף: לא לקרוא ל-callback של משתמש בזמן שה-lock מוחזק, כי זה בדיוק מה שמוביל לכניסה חוזרת.",
+        "rubric": [
+          "lock token: פרמטר unique_lock/lock_guard לפונקציה הפרטית",
+          "Clang Thread Safety Analysis עם GUARDED_BY ו-REQUIRES ו-Wthread-safety",
+          "assert על owns_lock ועל זהות ה-mutex בגרסת debug",
+          "לא לקרוא ל-callback חיצוני תחת lock"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q25",
@@ -791,7 +898,17 @@
         "לא נכון: recursive_mutex לא מקצר את ה-critical section ולא מפחית תחרות; הוא פותר רק נעילה חוזרת מאותו thread.",
         "לא נכון: כל הגישות כאן הן עדכונים של ה-map, ולכן כולן צריכות unique_lock בלעדי. shared_mutex לא נותן מקביליות.",
         "נכון: fprintf תחת lock מאריך את ה-critical section בסדרי גודל, ואם הכתיבה נחסמת, כל ה-threads נערמים (lock convoy). מכינים את שורת הלוג תחת ה-lock, משחררים, ורק אז כותבים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "דרישה נוספת: שורות הלוג חייבות להופיע בדיוק בסדר שבו עודכן ה-map. איך שומרים על הסדר בלי לעשות I/O תחת ה-lock, ומה המחיר?",
+        "modelAnswer": "את הסדר קובעים בתוך ה-critical section, ואת ה-I/O מבצעים מחוץ לו. אפשרות אחת: לדחוף את רשומת הלוג לתור בזיכרון בזמן שה-lock עדיין מוחזק, כך שסדר ההכנסה לתור זהה לסדר העדכונים, ו-thread כותב ייעודי מרוקן את התור לקובץ. אפשרות שנייה: לתת לכל עדכון מספר רצף תחת ה-lock ולמיין לפיו בצד הכותב. המחיר: התור חייב להיות חסום בגודל, ולכן צריך מדיניות כשהוא מתמלא (לחסום, לזרוק רשומות, או לגדול). בנוסף, אם התהליך קורס, רשומות שעדיין בתור הולכות לאיבוד, כלומר מחליפים durability ב-latency.",
+        "rubric": [
+          "קובעים סדר תחת ה-lock: הכנסה לתור או מספר רצף",
+          "thread ייעודי מבצע את ה-I/O",
+          "תור חסום ומדיניות כשהוא מלא",
+          "קריסה מאבדת רשומות שעדיין בתור"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q26",
@@ -812,7 +929,16 @@
         "לא נכון: glibc לא נותן עדיפות לפי סדר נעילה ראשונה. T1 מנצח כי הוא כבר רץ ו-T2 עוד מתעורר, לא בגלל שנעל ראשון.",
         "לא נכון: T2 כן מקבל FUTEX_WAKE ומתעורר; הוא פשוט מגיע מאוחר מדי ונרדם שוב. אילו לא היה מקבל wake לעולם, הוא לא היה מצליח אף פעם.",
         "לא נכון: יש רק mutex אחד, ולכן אין סדר נעילה שיכול ליצור deadlock. T2 גם מצליח מדי פעם, וזה לא מתיישב עם deadlock."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם תחליף ל-ticket lock הוגן, מה בדיוק המחיר ב-throughput, ומה קורה כשה-thread הבא בתור עבר preemption?",
+        "modelAnswer": "ב-ticket lock ה-lock עובר ישירות לבא בתור, ולכן כל העברה מחכה שה-thread הספציפי הזה ירוץ. אם הוא מסתובב על core אחר, ההעברה עולה בערך העברת cache line (עשרות עד מאות ns), אבל אם הוא ישן או לא רץ, ההעברה עולה wake-up ו-context switch של כמה מיקרו-שניות, לעומת עשרות ns כשה-thread שכבר רץ חוטף את ה-lock שוב. כך ה-throughput יכול לרדת בסדר גודל. גרוע מכך: אם ה-thread שהתור שלו הגיע עבר preemption, ה-lock פנוי אבל אף אחד אחר לא רשאי לקחת אותו, וכל הממתינים אחריו תקועים עד שהוא יחזור לרוץ, כלומר עד time slice שלם (מילי-שניות). לכן הוגנות קפדנית ב-user space עם oversubscription מסוכנת.",
+        "rubric": [
+          "כל העברה מחכה ל-thread ספציפי: wake-up של מיקרו-שניות לעומת עשרות ns ב-barging",
+          "ירידת throughput בסדר גודל",
+          "next-in-line שעבר preemption תוקע את כל התור לזמן של time slice"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q27",
@@ -833,7 +959,16 @@
         "לא נכון: std::mutex ב-glibc מאותחל עם PTHREAD_PRIO_NONE, כלומר בלי priority inheritance.",
         "נכון: מאתחלים pthread_mutex_t עם `pthread_mutexattr_setprotocol(PTHREAD_PRIO_INHERIT)` ועוטפים במחלקה עם lock, unlock ו-try_lock. היא עומדת בדרישות Lockable ולכן עובדת עם lock_guard ו-unique_lock.",
         "לא נכון: recursive_mutex מאפשר נעילה חוזרת מאותו thread ואין לו קשר ל-priority inheritance. גם הוא מאותחל בלי PI."
-      ]
+      ],
+      "followUp": {
+        "prompt": "priority inheritance פותר את ה-inversion. מה הוא לא פותר, איך נראה lock עם PI ב-kernel, ומה החלופה של priority ceiling?",
+        "modelAnswer": "PI הופך inversion בלתי חסום לחסום: ה-RT thread עדיין מחכה, אבל רק למשך ה-critical section של ה-thread הנמוך (שעכשיו רץ בעדיפות גבוהה), ובשרשרת locks ההמתנה מצטברת. לכן עדיין צריך critical sections קצרים וחסומים. במימוש של Linux מילת ה-futex מכילה את ה-TID של הבעלים: lock בלי תחרות הוא עדיין CAS ב-user space, אבל בתחרות FUTEX_LOCK_PI נכנס ל-kernel, שמוצא את הבעלים לפי ה-TID ומעלה את העדיפות שלו דרך rt_mutex. priority ceiling (PTHREAD_PRIO_PROTECT) מעלה את העדיפות לתקרה קבועה בכל נעילה, גם בלי תחרות, ולכן עולה syscall לשינוי עדיפות בכל lock, אבל מונע שרשראות ונותן התנהגות צפויה יותר.",
+        "rubric": [
+          "PI מגביל את ההמתנה לאורך ה-critical section, לא מבטל אותה; שרשראות מצטברות",
+          "מילת ה-futex מכילה TID, ובתחרות FUTEX_LOCK_PI ב-kernel",
+          "priority ceiling מעלה עדיפות בכל נעילה, עם syscall גם בלי תחרות"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q28",
@@ -854,7 +989,16 @@
         "נכון: התקן מחייב בנאי ברירת מחדל constexpr ל-std::mutex, ולכן mutex גלובלי עובר constant initialization לפני שום אתחול דינמי. בנאי גלובלי ב-b.cpp רואה mutex תקין.",
         "לא נכון: סדר הקישור לא מבטיח כלום לפי התקן, ולא נדרש כאן בכלל, כי constant initialization לא תלוי בסדר יחידות התרגום.",
         "לא נכון: static מקומי הוא פתרון כללי ל-fiasco של טיפוסים עם אתחול דינמי, אבל std::mutex לא צריך אותו בזכות הבנאי ה-constexpr. זה לא נכון למשל ל-recursive_mutex."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תוודא בזמן קומפילציה שמשתנה גלובלי עובר constant initialization, ומה תעשה עם טיפוס שאין לו בנאי constexpr, כמו std::recursive_mutex?",
+        "modelAnswer": "ב-C++20 מוסיפים `constinit` להגדרה: אם המשתנה לא מאותחל כ-constant initialization, הקומפיילר נותן שגיאה, וכך ההנחה הופכת לבדיקה. לטיפוס בלי בנאי constexpr אפשר להשתמש ב-construct on first use: פונקציה שמחזירה reference ל-static מקומי, שמאותחל בפעם הראשונה שמישהו קורא לה, ובצורה thread-safe מ-C++11. צריך לזכור גם את צד ההריסה: גלובלים נהרסים בסדר הפוך לאתחול, ו-destructor גלובלי ב-b.cpp שנועל mutex מ-a.cpp עלול לרוץ אחרי שה-mutex נהרס. לכן יש מי שמקצים עם new ולא משחררים בכוונה, כדי שהאובייקט לעולם לא ייהרס.",
+        "rubric": [
+          "constinit ב-C++20 נותן שגיאת קומפילציה אם אין constant initialization",
+          "construct on first use: static מקומי בפונקציה",
+          "סדר ההריסה ביציאה הוא בעיה נפרדת (destructor שנועל mutex שכבר נהרס)"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q29",
@@ -875,7 +1019,17 @@
         "לא נכון: MCS משתמש ב-exchange על ה-tail בכניסה וב-CAS בשחרור. הוא לא חוסך פעולות אטומיות, אלא מצמצם את ה-cache lines שכולם מסתובבים עליהן.",
         "לא נכון: ticket lock הוא spinlock שלם ב-user space או ב-kernel, בלי syscall בכלל. ההאטה באה מ-cache coherence.",
         "נכון: ב-ticket lock כל הממתינים מסתובבים על אותו מונה serving, וכל שחרור גורם ל-invalidate ול-reload אצל כולם, גם על sockets אחרים ב-NUMA. ב-MCS כל ממתין מסתובב על node מקומי משלו, והשחרור נוגע רק ב-line של הבא בתור."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-MCS כל ממתין צריך node משלו. איפה ה-node הזה חי, מה זה עושה ל-API, ואיך ה-qspinlock של Linux דוחס את כל זה למילה של 4 בתים?",
+        "modelAnswer": "ב-MCS הקלאסי ה-lock הוא pointer ל-tail, ו-lock(node) מקבל node מהקורא, בדרך כלל על ה-stack, ואותו node חייב לעבור גם ל-unlock. זה שובר את ה-API הרגיל של lock()/unlock() ולא מתאים להחליף בו spinlock קיים שהוא מילה קטנה בתוך מבנים. qspinlock פותר את זה: ה-lock הוא 32 ביט עם byte של locked, ביט pending, ו-tail מקודד כמספר CPU ואינדקס הקשר. ה-nodes עצמם הם per-CPU, ארבעה לכל CPU (task, softirq, hardirq, NMI), כי בכל הקשר ה-CPU יכול לחכות לכל היותר ל-lock אחד. הביט pending נותן לממתין הראשון להסתובב ישירות על מילת ה-lock בלי להיכנס לתור, כי במקרה של תחרות קלה התור הוא overhead מיותר.",
+        "rubric": [
+          "node לכל ממתין, בדרך כלל על ה-stack, וחייב לעבור גם ל-unlock",
+          "qspinlock: מילה של 32 ביט עם locked, pending ו-tail מקודד (CPU + הקשר)",
+          "nodes per-CPU, אחד לכל הקשר (task, softirq, hardirq, NMI)",
+          "pending bit: הממתין הראשון לא נכנס לתור"
+        ]
+      }
     },
     {
       "id": "conc.mutex-locks.q30",
@@ -891,7 +1045,17 @@
         "בונוס: adaptive spinning ו-PI futex"
       ],
       "explanation": "תשובה חזקה מבחינה בין המסלולים ומסבירה למה מדובר ב-'fast userspace mutex'. תשובה חלשה אומרת ש-mutex תמיד עושה syscall.",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "ב-FUTEX_WAKE ה-kernel מקבל רק כתובת. איך הוא מוצא את הממתינים עליה, ואיך זה עובד כשה-mutex נמצא בזיכרון משותף בין שני תהליכים בכתובות וירטואליות שונות?",
+        "modelAnswer": "ב-kernel יש hash table גלובלית של buckets, כל אחד עם spinlock ורשימת ממתינים. מכל futex מחשבים key ומשייכים אותו ל-bucket. ל-futex פרטי (FUTEX_PRIVATE_FLAG, מה ש-std::mutex משתמש בו) ה-key הוא זוג של ה-mm של התהליך והכתובת הווירטואלית, וזה זול. ל-futex משותף ה-key מבוסס על הדף הפיזי או ה-inode וה-offset בקובץ ממופה, ולכן שתי כתובות וירטואליות שונות בשני תהליכים שממפות לאותו זיכרון מקבלות אותו key. החישוב הזה דורש חיפוש בטבלאות הדפים, ולכן futex משותף יקר יותר. ב-pthreads בוחרים בזה עם `pthread_mutexattr_setpshared(PTHREAD_PROCESS_SHARED)`.",
+        "rubric": [
+          "hash table של buckets עם spinlock ורשימת ממתינים, לפי futex key",
+          "futex פרטי: key = mm + כתובת וירטואלית",
+          "futex משותף: key לפי דף פיזי/inode ו-offset, ולכן עובד בין תהליכים",
+          "PTHREAD_PROCESS_SHARED בוחר במצב המשותף, שהוא יקר יותר"
+        ]
+      }
     },
     {
       "level": 1,
@@ -978,7 +1142,17 @@
         "נכון: התנאי המקדים של unlock הוא שה-thread הנוכחי מחזיק את ה-mutex. הפרה היא UB."
       ],
       "id": "conc.mutex-locks.q33",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "השתמשת ב-counting_semaphore שמאותחל ל-4 כדי להגביל גישה. בנתיב נדיר נזרק exception בין acquire ל-release. מה קורה לאורך זמן, ואיך מונעים את זה ב-C++?",
+        "modelAnswer": "ה-permit לא מוחזר, כך שהקיבולת יורדת באחד לצמיתות. אחרי ארבע זליגות כאלה כל acquire נחסם לנצח, והמערכת נתקעת בלי שום הודעת שגיאה, לפעמים ימים אחרי הבאג המקורי. בגלל שאין ownership, אין מי שיזהה שה-thread שעשה acquire נעלם. בתקן אין RAII guard ל-semaphore, ולכן כותבים מחלקה קטנה שעושה acquire בבנאי ו-release ב-destructor, בדומה ל-lock_guard. לניטור: ל-std::counting_semaphore אין פונקציה שמחזירה את הערך הנוכחי, ולכן אם רוצים metric צריך לנהל מונה atomic נפרד.",
+        "rubric": [
+          "permit שלא הוחזר מקטין את הקיבולת לצמיתות, ואחרי 4 כולם נחסמים",
+          "RAII wrapper: acquire בבנאי, release ב-destructor",
+          "אין ownership ולכן אין זיהוי אוטומטי",
+          "ל-std::counting_semaphore אין שאילתת ערך, צריך מונה נפרד לניטור"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1029,7 +1203,17 @@
         "שגוי: spinlock בקרנל לעולם לא ישן. מי שמחזיק spinlock גם אסור לו לישון."
       ],
       "id": "conc.mutex-locks.q35",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "עכשיו בקרנל SMP: thread בהקשר process לוקח את l עם `spin_lock` רגיל, ו-interrupt handler לוקח את אותו l. תאר את התרחיש הגרוע ואיך מתקנים.",
+        "modelAnswer": "ה-process מחזיק את l על CPU 0, interrupt מגיע על אותו CPU 0, וה-handler מנסה לקחת את l ומסתובב. המחזיק לא יכול לרוץ עד שה-handler יסיים, וה-handler לא יסיים עד שהמחזיק ישחרר, כלומר deadlock מוחלט של ה-CPU. אם ה-interrupt היה מגיע ל-CPU אחר, הוא פשוט היה מחכה קצת, ולכן הבאג מופיע רק לפעמים. התיקון: בהקשר process משתמשים ב-`spin_lock_irqsave`, שמבטל interrupts מקומיים ושומר את מצב ה-flags הקודם, כך שגם קריאה מקוננת משחזרת נכון (בניגוד ל-spin_lock_irq שמדליק interrupts בשחרור גם אם היו כבויים לפני). בקרנל uniprocessor אותה קריאה מצטמצמת לביטול interrupts וביטול preemption.",
+        "rubric": [
+          "deadlock: ה-handler מסתובב על אותו CPU שבו המחזיק נקטע",
+          "spin_lock_irqsave בהקשר process",
+          "irqsave שומר flags קודמים, בניגוד ל-spin_lock_irq",
+          "ב-UP זה מצטמצם לביטול interrupts ו-preemption"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1050,7 +1234,17 @@
         "שגוי: שום דבר לא משחרר lock בלי שהבעלים יקרא ל-unlock. שחרור אוטומטי היה שובר את ה-mutual exclusion."
       ],
       "id": "conc.mutex-locks.q36",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "ה-page fault בתוך ה-critical section הוא חסימה שלא רואים בקוד. איך מונעים page faults בקוד low-latency, ואיך מודדים אותם?",
+        "modelAnswer": "יש שני סוגים: minor fault, כשהדף כבר בזיכרון וצריך רק למפות אותו (בערך מיקרו-שנייה), ו-major fault שדורש I/O מהדיסק (מילי-שניות). המניעה: `mlockall(MCL_CURRENT | MCL_FUTURE)` נועל את הזיכרון ב-RAM ומונע swap, ו-prefault בזמן האתחול, כלומר לגעת בכל דף של ה-buffers וה-stacks מראש (למשל memset), כי זיכרון מהקצאה חדשה ממופה רק בנגיעה הראשונה. בנוסף מקצים הכול מראש ולא קוראים ל-malloc במסלול החם. מודדים עם `perf stat -e page-faults,major-faults` או עם getrusage, שמחזיר את ru_minflt ו-ru_majflt, ובודקים שהמונים לא עולים בזמן ריצה יציבה.",
+        "rubric": [
+          "minor fault בסדר מיקרו-שנייה, major fault דורש I/O ובסדר מילי-שניות",
+          "mlockall עם MCL_CURRENT ו-MCL_FUTURE",
+          "prefault: נגיעה בכל הדפים בזמן האתחול, בלי הקצאות במסלול החם",
+          "מדידה: perf stat page-faults או getrusage (ru_minflt, ru_majflt)"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1084,7 +1278,16 @@
         "https://www.geeksforgeeks.org/?p=141478"
       ],
       "id": "conc.mutex-locks.q37",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "האם כל פונקציה reentrant היא גם thread-safe? תן דוגמה נגדית, והסבר גם למה signal handler חייב לשמור ולשחזר את errno.",
+        "modelAnswer": "לא בהכרח. דוגמה: פונקציה שמשתמשת במשתנה גלובלי, שומרת את ערכו במשתנה מקומי בכניסה ומשחזרת אותו לפני היציאה. מול signal היא reentrant, כי קטיעה היא מקוננת (LIFO): ה-handler רץ עד הסוף ומשחזר את הגלובלי לפני שהקוד הנקטע ממשיך. מול threads היא לא thread-safe, כי שני threads רצים במשולב ולא מקונן, ויכולים לדרוס זה לזה את הגלובלי באמצע. לגבי errno: ה-handler יכול לקרוא ל-write, שמשנה errno, ואם הוא קטע קוד שבדיוק עמד לבדוק את errno אחרי syscall שנכשל, הקוד הזה יראה ערך שגוי. לכן handler שומר את errno במשתנה מקומי בכניסה ומחזיר אותו ביציאה.",
+        "rubric": [
+          "דוגמה: שמירה ושחזור של גלובלי, reentrant אבל לא thread-safe",
+          "ההבדל: קטיעת signal מקוננת (LIFO), threads משולבים",
+          "handler משנה errno דרך syscalls וקוד נקטע יקרא ערך שגוי, לכן שומרים ומשחזרים"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1126,7 +1329,17 @@
         "שגוי: SA_RESTART קובע אם syscalls שנקטעו יתחדשו. אין לו קשר למבנה הנתונים שה-handler פוגש."
       ],
       "id": "conc.mutex-locks.q39",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "מימשת את ההעברה עם pipe או eventfd. מה בדיוק ה-handler עושה, ומה קורה כשה-signal מגיע הרבה פעמים לפני שה-thread מתעורר?",
+        "modelAnswer": "ה-handler שומר errno, קורא ל-`write` (שהיא async-signal-safe) ל-eventfd או ל-pipe, ומשחזר errno. ה-pipe חייב להיות O_NONBLOCK, כדי שאם הוא מלא ה-handler לא ייחסם; איבוד כתיבה במקרה כזה לא מזיק, כי מספיק byte אחד כדי להעיר את ה-thread. eventfd צובר את הכתיבות במונה אחד, ו-read מחזיר את הסכום. חשוב: signals רגילים (לא real-time) לא נספרים, ושני signals מאותו סוג שמגיעים בזמן שאחד pending מתמזגים לאחד, ולכן ממילא אי אפשר לסמוך על ספירה מדויקת שלהם. החלופה הנקייה היא signalfd: חוסמים את ה-signal בכל ה-threads עם pthread_sigmask, ו-thread אחד קורא אותו כאירוע מ-file descriptor, בלי handler בכלל.",
+        "rubric": [
+          "write היא async-signal-safe, עם שמירה ושחזור של errno",
+          "pipe עם O_NONBLOCK כדי שה-handler לא ייחסם",
+          "signals רגילים מתמזגים ולא נספרים",
+          "signalfd דורש לחסום את ה-signal בכל ה-threads"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1157,7 +1370,17 @@
         "https://leetcode.com/discuss/post/489558/microsoft-azure-bangalore-by-anonymous_u-wwn9/"
       ],
       "id": "conc.mutex-locks.q40",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "ב-try_pop שמחזיר את האיבר לפי ערך יש בעיית exception safety ידועה. מהי, ואילו צורות API פותרות אותה?",
+        "modelAnswer": "אם הפונקציה מסירה את האיבר מה-stack ואז מחזירה אותו לפי ערך, וה-copy constructor זורק בזמן ההחזרה, האיבר כבר לא ב-stack וגם לא אצל הקורא, כלומר הוא אבד. זו הסיבה ההיסטורית ש-std::stack מפריד בין top ל-pop. פתרונות: (1) `bool try_pop(T& out)` שמעתיק ליעד של הקורא לפני ההסרה, כך שאם ההעתקה זורקת, ה-stack לא השתנה. (2) להחזיק ולהחזיר `std::shared_ptr<T>`, שהעתקה שלו לא זורקת. (3) לדרוש ש-move constructor של T יהיה noexcept, ואז `std::optional<T>` שבנוי ב-move בטוח. כל אחד מהם שומר על בדיקה ושליפה תחת אותו lock.",
+        "rubric": [
+          "האיבר הוסר וההעתקה בהחזרה זרקה, ולכן הוא אבד",
+          "out-parameter: מעתיקים לפני ההסרה",
+          "shared_ptr<T> שהעתקתו לא זורקת",
+          "דרישה ל-move noexcept עם optional"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1199,7 +1422,16 @@
         "שגוי: כל פעולת תור אטומית לבדה, אבל רצף ההעברה וההחלפה לא. זו אותה בעיה כמו check-then-act."
       ],
       "id": "conc.mutex-locks.q42",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "עם mutex אחד, ה-pop מחזיק את ה-lock לאורך העברה של O(n) איברים. מה זה עושה ל-throughput עם 16 threads ו-stack גדול, ומה היית מציע במקום?",
+        "modelAnswer": "ה-critical section גדל ליניארית עם גודל ה-stack: עם מיליון איברים pop מחזיק את ה-lock מילי-שניות, וכל שאר ה-threads מחכים, כך שה-throughput של כל המערכת יורד ביחס הפוך ל-n. להעביר את ה-O(n) ל-push לא עוזר, כי זה רק מזיז את הבעיה. בפועל לא בונים stack מקבילי משני queues: מחזיקים std::vector תחת mutex, שבו push ו-pop הם O(1) amortized, וה-critical section קצר וקבוע. אם התחרות עדיין גבוהה, יש Treiber stack: lock-free עם CAS על pointer ה-head, שצריך לטפל בבעיית ABA ובשחרור זיכרון בטוח (hazard pointers או epochs).",
+        "rubric": [
+          "critical section של O(n) תחת lock, ו-throughput יורד ביחס ל-n",
+          "vector תחת mutex: O(1) amortized ו-critical section קבוע",
+          "Treiber stack עם CAS על head, ובעיות ABA ו-reclamation"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1231,7 +1463,17 @@
         "https://leetcode.com/discuss/post/7019880/apple-sde-1-interview-india-by-utkarshda-ddqi/"
       ],
       "id": "conc.mutex-locks.q43",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "הצעת CLOCK במקום LRU מדויק. הסבר איך get יכול לרוץ תחת shared_lock בלי race, ומה עושה ה-eviction.",
+        "modelAnswer": "האיברים מסודרים במעגל (מערך), ולכל אחד יש `std::atomic<bool>` של referenced. get מוצא את האיבר תחת shared_lock ומדליק את הביט ב-store עם relaxed, בלי לגעת במבנה עצמו, ולכן כמה קוראים במקביל לא יוצרים data race. אופטימיזציה: לבדוק את הביט לפני הכתיבה, כדי שמפתח חם לא יכתוב שוב ושוב ל-cache line משותף. ה-eviction רץ תחת unique_lock: מחוג עובר על המעגל, אם הביט דלוק הוא מכבה אותו וממשיך (הזדמנות שנייה), ואת האיבר הראשון שהביט שלו כבוי הוא מפנה. במקרה הגרוע המחוג מקיף את כל המעגל, O(n), אבל בממוצע זה זול, והתוצאה קירוב טוב ל-LRU.",
+        "rubric": [
+          "ביט referenced אטומי לכל איבר, get כותב רק אותו תחת shared_lock",
+          "בדיקה לפני כתיבה כדי לחסוך כתיבות ל-cache line",
+          "eviction תחת unique_lock: מחוג מכבה ביטים דלוקים ומפנה את הראשון עם ביט כבוי",
+          "מקרה גרוע O(n) לסיבוב שלם"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1252,7 +1494,17 @@
         "שגוי: עדכון רשימה מקושרת דורש שינוי של כמה pointers יחד. atomics נפרדים לא נותנים אטומיות לכל העדכון."
       ],
       "id": "conc.mutex-locks.q44",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "אחרי ה-sharding, מפתח אחד מקבל 50% מהתעבורה, וה-shard שלו הוא שוב צוואר בקבוק. איך תזהה את זה ומה תעשה?",
+        "modelAnswer": "sharding מחלק רק מפתחות שונים, ולכן הוא לא עוזר מול skew. מזהים את זה עם metrics לכל shard: מספר פעולות וזמן המתנה ל-lock, ומחפשים shard אחד שבולט. פתרונות: (1) near cache מקומי לכל thread למפתחות חמים, עם TTL קצר או invalidation, כך שרוב הקריאות לא נוגעות ב-shard. (2) לצמצם כתיבות במסלול ה-hit: לעדכן את סדר ה-LRU רק בהסתברות (למשל 1 מ-16), או לדחות את העדכון ל-buffer, כי מפתח חם ממילא יישאר בראש הרשימה. (3) אם המפתח כמעט רק נקרא, לשמור את הערך שלו כ-snapshot immutable שמתחלף אטומית. המחיר של near cache הוא staleness, ולכן צריך לבדוק שהאפליקציה סובלת אותו.",
+        "rubric": [
+          "sharding לא עוזר מול מפתח חם יחיד",
+          "זיהוי עם metrics לכל shard (פעולות וזמן המתנה)",
+          "near cache מקומי לכל thread, במחיר staleness",
+          "עדכון LRU הסתברותי או דחוי למפתחות חמים"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1273,7 +1525,17 @@
         "שגוי: פינוי של מפתח שעדיין בשימוש גורם ל-miss בפעם הבאה, לא לתוצאה שגויה. הערך נטען מחדש."
       ],
       "id": "conc.mutex-locks.q45",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "למה ההחלה של ה-buffer נעשית עם tryLock ולא עם lock, ולמה איבוד אירועים תחת עומס כבד פוגע ב-hit rate פחות ממה שנדמה?",
+        "modelAnswer": "אם thread אחר כבר מרוקן את ה-buffers, אין טעם שגם ה-thread הנוכחי יחכה: tryLock שנכשל פשוט מחזיר אותו מיד לקורא, כך שה-get לעולם לא נחסם על ה-lock של המדיניות, והעבודה מתבצעת ב-batch על ידי מי שכבר מחזיק. כדי שה-buffer עצמו לא יהפוך לנקודת תחרות, מחלקים אותו לכמה ring buffers לפי hash של ה-thread. לגבי האיבוד: תחת עומס, רוב האירועים מגיעים ממפתחות חמים, ולכן גם אם חלק מהם נזרקים, המפתחות האלה נרשמים שוב מהר ומעמדם ב-LRU נשמר. המפתחות שהאיבוד פוגע בהם הם קרים ממילא. חשוב: זה נכון רק לאירועי קריאה; אירועי כתיבה (insert, delete) הולכים ל-buffer נפרד שלא מאבד אירועים, כי שם איבוד היה באג נכונות.",
+        "rubric": [
+          "tryLock שנכשל חוזר מיד, ולכן get לא נחסם על lock המדיניות",
+          "buffers מחולקים לפי thread כדי למנוע תחרות על ה-buffer",
+          "אירועים שנזרקים הם בעיקר של מפתחות חמים שנרשמים שוב",
+          "אירועי כתיבה עוברים ב-buffer שלא מאבד"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1301,7 +1563,17 @@
         "https://leetcode.com/discuss/post/1262088/apple-ict3-april-2021-offer-by-anonymous-jsei/"
       ],
       "id": "conc.mutex-locks.q46",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "נעילת כל ה-stripes ל-resize עוצרת את כל המערכת לזמן O(n), כלומר spike של latency. איך maps מקביליים אמיתיים נמנעים מ-resize שעוצר הכול?",
+        "modelAnswer": "הרעיון הוא migration הדרגתי במקום העתקה בבת אחת. ב-ConcurrentHashMap של Java 8, ה-resize מעביר bucket אחד בכל פעם, ובמקום ה-bucket שהועבר בטבלה הישנה שם ForwardingNode שמפנה לטבלה החדשה. פעולה שמגיעה ל-bucket כזה הולכת לטבלה החדשה, ו-threads שמכניסים בזמן resize גם עוזרים להעביר חלק מה-buckets. ב-Redis יש rehash הדרגתי: שתי טבלאות חיות במקביל, כל פעולה מעבירה כמה buckets, ו-lookup בודק בשתיהן עד שההעברה מסתיימת. המחיר: מימוש מסובך יותר ופעולות מעט איטיות יותר בזמן ההעברה, אבל במקום spike אחד של O(n) העלות מתפזרת על פני הרבה פעולות.",
+        "rubric": [
+          "migration הדרגתי, bucket אחרי bucket",
+          "סימון bucket שהועבר (forwarding node) שמפנה לטבלה החדשה",
+          "פעולות עוזרות להעביר או בודקות בשתי הטבלאות",
+          "העלות מתפזרת במקום spike של O(n)"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1322,7 +1594,16 @@
         "שגוי: אפשר, רק במחיר של נעילה כוללת או בתוצאה מקורבת."
       ],
       "id": "conc.mutex-locks.q47",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "החלטת שמספיק size מקורב בלי לנעול כלום. איך מממשים אותו בלי data race, איזו הבטחה הוא נותן, ולמה לא פשוט מונה atomic גלובלי אחד?",
+        "modelAnswer": "כל מונה per-stripe הופך ל-`std::atomic<long>` מרופד ל-cache line משלו. הכתיבה נעשית תחת ה-lock של ה-stripe (או עם fetch_add), ו-size() סוכם load עם relaxed מכל המונים. בגלל שהגישות אטומיות אין UB, אבל הסכום הוא תערובת של ערכים מרגעים שונים, ולכן ייתכן שהוא לא היה הגודל האמיתי באף רגע; הוא רק נמצא בין המינימום למקסימום שהיו במהלך הסריקה, בתנאי שהמונים זזים רק לכיוון אחד. מונה גלובלי אחד היה מדויק יותר, אבל כל insert ו-erase היו עושים RMW על אותה cache line, וזה בדיוק ה-bouncing שה-striping נועד למנוע. זה הרעיון של LongAdder ב-Java: מונים מפוזרים שנסכמים רק כשקוראים.",
+        "rubric": [
+          "מונים atomic לכל stripe, מרופדים ל-cache line",
+          "size סוכם עם relaxed loads, בלי UB אבל לא snapshot מדויק",
+          "מונה גלובלי יחיד יוצר cache line bouncing על כל insert/erase"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1343,7 +1624,17 @@
         "שגוי: התקן מגדיר זאת במפורש בדרישות של unordered associative containers."
       ],
       "id": "conc.mutex-locks.q48",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "ומה אם המבנה היה std::map, absl::flat_hash_map או std::deque עם push_back? איפה p נשאר תקף ואיפה לא, ומה ה-trade-off?",
+        "modelAnswer": "std::map הוא node-based: insert לא פוסל לא pointers ולא iterators. flat_hash_map משתמש ב-open addressing ושומר את האיברים ישירות במערך, ולכן rehash מזיז אותם וכל pointer לאיבר נפסל. absl::node_hash_map שומר כל איבר ב-node נפרד ולכן יציב. ב-std::deque, push_back פוסל iterators אבל לא references לאיברים קיימים, כי הוא מקצה בלוקים חדשים ולא מזיז ישנים. ה-trade-off: יציבות כתובות דורשת הקצאה לכל איבר ו-pointer chasing, כלומר יותר cache misses, ואילו מבנים שטוחים מהירים יותר אבל מזיזים איברים.",
+        "rubric": [
+          "std::map: pointers ו-iterators נשארים תקפים ב-insert",
+          "flat_hash_map (open addressing): rehash מזיז איברים ופוסל pointers",
+          "deque::push_back פוסל iterators אבל לא references",
+          "יציבות = הקצאה לכל node ויותר cache misses"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1374,7 +1665,17 @@
         "https://leetcode.com/discuss/post/5141523/google-interview-how-to-implement-a-mult-baaq/"
       ],
       "id": "conc.mutex-locks.q49",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "הבאג מופיע פעם בשבוע ב-production. איך תשחזר אותו בבדיקה, ואיזה sanitizer תופס איזה חלק ממנו?",
+        "modelAnswer": "כדי לשחזר, כותבים stress test שבו כמה threads קוראים ל-get ו-thread אחד עושה set על אותו מפתח בלולאה, בלי reserve, כך ש-emplace_back מבצע realloc לעתים קרובות. AddressSanitizer יתפוס heap-use-after-free, אבל רק בהרצה שבה realloc באמת קרה בזמן שה-get חיפש. ThreadSanitizer חזק יותר כאן: הוא מזהה את ה-race בין הקריאה לכתיבה גם בלי realloc וגם אם התוצאה במקרה נכונה, כי הוא בודק happens-before ולא תוצאה. המחיר של TSan הוא בערך פי 5-15 בזמן ריצה ופי 5-10 בזיכרון, ולכן מריצים אותו ב-CI ולא ב-production, ואי אפשר להריץ אותו יחד עם ASan באותו build.",
+        "rubric": [
+          "stress test: כותב על אותו מפתח בלי reserve כדי לגרום ל-realloc",
+          "ASan: heap-use-after-free רק כש-realloc קרה בפועל",
+          "TSan מזהה race גם בלי realloc, לפי happens-before",
+          "TSan עולה בערך פי 5-15 זמן, ולא משלבים אותו עם ASan"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1395,7 +1696,17 @@
         "שגוי: insert של מפתח חדש משנה את ה-unordered_map (ואולי rehash), ו-find מקבילי בלי lock הוא data race."
       ],
       "id": "conc.mutex-locks.q50",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "בתכנון הזה, מה קורה כשצריך למחוק מפתח? איזה באג מחכה שם ואיך מונעים אותו?",
+        "modelAnswer": "הסכנה: thread A מוצא את ה-entry תחת shared lock של ה-map, משחרר אותו, ואז נועל את ה-mutex של המפתח. בינתיים thread B מוחק את המפתח ומשחרר את ה-entry, כולל ה-mutex עצמו, ו-A נועל זיכרון משוחרר. פתרון אחד: להחזיק את ה-shared lock של ה-map לאורך כל הפעולה על המפתח (קודם map, אחר כך מפתח, תמיד באותו סדר), ומחיקה לוקחת unique lock על ה-map, ולכן מחכה שכל הקוראים יסיימו. פתרון שני: לשמור `std::shared_ptr<Entry>` ב-map, כך ש-A מחזיק reference count והזיכרון לא משתחרר מתחתיו. פתרון שלישי: לא למחוק בכלל ולסמן tombstone. סדר נעילה קבוע map ואז מפתח מונע deadlock.",
+        "rubric": [
+          "מחיקה בזמן ש-thread אחר מחזיק pointer ל-entry = use-after-free של ה-mutex",
+          "להחזיק shared lock על ה-map בזמן עבודה על המפתח; מחיקה דורשת unique lock",
+          "חלופה: shared_ptr<Entry> או tombstone",
+          "סדר נעילה קבוע: map ואז מפתח"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1416,7 +1727,17 @@
         "שגוי: size() של vector נקרא במקביל ל-push_back שמשנה אותו, וזה data race. וגם realloc עדיין אפשרי."
       ],
       "id": "conc.mutex-locks.q51",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "המערך הקבוע מתמלא ועוברים ל-chunks. איך הקורא מוצא את האיבר i בלי lock, ומתי מותר לשחרר זיכרון?",
+        "modelAnswer": "מחלקים לבלוקים בגודל קבוע, למשל 1024 איברים, שלעולם לא זזים, ומחזיקים directory של pointers אליהם. איבר i נמצא ב-chunk מספר i/1024 ובאינדקס i%1024, ועם חזקה של 2 זה shift ו-mask. הכותב מקצה chunk חדש, כותב את ה-pointer שלו ל-directory, ממלא את התא, ורק אז מפרסם את n עם release; הקורא שעושה load של n עם acquire רואה גם את ה-pointer וגם את התוכן. אם ה-directory בגודל קבוע ומספיק, אין מה לשחרר, כי זה מבנה append-only. אם ה-directory עצמו צריך לגדול, מעתיקים אותו לגדול כפליים ומחליפים pointer אטומית, ואת הישן אפשר לשחרר רק כשאין קוראים שמחזיקים אותו (epoch או hazard pointers), או פשוט להשאיר אותו, כי סכום כל הגרסאות קטן מפי 2 מהגרסה האחרונה.",
+        "rubric": [
+          "chunks בגודל קבוע שלא זזים, אינדקס דרך i/C ו-i%C",
+          "סדר הכתיבה: pointer ל-chunk ותוכן התא לפני פרסום n עם release",
+          "append-only: chunks לא משתחררים כל עוד המבנה חי",
+          "directory שגדל: החלפה אטומית ושחרור עם epoch/hazard או השארה (סכום פחות מפי 2)"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1466,7 +1787,17 @@
         "שגוי: שום exception לא נשמר. כל ניסיון מריץ את הבנאי מחדש."
       ],
       "id": "conc.mutex-locks.q53",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "שני threads קוראים ל-instance() בו-זמנית, והבנאי של הראשון זורק. מה חווה השני? ואם פתיחת הקובץ נכשלת תמיד, מה הבעיה בהתנהגות הזו ואיך תתכנן אחרת?",
+        "modelAnswer": "השני מחכה על ה-guard. כשהאתחול של הראשון יוצא ב-exception, ה-guard משתחרר במצב לא מאותחל, והשני מנסה לאתחל בעצמו, כלומר מריץ את הבנאי שוב. ה-exception של הראשון לא נשמר ולא נזרק לשני; אם גם אצלו הבנאי נכשל, הוא מקבל exception משלו. כשהכשל קבוע, כל קריאה ל-instance() מנסה שוב לפתוח את הקובץ, וזה יכול להפוך ל-retry storm יקר במסלול חם. פתרון: לתכנן אתחול שלא זורק אלא שומר מצב שגיאה, למשל אובייקט שמחזיק `std::expected` (C++23) או דגל failed, כך שהכישלון נשמר פעם אחת, ולהוסיף retry מבוקר עם backoff אם רוצים.",
+        "rubric": [
+          "ה-thread הממתין מנסה לאתחל בעצמו אחרי הכישלון",
+          "ה-exception לא נשמר ולא מועבר ל-threads אחרים",
+          "כשל קבוע גורם לניסיון חוזר בכל קריאה (retry storm)",
+          "פתרון: אתחול ששומר מצב שגיאה (expected/דגל) ו-backoff"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1487,7 +1818,16 @@
         "נכון: UB לפי התקן. בפועל אותו thread מחכה ל-guard שהוא עצמו מחזיק (deadlock), ובחלק מהמימושים או המצבים נזרק __gnu_cxx::recursive_init_error. אסור לסמוך על אף אחד מהם."
       ],
       "id": "conc.mutex-locks.q54",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "Config ו-Logger צריכים זה את זה בבנייה. איך שוברים את התלות המעגלית, ואיזו בעיה דומה מחכה בצד ההריסה?",
+        "modelAnswer": "הפתרון הנקי הוא לבנות את שני האובייקטים במפורש ב-main בסדר מוגדר ולהעביר references (dependency injection), כך שהסדר נראה בקוד ולא מוסתר בשרשרת קריאות. אם חייבים singletons: אתחול דו-שלבי, כלומר הבנאי בונה רק את המינימום, ואת החלק שתלוי באובייקט השני מאתחלים בשלב init נפרד או בעצלות, בשימוש הראשון ולא בבנאי. בצד ההריסה: static מקומיים נהרסים בסדר הפוך לסיום הבנייה שלהם, ולכן אם Logger נבנה לפני Config, הוא נהרס אחריו, אבל אם ה-destructor של Config כותב ללוג ו-Logger נבנה אחריו, Config ישתמש ב-Logger שכבר נהרס. לכן או שולטים בסדר במפורש, או מקצים עם new ולא הורסים בכלל.",
+        "rubric": [
+          "בנייה מפורשת ב-main והעברת references (dependency injection)",
+          "אתחול דו-שלבי או עצלני של התלות במקום בבנאי",
+          "הריסה בסדר הפוך לבנייה: destructor עלול להשתמש באובייקט שכבר נהרס"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1510,7 +1850,17 @@
         "https://www.hellointerview.com/community/questions/mutex-semaphore-comparison/cmlufiz6y09lt0eadwjafzgyl"
       ],
       "id": "conc.mutex-locks.q55",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "תן סדרי גודל במספרים על x86 מודרני: lock+unlock בלי תחרות, העברה של spinlock תחת תחרות, והעברה של mutex שהממתין שלו ישן. מאיפה מגיע כל מספר?",
+        "modelAnswer": "בלי תחרות, גם mutex וגם spinlock הם פעולת RMW אטומית על cache line מקומית, בערך 20 מחזורים לכל אחת, כלומר lock+unlock בסביבות 10-25 ns, ואין ביניהם הבדל משמעותי. העברה של spinlock תחת תחרות עולה בעיקר העברה של ה-cache line בין cores: בערך 50-100 ns על אותו socket ויותר בין sockets. העברה של mutex לממתין ישן כוללת FUTEX_WAKE (syscall, מאות ns עד מיקרו-שנייה), ואז ה-scheduler צריך להריץ את ה-thread שהתעורר, וזה context switch של כמה מיקרו-שניות. אם ה-core של הממתין נכנס ל-C-state עמוק, היציאה ממנו יכולה להוסיף עשרות מיקרו-שניות. כלומר הפער בין המקרים הוא כמה סדרי גודל, ומקורו בתנועת cache lines, syscalls ו-scheduler, לא בפרימיטיב עצמו.",
+        "rubric": [
+          "בלי תחרות: RMW אטומי, בערך 10-25 ns, דומה ל-mutex ול-spinlock",
+          "העברת spinlock: העברת cache line, עשרות עד ~100 ns",
+          "העברת mutex לממתין ישן: syscall ו-context switch, מיקרו-שניות",
+          "C-states עמוקים מוסיפים עשרות מיקרו-שניות"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1531,7 +1881,16 @@
         "שגוי: shared_lock לא מגביל את מספר המחזיקים. כל 12 ייכנסו יחד."
       ],
       "id": "conc.mutex-locks.q56",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "ה-semaphore מבטיח שיש ערוץ פנוי, אבל לא אומר איזה. איך תבחר ערוץ ספציפי בלי mutex, ובאיזה סדר משחררים?",
+        "modelAnswer": "מחזיקים `std::atomic<uint32_t>` כ-bitmask של ערוצים תפוסים. אחרי acquire מוצלח על ה-semaphore מובטח שלפחות ביט אחד פנוי, ולכן לולאת CAS תמצא אותו: קוראים את המסכה, מוצאים את הביט הפנוי הראשון (למשל עם `std::countr_one`), ומנסים compare_exchange שמדליק אותו; אם thread אחר הקדים, חוזרים על הניסיון. הלולאה מסתיימת תמיד, כי ה-semaphore לא נותן ליותר מ-4 להיכנס. בשחרור הסדר חשוב: קודם מכבים את הביט (fetch_and עם release), ורק אחר כך release על ה-semaphore. בסדר הפוך, thread חדש עלול לעבור את ה-semaphore ולא למצוא ביט פנוי.",
+        "rubric": [
+          "bitmask אטומי, ותפיסת ביט עם לולאת compare_exchange",
+          "ה-semaphore מבטיח שיש ביט פנוי ולכן הלולאה מסתיימת",
+          "בשחרור: קודם לכבות את הביט, אחר כך release ל-semaphore"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1558,7 +1917,17 @@
         "שגוי: ל-semaphore אין בעלים, ולכן אין למי להוריש עדיפות. PI קיים ל-mutex."
       ],
       "id": "conc.mutex-locks.q57",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "מישהו מציע לתקן את ה-spinlock ב-user space תחת oversubscription על ידי `sched_yield()` בלולאה. למה זה פתרון חלש, ומה עדיף?",
+        "modelAnswer": "sched_yield לא יודע מי מחזיק את ה-lock ולא נותן לו את ה-CPU במפורש: הוא רק מוותר על ה-time slice לטובת מה שה-scheduler יבחר. ב-CFS המשמעות של yield חלשה, וה-thread יכול לקבל את ה-CPU שוב כמעט מיד. בנוסף, המחזיק יכול להיות ב-runqueue של core אחר, ואז ה-yield לא עוזר לו בכלל. כל איטרציה היא syscall, כך שהממתינים עדיין שורפים CPU, רק לאט יותר. עדיף spin קצר וחסום ואז שינה אמיתית ב-futex, כלומר mutex רגיל או adaptive, שבו הממתין יוצא מה-runqueue לגמרי ומתעורר רק כשמישהו משחרר.",
+        "rubric": [
+          "yield לא מעביר את ה-CPU למחזיק ולא יודע מיהו",
+          "המחזיק יכול להיות ב-runqueue של core אחר",
+          "כל איטרציה syscall וה-CPU עדיין מבוזבז",
+          "spin קצר ואז שינה ב-futex"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1608,7 +1977,17 @@
         "נכון: מעגל המתנה קלאסי שנוצר רק בגלל העדפת הכותבים."
       ],
       "id": "conc.mutex-locks.q59",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "הקוד עבר את כל הבדיקות ב-Linux ונתקע רק ב-Windows. איך זה אפשרי, ואיך תאתר את ה-deadlock כשהוא קורה?",
+        "modelAnswer": "נעילה רקורסיבית של shared lock היא UB לפי התקן, וכל מימוש עושה משהו אחר. ב-glibc ברירת המחדל של pthread_rwlock (שעליה בנוי std::shared_mutex ב-libstdc++) מעדיפה קוראים, ולכן הנעילה השנייה של R מצליחה גם כשכותב מחכה, והבאג נסתר. ב-MSVC, std::shared_mutex בנוי על SRWLOCK, שלא תומך ברכישה רקורסיבית, ולכן שם זה נתקע. כלומר בדיקות שעוברות לא מוכיחות כלום על UB. לאיתור: לוקחים dump של כל ה-threads בזמן התקיעה (ב-Linux `gdb -p` ואז `thread apply all bt`, ב-Windows WinDbg עם `~*k`), ומחפשים thread שמחכה ב-lock_shared בזמן שבמחסנית שלו כבר יש lock_shared על אותו אובייקט. התיקון: נעילה פעם אחת בגבול ה-API, ופונקציות פנימיות שמניחות שה-lock מוחזק.",
+        "rubric": [
+          "UB, וכל מימוש מתנהג אחרת",
+          "glibc מעדיף קוראים כברירת מחדל ולכן הבאג נסתר; SRWLOCK לא תומך ברקורסיה",
+          "dump של כל ה-threads: gdb thread apply all bt או WinDbg ~*k",
+          "נעילה אחת בגבול ה-API"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1632,7 +2011,17 @@
         "שגוי: notify תחת ה-lock תקין לגמרי מבחינת נכונות. זה לכל היותר עניין קטן של ביצועים, ולא מסביר קוראים שנשארים ישנים."
       ],
       "id": "conc.mutex-locks.q60",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "אם על אותו cv מחכים גם קוראים וגם כותבים, notify_all מעיר את כולם. מה המחיר, ואיך תתכנן את ה-RW lock טוב יותר?",
+        "modelAnswer": "notify_all מעיר את כל הממתינים, וכולם מתחרים על m_. הכותבים בודקים את ה-predicate שלהם (אין כותב ואין קוראים), מגלים שהקוראים כבר נכנסו, וחוזרים לישון. כל wake-up כזה הוא context switch של מיקרו-שניות ועוד תחרות על m_, בלי שום התקדמות (thundering herd). התכנון הטוב יותר הוא שני condition variables: אחד לקוראים ואחד לכותבים. כשכותב משחרר, מדיניות ההעדפה קובעת: notify_one לכותב ממתין, או notify_all לקוראים. כשהקורא האחרון משחרר (readers_ יורד ל-0), הוא עושה notify_one לכותבים. כך כל wake-up מעיר רק מי שבאמת יכול להתקדם.",
+        "rubric": [
+          "כולם מתעוררים ומתחרים על m_, רובם חוזרים לישון (thundering herd)",
+          "שני cvs נפרדים לקוראים ולכותבים",
+          "הקורא האחרון עושה notify_one לכותב",
+          "מדיניות ההעדפה קובעת את מי מעירים בשחרור כותב"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1660,7 +2049,16 @@
       ],
       "problem": "Google onsite: implement a mutex using a semaphore",
       "id": "conc.mutex-locks.q61",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "באילו מצבים דווקא היעדר ה-ownership של semaphore הוא יתרון, ולמה אפשר לקרוא ל-sem_post מתוך signal handler אבל לא ל-pthread_mutex_unlock?",
+        "modelAnswer": "היעדר ownership מאפשר signaling בין threads: producer עושה post ו-consumer עושה wait, וזה בדיוק מה ש-mutex אוסר, כי רק הבעלים רשאי לשחרר. זה גם מאפשר לספור משאבים שעוברים בין threads. POSIX מגדיר את sem_post כ-async-signal-safe: הוא בעצם פעולה אטומית על המונה ו-wake אם יש ממתינים, בלי מצב פנימי שיכול להיות חצי מעודכן. pthread_mutex_unlock לא ברשימה הזו, וגם אם היה, ה-handler לא מחזיק את ה-mutex ולכן אין לו מה לשחרר. לכן הדפוס הקלאסי הוא signal handler שעושה sem_post ו-thread רגיל שעושה sem_wait ומטפל באירוע.",
+        "rubric": [
+          "signaling: post מ-thread אחד ו-wait מ-thread אחר, אסור עם mutex",
+          "sem_post מוגדר async-signal-safe ב-POSIX",
+          "pthread_mutex_unlock לא async-signal-safe ודורש בעלות"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1684,7 +2082,16 @@
       ],
       "explanation": "ערך התחלתי של semaphore הוא מספר הכניסות הזמינות. כ-lock הוא חייב להיות 1. ערך 0 מתאים לשימוש אחר: signaling, כש-thread אחד מחכה שאחר יודיע שמשהו קרה.",
       "id": "conc.mutex-locks.q62",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "עם ערך התחלתי 0 ה-semaphore מתאים ל-signaling. מה ההבדל בינו לבין condition_variable עם דגל, ומה קורה אם קוראים ל-release פעמיים על `counting_semaphore<1>`?",
+        "modelAnswer": "semaphore זוכר: release שקורה לפני acquire מגדיל את המונה, וה-acquire הבא עובר מיד, כך שאין lost wakeup. notify של condition_variable כשאף אחד לא מחכה פשוט הולך לאיבוד, ולכן cv תמיד צריך predicate על דגל שמוגן ב-mutex. היתרונות של cv: תנאי שרירותי, ו-notify_all שמעיר את כולם בבת אחת. לגבי release כפול: ל-release יש precondition שהמונה אחרי ההגדלה לא יעבור את max(), שהוא 1 כאן, ולכן release שני בלי acquire ביניהם הוא UB, לא ערך שנשאר 1 בשקט. מכאן שעם binary_semaphore צריך לוודא שאין שני releases ברצף.",
+        "rubric": [
+          "semaphore שומר release מוקדם, אין lost wakeup",
+          "notify בלי ממתין הולך לאיבוד, cv צריך predicate תחת mutex",
+          "release שעובר את max() הוא UB (precondition)"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1711,7 +2118,17 @@
       ],
       "explanation": "ההבדל המהותי הוא ownership. כל מה שתלוי בשאלה \"מי מחזיק\" (priority inheritance, בדיקת unlock, recursion) נעלם. mutual exclusion והמתנה בלי busy-wait נשארים.",
       "id": "conc.mutex-locks.q63",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "איך היית מדגים priority inversion בבדיקה על Linux, כדי לשכנע את הצוות שה-PI שאבד חשוב?",
+        "modelAnswer": "בונים שלושה threads עם SCHED_FIFO, כולם מקובעים לאותו core עם pthread_setaffinity_np: L בעדיפות נמוכה (למשל 10) לוקח את ה-lock ועושה עבודה של מילי-שנייה, H בעדיפות גבוהה (90) מנסה לקחת את ה-lock, ו-M בעדיפות בינונית (50) הוא לולאת CPU ארוכה שמתחילה אחרי ש-L נעל. מודדים עם clock_gettime את זמן ההמתנה של H ל-lock, על אלפי חזרות, ומציגים histogram. עם ה-semaphore, H מחכה כל זמן ש-M רץ, כי M מונע מ-L להתקדם. עם pthread_mutex עם PTHREAD_PRIO_INHERIT, L עולה ל-90, מסיים מהר, וזמן ההמתנה של H חסום באורך ה-critical section. צריך לשים לב ל-RT throttling: ברירת המחדל sched_rt_runtime_us היא 950000, כלומר משימות RT מקבלות לכל היותר 95% מה-CPU.",
+        "rubric": [
+          "שלושה threads בעדיפויות נמוכה, בינונית וגבוהה על אותו core (affinity)",
+          "M הוא CPU hog שמונע מ-L להתקדם",
+          "מדידה של זמן ההמתנה של H, עם histogram על הרבה חזרות",
+          "עם PI ההמתנה חסומה באורך ה-critical section של L"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1739,7 +2156,17 @@
       ],
       "problem": "Google staff embedded coding round: spinlock vs mutex choice",
       "id": "conc.mutex-locks.q64",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "ב-Linux, timer callback רגיל רץ ב-softirq. איזה וריאנט של spinlock תשתמש בכל צד (process context ו-callback), ולמה?",
+        "modelAnswer": "בצד ה-process צריך `spin_lock_bh`, שמבטל bottom halves (softirqs) על ה-CPU המקומי. בלי זה, ה-thread מחזיק את ה-lock, softirq של ה-timer רץ על אותו CPU (למשל ביציאה מ-interrupt), מנסה לקחת את ה-lock ומסתובב לנצח, כי ה-thread לא יחזור לרוץ עד שה-softirq יסיים. בתוך ה-callback עצמו מספיק `spin_lock` רגיל, כי softirq לא נקטע על ידי softirq אחר על אותו CPU. אם גם hardirq handler נוגע באותם נתונים, צריך לעלות ל-`spin_lock_irqsave`. הכלל: מבטלים בדיוק את סוג ההקשר שיכול לקטוע את המחזיק על אותו CPU ולנסות לקחת את אותו lock.",
+        "rubric": [
+          "spin_lock_bh בהקשר process",
+          "deadlock אם softirq קוטע את המחזיק על אותו CPU",
+          "spin_lock רגיל בתוך ה-softirq",
+          "spin_lock_irqsave אם גם hardirq נוגע בנתונים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1760,7 +2187,17 @@
       ],
       "explanation": "adaptive mutex מנסה לקבל את הטוב משני העולמות: spin קצר כשסביר שהשחרור קרוב, ושינה כשלא. זה משתלם רק כשהמחזיק באמת רץ במקביל, כלומר על core אחר.",
       "id": "conc.mutex-locks.q65",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "כמה זמן adaptive mutex צריך להסתובב, איך glibc מחליט את זה בפועל, ומה ה-mutex של kernel Linux עושה חכם יותר?",
+        "modelAnswer": "תקציב ה-spin צריך להיות בסדר גודל של עלות השינה וההתעוררות, כלומר מיקרו-שניות ספורות. ב-glibc הגבול נקבע ב-tunable `glibc.pthread.mutex_spin_count` (ברירת מחדל 100 איטרציות), וה-mutex שומר ממוצע נע של כמה זמן הוא היה צריך להסתובב בפעמים הקודמות, ומתאים את ה-spin הבא לפיו. החולשה: glibc לא בודק אם המחזיק רץ כרגע, ולכן יכול להסתובב לחינם על מחזיק שעבר preemption. ה-mutex של ה-kernel עושה optimistic spinning רק כל עוד המחזיק רץ על CPU (בדיקת owner on cpu), ומפסיק מיד אם המחזיק נרדם, כי ל-kernel יש את המידע הזה וב-user space אין.",
+        "rubric": [
+          "תקציב spin בסדר גודל של עלות block+wake",
+          "glibc: tunable mutex_spin_count (ברירת מחדל 100) וממוצע נע לכל mutex",
+          "glibc לא יודע אם המחזיק רץ",
+          "kernel mutex מסתובב רק כל עוד הבעלים רץ על CPU"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1784,7 +2221,17 @@
       ],
       "explanation": "test-and-set נאיבי יוצר \"סערת coherence\": כל ניסיון כותב ל-line. test-and-test-and-set מסתובב על קריאה מקומית, וכותב רק כשה-lock נראה פנוי. מוסיפים `_mm_pause` (או yield ב-ARM) וקצת backoff, וזה ה-spinlock הסטנדרטי.",
       "id": "conc.mutex-locks.q66",
-      "lesson": "conc.mutex-locks"
+      "lesson": "conc.mutex-locks",
+      "followUp": {
+        "prompt": "גם עם test-and-test-and-set, ב-unlock כל 15 הממתינים רואים את ה-line נפסלת ומסתערים על exchange בבת אחת. מה העלות, איך מקטינים אותה, ואיך תוכיח את הבעיה עם כלי?",
+        "modelAnswer": "ב-unlock ה-line נפסלת אצל כל הממתינים, כולם מקבלים miss, רואים false, וכולם מנסים exchange כמעט ביחד. רק אחד מצליח, אבל ה-line עוברת במצב בלעדי בין כולם, כלומר תעבורה של O(P) לכל העברת lock ו-O(P בריבוע) כש-P threads לוקחים את ה-lock אחד אחרי השני. exponential backoff עם רנדומיזציה ותקרה מפזר את הניסיונות בזמן ומקטין את ההתנגשויות, במחיר latency כשה-lock מתפנה בזמן שכולם בהמתנה. queue lock כמו MCS הופך את התעבורה ל-O(1) לכל העברה. כדי להוכיח, `perf c2c` מראה את ה-cache lines עם הכי הרבה HITM (גישה ל-line שנמצא modified ב-cache של core אחר), ואת ה-offset וה-functions שנוגעים בה, וה-lock יופיע שם בראש הרשימה.",
+        "rubric": [
+          "ב-unlock כל הממתינים מקבלים miss ומנסים RMW יחד: O(P) תעבורה להעברה",
+          "exponential backoff רנדומלי עם תקרה",
+          "queue lock (MCS) נותן O(1) להעברה",
+          "perf c2c מראה HITM על ה-line של ה-lock"
+        ]
+      }
     }
   ]
 }

@@ -394,7 +394,17 @@
         "שגוי. const_cast על this וכתיבה דרכו הם UB אם האובייקט עצמו הוגדר const (למשל `const Image img;`). זה גם מסתיר את הכוונה במקום להצהיר עליה.",
         "שגוי. הסרת const שוברת את ה-API: כל מי שמחזיק `const Image&` כבר לא יכול לקבל histogram, למרות שמבחינה לוגית זו פעולת קריאה.",
         "שגוי. static member משותף לכל מופעי Image, ולכן ה-cache של תמונה אחת יוחזר לתמונה אחרת. זה פותר את בעיית ה-const בדרך שגויה לוגית."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו `histogram()` נקראת מ-16 threads במקביל על אותה Image, ורובן מגיעות אחרי שה-cache כבר מוכן. mutex רגיל סביב כל הקריאה הוא צוואר בקבוק. איך היית מממש את ה-cache כך שהמסלול החם (cache כבר קיים) כמעט לא עולה כלום?",
+        "modelAnswer": "הפתרון הנקי הוא `std::once_flag` עם `std::call_once`: אחרי האתחול הראשון, call_once בודק דגל עם acquire load בלבד, בלי lock. חלופה ידנית היא double-checked locking: `std::atomic<bool> ready` שנקרא עם acquire, ורק אם הוא false לוקחים mutex, בודקים שוב, מחשבים ואז store(true, release). ה-release/acquire מבטיח שמי שרואה ready==true רואה גם את תוכן ה-histogram המלא. ללא atomic, double-checked locking הוא data race ו-UB. אם ה-Image ניתנת לשינוי (invalidate של ה-cache), call_once כבר לא מספיק וצריך shared_mutex או גרסה (version counter) שמשווים אליה. העלות במסלול החם היא load אחד ו-branch, כמה ננו-שניות, לעומת lock/unlock שעולה עשרות ננו-שניות ויותר תחת contention.",
+        "rubric": [
+          "מציע std::call_once או double-checked locking עם std::atomic",
+          "מסביר שה-release/acquire נדרש כדי שתוכן ה-cache ייראה שלם ב-thread הקורא",
+          "מציין שבלי atomic הבדיקה הכפולה היא data race (UB)",
+          "מזכיר שאם ה-cache צריך invalidate, call_once לא מספיק"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q09",
@@ -417,7 +427,16 @@
         "שגוי. describe<double> מחזירה `v + 0.5`, כלומר 1.5 ולא 1. אין כאן המרה ל-int.",
         "שגוי. describe<int> לוקחת את הענף של is_integral ומחזירה int 6; הענף עם 0.5 לא מקומפל עבורה.",
         "נכון. describe<int> מחזירה int ‏6, ו-describe<double> מחזירה double ‏1.5; cout מדפיס 1.5 כמו שהוא."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה היה קורה אם היית מחליף את `if constexpr` ב-`if` רגיל עם אותו תנאי, ומה אם במקום זה הענף השני היה קורא לפונקציה שלא קיימת עבור int (למשל `x.size()`)? למה if constexpr פותר את שני המקרים רק בתוך template?",
+        "modelAnswer": "עם if רגיל שני ה-return משתתפים ב-return type deduction של auto, וב-describe<int> יש return של int ו-return של double, ולכן שגיאת קומפילציה (inconsistent deduction). גם `x.size()` על int היה נכשל, כי עם if רגיל שני הענפים עוברים instantiation. ב-if constexpr הענף שלא נבחר הוא discarded statement: הוא לא עובר instantiation ולא משתתף ב-deduction. זה עובד רק כשהקוד בענף תלוי ב-template parameter, כי רק אז יש שלב instantiation נפרד שאפשר לדלג עליו. קוד לא תלוי (למשל קריאה לפונקציה לא מוצהרת בלי ארגומנט תלוי) עדיין נבדק כבר בשלב ההגדרה ונכשל.",
+        "rubric": [
+          "if רגיל: שני ה-return משתתפים ב-deduction והטיפוסים סותרים, שגיאת קומפילציה",
+          "הענף שנזרק ב-if constexpr לא עובר instantiation",
+          "ההגנה חלה רק על ביטויים שתלויים ב-template parameter"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q10",
@@ -438,7 +457,16 @@
         "שגוי. באתחול `std::string t = make();` C++17 מבטיח copy elision: האובייקט נבנה ישירות ב-t, בלי copy ובלי move, וה-cv של ה-prvalue לא מפריע.",
         "נכון. בהשמה ה-const חוסם את `operator=(string&&)` ונבחר copy assignment; באתחול מ-prvalue מאותו class type יש guaranteed copy elision. לכן לא מחזירים const by value.",
         "שגוי. החזרת const by value חוקית לגמרי, רק לא מומלצת כי היא חוסמת move."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מישהו טוען שהחזרת `const std::string` by value מגינה מפני `make() = other;` ולכן היא best practice. כמה זה עולה בפועל בלולאה שמבצעת `s = make();` מיליון פעמים על מחרוזות של 1KB, ומה הדרך המודרנית להשיג את אותה הגנה בלי המחיר?",
+        "modelAnswer": "בגלל ה-const, `s = make()` בוחר copy assignment: כל איטרציה מעתיקה 1KB (וייתכן גם הקצאה אם הקיבולת של s לא מספיקה), במקום move שהוא החלפת 3 מצביעים. במיליון איטרציות זה בערך 1GB של memcpy ועד מיליון הקצאות, לעומת כמעט אפס עם move. ההגנה מפני השמה ל-rvalue מושגת היום עם ref-qualifier על אופרטור ההשמה של המחלקה שלך: `T& operator=(const T&) &;`, שמאפשר השמה רק ל-lvalue. עבור std::string אין מה לעשות, אבל ממילא השמה ל-temporary היא באג נדיר שה-linters תופסים. לכן ההמלצה מאז C++11 היא לא להחזיר const by value.",
+        "rubric": [
+          "const by value הופך כל השמה ל-copy במקום move",
+          "move של string הוא O(1) (כמה מצביעים) לעומת העתקה של n bytes ואולי הקצאה",
+          "החלופה: ref-qualifier & על operator= כדי לחסום השמה ל-rvalue"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q11",
@@ -472,7 +500,16 @@
         "נכון. const_cast תמיד מתקמפל; השאלה היא האובייקט האמיתי. b אינו const, ולכן (1) תקינה; a הוגדר const, וכתיבה אליו היא UB ([dcl.type.cv]).",
         "שגוי. const_cast נועד להסיר const מגישה לאובייקט שאינו const במקור (למשל API ישן). שינוי של אובייקט שהוגדר const הוא UB בכל מקרה.",
         "שגוי. שתיהן מתקמפלות: const_cast מ-const int& ל-int& חוקי תחבירית בשני המקרים. ההבדל הוא בהתנהגות בזמן ריצה, לא בקומפילציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בפועל, מה קורה בדרך כלל כשמריצים את שורה (2) עם -O2? תאר שני תרחישים שונים שהקומפיילר וה-linker יכולים לייצר, ולמה ייתכן שתראה ש-`a` מודפס כ-1 גם אחרי הכתיבה.",
+        "modelAnswer": "תרחיש ראשון: a הוא קבוע שלם עם initializer קבוע, ולכן הקומפיילר מציב 1 ישירות בכל שימוש (constant propagation) ואולי לא מקצה לו storage בכלל. אם כן נלקחה כתובתו (כמו כאן בגלל const_cast), הכתיבה הולכת לזיכרון אבל הדפסה של a עדיין משתמשת ב-1 המוצב, כך שנראה שהכתיבה לא קרתה. תרחיש שני: a הוא global או static const, והוא יושב ב-.rodata שממופה read-only, ואז הכתיבה גורמת ל-segfault (SIGSEGV). כמשתנה מקומי על ה-stack הכתיבה פיזית מצליחה, אבל הקומפיילר עדיין רשאי להתעלם ממנה. כל אלה תוצאות לגיטימיות של UB, ולכן אין התנהגות אחת לצפות לה.",
+        "rubric": [
+          "constant propagation: הקומפיילר מציב 1 בשימושים ולכן הכתיבה לא נראית",
+          "global const יכול לשבת ב-.rodata והכתיבה גורמת ל-segfault",
+          "מסיק שאין התנהגות צפויה כי זה UB"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q13",
@@ -499,7 +536,16 @@
         "נכון. constinit מותר רק על משתנים עם static או thread storage duration; על משתנה מקומי אוטומטי הוא לא מתקמפל.",
         "נכון. constexpr על הצהרת משתנה גורר const ([dcl.constexpr]).",
         "שגוי. כל קריאה ל-consteval (immediate function) חייבת להיות constant expression, בלי קשר למה שעושים עם התוצאה. ארגומנט של זמן ריצה הוא שגיאת קומפילציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך `constinit std::atomic<int> g_count{0};` ב-a.cpp ו-constructor של global ב-b.cpp שמגדיל אותו. למה זה בטוח מבחינת סדר אתחול, ולמה לא היית יכול לכתוב `constexpr` במקום `constinit`?",
+        "modelAnswer": "constinit מבטיח שהמשתנה עובר constant initialization, כלומר הערך ההתחלתי כבר צרוב בקובץ הבינארי (.data) לפני שכל dynamic initialization מתחיל. לכן ה-constructor ב-b.cpp רואה g_count מאותחל בלי קשר לסדר בין ה-TUs, וזה מונע static initialization order fiasco. אם האתחול לא קבוע, הקומפיילר נותן שגיאה במקום ליפול בשקט ל-dynamic init. constexpr גורר const, ואז אי אפשר להגדיל את המונה בכלל: fetch_add ו-operator++ הן מתודות לא const. constinit מפריד בין זמן האתחול לבין ה-constness.",
+        "rubric": [
+          "constinit = ערך התחלתי בזמן קומפילציה, לפני כל dynamic initialization",
+          "לכן אין תלות בסדר האתחול בין translation units",
+          "constexpr היה הופך את המשתנה ל-const ואי אפשר לשנות אותו"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q14",
@@ -520,7 +566,16 @@
         "שגוי. a הוא constexpr ולכן מחושב בקומפילציה; אין כאן שלב של זמן ריצה. ובחישוב קבוע UB נתפס כשגיאה.",
         "שגוי. wrap-around מוגדר רק ל-unsigned. signed overflow הוא UB (גם ב-C++20, שקבע two's complement לייצוג אבל לא לגלישה), ובהקשר constexpr זו שגיאה.",
         "שגוי. התקן מחייב diagnostic כאן, לא warning עם ערך unspecified: הביטוי פשוט לא מהווה constant expression."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מנצל את התכונה הזו (UB אסור ב-constant expression) כדי לבדוק UB בקוד אמיתי, למשל פונקציית bit manipulation או חישוב אינדקס? מה המגבלות של הטכניקה?",
+        "modelAnswer": "כותבים את הפונקציה כ-constexpr ומריצים עליה מקרי קצה בתוך static_assert, למשל `static_assert(f(INT_MAX) == ...)` או בדיקה של shift בגודל 31 ו-32. אם יש signed overflow, shift ברוחב לא חוקי, קריאה מחוץ לגבולות מערך או קריאת ערך לא מאותחל, הקומפיילר חייב להוציא שגיאה, כי ביטוי עם core-language UB אינו constant expression. זה בעצם sanitizer חינמי בזמן קומפילציה, בלי -fsanitize ובלי הרצה. המגבלות: זה בודק רק את הקלטים שבחרת, לא את כל המרחב. UB של הספרייה (למשל precondition של פונקציה סטנדרטית) לא חייב להיתפס. וקוד שתלוי ב-I/O, ב-reinterpret_cast או בדברים שלא מותרים ב-constexpr לא ניתן לבדיקה כך.",
+        "rubric": [
+          "מריצים את הפונקציה בתוך static_assert על מקרי קצה",
+          "דוגמאות ל-UB שנתפס: signed overflow, shift לא חוקי, out-of-bounds",
+          "מגבלה: רק הקלטים שנבדקו, ו-library UB לא מובטח שייתפס"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q15",
@@ -561,7 +616,16 @@
         "שגוי. c הוא const int שמאותחל מ-f(): האתחול שלו נבדק קודם כ-constant initialization, ושם is_constant_evaluated מחזיר true, ולכן הוא 1 ולא 2.",
         "שגוי. זה מניח ש-b מחושב בקומפילציה כי f() היא constexpr. הקובע הוא ההקשר: אתחול של int רגיל אינו manifestly constant-evaluated.",
         "נכון. a (constexpr) מקבל 1; b (int רגיל) מקבל 2; c (const int ממספר שלם, שאתחולו נבדק כ-constant initialization) מקבל 1."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מפתח כתב `constexpr double my_sqrt(double x)` שמשתמש ב-`std::is_constant_evaluated()` כדי לבחור בין לולאת Newton לבין `__builtin_sqrt` (הוראת SSE). מה הסכנה המרכזית בדפוס הזה, ואיך C++23 משפר אותו?",
+        "modelAnswer": "הסכנה היא ששני המסלולים לא מחזירים בדיוק אותו ערך: Newton עם מספר איטרציות קבוע יכול להיות רחוק ב-ULP אחד או יותר מהוראת sqrtsd שמעוגלת נכון. אז אותו ביטוי נותן תוצאה שונה בזמן קומפילציה ובזמן ריצה, ו-static_assert שעובר לא מעיד על הריצה. טעות נפוצה נוספת היא `if constexpr (std::is_constant_evaluated())`, שתמיד true כי התנאי של if constexpr עצמו מחושב בזמן קומפילציה. C++23 מוסיף `if consteval { }`, שאין לו את המלכודת הזו ומאפשר לקרוא לפונקציות consteval בענף שלו. כדי למזער את הסכנה בודקים שהמימוש בזמן קומפילציה מעוגל נכון, או מקבלים במפורש סטייה מוגדרת.",
+        "rubric": [
+          "שני המסלולים עלולים לתת ערכים שונים (הבדלי ULP)",
+          "if constexpr (std::is_constant_evaluated()) הוא תמיד true",
+          "C++23 מוסיף if consteval"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q17",
@@ -582,7 +646,16 @@
         "שגוי. אתחול in-class של static const/constexpr member מטיפוס literal מותר מאז C++98 (ל-const integral) ו-C++11 (ל-constexpr).",
         "נכון. ב-C++14 ההצהרה במחלקה איננה הגדרה, ו-odr-use דרך const& דורש הגדרה ב-cpp, ולכן undefined reference (לעיתים רק ב-O0). C++17 הפך static constexpr data member ל-inline variable.",
         "שגוי. inline variable (C++17) מותר להופיע בכמה TUs בדיוק כמו inline function; זה לא ODR violation."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה הבאג הזה של C++14 הופיע רק ב-O0 ונעלם ב-O2? ואם אתה תקוע ב-C++14, מה בדיוק כותבים ואיפה כדי לתקן?",
+        "modelAnswer": "ב-O2 הקומפיילר עושה inlining ל-std::max, ואז קריאת `const int&` הופכת לשימוש בערך 8 ישירות, ואין צורך בכתובת של kN. ב-O0 אין inlining, הקריאה ל-max מעבירה כתובת בפועל, והקומפיילר מייצר relocation לסימבול Cfg::kN שאף אחד לא הגדיר, ולכן ה-linker נותן undefined reference. ב-C++14 מוסיפים בדיוק קובץ cpp אחד עם `constexpr int Cfg::kN;` בלי initializer, כי ה-initializer כבר במחלקה. שתי הגדרות כאלה בשני קבצים היו מפרות ODR. דרך נוספת להימנע מ-odr-use היא להעביר עותק: `std::max(3, +Cfg::kN)` או `int(Cfg::kN)`, שיוצרים prvalue.",
+        "rubric": [
+          "ב-O2 inlining מבטל את הצורך בכתובת, ב-O0 נוצרת הפניה לסימבול",
+          "התיקון ב-C++14: הגדרה `constexpr int Cfg::kN;` בקובץ cpp אחד בלי initializer",
+          "חלופה: לגרום ל-prvalue (למשל +Cfg::kN) כדי למנוע odr-use"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q18",
@@ -610,7 +683,16 @@
         "מתקמפל. s הוא static local עם static storage duration, ולכן הכתובת שלו קבועה כמו של משתנה גלובלי.",
         "מתקמפל. nullptr הוא constant expression, ו-constexpr pointer ל-const int חוקי.",
         "מתקמפל. constexpr על pointer הופך רק את ה-pointer לקבוע (`int* const`); האובייקט g אינו const, ולכן `*p5 = 7` מותר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין `constexpr const int* p` לבין `constexpr int* const p`, ולמה בעצם אפשר לכתוב `*p5 = 7` למרות ש-p5 הוא constexpr? ומה היה קורה אם g היה משתנה `thread_local`?",
+        "modelAnswer": "constexpr על הצהרת pointer מחיל const על ה-pointer עצמו (top-level), ולכן `constexpr int* p` שקול ל-`int* const p` שערכו ידוע בזמן קומפילציה. לכן `constexpr int* const p` כפול ומיותר, ו-`constexpr const int* p` הוא pointer קבוע לאובייקט const. האובייקט g עצמו לא const, ולכן כתיבה דרך p5 חוקית. thread_local הוא בעייתי: לכל thread יש עותק בכתובת אחרת, שנקבעת בזמן ריצה (TLS), ולכן `&tls_var` אינו address constant expression ו-constexpr pointer אליו לא מתקמפל. בדומה, כתובת של משתנה אוטומטי לא קבועה כי ה-stack frame משתנה בכל קריאה.",
+        "rubric": [
+          "constexpr על pointer הוא top-level const על ה-pointer, לא על ה-pointee",
+          "כתיבה דרך p5 חוקית כי g לא const",
+          "כתובת של thread_local נקבעת בזמן ריצה ולכן אינה constant expression"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q19",
@@ -626,7 +708,17 @@
         "מבחין בין constness לוגית ל-bitwise"
       ],
       "explanation": "השאלה בודקת אם אתה מבין ש-const הוא חלק מחוזה ה-thread safety בפועל, ולא רק מגבלה של הקומפיילר.",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "הצעת mutex בתוך המחלקה כדי להגן על ה-mutable cache. מה זה עושה ל-copy/move של המחלקה, ואיך אתה מחליט בין mutex, atomic ו-precompute ב-constructor בסביבה real-time שבה קריאה ב-hot path מוגבלת ל-1 מיקרו-שנייה?",
+        "modelAnswer": "std::mutex הוא non-copyable ו-non-movable, ולכן member כזה מוחק את ה-copy וה-move שהקומפיילר מייצר, וצריך לכתוב אותם ידנית (להעתיק את ה-cache תחת lock של המקור וליצור mutex חדש). ב-real-time, mutex מוסיף סיכון ל-blocking ול-priority inversion, וגם lock לא contended עולה עשרות ננו-שניות; תחת contention זה יכול לחרוג מהתקציב. atomic מתאים כשה-cache קטן (ערך יחיד, למשל double או pointer) או כשמשתמשים ב-call_once ופרסום עם release/acquire. אם החישוב דטרמיניסטי וזול מספיק, precompute ב-constructor מבטל לגמרי את המצב המשתנה: האובייקט באמת bitwise const ובטוח לקריאה מקבילה. ב-hot path של real-time הבחירה המועדפת היא precompute או immutable snapshot שמוחלף דרך atomic pointer, ולא lock.",
+        "rubric": [
+          "mutex כ-member מוחק copy ו-move ודורש מימוש ידני",
+          "mutex ב-real-time: blocking ו-priority inversion",
+          "precompute ב-constructor הופך את האובייקט ל-bitwise const ובטוח לקריאה",
+          "atomic מתאים לערך קטן או לפרסום עם release/acquire"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q20",
@@ -753,7 +845,16 @@
         "שגוי. 8 הוא fib(6). זו טעות off-by-one בספירת האיטרציות; אחרי 7 איטרציות a הוא 13.",
         "שגוי. ההגבלה ל-return יחיד הייתה ב-C++11 בלבד. מ-C++14 פונקציה constexpr יכולה להכיל לולאות ומשתנים מקומיים.",
         "שגוי. static_assert בלי הודעה מותר מאז C++17."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שבמקום fib(7) כתבו fib(90) עם int, ובגרסה רקורסיבית נאיבית. מה יקרה בזמן קומפילציה, ומה המגבלות שהקומפיילר מטיל על חישובי constexpr?",
+        "modelAnswer": "fib(90) בערך 2.9e18, מעבר ל-INT_MAX (בערך 2.1e9), כך שכבר fib(47) גורם ל-signed overflow. בהקשר קבוע זה UB ולכן הקומפיילר חייב לתת שגיאה ולא תוצאה שגויה. גם עם long long, גרסה רקורסיבית נאיבית היא O(phi^n), בערך 10^18 קריאות, והקומפיילר יעצור על מגבלות: GCC מגביל עומק רקורסיה עם -fconstexpr-depth (ברירת מחדל 512) ומספר פעולות עם -fconstexpr-ops-limit, ו-Clang עם -fconstexpr-steps. הפתרון הוא גרסה איטרטיבית ב-O(n) עם טיפוס רחב מספיק, שמותרת מ-C++14. חישוב constexpr מאט את הבנייה, ולכן טבלאות גדולות כדאי לחשב בתבונה.",
+        "rubric": [
+          "int גולש כבר בסביבות fib(47), ובהקשר קבוע זה שגיאת קומפילציה",
+          "רקורסיה נאיבית אקספוננציאלית, והקומפיילר עוצר על מגבלות עומק/צעדים",
+          "פתרון: גרסה איטרטיבית O(n) וטיפוס רחב יותר"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q26",
@@ -774,7 +875,16 @@
         "נכון. במתודה const, p_ נראה כ-`int* const`: ה-pointer קבוע, אבל ה-int שהוא מצביע עליו לא (shallow const), ולכן `*p_ = 1` מתקמפל.",
         "שגוי. v_ הוא const vector, ו-operator[] const מחזיר `const int&`. בניגוד ל-pointer, vector מעביר את ה-const לאיברים (deep const).",
         "שגוי. p_ עצמו הוא member, ולכן במתודה const הוא `int* const` ואי אפשר להציב לו."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הבעיה הזו נקראת shallow const. איך היית גורם לכך ש-`*p_ = 1` לא יתקמפל בתוך מתודת const, בלי לוותר על ה-pointer הגולמי, ואיפה זה חשוב בקוד אמיתי?",
+        "modelAnswer": "עוטפים את ה-pointer בטיפוס שמעביר const: מחלקה קטנה עם שתי גרסאות של operator* ו-operator->, גרסת const מחזירה `const T&` וגרסה רגילה מחזירה `T&`. זה בדיוק `std::experimental::propagate_const` מה-Library Fundamentals TS. חלופה פשוטה יותר היא להחזיק את ה-pointer private ולגשת אליו רק דרך accessors עם overload ל-const ול-non-const. זה חשוב ב-pimpl idiom: מתודת const של המחלקה החיצונית יכולה בטעות לשנות את ה-Impl דרך unique_ptr, כי גם unique_ptr הוא shallow const. ב-thread safety זה קריטי, כי מניחים שמתודת const לא כותבת, ושבירת ההנחה הזו יוצרת data race שה-compiler לא מזהיר עליו.",
+        "rubric": [
+          "עטיפה עם operator* ו-operator-> בגרסת const שמחזירה const T&",
+          "מזכיר propagate_const או accessors עם overloads",
+          "דוגמה: pimpl עם unique_ptr סובל מאותה בעיה"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q27",
@@ -795,7 +905,16 @@
         "נכון. ב-(1) ה-vector מקצה ומשחרר בתוך sum, והתוצאה היא int. ב-(2) הזיכרון היה צריך לשרוד מעבר לחישוב הקבוע, וזה אסור (אין non-transient allocation).",
         "שגוי. vector הוא אכן constexpr ב-C++20, אבל רק לשימוש transient. משתנה constexpr מטיפוס vector עם איברים היה דורש שההקצאה תשרוד לזמן ריצה.",
         "שגוי. range-for מותר בפונקציה constexpr מאז C++14. וההפך נכון: (2) היא זו שנכשלת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה צריך lookup table של 4096 ערכי sin ב-Q15 שמחושבת בזמן קומפילציה ונגישה בזמן ריצה. איך תבנה את זה ב-C++20, ומה הבעיה עם `std::sin` בתוך פונקציית constexpr?",
+        "modelAnswer": "פונקציה constexpr מחזירה `std::array<int16_t, 4096>`, ממלאת אותו בלולאה, ומאתחלים `constexpr auto table = make_table();` או `static constexpr` בתוך פונקציה, כך שהטבלה נכנסת ל-.rodata בלי קוד אתחול. std::array עובד כי אין לו הקצאה דינמית, בניגוד ל-vector. הבעיה: std::sin אינו constexpr לפני C++26 (GCC מאפשר זאת כהרחבה, Clang לא), ולכן צריך מימוש משלך, למשל Taylor series או CORDIC, עם range reduction ל-[-pi/2, pi/2]. צריך לבדוק שהדיוק מספיק ל-Q15 (שגיאה מתחת ל-1/32768) ושהעיגול ל-int16 לא חורג ב-32767. זמן הקומפילציה עולה, אבל 4096 ערכים זה זניח.",
+        "rubric": [
+          "constexpr function שמחזירה std::array, משתנה constexpr ב-.rodata",
+          "std::sin אינו constexpr (לפני C++26), צריך מימוש משלך",
+          "מימוש: Taylor או CORDIC עם range reduction ובדיקת דיוק/saturation ל-Q15"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q28",
@@ -816,7 +935,16 @@
         "שגוי. הקוד לא מגיע ל-link: name lookup של שם שלא הוצהר נכשל כבר בקומפילציה.",
         "נכון. מחוץ ל-template אין instantiation לדחות, ולכן הענף שלא נבחר נבדק במלואו, כולל name lookup, ו-legacy32_setup שלא הוצהר הוא שגיאה. לבחירה לפי פלטפורמה משתמשים ב-#if.",
         "שגוי. זו לא אזהרה אלא שגיאה: שימוש בשם שלא הוצהר הוא ill-formed גם בענף שלעולם לא ירוץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הצע שתי דרכים מודרניות (בלי `#if`) לגרום לקוד הזה להתקמפל על 64 ביט ולהשתמש ב-`legacy32_setup` רק ב-32 ביט. מה היתרון של כל אחת על פני ה-preprocessor?",
+        "modelAnswer": "דרך אחת: להפוך את init ל-template או generic lambda כך שהקריאה תהיה תלויה ב-template parameter, למשל `template<class T = void> void init()` וקריאה `legacy32_setup<T>()` או דרך טיפוס תלוי; אז הענף שנזרק לא עובר instantiation. דרך שנייה: להצהיר על legacy32_setup בכל הפלטפורמות (header משותף) ולספק מימוש רק ב-32 ביט; ב-64 ביט הענף נזרק, אין odr-use, ולכן אין צורך בהגדרה ב-link. ההצהרה מספיקה ל-name lookup. היתרון על #if הוא שהקוד בשני הענפים עובר בדיקת syntax ו-type בכל build, כך שקוד 32 ביט לא נרקב בשקט. החיסרון: אם ה-API באמת לא קיים בפלטפורמה (header חסר), #if עדיין הכרחי.",
+        "rubric": [
+          "להפוך את הקוד לתלוי ב-template parameter כדי שהענף לא יעבור instantiation",
+          "להצהיר על הפונקציה בכל מקום ולהגדיר רק ב-32 ביט; בענף שנזרק אין odr-use",
+          "יתרון: שני הענפים נבדקים בכל build, בניגוד ל-#if"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q29",
@@ -837,7 +965,16 @@
         "שגוי. static local עם dynamic initialization מאותחל בקריאה הראשונה לפונקציה, לא לפני main. רק constant initialization קורה \"מראש\".",
         "שגוי. lock נלקח רק בקריאה הראשונה (__cxa_guard_acquire); בשאר הקריאות יש רק בדיקת guard זולה. ול-B אין guard בכלל.",
         "שגוי. ההגבלה עד C++23 נוגעת ל-static בתוך פונקציה constexpr. `static constexpr` בפונקציה רגילה חוקי מאז C++11."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מוכיח ב-profiler או ב-disassembly שגרסה A משלמת על ה-guard? ובמקרה ש-build() לא יכולה להיות constexpr (למשל קוראת קובץ), איך מעלימים את ה-guard מה-hot path?",
+        "modelAnswer": "ב-disassembly (objdump -d או Compiler Explorer) רואים ב-A טעינה של guard variable (byte עם acquire, ב-x86 פשוט mov), השוואה ו-branch לפני כל גישה לטבלה, וקריאה ל-__cxa_guard_acquire במסלול הקר. ב-B הגישה היא lea/mov ישיר ל-.rodata. ב-perf אפשר לראות את ה-branch, אבל העלות בדרך כלל ננו-שנייה, אז המדד החשוב יותר הוא שה-guard חוסם vectorization ו-inlining מסוימים. אם build() חייבת להיות בזמן ריצה, מאתחלים את הטבלה פעם אחת ב-startup (למשל ב-init מפורש לפני שה-real-time threads מתחילים) ושומרים pointer או reference רגיל ש-hot path קורא בלי guard. חלופה: global עם constinit pointer שמאותחל ל-nullptr ומוצב ב-init. כך גם נמנע page fault ו-lock בקריאה הראשונה בתוך ה-deadline.",
+        "rubric": [
+          "ב-disassembly: load של guard ו-branch, וקריאה ל-__cxa_guard_acquire",
+          "ב-B: גישה ישירה ל-.rodata בלי קוד אתחול",
+          "פתרון: אתחול מפורש ב-startup והחזקת pointer/reference רגיל ב-hot path"
+        ]
+      }
     },
     {
       "id": "cpp.const-constexpr.q30",
@@ -858,7 +995,16 @@
         "שגוי. noexcept לא אומר כלום על אילו אובייקטים g משנה; זה לא קשור ל-aliasing.",
         "שגוי. אין כאן memory barrier; זו בעיית aliasing של קומפיילר בתוך thread אחד. הקומפיילר רק צריך לטעון את r מחדש מהזיכרון.",
         "נכון. g עשויה לשנות את האובייקט המקורי דרך alias אחר (למשל גלובלי), ולכן הקומפיילר חייב לטעון את r מחדש אחרי הקריאה. רק אם ידוע שהאובייקט עצמו הוגדר const מותר להניח שלא השתנה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אילו שינויים בקוד או בהצהרות היו מאפשרים לקומפיילר באופן חוקי לבצע את האופטימיזציה `return 2 * a;`? תן לפחות שתי דרכים.",
+        "modelAnswer": "דרך אחת: לקבל את הפרמטר by value (`int r`), ואז r הוא אובייקט מקומי שהכתובת שלו לא בורחת, ו-g לא יכולה לשנות אותו. דרך שנייה: אם הקומפיילר רואה את הגוף של g (באותו TU, או עם LTO) ומוכיח שהיא לא כותבת לזיכרון שאולי מתלכד עם r. דרך שלישית: לסמן את g כ-pure או const (`__attribute__((pure))` ב-GCC/Clang), הבטחה שהיא לא משנה זיכרון גלובלי. אפשר גם לקרוא את r פעם אחת לתוך מקומי ולהשתמש רק בו. לשים const על r או restrict לא מספיק ב-C++: const& לא מבטיח שהאובייקט לא ישתנה, ו-restrict אינו חלק מהתקן של C++ (רק הרחבה).",
+        "rubric": [
+          "העברה by value מבטלת את ה-aliasing",
+          "נראות של הגוף של g (אותו TU או LTO) מאפשרת הוכחה",
+          "attribute pure/const על g כהבטחה לקומפיילר"
+        ]
+      }
     },
     {
       "level": 3,
@@ -888,7 +1034,17 @@
       ],
       "problem": "NVIDIA / Qualcomm interview: implement a Singleton class",
       "id": "cpp.const-constexpr.q31",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "ה-Meyers singleton בטוח באתחול. מה קורה בסוף התוכנית אם global אחר, שה-destructor שלו רץ אחרי ה-destructor של Logger, קורא ל-`Logger::get().log(...)`? איך מתמודדים עם זה?",
+        "modelAnswer": "objects עם static storage duration נהרסים בסדר הפוך לסיום הבנייה שלהם. אם global X נבנה לפני ש-Logger אותחל לראשונה, X יהרס אחרי Logger, ואז ב-destructor של X הקריאה ל-get() מחזירה reference לאובייקט שכבר נהרס, וזה UB (dead reference problem). פתרון אחד: לגרום ל-X לקרוא ל-Logger::get() ב-constructor שלו, ואז Logger נבנה קודם ונהרס אחרי X. פתרון שני: leaky singleton, כלומר `static Logger* inst = new Logger;` שלעולם לא נהרס, וה-OS משחרר את הזיכרון ביציאה (אבל flush של קבצים צריך לקרות במפורש). פתרון שלישי: Nifty Counter, הטכניקה ש-iostream משתמש בה כדי ש-std::cout יהיה זמין גם ב-destructors של globals.",
+        "rubric": [
+          "statics נהרסים בסדר הפוך לסדר הבנייה",
+          "שימוש אחרי הריסה הוא UB (dead reference)",
+          "פתרון: leaky singleton או קריאה ל-get() ב-constructor של התלוי",
+          "מזכיר את Nifty Counter / std::cout כדוגמה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -909,7 +1065,16 @@
         "שגוי: constexpr (או constinit) פותר את הבעיה רק אם ל-Registry יש constexpr constructor. registry שמבצע הקצאות דינמיות לרוב לא עומד בזה."
       ],
       "id": "cpp.const-constexpr.q32",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "התיקון עם static local פותר את האתחול. בהקשר של plugins שנרשמים אוטומטית מ-static library, מה עוד יכול להשתבש, כך ש-Plugin בכלל לא נרשם, ואיך מזהים את זה?",
+        "modelAnswer": "כש-b.cpp נמצא ב-static library (.a או .lib), ה-linker מושך object file רק אם יש סימבול לא פתור שהוא מגדיר. אם אף אחד לא מתייחס ל-g_plugin או לפונקציה מ-b.o, ה-linker משמיט אותו לגמרי, וה-constructor הגלובלי לא רץ: ה-plugin פשוט לא נרשם בלי שום שגיאה. מזהים עם `nm` על הבינארי הסופי (הסימבול חסר) או עם הדפסה ב-constructor שלא מופיעה. התיקונים: `-Wl,--whole-archive` ב-GCC או `/WHOLEARCHIVE` ב-MSVC, לקשר את ה-object ישירות, או רישום מפורש מ-main (פונקציית init שמתייחסת לכל plugin). גם ב-shared library יש סדר אתחול לפי סדר הטעינה, שהוא עוד מקור לבאגים דומים.",
+        "rubric": [
+          "ה-linker משמיט object מ-static library אם אין אליו הפניה",
+          "מזהים עם nm או לוג שלא מופיע",
+          "תיקון: --whole-archive / WHOLEARCHIVE או רישום מפורש"
+        ]
+      }
     },
     {
       "level": 3,
@@ -933,7 +1098,16 @@
         "שגוי: get() מחזירה reference לאותו c בכל קריאה. הבעיה היא שה-reference מועתק לאובייקט חדש בצד הקורא."
       ],
       "id": "cpp.const-constexpr.q33",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "איך היית מתכנן את מחלקת Config כך שהבאג הזה בכלל לא יתקמפל? ואם מישהו כן צריך snapshot של הקונפיגורציה כדי לקרוא אותה ב-thread אחר בלי locks, מה היית מציע?",
+        "modelAnswer": "מוחקים במפורש את ה-copy constructor וה-copy assignment (`Config(const Config&) = delete;`), ומכיוון שהם מוצהרים, גם ה-move לא נוצר. אז `auto cfg = Config::get();` הוא שגיאת קומפילציה, ומשתמשים חייבים לכתוב `auto& cfg`. constructor פרטי לבד לא מספיק כי ה-copy constructor המובלע הוא public. עבור snapshot לקריאה מקבילה, מפרידים בין ה-singleton לבין struct נתונים פשוט (ConfigData) שכן ניתן להעתקה. ה-singleton מחזיק `std::shared_ptr<const ConfigData>`, הכותב יוצר עותק חדש ומחליף אותו אטומית (std::atomic<std::shared_ptr> ב-C++20, או atomic_load/atomic_store), והקוראים לוקחים snapshot עקבי בלי לחסום. זה דפוס RCU פשוט.",
+        "rubric": [
+          "= delete על copy constructor ו-copy assignment",
+          "constructor פרטי לא מונע העתקה",
+          "snapshot: struct נתונים ניתן להעתקה + shared_ptr<const> שמוחלף אטומית"
+        ]
+      }
     },
     {
       "level": 3,
@@ -968,7 +1142,16 @@
       ],
       "problem": "Qualcomm / NVIDIA / Intel interview: macro vs inline function",
       "id": "cpp.const-constexpr.q34",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "יש מאקרו `#define SQUARE(x) x*x` בקוד DSP ישן. תן שתי קריאות שנשברות מסיבות שונות (לא רק side effects), ואיך היית מחליף את המאקרו בלי לאבד ביצועים ובלי לשבור קוד C שעדיין משתמש ב-header?",
+        "modelAnswer": "קריאה ראשונה: `SQUARE(a+1)` נפרש ל-`a+1*a+1`, כלומר 2a+1 ולא (a+1)^2, בגלל חוסר סוגריים סביב הפרמטר. קריאה שנייה: `1.0/SQUARE(x)` נפרש ל-`1.0/x*x`, שמחזיר 1 בערך, בגלל חוסר סוגריים סביב כל הביטוי. וכמובן `SQUARE(i++)` מקדם פעמיים ובלי sequence point בין השניים, וזה UB. ב-C++ מחליפים ב-`template<class T> constexpr T square(T x) { return x*x; }`, שעובר inlining ב-O2 ועולה בדיוק כמו המאקרו. אם ה-header משותף ל-C, משתמשים ב-`static inline` function לכל טיפוס (C99 תומך) או ב-`#ifdef __cplusplus` עם template ל-C++ ומאקרו מוגן בסוגריים ל-C.",
+        "rubric": [
+          "SQUARE(a+1) נותן 2a+1 בגלל חוסר סוגריים סביב הפרמטר",
+          "1.0/SQUARE(x) נשבר בגלל חוסר סוגריים סביב הביטוי",
+          "החלפה ב-constexpr template / static inline, בלי מחיר ביצועים אחרי inlining"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1019,7 +1202,16 @@
         "נכון: לפונקציה יש סמל ושורות מקור, ולכן ה-debugger מכיר אותה. מאקרו נעלם לפני הקומפילציה."
       ],
       "id": "cpp.const-constexpr.q36",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "אם `inline` כבר לא מחייב את הקומפיילר להכניס את הגוף, מה הוא כן עושה היום? ומה קורה אם בשני קבצי cpp יש הגדרות שונות של אותה פונקציה inline?",
+        "modelAnswer": "היום המשמעות העיקרית של inline היא ODR: מותר להגדיר את הפונקציה בכמה translation units (בדרך כלל דרך header), וה-linker מאחד אותן להגדרה אחת (weak/COMDAT symbol) במקום לתת multiple definition. ההחלטה אם לעשות inlining בפועל היא של האופטימייזר, לפי heuristics של גודל ותדירות, ויש `__attribute__((always_inline))` או `__forceinline` כשבאמת צריך. אם בשני TUs יש הגדרות שונות, זו הפרת ODR, ill-formed no diagnostic required: ה-linker בוחר אחת באופן שרירותי, ובחלק מנקודות הקריאה ייתכן שהגרסה המקומית כבר עברה inlining. התוצאה היא באגים שתלויים ברמת אופטימיזציה ובסדר הקישור. LTO או -Wodr לפעמים מזהים את זה.",
+        "rubric": [
+          "inline מתיר הגדרה בכמה TUs (ODR) והלינקר מאחד",
+          "inlining בפועל הוא החלטת האופטימייזר",
+          "הגדרות שונות = הפרת ODR, no diagnostic required, הלינקר בוחר אחת"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1057,7 +1249,16 @@
       ],
       "problem": "Qualcomm / NVIDIA interview: the volatile keyword",
       "id": "cpp.const-constexpr.q37",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "ב-driver ל-SDR אתה ממפה register של FPGA ב-mmap וקורא ממנו status. למה volatile לבד לא מספיק כדי להבטיח שכתיבה ל-register הפקודה תגיע לחומרה לפני קריאת ה-status על ARM, ומה מוסיפים?",
+        "modelAnswer": "volatile מבטיח רק שהקומפיילר מוציא כל גישה ולא משנה את הסדר בין גישות volatile. הוא לא אומר כלום על ה-CPU: מעבדים עם memory model חלש כמו ARM יכולים לבצע או לחשוף גישות בסדר שונה, ו-write buffers יכולים לעכב את הכתיבה. לכן מוסיפים memory barrier של החומרה, ב-ARM `dsb` או `dmb` (ב-Linux kernel: `wmb()`, או accessors כמו `writel`/`readl` שכוללים אותם). בנוסף, המיפוי חייב להיות uncached או device memory (ב-Linux `pgprot_noncached` או ioremap), אחרת הכתיבה יכולה לשבת ב-cache. ב-x86 עם uncached mapping הסדר חזק יותר ולעתים volatile מספיק בפועל, אבל לא כדאי להסתמך על זה בקוד portable.",
+        "rubric": [
+          "volatile משפיע רק על הקומפיילר, לא על reordering של ה-CPU",
+          "צריך hardware barrier (dmb/dsb ב-ARM, או accessors כמו writel)",
+          "המיפוי צריך להיות uncached/device memory"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1078,7 +1279,17 @@
         "שגוי: זה מסתיר את הבאג ולא מתקן אותו. הקוד עדיין UB לפי התקן, ויכול להישבר בכל קומפיילר או מעבד."
       ],
       "id": "cpp.const-constexpr.q38",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "למה לא מספיק `std::atomic<bool>` עם `memory_order_relaxed` בשני הצדדים? ומה ההבדל בקוד המכונה בין release/acquire לבין seq_cst ב-x86 וב-ARM?",
+        "modelAnswer": "relaxed מבטיח שהלולאה תראה בסוף את ready=true ושאין data race על ready עצמו, אבל לא יוצר happens-before. לכן A יכול לראות ready==true ועדיין לקרוא ערך ישן של data, כי הכתיבה ל-data ב-B יכולה להיחשף אחרי ה-store של ready. release ב-B ו-acquire ב-A יוצרים synchronizes-with, וכל מה שנכתב לפני ה-release נראה אחרי ה-acquire. ב-x86 (TSO) acquire load ו-release store הם mov רגילים, רק מגבלות על הקומפיילר. seq_cst store ב-x86 הוא xchg או mov+mfence, שעולה עשרות מחזורים. ב-ARMv8 release/acquire הם stlr/ldar, ו-seq_cst משתמש באותן הוראות לרוב, כך שההבדל קטן יותר שם. ב-ARMv7 צריך dmb.",
+        "rubric": [
+          "relaxed לא יוצר happens-before ולכן data יכול להיות ישן",
+          "release/acquire יוצרים synchronizes-with",
+          "x86: acquire/release הם mov רגיל, seq_cst store דורש xchg או mfence",
+          "ARMv8: ldar/stlr"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1166,7 +1377,16 @@
         "שגוי: const היה מונע את ההגדלה (שגיאת קומפילציה), וגם const ב-namespace scope הוא internal linkage כברירת מחדל."
       ],
       "id": "cpp.const-constexpr.q41",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "התיקון הוא `inline int g_packets`. עכשיו on_packet רץ ב-RX thread בקצב של מיליון חבילות בשנייה, ו-report ב-thread אחר. מה הבעיה, ואיך היית מממש מונה כזה בלי להאט את ה-RX?",
+        "modelAnswer": "גישה מקבילה ל-int רגיל מ-thread כותב ו-thread קורא היא data race, ו-UB: הקומפיילר יכול להחזיק את המונה ב-register ולכתוב אותו רק בסוף הלולאה. התיקון הוא `inline std::atomic<uint64_t> g_packets{0};` עם `fetch_add(1, std::memory_order_relaxed)`, כי מונה סטטיסטי לא צריך לסנכרן נתונים אחרים. ב-x86 זה lock xadd, בערך 5-20 ננו-שניות כשאין contention, וזניח במיליון בשנייה. כשיש כמה threads כותבים, cache line ping-pong יכול לעלות מאות ננו-שניות, ואז נותנים לכל thread מונה משלו ב-cache line נפרדת (alignas(64)) וה-report מסכם. אם יש רק כותב אחד, אפשר אפילו load ו-store relaxed נפרדים במקום RMW אטומי.",
+        "rubric": [
+          "int רגיל מכמה threads הוא data race (UB)",
+          "std::atomic עם fetch_add relaxed מספיק למונה",
+          "כמה כותבים: מונה per-thread עם alignas(64) כדי למנוע false sharing"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1321,7 +1541,17 @@
         "שגוי: member operator< תקין לגמרי עבור sort."
       ],
       "id": "cpp.const-constexpr.q47",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "החלטת להחזיק `std::vector<std::unique_ptr<Sensor>>` כדי לשמור את ה-const member ועדיין למיין. מה אתה מרוויח ומה אתה משלם, במונחים של זיכרון וביצועים, כשיש מיליון sensors שממוינים ונסרקים בלולאה חמה?",
+        "modelAnswer": "מרוויחים שה-Sensor עצמו לא זז: המיון מחליף רק מצביעים (8 bytes), ו-id_ נשאר const, וגם pointers חיצוניים ל-Sensor נשארים תקפים. משלמים בהקצאה נפרדת לכל אובייקט: מיליון הקצאות, overhead של allocator (בערך 16 bytes לכל אחת) ו-8 bytes של pointer. החשוב יותר הוא locality: האובייקטים מפוזרים ב-heap, וסריקה בלולאה חמה עושה pointer chasing עם cache miss כמעט לכל איבר, 100 ננו-שניות לפעמים, לעומת סריקה רציפה שה-prefetcher מזין. החלופה הנפוצה היא להוריד את ה-const מ-id_, להפוך אותו ל-private ולשמור את ה-invariant דרך ה-interface, או למיין vector של אינדקסים.",
+        "rubric": [
+          "מיון מחליף רק pointers, האובייקטים לא זזים",
+          "עלות: הקצאה לכל אובייקט ו-overhead של allocator",
+          "פגיעה ב-locality: cache miss לכל איבר בסריקה",
+          "חלופה: id_ private לא const, או מיון אינדקסים"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1345,7 +1575,16 @@
         "שגוי: עם x=10 אין overflow. הזבל נובע מקריאה של hi_ לפני האתחול שלו."
       ],
       "id": "cpp.const-constexpr.q48",
-      "lesson": "cpp.const-constexpr"
+      "lesson": "cpp.const-constexpr",
+      "followUp": {
+        "prompt": "איך היית תופס את הבאג הזה אוטומטית בפרויקט גדול, לפני שהוא מגיע ל-production? ואיזה כלי תופס את הקריאה מהזיכרון הלא מאותחל בזמן ריצה?",
+        "modelAnswer": "בזמן קומפילציה: `-Wreorder` (חלק מ-`-Wall` ב-GCC ו-Clang) מזהיר כשרשימת האתחול לא בסדר ההצהרה, ו-`-Werror` הופך את זה לשבירת build. Clang גם מזהיר על שימוש ב-member לא מאותחל ב-initializer (-Wuninitialized). clang-tidy בודק את זה גם כן. בזמן ריצה: MemorySanitizer (-fsanitize=memory, Clang בלבד) מדווח על שימוש בערך לא מאותחל בנקודה שבה הוא משפיע על branch או פלט. Valgrind memcheck עושה דבר דומה בלי קימפול מחדש אבל איטי פי 20-50. AddressSanitizer לא תופס את זה, כי הזיכרון חוקי, רק לא מאותחל.",
+        "rubric": [
+          "-Wreorder (ב-Wall) עם -Werror",
+          "MemorySanitizer או Valgrind memcheck לזמן ריצה",
+          "ASan לא תופס קריאה של זיכרון לא מאותחל"
+        ]
+      }
     }
   ]
 }

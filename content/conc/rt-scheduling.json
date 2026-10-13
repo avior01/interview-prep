@@ -379,7 +379,16 @@
         "שגוי: זה היה נכון רק אם RT throttling כבוי (sched_rt_runtime_us = -1). בהגדרות ברירת המחדל ה-throttling משאיר כ-5% ל-threads לא-RT.",
         "שגוי: אין הוגנות בין מחלקת RT ל-SCHED_OTHER. FIFO שלא נחסם רץ לפני כל thread רגיל על אותו core.",
         "שגוי: הקרנל לא משנה policy אוטומטית ל-thread שמסתובב. ה-throttling רק עוצר זמנית את מחלקת ה-RT, וה-thread נשאר SCHED_FIFO 50."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-thread ב-FIFO חייב להגיב ל-flag תוך מיקרו-שניות בודדות. מה התיקון הנכון לתרחיש הזה, ומה המחיר של כל חלופה?",
+        "modelAnswer": "יש שתי חלופות סבירות. הראשונה: המתנה חוסמת (futex, condition variable או eventfd). ה-thread ב-FIFO ישן, ה-SCHED_OTHER רץ על אותו core ומעיר אותו. המחיר הוא wake-up latency של context switch, בדרך כלל כמה עד עשרות מיקרו-שניות ב-PREEMPT_RT, וגם syscall בצד שמדליק את ה-flag. השנייה: להעביר את שני ה-threads ל-cores שונים, ולתת ל-FIFO להסתובב על core מבודד. אז ה-latency הוא בערך העברה של cache line, סדר גודל של 100ns, אבל core שלם נשרף, ו-RT throttling עלול לחתוך את ה-thread שמסתובב אם לא מכבים אותו. בשתי החלופות ה-flag חייב להיות `std::atomic` עם release/acquire: על int רגיל זה data race, והקומפיילר רשאי להוציא את הקריאה מהלולאה ולהיתקע לנצח. פשרה נפוצה היא spin קצר ואז מעבר להמתנה חוסמת.",
+        "rubric": [
+          "המתנה חוסמת (futex/cv/eventfd) נותנת ל-SCHED_OTHER לרוץ, במחיר wake-up latency של מיקרו-שניות עד עשרות",
+          "spin על core נפרד: latency של כ-100ns, במחיר core שלם ו-RT throttling",
+          "ה-flag חייב להיות std::atomic (release/acquire), אחרת data race והקומפיילר יכול לתקוע את הלולאה"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q08",
@@ -406,7 +415,17 @@
         "נכון: ב-PTHREAD_PRIO_PROTECT (immediate ceiling) המחזיק עולה לתקרה ברגע הנעילה, בלי לחכות לתחרות. זה המחיר של ceiling: שינוי עדיפות בכל lock/unlock.",
         "נכון: PI פועל רק בתחרות. כש-thread בעדיפות גבוהה נחסם על ה-lock, המחזיק יורש את העדיפות שלו, ובלי ממתינים אין שום עלות.",
         "שגוי: std::mutex הוא pthread_mutex עם PTHREAD_PRIO_NONE. כדי לקבל PI צריך pthread_mutexattr_setprotocol(PTHREAD_PRIO_INHERIT) לפני האתחול, ו-std::mutex לא חושף זאת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן דוגמה קונקרטית ל-deadlock ש-priority inheritance לא מונע, והסבר במנגנון למה priority ceiling מונע אותו על מעבד יחיד ולמה זה לא מחזיק על multi-core.",
+        "modelAnswer": "H נועל את A ואז את B, ו-L נועל את B ואז את A. L נועל את B, H מפסיק אותו ונועל את A, ואז נחסם על B. L יורש את העדיפות של H, רץ, מנסה לנעול את A ונחסם: מעגל. PI רק משנה עדיפויות, הוא לא שובר את המעגל. ב-immediate ceiling התקרה של A ושל B היא העדיפות של H. ברגע ש-L נועל את B הוא עולה לעדיפות של H, ולכן H לא יכול בכלל להתחיל לרוץ ולנעול את A עד ש-L משחרר את כל מה שהוא מחזיק. H לעולם לא רץ בזמן שמישהו מחזיק lock שהוא עשוי לבקש, ולכן אין מעגל, ו-H נחסם לכל היותר פעם אחת, למשך critical section אחד. על multi-core H יכול לרוץ במקביל על core אחר ולנעול את A בזמן ש-L מחזיק את B, כך שההנחה נשברת, ושם צריך סדר נעילה גלובלי.",
+        "rubric": [
+          "דוגמה עם שני locks שננעלים בסדר הפוך על ידי H ו-L",
+          "ceiling מעלה את המחזיק מיד, ולכן H לא מתחיל לרוץ כל עוד lock שלו מוחזק",
+          "תוצאה: אין מעגל, וחסימה של לכל היותר critical section אחד",
+          "על multi-core H רץ במקביל על core אחר, ולכן צריך סדר נעילה גלובלי"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q09",
@@ -427,7 +446,16 @@
         "שגוי: מבחן Liu-Layland הוא בדיוק כלי אנליטי שעונה בלי סימולציה, כשה-U מתחת לחסם. סימולציה או response time analysis נדרשים רק כשהמבחן לא מכריע.",
         "נכון: U = 1/5 + 2/6 + 2/10 ≈ 0.733, והחסם ל-n=3 הוא n(2^(1/n)-1) ≈ 0.780. U מתחת לחסם, ולכן RM מבטיח את כל ה-deadlines.",
         "שגוי: U <= 1 הוא תנאי הכרחי ומספיק ל-EDF, לא ל-RM. ב-RM יש מערכות עם U < 1 שמפספסות deadline, ולכן משתמשים בחסם Liu-Layland או ב-RTA."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מוסיפים משימה רביעית עם C=1 ו-T=8. מה החסם של Liu-Layland עכשיו, האם הוא עובר, ואם לא, האם המערכת בכל זאת schedulable?",
+        "modelAnswer": "U = 0.733 + 0.125 ≈ 0.858. החסם לארבע משימות הוא 4(2^(1/4) - 1) ≈ 0.757, כך שהמבחן לא מבטיח כלום. עוברים ל-response time analysis לפי סדר RM: T=5, 6, 8, 10. למשימה עם T=10 ו-C=2 האיטרציה היא 2, 6, 7, 9, 10, ו-10 מתייצב: 2 + ceil(10/5)·1 + ceil(10/6)·2 + ceil(10/8)·1 = 2 + 2 + 4 + 2. R = 10 שווה בדיוק ל-deadline, כך שהמערכת schedulable אבל בלי שום מרווח. בפועל context switches, IRQs ו-jitter יפילו אותה, ולכן הייתי דורש מרווח, למשל להוריד WCET או לבחור periods הרמוניים.",
+        "rubric": [
+          "U ≈ 0.858 מול חסם ≈ 0.757 לארבע משימות: המבחן נכשל",
+          "RTA למשימה עם T=10 מתכנס ל-R = 10",
+          "R = D: schedulable בלי מרווח, ו-overhead אמיתי ישבור את זה"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q10",
@@ -448,7 +476,17 @@
         "נכון: ה-scheduler בודק את המחלקות לפי סדר (stop, deadline, rt, fair, idle). כל עוד יש thread RT מוכן, אפילו בעדיפות 1, CFS/EEVDF לא נבחר.",
         "שגוי: חלוקה לפי משקל קיימת רק בין threads של SCHED_OTHER. בין RT ל-SCHED_OTHER אין חלוקה, יש קדימות מוחלטת (פרט ל-RT throttling).",
         "שגוי: סדר ההגעה משנה רק בין threads RT באותה עדיפות. כאן המחלקות שונות, ו-B יעבור לפני A גם אם A הגיע ראשון."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-thread ב-FIFO 1 הזה נכנס בטעות ללולאה אינסופית בלי לחסום. מה קורה לשאר ה-threads במערכת, ואילו מנגנונים מגנים עליה?",
+        "modelAnswer": "על ה-core שלו אף thread ב-SCHED_OTHER לא רץ, חוץ מה-5% ש-RT throttling משאיר (כ-50ms בכל שנייה עם ברירות המחדל). threads של SCHED_OTHER שלא מוצמדים ל-core הזה יכולים לעבור דרך ה-load balancer ל-cores אחרים ולהמשיך שם. threads שמוצמדים לאותו core, ו-kernel threads שקשורים אליו, מורעבים. הגנות: להשאיר את ה-throttling פעיל, RLIMIT_RTTIME שמגביל כמה זמן CPU thread RT צורך בלי לבצע syscall חוסם (SIGXCPU בגבול הרך, SIGKILL בקשיח), SCHED_DEADLINE שאוכף bandwidth, ו-watchdog ברמת האפליקציה.",
+        "rubric": [
+          "על אותו core: SCHED_OTHER מקבל רק כ-50ms לשנייה דרך RT throttling",
+          "threads לא מוצמדים יכולים לעבור ל-cores אחרים",
+          "RLIMIT_RTTIME שולח SIGXCPU ואז SIGKILL ל-thread RT שלא חוסם",
+          "חלופה: SCHED_DEADLINE או watchdog שאוכפים תקציב"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q11",
@@ -487,7 +525,17 @@
         "שגוי, זה כן שינוי של PREEMPT_RT: spinlock_t ממומש כ-rt_mutex (sleeping lock עם PI). רק raw_spinlock_t נשאר spin אמיתי.",
         "נכון, זה לא שינוי של PREEMPT_RT: ה-policy של אפליקציות ב-user space לא משתנה. thread נשאר SCHED_OTHER עד שמבקשים במפורש sched_setscheduler או chrt.",
         "שגוי, זה כן שינוי של PREEMPT_RT: interrupt handlers הופכים ל-threads בשם irq/NN-name עם SCHED_FIFO 50 כברירת מחדל, ואפשר לשנות את העדיפות עם chrt."
-      ]
+      ],
+      "followUp": {
+        "prompt": "PREEMPT_RT הופך spinlock_t ל-rt_mutex שיכול לישון. מה המחיר של זה, ולמה זה בכל זאת שווה במערכת זמן-אמת?",
+        "modelAnswer": "המחיר הוא throughput: lock שיכול לישון גורם ליותר context switches, יש bookkeeping של PI, ו-interrupts שרצים כ-threads מוסיפים מעבר דרך ה-scheduler. בעומסים כבדים על רשת או על locks יש ירידה מורגשת ב-throughput, והממוצע של ה-latency יכול אפילו לעלות מעט. התמורה היא ב-worst case: האזורים שבהם preemption כבוי מצטמצמים לקטעי raw_spinlock_t ולחלק הקשיח של ה-IRQ, ולכן ה-latency המקסימלי יורד ממילי-שניות לעשרות מיקרו-שניות. במערכת זמן-אמת מעניין ה-tail ולא הממוצע. המגבלה: בתוך raw_spinlock_t אסור לקרוא לשום דבר שיכול לישון, כולל lock רגיל או הקצאת זיכרון, ולכן הוא נשאר רק לקוד הנמוך ביותר.",
+        "rubric": [
+          "המחיר: יותר context switches ו-throughput נמוך יותר",
+          "התמורה: worst-case latency יורד לעשרות מיקרו-שניות כי אזורים לא-preemptible מצטמצמים",
+          "raw_spinlock_t נשאר spin אמיתי, ובתוכו אסור לישון או להקצות",
+          "זמן-אמת נמדד ב-tail ולא בממוצע"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q13",
@@ -508,7 +556,16 @@
         "שגוי: PI נועד בדיוק ל-threads של RT (FIFO/RR), שם יש עדיפויות קבועות ש-priority inversion פוגע בהן.",
         "שגוי: POSIX semaphores נתמכים ב-Linux (sem_wait/sem_post, מבוססים על futex). הבעיה היא חוסר הבעלות, לא חוסר התמיכה.",
         "שגוי: PI עובד עם כל מספר ממתינים, ואפילו לאורך שרשראות של mutexes. ההגבלה היחידה כאן היא שאין owner."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מעצב מחדש את התרחיש הזה, שבו H מחכה לתוצאה ש-L מייצר, כך שזמן ההמתנה של H יהיה חסום בלי להסתמך על PI?",
+        "modelAnswer": "העיקרון: עדיפות נקבעת לפי מי מחכה לעבודה, לא לפי כמה העבודה חשובה בפני עצמה. אפשרות אחת: לתת ל-L עדיפות גבוהה מ-M (למשל 75), כי הוא על הנתיב הקריטי של H. אפשרות שנייה: להצמיד את L ל-core שבו M לא רץ, כך ש-M לא יכול לדחוק אותו. אפשרות שלישית: לתת ל-L הזמנת bandwidth ב-SCHED_DEADLINE, כך שהוא מובטח לקבל את ה-runtime שלו בכל period. או להעביר את העבודה ל-H עצמו. אחרי השינוי ההמתנה של H חסומה על ידי WCET של L ועוד ההפרעה ממשימות בעדיפות גבוהה מ-L על אותו core, ואת זה אפשר לחשב ב-response time analysis.",
+        "rubric": [
+          "להעלות את ה-producer מעל M, כי הוא על הנתיב הקריטי של H",
+          "או לבודד את L על core אחר, או לתת לו הזמנת SCHED_DEADLINE",
+          "החסם: WCET של L ועוד ההפרעה ממשימות גבוהות ממנו"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q14",
@@ -523,7 +580,17 @@
         "affinity ובידוד cores, RT throttling"
       ],
       "explanation": "הטעות הנפוצה: לתת לכל ה-threads FIFO 99 ולשכוח שה-IRQ thread של ה-NIC צריך לרוץ כדי שהדגימות בכלל יגיעו.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "הקצית עדיפויות כמו בתשובה, ובאמצע ניסוי ה-RX thread מקבל overflow, למרות שהוא צורך רק 30% CPU בממוצע. איך תאתר אם הבעיה בתזמון ולא בתפוקה?",
+        "modelAnswer": "30% בממוצע עם overflow אומר שהבעיה היא spike של latency, לא חוסר CPU. ב-200 MS/s עם sc16 זה 800MB/s, כך שבאפר של 32MB מחזיק בערך 40ms, וכל עצירה ארוכה מזה מאבדת דגימות. קודם מודדים את הפער המקסימלי בין קריאות recv עוקבות (timestamps בלולאה, היסטוגרמה), לא ממוצע. אם יש פער ארוך, מריצים trace-cmd עם sched_switch על ה-core של ה-RX סביב האירוע, ורואים מי רץ במקומו. בודקים ב-dmesg אם הופיעה ההודעה על RT throttling, וסופרים page faults של ה-thread. במקביל `ethtool -S` מראה אם ה-NIC עצמו זרק חבילות, וזה מבדיל בין בעיה בקרנל וברשת לבעיה ב-thread.",
+        "rubric": [
+          "מודדים פער מקסימלי בין recv עוקבים, לא CPU ממוצע",
+          "חישוב כמה זמן הבאפר מחזיק (800MB/s, כ-40ms ל-32MB)",
+          "trace של sched_switch על ה-core כדי לראות מי דחק את ה-RX",
+          "בדיקת RT throttling ב-dmesg ו-drops של ה-NIC ב-ethtool -S"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q15",
@@ -544,7 +611,16 @@
         "נכון: ב-PREEMPT_RT ה-IRQ של ה-NIC הוא thread (irq/NN-eth, ברירת מחדל FIFO 50), וגם NAPI/softirq רצים בהקשר thread. ה-RX ב-FIFO 90 שלא נחסם לעולם מרעיב אותם על אותו core, והעיבוד מתקדם רק בחלון של RT throttling.",
         "שגוי: ה-NIC שולח interrupts כרגיל. ההבדל ב-PREEMPT_RT הוא שעיקר ה-handler נדחה ל-thread שצריך לקבל CPU, ופה הוא לא מקבל.",
         "שגוי: אין כאן מעגל המתנה. ה-RX thread לא חסום על lock, הוא פשוט מסתובב בעדיפות גבוהה מה-IRQ thread וגורם ל-starvation."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה לא פשוט להחליף את ה-busy-poll ב-recv חוסם, שנותן ל-IRQ thread לרוץ על אותו core? מה המחיר, ומתי busy-poll כן מוצדק?",
+        "modelAnswer": "recv חוסם פותר את ההרעבה: ה-RX ישן, ה-IRQ thread רץ, מעבד את החבילה ומעיר אותו. המחיר הוא wake-up latency ו-context switch לכל התעוררות, בסדר גודל של מיקרו-שניות עד עשרות ב-PREEMPT_RT. ב-X310 שמזרים 800MB/s עם חבילות של כ-8KB יש בערך 100 אלף חבילות בשנייה, כך שהתעוררות לכל חבילה היא עומס משמעותי. לכן מקבצים: interrupt coalescing ב-NIC, וקריאה של כמה חבילות בכל התעוררות. busy-poll מוצדק כשה-latency חייב להיות מינימלי וקבוע ויש core פנוי להקדיש, ובתנאי שה-IRQ מנותב ל-core אחר או רץ בעדיפות גבוהה מה-poller.",
+        "rubric": [
+          "recv חוסם נותן ל-IRQ thread לרוץ, במחיר wake-up ו-context switch לכל התעוררות",
+          "קצב של כ-100 אלף חבילות בשנייה, ולכן צריך batching או interrupt coalescing",
+          "busy-poll מוצדק רק עם core ייעודי ו-IRQ מחוץ לו או בעדיפות גבוהה יותר"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q16",
@@ -565,7 +641,17 @@
         "שגוי: הקרנל לא הורג משימה שחורגת. הוא רק עוצר אותה (throttling) עד ה-period הבא, ואפשר לבקש signal עם SCHED_FLAG_DL_OVERRUN.",
         "שגוי: אין מעבר אוטומטי ל-SCHED_OTHER. המשימה נשארת SCHED_DEADLINE ופשוט לא רצה עד שה-runtime מתחדש.",
         "נכון: ה-CBS מוריד את ה-runtime בזמן ריצה, וכשהוא מגיע ל-0 אחרי 2ms המשימה throttled עד תחילת ה-period הבא. היא מפספסת בעצמה, ושאר המשימות מוגנות מהחריגה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תבחר את ה-runtime למשימה שה-WCET שלה לא ידוע מראש, ומה המחיר אם תיתן מרווח נדיב מדי?",
+        "modelAnswer": "מודדים את זמן הביצוע של כל job בתנאי העומס הגרועים: cache קר, cores שכנים עמוסים, קלטים קיצוניים. לוקחים את המקסימום הנמדד ומוסיפים מרווח, למשל 20% עד 50%, ובזמן ריצה מפעילים SCHED_FLAG_DL_OVERRUN כדי לקבל signal על חריגה. ה-admission control סוכם runtime/period של כל משימות ה-deadline, ואם הסכום עובר את המגבלה (ברירת מחדל 95% מה-CPUs), sched_setattr נכשל עם EBUSY. runtime נדיב מדי שורף bandwidth מוזמן שלא בשימוש, ולכן פחות משימות יתקבלו. SCHED_FLAG_RECLAIM מאפשר למשימות לנצל bandwidth שאחרות לא השתמשו בו, ומקטין את הבזבוז.",
+        "rubric": [
+          "WCET נמדד תחת עומס גרוע, ועוד מרווח",
+          "admission לפי סכום runtime/period, וכישלון מחזיר EBUSY",
+          "runtime מוגזם מבזבז bandwidth ומונע קבלה של משימות אחרות",
+          "SCHED_FLAG_DL_OVERRUN לזיהוי חריגה, או SCHED_FLAG_RECLAIM לניצול bandwidth לא מנוצל"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q17",
@@ -586,7 +672,16 @@
         "שגוי: חסם Liu-Layland הוא תנאי מספיק בלבד, לא הכרחי. חריגה ממנו לא אומרת שהמערכת לא schedulable, במיוחד כשה-periods הרמוניים.",
         "שגוי: ln 2 הוא חסם Liu-Layland לאינסוף משימות תחת RM, לא גבול כללי. EDF מתזמן עד U = 1, ו-RM עם periods הרמוניים גם כן.",
         "נכון: 5 מחלק את 10 ו-10 מחלק את 20, כלומר periods הרמוניים. במקרה כזה RM schedulable אם ורק אם U <= 1, ו-0.95 עומד בזה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-periods במערכת שלך נקבעים לפי גודל בלוקי FFT: 4096, 6144 ו-8192 דגימות, ב-sample rate קבוע ו-U = 0.95. מה הבעיה, ואיך היית משנה את התכנון?",
+        "modelAnswer": "4096 מחלק את 8192, אבל 6144 לא מחלק את 8192, ו-4096 לא מחלק את 6144, כך שה-periods לא הרמוניים. הערבות של RM עד U = 1 נעלמת, ו-0.95 גבוה בהרבה מחסם Liu-Layland לשלוש משימות (≈ 0.780), כך שצריך RTA ויש סיכוי ממשי לפספוס. ה-hyperperiod הוא LCM של 24576 דגימות, וב-critical instant יש זמן מבוזבז. תיקונים: לבחור גדלי בלוקים בחזקות של 2 (4096, 8192, 16384), ואז RM מחזיק עד U = 1. או לעבור ל-EDF, למשל SCHED_DEADLINE, שעובד עד U <= 1 גם עם periods לא הרמוניים. אבל ב-0.95 כמעט אין מרווח ל-overhead בשתי הדרכים.",
+        "rubric": [
+          "מזהה ש-6144 לא הרמוני מול 4096 ו-8192",
+          "בלי הרמוניות, U = 0.95 מעל החסם ודורש RTA",
+          "תיקון: periods בחזקות של 2, או EDF"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q18",
@@ -718,7 +813,17 @@
         "נכון: מחלקת deadline נבדקת לפני מחלקת rt, ולכן משימת SCHED_DEADLINE מוכנה רצה לפני גם FIFO 99.",
         "שגוי: ה-runtime נאכף ע״י CBS. משימה שחורגת נעצרת עד ה-period הבא, וזה בדיוק מה שמגן על שאר המשימות.",
         "שגוי: ב-SCHED_DEADLINE אין sched_priority. התזמון הוא EDF: המשימה עם ה-absolute deadline הקרוב ביותר רצה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה הקרנל דורש runtime <= deadline <= period, ומה המשמעות של למשל runtime 1ms, deadline 2ms ו-period 10ms? האם ה-admission control מבטיח את ה-deadline הזה?",
+        "modelAnswer": "runtime גדול מה-deadline הוא בלתי אפשרי: אי אפשר לקבל יותר CPU ממה שיש בחלון. deadline גדול מה-period היה יוצר חפיפה בין jobs, ו-Linux לא תומך בזה. deadline קטן מה-period הוא constrained deadline: המשימה חייבת לקבל את 1ms שלה בתוך 2ms מההפעלה, למשל כי צריך להגיב מהר לאירוע שקורה פעם ב-10ms. ה-admission control בודק רק bandwidth, runtime/period = 0.1, אבל ה-density runtime/deadline היא 0.5. לכן עמידה ב-admission לא מוכיחה שה-deadline של 2ms יתקיים. בנוסף, על multi-core עם global EDF הקרנל מבטיח רק bounded tardiness, ולא שכל deadline יתקיים.",
+        "rubric": [
+          "runtime > deadline לא ניתן לקיום, deadline > period לא נתמך",
+          "deadline < period = constrained deadline, דרישת תגובה מהירה יותר",
+          "admission בודק runtime/period (0.1) ולא density (0.5)",
+          "על multi-core: bounded tardiness ולא ערבות קשיחה"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q25",
@@ -739,7 +844,17 @@
         "שגוי: 9 הוא שלב ביניים. הצבה נותנת 3 + ceil(9/4)·1 + ceil(9/6)·2 = 3 + 3 + 4 = 10, ולכן עוד לא התכנס.",
         "נכון: האיטרציה 3 → 6 → 7 → 9 → 10 → 10 מתכנסת ל-10, כי 3 + ceil(10/4)·1 + ceil(10/6)·2 = 3 + 3 + 4 = 10. R = 10 <= 12, כלומר schedulable למרות שהוא מעל חסם Liu-Layland.",
         "שגוי: 13 מתקבל אם ממשיכים לספור interference אחרי נקודת השבת, או מניחים שחריגה מחסם Liu-Layland אומרת שיש פספוס. ה-RTA מתכנס ב-10, והמשימה עומדת ב-deadline."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו τ3 חולק mutex עם PI עם משימה רביעית בעדיפות נמוכה ממנו, וה-critical section הארוך שלה הוא 2. מה R של τ3?",
+        "modelAnswer": "מוסיפים blocking term אחד, B = 2, כי עם PI על core אחד τ3 נחסם לכל היותר פעם אחת על ידי ה-critical section של המשימה הנמוכה. R = C + B + ההפרעה. מתחילים ב-5: 5 + ceil(5/4)·1 + ceil(5/6)·2 = 9. אחר כך 5 + ceil(9/4)·1 + ceil(9/6)·2 = 5 + 3 + 4 = 12. אחר כך 5 + 3 + 4 = 12, ומתייצב. R = 12 <= 12: עדיין schedulable, אבל בלי מרווח בכלל. המשימה הנמוכה משפיעה על τ3 רק דרך B, לא דרך הפרעה. אם τ1 או τ2 לא נוגעים ב-mutex, עבורם B = 0.",
+        "rubric": [
+          "מוסיפים blocking term B = 2 פעם אחת",
+          "איטרציה: 5, 9, 12, ומתייצב",
+          "R = 12 = D: schedulable בלי מרווח",
+          "משימה נמוכה משפיעה רק דרך B"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q26",
@@ -760,7 +875,16 @@
         "שגוי: 99 בטוח מבחינת ה-lock, אבל מעלה את המחזיק מעל threads לא קשורים בעדיפויות 71–99 ופוגע בזמני התגובה שלהם בלי צורך.",
         "שגוי: ממוצע לא מבטיח כלום, כי thread 70 שנועל יהיה מעל התקרה. גם אין \"אזהרה\": POSIX מחזיר שגיאה על נעילה מעל התקרה.",
         "נכון: התקרה צריכה להיות העדיפות הגבוהה ביותר של מי שנועל, 70. pthread_mutex_lock מ-thread בעדיפות 85 מחזיר EINVAL כי היא מעל התקרה, ולכן צריך לעדכן את ה-prioceiling."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה העלות של נעילה ושחרור של mutex עם PTHREAD_PRIO_PROTECT ב-glibc, לעומת mutex עם PI כשאין תחרות, ומתי ceiling שווה את המחיר?",
+        "modelAnswer": "ב-PI ה-fast path הוא CAS אטומי על מילת ה-futex ב-user space, שבה נכתב ה-TID של הבעלים. אין syscall כשאין תחרות, ורק כשיש ממתין נכנסים לקרנל עם FUTEX_LOCK_PI. ב-PRIO_PROTECT, glibc מעלה את העדיפות לתקרה (כשהעדיפות הנוכחית נמוכה ממנה) ומחזיר אותה בשחרור, וזה syscall לשינוי עדיפות בכל נעילה ובכל שחרור, גם בלי תחרות, כלומר כמה מיקרו-שניות לכל critical section. ceiling שווה כשהתחרות תכופה, כשצריך חסם של חסימה אחת בלבד, או כשרוצים למנוע deadlock על core אחד. לקטעים קצרים מאוד ותכופים בלי תחרות PI זול בהרבה.",
+        "rubric": [
+          "PI בלי תחרות: CAS ב-user space על מילת ה-futex, בלי syscall",
+          "PROTECT ב-glibc: syscall לשינוי עדיפות בנעילה ובשחרור גם בלי תחרות",
+          "ceiling שווה כשיש תחרות תכופה או צורך בחסימה יחידה ומניעת deadlock"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q27",
@@ -781,7 +905,17 @@
         "נכון: PI ב-Linux טרנזיטיבי. M1 יורש 80, וכיוון ש-M1 חסום על m2, L יורש גם הוא 80. X ב-60 לא יכול לדחוק את L, ו-L משחרר את m2 מהר.",
         "שגוי: PI עובד גם עם mutexes מקוננים, ה-rt_mutex מטפל בשרשרת. המגבלה הידועה של PI היא chained blocking, לא שהוא מפסיק לעבוד.",
         "שגוי: EDEADLK מוחזר רק כשיש מעגל בשרשרת ההמתנה. כאן H → M1 → L בלי מעגל, ו-L פנוי לרוץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה זמן החסימה הגרוע של H בתרחיש הזה, ואיך היית משנה את התכנון כדי לקצר אותו?",
+        "modelAnswer": "H מחכה ליתרת ה-critical section של L על m2, ואחר כך ליתרת ה-critical section של M1 על m1, כולל החלק ש-M1 עושה אחרי שהוא מקבל את m2. כלומר סכום של שני critical sections, וזו בדיוק ה-chained blocking. באופן כללי, עם PI משימה יכולה להיחסם על ידי עד min(n, m) critical sections, כש-n הוא מספר המשימות הנמוכות ממנה ו-m מספר ה-locks שהיא משתמשת בהם. השורש הוא נעילה מקוננת: M1 מחזיק את m1 ומבקש את m2. תיקונים: לבטל קינון, לקצר את ה-critical sections, להשתמש ב-ceiling שמגביל לחסימה אחת, או להחליף את m2 במבנה lock-free. ב-Linux הליכה על שרשרת ה-PI עולה זמן ביחס לאורך השרשרת, והיא מוגבלת ב-max_lock_depth, שברירת המחדל שלו 1024.",
+        "rubric": [
+          "החסימה של H = סכום שני ה-critical sections (L על m2 ו-M1 על m1)",
+          "השורש: נעילה מקוננת שיוצרת שרשרת",
+          "תיקון: לבטל קינון, לקצר sections, או ceiling",
+          "Linux מגביל את אורך השרשרת ב-max_lock_depth (1024)"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q28",
@@ -802,7 +936,17 @@
         "שגוי: sched_yield עובד גם ב-PREEMPT_RT ובאותה סמנטיקה. הבעיה היא הסמנטיקה עצמה, שלא מוותרת למחלקה נמוכה יותר.",
         "שגוי: sched_yield לא ישן לזמן קבוע. הוא רק מחזיר את ה-thread לתור, ואם הוא עדיין הגבוה ביותר הוא ממשיך מיד. לשינה יש nanosleep.",
         "שגוי: nice משפיע רק בתוך SCHED_OTHER. גם nice -20 לא יעבור thread ב-FIFO 70."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השארת את ה-logger על core 2, והחלפת את sched_yield ב-nanosleep של 10 מיקרו-שניות בכל איטרציה. מה הבעיות בתיקון הזה, ומה התיקון הנכון?",
+        "modelAnswer": "זה עובד במובן שה-logger מקבל CPU, אבל המחיר כבד. השינה בפועל ארוכה מ-10 מיקרו-שניות, כי מוסיפים wake-up latency של timer ו-context switch, וב-PREEMPT_RT זה יכול להגיע לעשרות מיקרו-שניות, כך שה-jitter של הלולאה הקריטית עולה. בכל איטרציה יש שני context switches, וה-logger מלכלך את ה-cache וה-TLB של ה-RT thread, ולכן גם זמן החישוב עצמו עולה. ה-logger מקבל רק חלונות קטנים. אם הוא צריך יותר זמן הוא לא יעמוד בקצב, והתור אליו יגדל עד שיתמלא. התיקון הנכון: להעביר את ה-logger ל-core אחר, ולהעביר אליו הודעות דרך SPSC queue לא חוסם.",
+        "rubric": [
+          "השינה בפועל ארוכה מ-10µs בגלל wake-up latency, ולכן jitter",
+          "context switches ו-cache/TLB pollution בכל איטרציה",
+          "ה-logger מקבל רק חלונות קטנים ועלול לא לעמוד בקצב",
+          "תיקון: logger על core אחר עם SPSC queue"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q29",
@@ -823,7 +967,17 @@
         "שגוי: זה הפוך. EDF טהור לא מבודד משימות, ומשימה מאחרת עם deadline מוקדם דוחקת את כולן. בידוד מגיע רק עם CBS, כמו ב-SCHED_DEADLINE.",
         "נכון: ב-RM העדיפויות קבועות, ולכן רק המשימות שמתחת לחורגת נפגעות, בצורה צפויה. ב-EDF ה-deadline המאחר הופך לדחוף ביותר וגורר domino effect.",
         "שגוי: RM לא עוצר משימה שחורגת. בלי מנגנון enforcement כמו CBS או budget timer, החורגת ממשיכה לרוץ בעדיפות שלה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בתרחיש הזה ה-WCET הוכפל זמנית. איך מערכת production צריכה לזהות overload ולהגיב לו בצורה מבוקרת, במקום פשוט לפספס deadlines?",
+        "modelAnswer": "זיהוי: מודדים זמן ביצוע וזמן תגובה של כל job מול התקציב שלו (timestamps בתחילה ובסוף, או SCHED_FLAG_DL_OVERRUN שמחזיר signal בחריגה), ומחזיקים מונים והיסטוגרמה של slack. כש-slack נשחק לפני פספוס ממשי, יש התרעה מוקדמת. תגובה: graceful degradation מתוכנן מראש. מורידים עבודה במשימות פחות קריטיות, למשל דילוג על frame, FFT קטן יותר או פחות ערוצים, ומפסיקים לקבל עבודה חדשה, כך שהמשימות הקריטיות שומרות על ה-deadlines שלהן. זה mode change: למערכת יש מצב מופחת מוגדר מראש עם ניתוח schedulability משלו, וחזרה למצב רגיל אחרי שה-overload עובר.",
+        "rubric": [
+          "מדידת זמן ביצוע ותגובה של כל job מול התקציב, או signal של overrun",
+          "מעקב אחרי slack כהתרעה מוקדמת",
+          "הורדה מתוכננת של עבודה לא-קריטית (דילוג frame, הקטנת עיבוד)",
+          "mode change למצב מופחת עם ניתוח schedulability משלו"
+        ]
+      }
     },
     {
       "id": "conc.rt-scheduling.q30",
@@ -839,7 +993,17 @@
         "כלים: ftrace/trace-cmd, rtla timerlat/osnoise, cyclictest, ותפיסת אירוע נדיר עם trigger"
       ],
       "explanation": "מועמד חזק נותן מתודולוגיה עם כלי מדידה לכל השערה, ולא רק רשימת סיבות. תשובה חלשה: 'אעלה ל-FIFO 99'.",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "ה-trace מראה שבזמן הפספוס ה-thread היה במצב running כל הזמן ואף thread אחר לא הפסיק אותו, ובכל זאת ה-job לקח 900 מיקרו-שניות במקום 300. מה הסיבות האפשריות, ואיך תבדיל ביניהן?",
+        "modelAnswer": "אם ה-scheduler לא מראה החלפה, הזמן נגנב מתחת לרמת ה-scheduler או שהקוד עצמו האט. SMI: ה-firmware לוקח את המעבד וה-OS לא רואה. hwlatdetect או ה-tracer osnoise מראים זאת כ-hardware noise. ירידת תדר (thermal throttling, כיבוי turbo): turbostat מראה תדר בפועל לאורך זמן. contention על זיכרון או על ה-L3 מ-cores שכנים: `perf stat` על ה-thread מראה IPC נמוך והרבה LLC misses באותו חלון. page faults: הם רצים בהקשר של ה-thread ולכן נראים כ-running, ואפשר לספור minor ו-major faults ב-perf או ב-tracepoints. ולבסוף נתיב תלוי-נתונים בקוד, שמתגלה בהשוואת הקלט של ה-job האיטי.",
+        "rubric": [
+          "SMI, שמתגלה ב-hwlatdetect או ב-osnoise",
+          "ירידת תדר, שנראית ב-turbostat",
+          "contention על cache או זיכרון: IPC נמוך ו-LLC misses ב-perf stat",
+          "page faults שנספרים לפי thread (ופתרון: mlockall)"
+        ]
+      }
     },
     {
       "level": 3,
@@ -873,7 +1037,16 @@
         "https://www.geeksforgeeks.org/?p=131187"
       ],
       "id": "conc.rt-scheduling.q31",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "נניח שאין PI, אבל אתה יודע את ה-period וה-WCET של כל המשימות הבינוניות. איך תחשב חסם על ההמתנה של H, ולמה זה עדיין תכנון גרוע?",
+        "modelAnswer": "ההמתנה של H היא ה-critical section של L ועוד כל העבודה של משימות שהעדיפות שלהן בין L ל-H, שמפסיקות את L בחלון הזה. זו רקורסיה כמו ב-RTA: W = CS_L + Σ ceil(W/T_i)·C_i על המשימות האלה, ומחשבים עד התכנסות. היא מתכנסת רק אם המשימות הבינוניות מחזוריות עם WCET ידוע, וה-utilization שלהן קטן מ-1. גם כשיש חסם, הוא יכול להיות גדול בהרבה מה-critical section עצמו. והוא קושר את התזמון של H למשימות שאין להן שום קשר ל-lock, כך שכל משימה בינונית חדשה או שינוי ב-WCET שלה מחייבים לנתח את H מחדש.",
+        "rubric": [
+          "W = CS_L + Σ ceil(W/T_i)·C_i על המשימות שבין L ל-H",
+          "מתכנס רק עם משימות מחזוריות עם WCET ידוע ו-utilization קטן מ-1",
+          "החסם קושר את H למשימות לא קשורות, וכל שינוי בהן מחייב ניתוח מחדש"
+        ]
+      }
     },
     {
       "level": 3,
@@ -894,7 +1067,17 @@
         "שגוי: PI לא לוקח mutex מהבעלים. אי אפשר להפסיק critical section באמצע."
       ],
       "id": "conc.rt-scheduling.q32",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "מה קורה לחסם הזה אם בתוך ה-critical section, L קורא ל-`write()` לדיסק או ל-malloc?",
+        "modelAnswer": "PI מעלה עדיפות, אבל לא מאיץ I/O. אם L נחסם בתוך ה-critical section על דיסק, H מחכה כל הזמן הזה, ו-PI לא רלוונטי כי L לא צריך CPU אלא ממתין להתקן. החסם הופך ל-worst case של ה-I/O, מילי-שניות ולפעמים הרבה יותר, כלומר בפועל לא חסום. malloc יכול לנעול lock פנימי שמוחזק על ידי thread אחר, לקרוא ל-mmap או ל-brk, או לגרום ל-page fault, וכל אחד מאלה יכול לחסום. הכלל: ב-critical section שמשותף עם RT thread אין I/O, אין הקצאות ואין syscalls עם זמן לא חסום. מכינים הכל מחוץ ל-lock, ואת ה-I/O מעבירים ל-thread נפרד דרך תור.",
+        "rubric": [
+          "PI לא עוזר כשהמחזיק ישן על I/O",
+          "החסם הופך ל-worst case של ה-I/O (מילי-שניות ומעלה)",
+          "malloc יכול לחסום (lock פנימי, mmap, page fault)",
+          "פתרון: אין I/O והקצאות בתוך ה-section, להעביר I/O ל-thread נפרד"
+        ]
+      }
     },
     {
       "level": 4,
@@ -915,7 +1098,17 @@
         "שגוי: אם אף משימה לא רצה באמצע, אף משימה לא נחסמת על ה-section, ואין inversion."
       ],
       "id": "conc.rt-scheduling.q33",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "על Cortex-M ה-ISR הכי דחוף (בקרת מנוע) לא יכול לחכות אפילו כמה מיקרו-שניות. איך מגינים על critical sections של ה-RTOS בלי לחסום את ה-ISR הזה?",
+        "modelAnswer": "במקום לכבות את כל ה-interrupts משתמשים ב-BASEPRI (קיים ב-Cortex-M3 ומעלה, לא ב-M0). הוא חוסם רק interrupts שהעדיפות שלהם נמוכה מסף מסוים, וה-ISR הדחוף מעל הסף ממשיך לקבל שירות גם בתוך ה-critical section. כך עובד configMAX_SYSCALL_INTERRUPT_PRIORITY ב-FreeRTOS: ה-critical sections של ה-kernel מעלים את BASEPRI לסף הזה. המחיר: ISR שמעל הסף אסור לו לקרוא ל-API של ה-RTOS או לגעת במבנים שה-critical sections האלה מגינים עליהם, כי הוא יכול להפריע באמצע עדכון. אם הוא חייב להעביר נתונים, משתמשים במבנה lock-free (LDREX/STREX), ב-double buffer, או בהעברה דרך ISR נמוך יותר.",
+        "rubric": [
+          "BASEPRI חוסם רק interrupts מתחת לסף",
+          "ISR מעל הסף לא יכול לקרוא ל-API של ה-RTOS או לגעת במבנים המוגנים",
+          "FreeRTOS: configMAX_SYSCALL_INTERRUPT_PRIORITY",
+          "העברת נתונים מה-ISR הזה דרך lock-free (LDREX/STREX) או double buffer"
+        ]
+      }
     },
     {
       "level": 3,
@@ -944,7 +1137,17 @@
         "https://leetcode.com/discuss/post/5396353/nvidia-off-campus-interview-experience-b-edj2/"
       ],
       "id": "conc.rt-scheduling.q34",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "בחרת fixed-priority. בקרת הבלמים ועיבוד המצלמה רצים על אותו core, ולפעמים זמן עיבוד המצלמה קופץ פי 3. מי נפגע, ואיך מגנים על כל אחד?",
+        "modelAnswer": "ב-RM הבלמים (1ms) הם בעדיפות הגבוהה ביותר, ולכן קפיצה במצלמה לא פוגעת בהם ישירות. הם יכולים להיפגע רק דרך משאבים משותפים (lock שהמצלמה מחזיקה, ואז צריך PI או ceiling), דרך אזורים לא-preemptible, או דרך interrupts. מי שנפגע הוא תכנון המסלול (100ms), שנמצא מתחת למצלמה ומקבל את כל החריגה שלה. הגנה: אכיפת תקציב על המצלמה, כמו הזמנת bandwidth (CBS, SCHED_DEADLINE) או ניטור זמן ריצה שמוותר על frame מאחר, כך שהחריגה נשארת אצלה. במערכת בטיחותית מפרידים את הבלמים ל-core או אפילו למעבד נפרד (partitioning), כדי שלא יחלקו איתה cache, זיכרון או locks.",
+        "rubric": [
+          "הבלמים בעדיפות עליונה ונפגעים רק דרך משאבים משותפים, אזורים לא-preemptible או interrupts",
+          "תכנון המסלול, שמתחת למצלמה, הוא זה שנפגע",
+          "אכיפת תקציב על המצלמה (CBS/reservation או דילוג frame)",
+          "בידוד הבלמים ל-core או מעבד נפרד"
+        ]
+      }
     },
     {
       "level": 2,
@@ -986,7 +1189,16 @@
         "שגוי: DM מוגדר בדיוק בשביל המקרה הזה."
       ],
       "id": "conc.rt-scheduling.q36",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "נניח ש-A הוא (C=2, T=10, D=3) ו-B הוא (C=2, T=5, D=5). בדוק עם response time analysis אם כל ה-deadlines מתקיימים תחת DM ותחת RM.",
+        "modelAnswer": "תחת DM ל-A יש עדיפות גבוהה: R_A = 2 <= 3. ל-B: R = 2 + ceil(R/10)·2, כלומר 2 ואז 4, ומתייצב: R_B = 4 <= 5. הכל עובר. תחת RM ל-B עדיפות גבוהה: R_B = 2. ל-A: R = 2 + ceil(R/5)·2, כלומר 2 ואז 4, ומתייצב: R_A = 4 > 3, ולכן A מפספס. ה-utilization הוא רק 0.6, ובכל זאת RM נכשל. כש-D < T, utilization לבד לא מספיק לקבוע schedulability, והסדר חייב להתחשב ב-deadline.",
+        "rubric": [
+          "DM: R_A = 2 ו-R_B = 4, הכל עומד",
+          "RM: R_A = 4 > 3, ולכן A מפספס",
+          "U = 0.6 נמוך ועדיין נכשל: עם D < T, utilization לבד לא קובע"
+        ]
+      }
     },
     {
       "level": 1,
@@ -1085,7 +1297,17 @@
         "https://www.geeksforgeeks.org/?p=140440"
       ],
       "id": "conc.rt-scheduling.q40",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "למה דווקא FIFO בתוך כל עדיפות, ומה צריך לקרות במבנה הזה כשמשימה עולה בעדיפות זמנית בגלל priority inheritance?",
+        "modelAnswer": "FIFO בתוך עדיפות נותן סדר דטרמיניסטי לפי זמן ההגעה, וזו הסמנטיקה של SCHED_FIFO. ב-round-robin ה-scheduler פשוט מעביר את הראשון לסוף הרשימה בכל time slice. ב-PI boost מוציאים את המשימה מהרשימה של העדיפות הישנה, ב-O(1) כי הרשימה דו-כיוונית, מכניסים אותה לרשימה של העדיפות החדשה, ומעדכנים את ה-bitmap: מדליקים את הביט החדש ומכבים את הישן אם הרשימה התרוקנה. גם התור של ה-mutex עצמו חייב להיות ממוין לפי עדיפות, כדי שבשחרור הוא יעבור לממתין הגבוה ביותר, וכדי שהמחזיק ידע לאיזו עדיפות לעלות. ב-rt_mutex של Linux הממתינים נשמרים ב-red-black tree. בשחרור ה-lock מחזירים את המשימה לעדיפות שלה, או לעדיפות של הממתין הבא אם היא מחזיקה locks נוספים.",
+        "rubric": [
+          "FIFO בתוך עדיפות = הסמנטיקה של SCHED_FIFO וסדר דטרמיניסטי",
+          "boost = הוצאה ב-O(1) מרשימה אחת, הכנסה לאחרת ועדכון ביטים",
+          "ממתינים על ה-mutex ממוינים לפי עדיפות (red-black tree ב-rt_mutex)",
+          "בשחרור חוזרים לעדיפות הבסיס או לעדיפות של locks אחרים שמוחזקים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1117,7 +1339,16 @@
         "שגוי: אין מספר קטן של \"רמות\". כל deadline הוא ערך זמן שונה."
       ],
       "id": "conc.rt-scheduling.q42",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "על שרת עם 64 cores ו-global EDF, מה הבעיה עם red-black tree אחד לכל המערכת, ואיך Linux SCHED_DEADLINE מתמודד?",
+        "modelAnswer": "עץ גלובלי אחד דורש lock גלובלי, וכל wakeup, סיום job ובחירה על כל אחד מ-64 ה-cores מתחרים עליו. ה-cache line שלו קופץ בין cores, וה-scheduler עצמו נהיה צוואר בקבוק. Linux מחזיק red-black tree של משימות deadline לכל CPU בנפרד, ומקרב global EDF בעזרת push ו-pull. כשמשימה מתעוררת או משתחררת, הקרנל מנסה לדחוף אותה ל-CPU שה-deadline הנוכחי שלו הכי מאוחר, או למשוך משימה מ-CPU אחר. כדי למצוא את ה-CPU הזה מהר יש מבנה גלובלי קטן (cpudl, heap של ה-deadline המוקדם בכל CPU). הפשרה: פחות contention, אבל migrations ו-EDF שהוא רק קירוב של global.",
+        "rubric": [
+          "עץ גלובלי = lock גלובלי ו-contention בין cores",
+          "Linux: red-black tree לכל CPU",
+          "migration בעזרת push ו-pull לפי ה-deadlines של ה-CPUs"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1167,7 +1398,17 @@
         "שגוי: ה-period של משימה מהירה לא מתחשב בעיכובים חוקיים של משימות אחרות שגם הן מדווחות."
       ],
       "id": "conc.rt-scheduling.q44",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "במערכת יש 5 threads, ורק אחד מהם בועט ב-watchdog. מה הבעיה, ואיך מתכננים watchdog שמזהה תקיעה של כל אחד מהם?",
+        "modelAnswer": "בעיטה מ-thread אחד מוכיחה רק שהוא חי. אם thread אחר נתקע ב-deadlock או בלולאה, ה-watchdog לא יודע. התכנון הנכון: כל thread מדווח התקדמות (מונה או דגל check-in) לפחות פעם בחלון שמוגדר לו לפי ה-period שלו. משימת supervisor בודקת שכל ה-threads הצפויים דיווחו בזמן, ורק אז בועטת ב-watchdog החומרתי ומאפסת את הדגלים. כדאי שה-supervisor ירוץ בעדיפות נמוכה, כך שגם thread בעדיפות גבוהה שמסתובב בלולאה ומרעיב אחרים יגרום להחמצת בעיטה. window watchdog מוסיף זיהוי של בעיטות מוקדמות מדי, שמעידות על לולאה שבורחת ובועטת בלי לעשות עבודה אמיתית.",
+        "rubric": [
+          "בעיטה מ-thread אחד מוכיחה רק שהוא חי",
+          "check-in פר thread, ו-supervisor שבועט רק כשכולם דיווחו",
+          "supervisor בעדיפות נמוכה מזהה גם הרעבה על ידי thread גבוה",
+          "window watchdog מזהה בעיטות מוקדמות מדי"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1216,7 +1457,17 @@
       ],
       "problem": "Google Chrome OS firmware phone screen: watchdog timers in embedded systems",
       "id": "conc.rt-scheduling.q46",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "מחיקת sector בודד לוקחת 400ms, ובזמן הזה בהרבה MCUs ה-CPU לא יכול לקרוא קוד מאותו flash bank. מה ההשלכות על interrupts ועל זמן-אמת, ואיך מתמודדים?",
+        "modelAnswer": "כשהמעבד מנסה להביא הוראה מה-bank שנמחק, ה-bus נעצר עד סוף המחיקה. כל ISR שהקוד שלו או טבלת הוקטורים שלו ב-flash נתקע איתו, כלומר עד 400ms בלי תגובה ל-interrupts, ומשימות זמן-אמת מפספסות. ה-watchdog החומרתי ממשיך לספור, ולכן ה-timeout חייב להיות ארוך מזמן המחיקה של sector. פתרונות: להריץ את פונקציית המחיקה ואת ה-ISRs הקריטיים מ-RAM, ולהעביר את טבלת הוקטורים ל-RAM. או להשתמש ב-flash עם שני banks (read-while-write): מוחקים את bank B ומריצים מ-A, וזה גם הבסיס לעדכון A/B. אפשרות נוספת: לבצע עדכון רק במצב תחזוקה, שבו הפונקציות הקריטיות הושבתו בצורה בטוחה.",
+        "rubric": [
+          "fetch מה-bank שנמחק עוצר את המעבד, כולל ISRs שב-flash",
+          "timeout של ה-watchdog חייב להיות ארוך מזמן המחיקה של sector",
+          "להריץ את המחיקה, ה-ISRs הקריטיים וטבלת הוקטורים מ-RAM",
+          "dual-bank flash (read-while-write)"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1258,7 +1509,17 @@
       ],
       "explanation": "watchdog לבדו מזהה תקיעה, אבל לא פותר באג דטרמיניסטי: הוא יוצר boot loop. מערכת עמידה משלבת אותו עם boot counter וגרסת גיבוי.",
       "id": "conc.rt-scheduling.q48",
-      "lesson": "conc.rt-scheduling"
+      "lesson": "conc.rt-scheduling",
+      "followUp": {
+        "prompt": "מתי בדיוק הגרסה החדשה צריכה לסמן את עצמה תקינה, ומה קורה אם היא מסמנת מוקדם מדי או מאוחר מדי?",
+        "modelAnswer": "הסימון צריך לבוא אחרי בדיקות בריאות שמפעילות את הפונקציות הקריטיות: המערכת רצה זמן מינימלי, החיישנים מגיבים, ובעיקר ערוץ העדכונים עובד, כך שאפשר לשלוח לה תיקון הבא. אם מסמנים מוקדם מדי, למשל בשורה הראשונה של main, באג שתוקע אחרי 10 שניות לא יגרום ל-rollback. המכשיר נכנס ל-reset loop שבו המונה מתאפס בכל boot, והוא תקוע בלי מגע אדם. אם מסמנים מאוחר מדי, resets לא קשורים (נפילת חשמל) נספרים ככישלונות, ומקבלים rollback מיותר לגרסה הישנה. לכן גם סופרים רק resets שנראים כמו כישלון (watchdog, boot שלא הושלם), ובוחרים N סביר כמו 3.",
+        "rubric": [
+          "סימון אחרי בדיקות בריאות, כולל ערוץ העדכונים",
+          "מוקדם מדי: באג מאוחר לא מגיע ל-rollback",
+          "מאוחר מדי: resets לא קשורים גורמים ל-rollback מיותר",
+          "סופרים רק resets של כישלון (watchdog), עם סף N"
+        ]
+      }
     }
   ]
 }

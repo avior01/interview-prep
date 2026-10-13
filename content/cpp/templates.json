@@ -378,7 +378,16 @@
         "נכון. f(1): שוויון exact match, ו-non-template עדיף. f(1L): exact match עם T=long מנצח conversion. f('a'): exact match עם T=char מנצח promotion. f<>(1) מכריח template.",
         "שגוי. f('a') לא בוחר את f(int): char→int הוא promotion, ו-exact match של ה-template עם T=char מדורג גבוה יותר.",
         "שגוי. ב-f(1) שתי האפשרויות exact match, ובשוויון כזה פונקציה רגילה עדיפה על template specialization ([over.match.best])."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך `void log(const std::string&)` ו-`template<class T> void log(const T&)` ב-API. מישהו קורא `log(\"hello\")` ומקבל את ה-template ולא את גרסת ה-string. למה, ואיך היית מתכנן את ה-overloads כך שזה לא יקרה?",
+        "modelAnswer": "\"hello\" הוא const char[6]. ה-template מסיק T = char[6] ונותן exact match (קשירה של reference למערך), ואילו גרסת ה-string דורשת user-defined conversion (בניית std::string), וזה דירוג גרוע יותר. כלל ה-non-template עדיף חל רק בשוויון, ולכן ה-template מנצח. בנוסף, הקריאה בונה instantiation נפרד לכל אורך של literal. פתרונות: להוסיף overload ל-`const char*` או `std::string_view` שהוא non-template ותואם טוב יותר, להגביל את ה-template עם constraint (`requires (!std::convertible_to<const T&, std::string_view>)`) כך שמחרוזות לא נכנסות אליו, או לשנות את גרסת ה-string לקבל std::string_view ולהגביל את ה-template. הכלל: overload של template לצד non-template שמחייב המרה הוא מלכודת, ו-constraints פותרים אותה.",
+        "rubric": [
+          "literal הוא const char[N], ה-template נותן exact match",
+          "גרסת string דורשת user-defined conversion, ולכן מפסידה",
+          "פתרון: overload ל-string_view/const char* או constraint על ה-template"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q09",
@@ -399,7 +408,16 @@
         "שגוי. אין ערך ברירת מחדל ל-+ על pack ריק; 0 מתקבל רק עם binary fold שבו נותנים ערך התחלתי במפורש.",
         "שגוי. fold expression עובד עם כל גודל של pack, כולל איבר אחד (התוצאה היא האיבר עצמו). הבעיה היא רק pack ריק ב-unary fold.",
         "שגוי. void() הוא תוצאת ה-fold הריק רק עבור האופרטור פסיק. עבור + זו שגיאת קומפילציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השתמשת ב-`(0 + ... + xs)`. מה הטיפוס של התוצאה עבור `sum(1, 2.5f, 3.0)`, ומה הבעיה אם מישהו קורא `sum(std::string(\"a\"), std::string(\"b\"))`? איך היית כותב sum שעובד נכון לשני המקרים?",
+        "modelAnswer": "binary left fold `(0 + ... + xs)` מחושב משמאל: ((0 + 1) + 2.5f) + 3.0, ולכן int + float נותן float, ו-float + double נותן double: התוצאה double, 6.5, אם כי החישוב הביניים ב-float עלול לאבד דיוק. עם strings, `0 + std::string(\"a\")` לא מתקמפל, כי אין operator+ בין int ל-string (ו-0 כ-null pointer ל-const char* היה גרוע יותר). פתרון: ערך התחלתי מהטיפוס המשותף, `std::common_type_t<Ts...>{}`, כלומר `(std::common_type_t<Ts...>{} + ... + xs)`, שנותן double{} במקרה הראשון ו-std::string{} בשני. ל-pack ריק, common_type_t של אין כלום לא מוגדר, ולכן מוסיפים overload או if constexpr (sizeof...(Ts) == 0) שמחזיר 0. אפשר גם לדרוש את ה-pack לא ריק עם requires (sizeof...(Ts) > 0) ולהשתמש ב-unary fold.",
+        "rubric": [
+          "left fold: התוצאה double, ביניים ב-float",
+          "0 + string לא מתקמפל",
+          "ערך התחלתי std::common_type_t<Ts...>{} וטיפול ב-pack ריק"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q10",
@@ -420,7 +438,16 @@
         "שגוי. SFINAE חל רק על substitution בחתימה וב-immediate context. שגיאה בגוף הפונקציה אחרי שנבחרה היא hard error.",
         "שגוי. הקומפיילר לא בוחר \"את הראשון שמתקמפל\". ה-candidates שההחלפה שלהם נכשלה מוסרים, ומהשאר נבחר הטוב ביותר לפי כללי overload resolution.",
         "נכון. Substitution Failure Is Not An Error: כשהחלפה בחתימה (return type, פרמטרים, default template args) נכשלת, ה-candidate פשוט מוסר מ-overload resolution ([temp.deduct])."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן דוגמה שבה כשל בגוף של פונקציה (לא בחתימה) גורם ל-hard error ולא ל-SFINAE, ותסביר איך להעביר את הבדיקה לחתימה כך ש-overload אחר ייבחר.",
+        "modelAnswer": "דוגמה: `template<class T> auto size_of(const T& t) { return t.size(); }` עם return type auto: כדי לדעת את הטיפוס, הקומפיילר חייב לעשות instantiation של הגוף, ואם ל-T אין size(), זו שגיאה בגוף, hard error, גם אם יש overload אחר שהיה מתאים. באותו אופן, static_assert בגוף לא מוציא candidate. כדי להעביר לחתימה: trailing return type עם decltype, `template<class T> auto size_of(const T& t) -> decltype(t.size())`. עכשיו כשל ב-t.size() קורה בזמן substitution של החתימה, וה-candidate פשוט מוסר, ו-overload חלופי (למשל לגרסה עם std::size) נבחר. ב-C++20: `requires requires(const T& t) { t.size(); }` או concept מתאים.",
+        "rubric": [
+          "auto return type מחייב instantiation של הגוף, כשל שם הוא hard error",
+          "-> decltype(t.size()) מעביר את הבדיקה לחתימה",
+          "C++20: requires-expression"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q11",
@@ -447,7 +474,16 @@
         "שגוי. subsumption משווה atomic constraints לפי זהות של ביטוי מאותו מקום בקוד. שני requires שנכתבו בנפרד הם atomic constraints שונים גם עם טקסט זהה; צריך named concept.",
         "שגוי. concepts הם predicates של זמן קומפילציה; אין להם שום ייצוג או עלות בזמן ריצה.",
         "נכון. trailing requires-clause על member function של class template מותר גם כשהיא עצמה לא template, למשל `void sort() requires std::totally_ordered<T>;`."
-      ]
+      ],
+      "followUp": {
+        "prompt": "כתוב במילים concept בשם `Sample` לטיפוסים שמותר לעבד ב-pipeline (float, double, std::complex<float>), ותסביר מה ההבדל בין concept שבודק תחביר (requires expression) לבין concept שמבוסס על רשימה סגורה של טיפוסים. מתי כל אחד עדיף?",
+        "modelAnswer": "גרסה תחבירית: `template<class T> concept Sample = requires(T a, T b, float g) { { a + b } -> std::convertible_to<T>; { a * g } -> std::convertible_to<T>; };`, שבודקת שהפעולות שהקוד צריך קיימות. היא פתוחה: כל טיפוס שמספק את הפעולות מתקבל, כולל טיפוס fixed-point שתכתוב בעתיד, אבל גם טיפוסים שמקיימים את התחביר במקרה בלי הסמנטיקה (למשל int, שבו הכפלה ב-float עם המרה חזרה מאבדת דיוק). גרסה סגורה: `template<class T> concept Sample = std::same_as<T, float> || std::same_as<T, double> || std::same_as<T, std::complex<float>>;`, מדויקת ובטוחה, אבל צריך לערוך את ה-concept כדי להוסיף טיפוס. עדיף תחבירי לספרייה גנרית שאחרים מרחיבים, וסגור כשהמימוש מסתמך על ייצוג מסוים (SIMD intrinsics ל-float בלבד).",
+        "rubric": [
+          "concept תחבירי עם requires expression על הפעולות הנדרשות",
+          "פתוח: מקבל טיפוסים חדשים, אבל גם טיפוסים בלי הסמנטיקה",
+          "סגור עם same_as: מדויק אבל דורש עריכה להרחבה"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q12",
@@ -471,7 +507,16 @@
         "שגוי. virtual לא קשור לשאלה אם השם נמצא; הקומפיילר לא מוצא את log בכלל בשלב ההגדרה.",
         "נכון. Base<T> הוא dependent base, ו-unqualified lookup בשלב ההגדרה לא מחפש בו (two-phase lookup, [temp.dep]). `this->log()` או `using Base<T>::log` הופכים את השם לתלוי ודוחים את ה-lookup ל-instantiation.",
         "שגוי. ירושה מ-class template חוקית לגמרי (למשל CRTP). הבעיה היא רק איך נמצאים שמות מהבסיס התלוי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין `this->log()` לבין `using Base<T>::log;` כפתרון, ומתי `Base<T>::log()` במפורש שונה בהתנהגות מ-`this->log()`?",
+        "modelAnswer": "this->log() הופך את הקריאה לתלויה, וה-lookup מתבצע ב-instantiation, כולל dispatch וירטואלי אם log היא virtual. using Base<T>::log; מכניס את השם ל-scope של המחלקה, כך שאפשר לכתוב log() בכל מקום, וגם מביא את כל ה-overloads של log מ-Base, ובכך מונע name hiding אם ל-Derived יש log משלו. Base<T>::log() במפורש הוא qualified call: הוא מכבה את ה-virtual dispatch וקורא בדיוק לגרסה של Base, גם אם Derived או מחלקה נגזרת ממנה דרסו אותה. לכן אם log היא virtual, Base<T>::log() עלול לקרוא לגרסה הלא נכונה בשקט. עבור data members (count), this->count או using הם הדרכים הרגילות.",
+        "rubric": [
+          "this-> הופך לתלוי ושומר על virtual dispatch",
+          "using מביא את כל ה-overloads ל-scope",
+          "Base<T>::log() מבטל virtual dispatch"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q13",
@@ -494,7 +539,16 @@
         "נכון. int→primary (0); int*→full specialization (3); const int*→const T* היא היותר מיוחדת (2); char*→T* (1); int* const לא תואם T* ולכן primary (0).",
         "שגוי. K<int*> תואם את ה-full specialization, ו-full specialization גוברת על כל partial specialization, ולכן 3 ולא 1.",
         "שגוי. const int* תואם גם T* וגם const T*, ו-const T* יותר מיוחדת לפי partial ordering, ולכן 2 ולא 1."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה int* const לא מתאים ל-T* כ-partial specialization, אבל בפונקציה `template<class T> void f(T*)` הקריאה `f(p)` עם `int* const p` כן עובדת? מה ההבדל בין שני ההקשרים?",
+        "modelAnswer": "ב-partial specialization משווים טיפוס שלם מול תבנית: K<int* const> הוא טיפוס שה-top-level const שלו חלק ממנו, והצורה T* לא כוללת const ברמה העליונה, ולכן אין התאמה, ונבחר ה-primary (0). ב-function template deduction, הארגומנט הוא ביטוי, ולפני deduction עבור פרמטר by value מסירים מהטיפוס של הארגומנט את ה-top-level cv (כמו שהעתקה מתעלמת ממנו), ולכן int* const נהיה int*, ו-T מוסק כ-int. ההיגיון: כשמעבירים by value, ה-const של העותק לא רלוונטי לקורא, ולכן הוא לא משפיע על ה-deduction. בתבנית class, לעומת זאת, הטיפוס הוא הארגומנט עצמו, ו-const הוא חלק מהזהות שלו.",
+        "rubric": [
+          "partial specialization: טיפוס שלם כולל top-level const, לא מתאים ל-T*",
+          "function deduction by value מסיר top-level cv מהארגומנט",
+          "ולכן f(p) מסיק T = int"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q14",
@@ -517,7 +571,16 @@
         "שגוי. זה נכון ל-x, אבל ב-w הסוגריים המסולסלים מעדיפים את ה-initializer_list constructor ([over.match.list]), ולכן מוסק vector<iterator> עם שני איברים.",
         "שגוי. x נבנה עם סוגריים עגולים, ולכן initializer_list לא משתתף ונבחר ה-constructor של טווח: 3 איברים.",
         "שגוי. w מתקמפל: הוא פשוט מקבל טיפוס שונה מהצפוי, std::vector<std::vector<int>::iterator>. זה מה שהופך את המלכודת לשקטה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך כותבים deduction guide משלך, ומתי צריך אחד? תן דוגמה של class template שבלי guide יסיק את הטיפוס הלא נכון.",
+        "modelAnswer": "deduction guide הוא הצהרה מחוץ למחלקה בצורה `Name(args) -> Name<Types>;`, שאומרת לקומפיילר איך להסיק את ה-template arguments מארגומנטים של constructor. צריך אחד כשה-template parameters לא מופיעים ישירות בפרמטרים של ה-constructor, או כשההסקה הטבעית לא רצויה. דוגמה: `template<class T> struct Buffer { Buffer(const T* data, size_t n); };` עם `Buffer b(\"abc\", 3)` מסיק T = char, וזה בסדר; אבל אם ה-constructor מקבל זוג iterators, `template<class It> Buffer(It first, It last)`, אין דרך להסיק T, ו-CTAD נכשל. guide פותר: `template<class It> Buffer(It, It) -> Buffer<typename std::iterator_traits<It>::value_type>;`. דוגמה שנייה: `Wrapper w(\"hi\")` עם `Wrapper(T)` יסיק const char* ולא std::string; guide `Wrapper(const char*) -> Wrapper<std::string>;` מתקן.",
+        "rubric": [
+          "תחביר: Name(args) -> Name<Types>;",
+          "צריך כשה-parameters לא נגזרים מה-constructor (זוג iterators)",
+          "או לשנות הסקה לא רצויה (const char* ל-string)"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q15",
@@ -557,7 +620,16 @@
         "שגוי. בין שני ה-primary templates, f(T*) יותר מיוחד לפי partial ordering ולכן נבחר על פני f(T).",
         "שגוי. partial ordering מכריע: f(T*) יותר מיוחד מ-f(T), ולכן אין ambiguity.",
         "נכון. ב-overload resolution משתתפים רק primary templates; f(T*) יותר מיוחד ונבחר. ה-specialization `f(int*)` שייכת ל-f(T) (הוצהרה לפניו) ולכן לא נבחרת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בגלל המלכודת הזו, Herb Sutter ממליץ לא לבצע explicit specialization ל-function templates. מה עושים במקום כשצריך התנהגות מיוחדת לטיפוס מסוים?",
+        "modelAnswer": "במקום specialization משתמשים ב-overload רגיל, non-template: `void f(int*)`, שמשתתף ב-overload resolution כמו כל פונקציה, ובשוויון גובר על templates. ההתנהגות צפויה ולא תלויה בסדר ההצהרות. אם צריך specialization חלקית (למשל לכל T*), ממילא אי אפשר לעשות partial specialization לפונקציות; הפתרון הוא להעביר את המימוש ל-class template עם static function, שאותו כן אפשר להתמחות חלקית, ופונקציה עוטפת שמפנה אליו: `template<class T> void f(T x) { FImpl<T>::run(x); }`. ב-C++17 ואילך, `if constexpr` בתוך template אחד עם בדיקה על הטיפוס פותר הרבה מקרים בפשטות, וב-C++20 overloads עם constraints.",
+        "rubric": [
+          "overload non-template במקום explicit specialization",
+          "class template עם static function ל-partial specialization",
+          "if constexpr או overloads עם constraints"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q17",
@@ -578,7 +650,16 @@
         "שגוי. extern template לא קשור ל-virtual או ל-dynamic dispatch; הוא שולט רק באיפה מתבצע ה-instantiation.",
         "נכון. explicit instantiation declaration ב-header מונעת instantiation מרומז בכל TU, ו-explicit instantiation definition בקובץ cpp אחד מייצרת את הקוד פעם אחת. inline functions עדיין יכולות לעבור inlining.",
         "שגוי. ה-linker לא מקמפל קוד (למעט LTO, שהוא נושא אחר). ה-instantiation נעשה בקובץ cpp עם explicit instantiation definition."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מעבר ל-extern template, אילו כלים וטכניקות היית משתמש בהם כדי למצוא איזה template או header אחראי לרוב זמן הקומפילציה, ואיך היית מקטין אותו?",
+        "modelAnswer": "מדידה: Clang עם `-ftime-trace` מייצר קובץ JSON לכל TU שאפשר לפתוח ב-chrome://tracing או ב-Perfetto, ורואים כמה זמן הלך על parsing של כל header ועל instantiation של כל template. ClangBuildAnalyzer מצרף את כל ה-traces ומראה את ה-headers וה-templates היקרים ביותר בכל הפרויקט. ב-MSVC יש /d1reportTime ו-Build Insights. הקטנה: precompiled headers או C++20 modules ל-headers כבדים (STL, Eigen); forward declarations ו-pimpl כדי להוציא includes מ-headers; extern template ל-instantiations נפוצים; הוצאת קוד לא תלוי מה-template ל-base class לא-template (כדי לא לייצר אותו לכל T); ו-unity builds להפחתת parsing חוזר. גם constexpr ו-recursion עמוקה של templates נראים ב-trace.",
+        "rubric": [
+          "-ftime-trace ו-ClangBuildAnalyzer (או Build Insights ב-MSVC)",
+          "PCH או modules ל-headers כבדים",
+          "forward declarations/pimpl והוצאת קוד לא תלוי מה-template"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q18",
@@ -599,7 +680,16 @@
         "נכון. ב-instantiation נוסף רק ADL בנקודת ה-instantiation ([temp.dep.candidate]), ול-int אין associated namespaces. לכן helper לא נמצא, ו-GCC מדווח על כך במפורש.",
         "שגוי. זו שגיאת קומפילציה ולא link: השם לא נמצא בכלל ב-lookup.",
         "שגוי. התקן מגדיר זאת כ-ill-formed שדורש diagnostic, לא כ-UB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה היה קורה אם g היה מקבל `T x` מטיפוס `mylib::Sample` ו-helper היה מוגדר ב-namespace mylib אחרי g? ולמה ADL הוא גם מקור לבאגים בקוד גנרי, למשל עם `swap` או `begin`?",
+        "modelAnswer": "עם mylib::Sample, הקריאה helper(x) תלויה, וב-instantiation (שקורה ב-main, אחרי ש-helper הוצהר) מתבצע ADL ב-namespace mylib, שם helper נמצאת, ולכן הקוד מתקמפל ועובד. זה בדיוק המנגנון שמאפשר customization points: הספרייה קוראת ל-helper(x) בלי לדעת עליה. הצד השני: ADL יכול למצוא פונקציה לא צפויה, למשל פונקציה בשם זהה ב-namespace של טיפוס שהוא template argument (גם namespaces של template arguments הם associated). לכן הדפוס של swap הוא `using std::swap; swap(a, b);`, שמאפשר ADL לגרסה ייעודית ונופל ל-std::swap. C++20 מוסיף customization point objects (std::ranges::swap, std::ranges::begin), שהם אובייקטים ולא פונקציות, ולכן ADL לא חוטף אותם, והם מבצעים את ה-lookup בצורה מבוקרת.",
+        "rubric": [
+          "עם טיפוס מ-mylib, ADL ב-instantiation מוצא את helper",
+          "ADL כ-customization point",
+          "using std::swap; swap(a,b); ו-CPOs ב-C++20"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q19",
@@ -615,7 +705,17 @@
         "מדגיש מדידה לפני שינוי"
       ],
       "explanation": "תשובה טובה לא בוחרת צד באופן דוגמטי. היא מחברת את ההחלטה ל-granularity של הקריאות ולצורך בגמישות בזמן ריצה.",
-      "lesson": "cpp.templates"
+      "lesson": "cpp.templates",
+      "followUp": {
+        "prompt": "בחרת גישה היברידית: virtual בין בלוקים, template בתוך כל שלב. איך היית מוכיח בניסוי שה-loop fusion של גישת ה-templates שווה את מחיר הגמישות, ומה היית מודד?",
+        "modelAnswer": "בונים benchmark של pipeline מייצג (למשל FIR, mixer, decimator) בשתי גרסאות על אותם נתונים: virtual לכל שלב עם process(span) בבלוקים של 4096, ו-pipeline מורכב ב-templates שבו כל השלבים עוברים inlining לתוך לולאה אחת. מודדים throughput (samples לשנייה), ובנוסף מוני perf: instructions, cycles, L1/L2 misses ו-memory bandwidth. היתרון הצפוי של fusion הוא בעיקר בזיכרון: בגרסה הווירטואלית כל שלב קורא וכותב את כל הבלוק, ואם הבלוק לא נכנס ל-L1 (4096 floats = 16KB, נכנס; 64K לא), כל שלב עובר דרך L2. מריצים את המדידה בכמה גדלי בלוק, ומצפים שבבלוק קטן שנכנס ל-L1 ההבדל קטן, ובגדול fusion מנצח. אם ההבדל מתחת ל-10%, הגמישות של virtual שווה יותר.",
+        "rubric": [
+          "benchmark של אותו pipeline בשתי הגרסאות",
+          "מוני perf: cycles, cache misses, bandwidth",
+          "מדידה בכמה גדלי בלוק; היתרון תלוי בהתאמה ל-L1",
+          "קריטריון החלטה מפורש"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q20",
@@ -738,7 +838,16 @@
         "שגוי. אין כאן dynamic dispatch: static_cast<D*> נפתר בזמן קומפילציה, והקריאה ל-step היא ישירה. זה ההפך מ-vtable.",
         "שגוי. הדפוס לא נוגע ב-constructors של Gain.",
         "נכון. CRTP: Stage מקבל את הטיפוס המדויק של היורש כ-template parameter, ולכן `static_cast<D*>(this)->step()` היא קריאה ישירה שניתנת ל-inlining, בלי vtable (static polymorphism)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "CRTP לא מאפשר להחזיק Stage<Gain> ו-Stage<Delay> באותו vector. איך היית בונה pipeline שמשלב את היתרון של CRTP עם אוסף הטרוגני, ואיפה ה-virtual call ממוקם?",
+        "modelAnswer": "מגדירים interface וירטואלי לא-template, `struct IStage { virtual void process(std::span<float>) = 0; virtual ~IStage() = default; };`, ו-CRTP base `template<class D> struct Stage : IStage { void process(std::span<float> b) override { for (auto& x : b) x = static_cast<D*>(this)->step(x); } };`. הנגזרת מממשת רק step(float), שעוברת inlining לתוך הלולאה של process. ה-pipeline הוא vector<unique_ptr<IStage>>. ה-virtual call ממוקם פעם אחת לבלוק, והלולאה הפנימית לכל דגימה היא קוד קונקרטי לכל טיפוס, עם inlining ו-vectorization. כך משלמים virtual פעם לבלוק ומקבלים ביצועי template לדגימה. חלופה ב-C++23: deducing this במקום CRTP, `void process(this auto& self, ...)`, אבל זה template ולכן לא יכול להיות virtual.",
+        "rubric": [
+          "interface וירטואלי לא-template ו-CRTP base שמממש אותו",
+          "virtual פעם לבלוק, step עם inlining בלולאה הפנימית",
+          "vector של unique_ptr<IStage>"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q26",
@@ -761,7 +870,16 @@
         "שגוי. N מוסק מהטיפוס של המערך, לא מגודל של pointer (sizeof pointer הוא 8). אין כאן decay.",
         "נכון. reference למערך מונע decay, ו-N מוסק מהטיפוס: a הוא int[7] ו-s הוא const char[4] (כולל '\\0'). הפלט 74.",
         "שגוי. decay ל-pointer קורה רק כשהפרמטר מתקבל by value; כשהפרמטר הוא `const T (&)[N]` המערך נקשר כמו שהוא."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה std::size עדיף על המאקרו `sizeof(a)/sizeof(a[0])`? מה קורה לכל אחד מהם כשמעבירים מערך לפונקציה כ-`int a[]`, ומה עם std::span?",
+        "modelAnswer": "פרמטר `int a[]` (או `int a[7]`) הוא בעצם `int* a`: המערך עושה decay ל-pointer. המאקרו מחזיר אז sizeof(int*)/sizeof(int), 2 על x86-64, בשקט ובלי אזהרה (GCC מזהיר עם -Wsizeof-array-argument על חלק מהמקרים). std::size עם pointer לא מתקמפל, כי template שמקבל `const T(&)[N]` לא מתאים ל-pointer, ואין overload אחר (ה-overload לקונטיינרים דורש .size()), ולכן הבאג נתפס בקומפילציה. כדי להעביר מערך לפונקציה בלי לאבד את הגודל: לקבל `std::span<int>` (שמסיק את הגודל ממערך C, std::array או vector), או reference למערך `int (&a)[N]` עם template. std::span עם extent קבוע (`std::span<int, 7>`) אפילו שומר את הגודל בטיפוס.",
+        "rubric": [
+          "int a[] כפרמטר הוא pointer (decay)",
+          "המאקרו נותן תוצאה שגויה בשקט, std::size לא מתקמפל",
+          "span או reference למערך שומרים את הגודל"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q27",
@@ -785,7 +903,16 @@
         "שגוי. std::enable_if_t קיים מ-C++14.",
         "שגוי. אף פעם לא מגיעים לקריאה: השגיאה היא redefinition כבר בהגדרה השנייה. וגם אילו הקוד היה תקין, int מתאים רק לאחת מהן.",
         "שגוי. SFINAE כן עובד על default template arguments (הם חלק מה-immediate context). הבעיה היא שהם לא מבדילים בין החתימות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הפתרון עם `std::enable_if_t<cond, int> = 0` עובד. מה קורה אם מישהו קורא `f(true)` או `f('a')`, ואיזה overload נבחר? איך היית מטפל ב-bool כמקרה נפרד?",
+        "modelAnswer": "std::is_integral_v<bool> ו-std::is_integral_v<char> הם true, ולכן f(true) ו-f('a') ייכנסו ל-overload של הטיפוסים השלמים, שאולי מבצע חישובים אריתמטיים שלא מתאימים ל-bool (למשל הדפסה כמספר). זה כנראה לא מה שהתכוונו. אפשרות: להוסיף לתנאי `&& !std::is_same_v<T, bool>` ולספק overload non-template נפרד `void f(bool)`, שגם גובר בשוויון. ב-C++20 נקי יותר: `template<class T> requires std::integral<T> && (!std::same_as<T, bool>) void f(T)` ו-`void f(bool)`. כך גם char אפשר להחריג באותו אופן אם הוא מייצג תו ולא מספר. כלל: concepts סטנדרטיים כמו std::integral כוללים את bool ואת סוגי ה-char, וצריך להחליט עליהם במפורש.",
+        "rubric": [
+          "bool ו-char הם integral ונכנסים ל-overload השלמים",
+          "החרגה בתנאי ו-overload נפרד ל-bool",
+          "C++20: requires עם !same_as<T, bool>"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q28",
@@ -808,7 +935,16 @@
         "נכון. עבור int, SignedIntegral (`Integral<T> && ...`) subsumes את Integral ולכן יותר מוגבל ונבחר: S. עבור unsigned רק Integral מתקיים: I.",
         "שגוי. אין ambiguity כי SignedIntegral בנוי מה-concept Integral, ולכן subsumption מוגדר. ambiguity הייתה מופיעה אם היה כתוב std::is_integral_v<T> ישירות.",
         "שגוי. עבור unsigned, std::is_signed_v הוא false, ולכן SignedIntegral לא מתקיים ונבחר Integral."
-      ]
+      ],
+      "followUp": {
+        "prompt": "שכתבת SignedIntegral עם std::is_integral_v<T> ישירות במקום Integral<T>, ועכשיו f(1) נותן שגיאת ambiguity. הסבר בדיוק למה, ואיך היית כותב היררכיה של concepts (למשל Numeric, Integral, SignedIntegral) כך שהיא תמיד תעבוד עם subsumption.",
+        "modelAnswer": "subsumption עובד על atomic constraints אחרי נרמול: Integral<T> מתפרק ל-atomic constraint אחד, הביטוי std::is_integral_v<T> כפי שהוא כתוב בתוך הגדרת Integral. כש-SignedIntegral כתוב עם std::is_integral_v<T> משלו, זה atomic constraint שונה, כי זהות נקבעת לפי הביטוי ומקומו בקוד, לא לפי הטקסט. לכן הקומפיילר לא יכול להוכיח ש-SignedIntegral גורר את Integral, אף אחד לא יותר מוגבל, ו-f(1) עמוס. כדי שהיררכיה תעבוד, כל concept בונה על הקודם בשמו: `concept Integral = Numeric<T> && std::is_integral_v<T>;` ו-`concept SignedIntegral = Integral<T> && std::is_signed_v<T>;`. כך כל concept מכיל את ה-atomic constraints של ההורה, ו-subsumption מזהה את היחס.",
+        "rubric": [
+          "subsumption לפי atomic constraints עם זהות של מקום בקוד",
+          "is_integral_v שנכתב פעמיים הם שני atomic constraints שונים",
+          "היררכיה: כל concept מוגדר עם שם ה-concept הקודם"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q29",
@@ -831,7 +967,16 @@
         "שגוי. ב-f(x) ה-forwarding reference נותן int& בלי הוספת const, וזו התאמה טובה יותר מ-const int&, ולכן 1 ולא 2.",
         "נכון. f(x): int& עדיף על const int& (1). f(cx): שתיהן const int&, ו-partial ordering מעדיף const T& (2). f(1) ו-f(std::move(cx)): rvalue מעדיף && (1, 1).",
         "שגוי. f(std::move(cx)) הוא rvalue מסוג const int, ו-T&& עם T=const int נותן const int&&, שעדיף על const int& עבור rvalue."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בקוד אמיתי, מתי יש היגיון לספק גם overload של `T&&` וגם של `const T&` לאותה פונקציה, ומתי זה מתכון לבלבול? איך היית כותב sink שמקבל lvalues ו-rvalues בלי overloads?",
+        "modelAnswer": "שילוב של forwarding reference `T&&` עם `const T&` הוא כמעט תמיד מתכון לבלבול: T&& הוא greedy, ותופס lvalues לא-const (T=X&) ו-rvalues, כך שה-const T& נבחר רק ל-const lvalues, וזה לא מה שרוב האנשים מצפים. זה בעייתי במיוחד עם constructors: template constructor עם T&& יכול לחטוף העתקה של אובייקט לא-const ולהיבחר על פני ה-copy constructor. יש היגיון בשני overloads כשהם לא templates: `f(const X&)` ו-`f(X&&)`, שזה הדפוס הקלאסי לקבלת עותק או move (כמו push_back). sink פשוט בלי overloads: לקבל by value, `void set(X x) { m_ = std::move(x); }`, או template אחד עם forwarding ו-constraint (`requires std::constructible_from<X, T>`) ו-std::forward.",
+        "rubric": [
+          "T&& חוטף lvalues לא-const ולכן const T& נבחר רק ל-const",
+          "סכנה מיוחדת ב-template constructor שחוטף העתקה",
+          "חלופות: by value sink או template אחד עם constraint"
+        ]
+      }
     },
     {
       "id": "cpp.templates.q30",
@@ -852,7 +997,16 @@
         "נכון. explicit specialization של function template היא פונקציה קונקרטית ולא template, ולכן אינה inline באופן מרומז. הגדרה בשני TUs מפרה ODR ([temp.expl.spec]). מוסיפים inline או מגדירים ב-cpp אחד.",
         "שגוי. specialization לא יורשת שום דבר מה-primary, וה-primary עצמו לא גורם ל-multiple definition כי instantiations שלו מתאחדים ב-link.",
         "שגוי. extern template מונע implicit instantiation; הוא לא משנה את העובדה שה-specialization מוגדרת פעמיים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אותה בעיה של ODR קיימת גם עם static data member של class template. מה קורה עם `template<class T> struct Reg { static int count; };` ב-header, איפה מגדירים את count, ומה C++17 שינה?",
+        "modelAnswer": "static data member של class template מוצהר במחלקה, וההגדרה שלו היא template בעצמה: `template<class T> int Reg<T>::count = 0;`, ומותר לשים אותה ב-header, כי כמו כל template, ה-instantiations שלה מתאחדות ב-link (COMDAT). זה בניגוד ל-static member של מחלקה רגילה, שמוגדר בדיוק ב-cpp אחד. הבעיה חוזרת עם explicit specialization: `template<> int Reg<int>::count = 5;` ב-header הוא הגדרה של משתנה קונקרטי, ובשני TUs זה multiple definition. ב-C++17 פשוט כותבים `static inline int count = 0;` בתוך המחלקה, וזה עובד גם למחלקות רגילות וגם ל-templates, וגם explicit specialization יכולה להיות inline. constexpr static data members הם inline במרומז מ-C++17.",
+        "rubric": [
+          "הגדרה template<class T> int Reg<T>::count מותרת ב-header",
+          "explicit specialization של ה-member היא משתנה קונקרטי ויוצרת ODR violation",
+          "C++17: static inline בתוך המחלקה"
+        ]
+      }
     },
     {
       "level": 3,
@@ -883,7 +1037,16 @@
       ],
       "problem": "NVIDIA interview: what exactly happens when a template is used (instantiation)",
       "id": "cpp.templates.q31",
-      "lesson": "cpp.templates"
+      "lesson": "cpp.templates",
+      "followUp": {
+        "prompt": "מה המשמעות של התכונה הזו (static local לכל instantiation) כשה-template מוגדר ב-header ונכלל ב-shared library וגם ב-executable? האם counter<int> הוא באמת מונה אחד בכל התהליך?",
+        "modelAnswer": "בתוך binary אחד, כל ה-TUs מייצרים את counter<int> כ-weak/COMDAT symbol, וה-linker משאיר עותק אחד, כולל static local אחד. בין shared library ל-executable, זה תלוי בייצוא הסימבולים: ב-Linux עם visibility ברירת מחדל, ה-dynamic linker מאחד סימבולים weak (symbol interposition), ולכן בדרך כלל יש מונה אחד. אבל אם הספרייה מקומפלת עם -fvisibility=hidden או נטענת עם RTLD_LOCAL, לכל אחד מהם יהיה עותק משלו, ושני מונים נפרדים. ב-Windows, DLL לא מאחד סימבולים עם ה-exe כברירת מחדל, ולכן כמעט תמיד יש שני עותקים. זה מקור לבאגים בסינגלטונים מבוססי templates (למשל registry), שבהם רישום מה-DLL לא נראה ב-exe. הפתרון: להגדיר את המצב המשותף בפונקציה לא-inline שמיוצאת מספרייה אחת.",
+        "rubric": [
+          "בתוך binary אחד: עותק אחד (COMDAT)",
+          "בין .so ל-exe תלוי ב-visibility וב-RTLD_LOCAL",
+          "Windows DLL: בדרך כלל שני עותקים; פתרון: פונקציה מיוצאת אחת"
+        ]
+      }
     },
     {
       "level": 3,
@@ -906,7 +1069,16 @@
         "שגוי: Reg<long> נבנה פעם אחת בלבד."
       ],
       "id": "cpp.templates.q32",
-      "lesson": "cpp.templates"
+      "lesson": "cpp.templates",
+      "followUp": {
+        "prompt": "אם רוצים מונה אחד משותף לכל ה-Reg<T> לכל T, איך מממשים, ולמה זה גם מקטין code bloat?",
+        "modelAnswer": "מוציאים את המונה ל-base class לא-template: `struct RegBase { static inline int total = 0; };` ו-`template<class T> struct Reg : RegBase { Reg() { ++total; } };`. כל Reg<T> יורש מאותו RegBase, ולכן יש total אחד לכל ה-specializations, ועדיין אפשר להחזיק count לכל T בנפרד. אותה טכניקה מקטינה code bloat: כל קוד שלא תלוי ב-T (ניהול זיכרון, לוגינג, בדיקות גבולות שעובדות על void* ו-size) עובר ל-base לא-template ומקומפל פעם אחת, במקום פעם לכל T. זה בדיוק מה שמימושים עושים, למשל vector<T*> שממומש מעל vector<void*> בכמה ספריות. בנוסף, אם המונה נגיש מכמה threads, צריך std::atomic<int>.",
+        "rubric": [
+          "base class לא-template עם static member משותף",
+          "קוד לא תלוי ב-T ב-base מקטין code bloat",
+          "atomic אם יש גישה מכמה threads"
+        ]
+      }
     },
     {
       "level": 2,

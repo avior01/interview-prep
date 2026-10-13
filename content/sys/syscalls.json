@@ -428,7 +428,17 @@
         "נכון: read על socket ריק מכניס את ה-thread ל-wait queue של ה-socket במצב interruptible, וה-scheduler מריץ thread אחר עד שמגיעים נתונים.",
         "לא נכון: רוב פונקציות libc (strlen, memcpy, qsort, printf לבאפר) רצות לגמרי ב-user space. רק wrappers כמו read, write ו-open נכנסים לקרנל, ו-printf רק כשהבאפר מתרוקן.",
         "נכון: קריאה לפונקציה עולה ns בודדים, ו-syscall כ-50–100ns בלי mitigations ומאות ns איתם (שמירת רגיסטרים, החלפת stack, KPTI)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אמרת ש-syscall עולה מאות ns. מה בדיוק קורה בין הוראת `syscall` לבין הרגע שבו הקוד של הקרנל מתחיל לטפל בבקשה, ומה מכל זה נוסף בגלל mitigations?",
+        "modelAnswer": "הוראת `syscall` מעבירה את המעבד ל-ring 0, טוענת את RIP מרגיסטר MSR (LSTAR) ושומרת את RIP ו-RFLAGS ב-RCX ו-R11. קוד הכניסה של הקרנל מחליף ל-kernel stack (דרך `swapgs` ומבנה per-CPU), שומר את הרגיסטרים של user, ובודק את מספר ה-syscall מול הטבלה. בגלל mitigations נוספים: KPTI (החלפת CR3 בכניסה וביציאה, במעבדים פגיעים ל-Meltdown), ניקוי buffers פנימיים (MDS, `verw`), הגנות על branch prediction (IBRS או retpolines, ו-RSB stuffing). ביציאה יש `sysret` ובדיקות של signals ו-rescheduling. ה-syscall הריק הגולמי הוא כ-50-100ns על מעבד מודרני בלי mitigations, ויכול להגיע למאות ns עם mitigations מלאים. אפשר למדוד עם לולאה של `syscall(SYS_getppid)`.",
+        "rubric": [
+          "syscall: מעבר ל-ring 0, RIP מ-MSR, שמירה ב-RCX/R11",
+          "swapgs ומעבר ל-kernel stack, שמירת רגיסטרים",
+          "mitigations: KPTI, ניקוי buffers (MDS), הגנות branch",
+          "סדר גודל ומדידה עם syscall ריק"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q09",
@@ -449,7 +459,17 @@
         "עדיפות גבוהה יותר משפרת latency מול threads אחרים, אבל לא משנה את העלות של כל syscall. ה-60% ב-kernel נשארים כי מספר הקריאות לא השתנה.",
         "נכון: העלות הקבועה היא לכל syscall, ו-recvmmsg מחלק אותה על עשרות חבילות בקריאה אחת. SO_RCVBUF גדול מאפשר לחבילות להצטבר בלי drops בין קריאות. זה השינוי הזול הראשון, לפני kernel bypass.",
         "TCP מוסיף מחסנית כבדה יותר (ACKs, retransmissions, head-of-line blocking) ולא מתאים ל-streaming של דגימות בזמן אמת. גם הוא דורש syscall לכל read, כך שהוא לא פותר את בעיית ה-overhead."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עברת ל-recvmmsg עם batch של 64. ה-CPU ירד, אבל עכשיו ה-latency של החבילה הראשונה ב-batch עלה. למה, ואיך מאזנים בין השניים?",
+        "modelAnswer": "recvmmsg במצב חוסם, בלי `MSG_WAITFORONE`, מחכה עד שיש vlen הודעות או עד timeout, כך שהחבילה הראשונה ממתינה לאחרות. וגם עם `MSG_WAITFORONE` (חוזר ברגע שיש לפחות אחת), העיבוד של החבילה הראשונה מתחיל רק אחרי שכל ה-batch הועתק. האיזון: להשתמש ב-`MSG_WAITFORONE` או ב-socket לא חוסם עם epoll, כך שהקריאה מחזירה כל מה שכבר הגיע, עד 64, ולא מחכה ליותר. בעומס גבוה ה-batch יתמלא באופן טבעי ויחסוך syscalls, ובעומס נמוך כל חבילה תיצא מיד. כך גודל ה-batch מותאם לקצב. בנוסף, להגדיר SO_RCVBUF גדול כדי שבזמן העיבוד חבילות לא ייפלו.",
+        "rubric": [
+          "recvmmsg חוסם בלי WAITFORONE מחכה ל-vlen הודעות",
+          "MSG_WAITFORONE / non-blocking מחזיר מה שכבר הגיע",
+          "batch מתאים את עצמו לקצב",
+          "SO_RCVBUF גדול"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q10",
@@ -470,7 +490,17 @@
         "EINTR מגיע רק כשקריאה חוסמת נקטעה ע״י signal. במצב O_NONBLOCK הקריאה לא נחסמת בכלל, ולכן אין מה לקטוע.",
         "זו ההתנהגות של pipe חוסם. O_NONBLOCK בדיוק מבטל את החסימה: במקום להמתין, הקריאה חוזרת מיד.",
         "נכון: במצב לא חוסם, read שהיה נחסם מחזיר מיד -1 עם EAGAIN (ב-Linux זהה ל-EWOULDBLOCK). בלולאת epoll זה הסימן לחכות לאירוע הבא."
-      ]
+      ],
+      "followUp": {
+        "prompt": "שני processes קוראים מאותו pipe לא חוסם, שניהם רשומים ב-epoll. כשמגיעה הודעה אחת, מה קורה, ואיך זה משפיע על לוגיקת הטיפול ב-EAGAIN?",
+        "modelAnswer": "שני ה-epoll instances מקבלים אירוע readable על אותו pipe (thundering herd), ושני ה-processes מתעוררים. הראשון שקורא מקבל את הנתונים, והשני מקבל EAGAIN, כי ה-pipe כבר ריק. לכן EAGAIN אחרי אירוע של epoll הוא מצב רגיל ותקין, לא שגיאה, וצריך פשוט לחזור ל-epoll_wait. אם הודעות גדולות מ-PIPE_BUF, או ש-read קורא חלק מהודעה, שני הקוראים יכולים לקבל חלקים של אותה הודעה, ולכן pipe עם כמה קוראים מתאים רק להודעות קצרות מ-PIPE_BUF שנקראות בשלמותן. כדי לצמצם את ה-herd אפשר `EPOLLEXCLUSIVE` (מעיר רק חלק מהממתינים) או להשתמש ב-socket עם תור לכל צרכן.",
+        "rubric": [
+          "שניהם מתעוררים, השני מקבל EAGAIN",
+          "EAGAIN אחרי אירוע הוא תקין, לחזור ל-epoll_wait",
+          "סכנה: הודעה מתפצלת בין קוראים",
+          "EPOLLEXCLUSIVE"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q11",
@@ -491,7 +521,17 @@
         "KPTI לא מבטל את ה-vDSO: דפי ה-vDSO וה-vvar נשארים ממופים ב-user space ו-clock_gettime ממשיך לעבוד בלי syscall. אם בכלל, workload שנשען על vDSO פחות נפגע מ-KPTI.",
         "ה-caches נשארים פעילים לגמרי. מה שנפגע הוא ה-TLB (תרגום כתובות), לא ה-data caches, וזה מקור הבלבול בין שני סוגי ה-cache.",
         "KPTI לא נוגע בבדיקת הארגומנטים, שהקרנל עשה תמיד דרך copy_from_user. המיטיגציה עוסקת במיפוי זיכרון הקרנל, לא בוולידציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תבדוק על מכונה ספציפית אילו mitigations פעילים ומה העלות שלהם ל-workload שלך? ומתי זה לגיטימי לכבות אותם?",
+        "modelAnswer": "`/sys/devices/system/cpu/vulnerabilities/` מכיל קובץ לכל פגיעות (meltdown, spectre_v2, mds וכו') ומציין אם המעבד פגיע ואיזו mitigation פעילה. `grep pcid /proc/cpuinfo` מראה תמיכה ב-PCID. למדידת העלות: להריץ את ה-workload עם `perf stat` ולהשוות זמן ו-syscall rate, ואז לאתחל עם `mitigations=off` (או לכבות mitigation ספציפית, למשל `nopti`) ולמדוד שוב. benchmark של syscall ריק מראה את העלות הגולמית. כיבוי לגיטימי רק כשאין קוד לא מהימן על המכונה: מכונה ייעודית שמריצה רק את הקוד שלך, בלי משתמשים אחרים, בלי דפדפן, בלי VMs של אחרים. בשרת multi-tenant או מחשב שולחני זה מסוכן. הפתרון העדיף הוא להקטין את מספר ה-syscalls (batching, io_uring), כך שהעלות פחות משמעותית.",
+        "rubric": [
+          "/sys/devices/system/cpu/vulnerabilities/",
+          "השוואה עם mitigations=off/nopti ו-perf stat",
+          "כיבוי רק בלי קוד לא מהימן על המכונה",
+          "עדיף להקטין מספר syscalls"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q12",
@@ -512,7 +552,17 @@
         "נכון: לפי signal(7), קריאות כמו epoll_wait, poll, select ו-nanosleep לעולם לא מתחדשות אוטומטית, גם עם SA_RESTART, בעיקר כי חידוש היה דורש חישוב מחדש של ה-timeout. לכן כל event loop בודק EINTR וחוזר ללולאה.",
         "SA_RESTART עובד ב-Linux עבור קריאות כמו read, write ו-wait על התקנים איטיים. מי שרואה EINTR רק ב-epoll_wait מסיק בטעות שהדגל לא עובד בכלל.",
         "SA_RESTART חל על כל signal שה-handler שלו הותקן עם הדגל, לא רק על real-time signals. ההבחנה בין standard ל-RT signals נוגעת לתור ולסדר, לא לחידוש קריאות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך event loop שמחכה ב-epoll_wait עם timeout של 100ms, ו-signals מגיעים כל הזמן. מה הסיכון בטיפול נאיבי ב-EINTR, ואיך signalfd משנה את התמונה?",
+        "modelAnswer": "טיפול נאיבי חוזר ל-epoll_wait עם אותו timeout של 100ms, ולכן אם signals מגיעים כל 50ms, ה-timeout לעולם לא יפוג, ו-timers שהלולאה מנהלת לא יופעלו. הפתרון: לחשב timeout מחדש מתוך deadline מוחלט (CLOCK_MONOTONIC) בכל חזרה. סיכון נוסף: race בין בדיקת דגל שה-handler הדליק לבין הכניסה ל-epoll_wait, כך שהלולאה נרדמת אחרי שה-signal כבר הגיע; `epoll_pwait` עם signal mask סוגר את החלון הזה. signalfd פותר את שתי הבעיות: חוסמים את ה-signals עם sigprocmask, ומקבלים אותם כאירוע readable על fd שרשום ב-epoll, כך ש-epoll_wait לא נקטע, אין handler אסינכרוני, ואין EINTR.",
+        "rubric": [
+          "timeout קבוע + signals תכופים = timers לא פוקעים",
+          "לחשב timeout מ-deadline מוחלט",
+          "race בין בדיקת דגל לשינה; epoll_pwait",
+          "signalfd: signals כאירועים, בלי EINTR"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q13",
@@ -533,7 +583,17 @@
         "strace לא נוגע ב-nice או ב-scheduling policy של התוכנית. השינוי בהתנהגות נובע מעצירות, לא מעדיפות.",
         "נכון: ptrace גורם לקרנל לעצור את ה-thread בכל כניסה ויציאה מ-syscall ולהעיר את strace, כלומר לפחות שני context switches לכל syscall. זה מאט פי עשרות ומשנה תזמון. perf trace ו-bpftrace אוספים בתוך הקרנל לבאפר בלי לעצור את התוכנית.",
         "strace לא מכבה את ה-vDSO, ולכן הוא בכלל לא רואה את clock_gettime שרץ ב-user space. ההאטה היא דווקא על syscalls אמיתיים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השתמשת ב-perf trace ועדיין רואה השפעה קטנה. איך היית מודד את התפלגות ה-latency של syscall מסוים (למשל recvmmsg) בתהליך, עם overhead מינימלי, ובלי לרשום כל אירוע?",
+        "modelAnswer": "הדרך עם overhead נמוך היא לחשב את ההיסטוגרמה בתוך הקרנל עם eBPF ולא להעביר כל אירוע ל-user space. למשל עם bpftrace: probe על `tracepoint:syscalls:sys_enter_recvmmsg` ששומר timestamp במפה לפי TID, ו-probe על `sys_exit_recvmmsg` שמחשב הפרש ומוסיף ל-`hist()`. בסוף מקבלים התפלגות log2 בלי שום אירוע שעבר ל-user space. יש כלים מוכנים: `syscount -L` ו-`funclatency` מ-BCC. העלות היא כמה מאות ns לכל syscall, ולכן ב-מיליון syscalls בשנייה זה עדיין כמה אחוזים, אבל ללא context switches. אפשר גם לסנן ל-PID אחד כדי לא להעמיס על המערכת כולה.",
+        "rubric": [
+          "eBPF: היסטוגרמה בתוך הקרנל",
+          "probes על sys_enter/sys_exit עם מפה לפי TID",
+          "כלים: bpftrace hist, syscount -L, funclatency",
+          "עלות: מאות ns לאירוע, סינון לפי PID"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q14",
@@ -548,7 +608,17 @@
         "copy_to_user, חזרה עם מספר בתים (אולי חלקי), EINTR"
       ],
       "explanation": "שאלה שבודקת אם יש מודל מנטלי שמחבר syscall, scheduler, interrupts ו-DMA.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "במסלול שתיארת, ה-thread מתעורר על core אחר מזה שקיבל את ה-interrupt. מה זה עולה, ואילו מנגנונים ב-Linux מנסים ליישר את ה-core של העיבוד עם ה-core של האפליקציה?",
+        "modelAnswer": "כשה-softirq שמעבד את החבילה רץ על core A וה-thread רץ על core B, יש IPI כדי להעיר את ה-thread על B, נתוני ה-socket וה-skb עוברים בין caches של cores (או בין sockets ב-NUMA), וה-copy_to_user קורא נתונים שנמצאים ב-cache של A. זה מוסיף מיקרו-שניות ו-cache misses. מנגנונים: RPS (Receive Packet Steering) מעביר עיבוד פרוטוקול בתוכנה ל-core מסוים לפי hash; RFS (Receive Flow Steering) זוכר על איזה core האפליקציה קראה בפעם האחרונה מה-socket ומכוון לשם את העיבוד; aRFS עושה את זה בחומרה ב-NIC. אפשרות ידנית: להצמיד את ה-thread לאותו core שמטפל ב-IRQ של התור, או להפך, ולוודא שה-NIC והאפליקציה באותו NUMA node.",
+        "rubric": [
+          "עלות: IPI, העברת cache lines בין cores",
+          "RPS: steering בתוכנה לפי hash",
+          "RFS/aRFS: לפי ה-core של האפליקציה",
+          "הצמדה ידנית של IRQ ו-thread, אותו NUMA node"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q15",
@@ -569,7 +639,17 @@
         "O_DIRECT עוקף את ה-page cache ומשפיע על מסלול הנתונים, לא על מספר ה-syscalls. עם או בלי O_DIRECT עדיין צריך להגיש את הבקשות.",
         "אין vDSO ל-io_uring. הטבעות ממופות לזיכרון המשותף דרך mmap, וזה מה שמאפשר לקרוא completions בלי syscall, אבל ההגשה עדיין צריכה מישהו בצד הקרנל.",
         "נכון: ב-SQPOLL thread של הקרנל מסתובב על ה-submission ring ולוקח בקשות חדשות, והאפליקציה קוראת completions ישירות מה-ring. syscall נדרש רק כדי להעיר את ה-thread אחרי idle, והמחיר הוא core שרוף."
-      ]
+      ],
+      "followUp": {
+        "prompt": "SQPOLL שורף core. באיזה מצב זה משתלם, ומה עוד יכול להשתבש עם הרשאות או עם ה-thread של הקרנל כשה-workload לא רציף?",
+        "modelAnswer": "SQPOLL משתלם כשקצב ה-I/O גבוה ורציף, למשל מאות אלפי פעולות בשנייה, כך שה-syscalls שנחסכים היו צורכים חלק משמעותי מ-core בכל מקרה, וכשיש cores פנויים במכונה. ב-workload לא רציף, ה-thread של הקרנל נרדם אחרי `sq_thread_idle` (ברירת מחדל 1 שנייה, ניתן לכוונון); אז האפליקציה צריכה לבדוק את הדגל `IORING_SQ_NEED_WAKEUP` ב-ring ולקרוא ל-`io_uring_enter` כדי להעיר אותו, ואם היא לא בודקת, פעולות נתקעות. בנוסף, ה-thread הזה שורף CPU גם כשאין עבודה, עד ה-idle timeout, ובקרנלים ישנים SQPOLL דרש CAP_SYS_ADMIN (מ-5.11 זה כבר לא נדרש). כדאי להצמיד את ה-SQPOLL thread ל-core ייעודי (`IORING_SETUP_SQ_AFF`), כדי שלא יתחרה עם ה-threads של האפליקציה.",
+        "rubric": [
+          "משתלם בקצב גבוה ורציף עם cores פנויים",
+          "sq_thread_idle והדגל IORING_SQ_NEED_WAKEUP",
+          "שורף CPU עד ה-idle timeout",
+          "IORING_SETUP_SQ_AFF להצמדה"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q16",
@@ -590,7 +670,17 @@
         "VM לא מבטל את ה-vDSO: הוא ממופה בכל process גם ב-guest. עם kvm-clock או tsc יציב clock_gettime ב-VM מהיר כמו על מתכת.",
         "CLOCK_MONOTONIC הוא בדיוק אחד מהשעונים שה-vDSO מממש, יחד עם CLOCK_REALTIME. שעונים שנופלים ל-syscall הם למשל CLOCK_PROCESS_CPUTIME_ID.",
         "ווירטואליזציה עם תמיכת חומרה מריצה רוב ההוראות במהירות מלאה. ההאטה היא בנקודות שדורשות VM exit, כמו גישה ל-hpet מדומה, לא בכל ההוראות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה רוצה להחזיר את ה-clocksource ל-TSC בתוך ה-VM. מה צריך להתקיים כדי שזה יהיה בטוח, ומה הסיכון אם ה-VM עובר live migration למארח אחר?",
+        "modelAnswer": "TSC בטוח כ-clocksource כשהוא invariant (קצב קבוע בלי תלות ב-P-states וב-C-states, הדגל `constant_tsc` ו-`nonstop_tsc` ב-cpuinfo), מסונכרן בין כל ה-cores, וה-hypervisor חושף אותו ל-guest באופן יציב. הקרנל מסמן TSC כ-unstable אם ה-watchdog רואה סטייה מול clocksource אחר, ולכן לפעמים צריך לתקן את הסיבה ולא רק לכפות. אפשר לכפות עם `clocksource=tsc tsc=reliable`, אבל זה מבטל את הבדיקה. ב-live migration למארח עם תדר TSC שונה, הקצב שה-guest רואה ישתנה, והזמן ירוץ מהר או לאט מדי, אלא אם המארח תומך ב-TSC scaling בחומרה. לכן kvm-clock (pvclock) הוא ברירת המחדל: הוא עדיין נתמך ב-vDSO, מבוסס TSC, וה-hypervisor מעדכן את הפרמטרים שלו אחרי migration.",
+        "rubric": [
+          "TSC invariant: constant_tsc/nonstop_tsc, מסונכרן",
+          "watchdog מסמן unstable; כפייה מבטלת בדיקה",
+          "migration: תדר שונה משבש זמן בלי TSC scaling",
+          "kvm-clock נתמך ב-vDSO ומתעדכן אחרי migration"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q17",
@@ -611,7 +701,17 @@
         "נכון: ה-signal יכול להגיע בין החזרת ה-write לבדיקת errno. ה-handler רץ על אותו thread, ו-waitpid שבו (למשל עם ECHILD) דורס את errno, כך שהבדיקה רואה ערך אחר מ-EAGAIN. הכלל: לשמור errno בכניסה ל-handler ולשחזר ביציאה.",
         "write על fd לא חוסם בהחלט מחזיר -1 עם EAGAIN כשאין מקום (socket או pipe מלאים). זו התנהגות מתועדת ונפוצה.",
         "errno הוא thread-local, ולכן thread אחר לא יכול לדרוס אותו. מה שכן חולק את אותו errno הוא signal handler שרץ על אותו thread."
-      ]
+      ],
+      "followUp": {
+        "prompt": "שמירה ושחזור של errno פותרת את הבאג הזה. אילו עוד מצבים גלובליים handler עלול לשבש באופן דומה, ומה הדרך הכללית להימנע מכל הבעיה?",
+        "modelAnswer": "כל פונקציה שה-handler קורא לה ומשנה מצב שהקוד הראשי באמצע שימוש בו: שינוי של signal mask או של `sigaction` שלא משוחזר; כתיבה ל-fd שהקוד הראשי כותב אליו באמצע (ערבוב פלט, או שינוי offset של קובץ משותף ב-lseek); שינוי של floating-point environment (rounding mode); ובעיקר קריאה לפונקציות לא async-signal-safe (malloc, stdio) שמחזיקות locks פנימיים או מבנים גלובליים, ו-deadlock או השחתה. הדרך הכללית: ה-handler עושה דבר אחד בלבד, כותב בית ל-self-pipe או ל-eventfd או מדליק `volatile sig_atomic_t`, וכל הלוגיקה (כולל waitpid) רצה בקוד הרגיל. עוד יותר טוב: לחסום את ה-signal ולקבל אותו דרך signalfd ב-event loop, כך שאין handler אסינכרוני כלל.",
+        "rubric": [
+          "מצבים נוספים: signal mask, offset של fd, FP environment",
+          "פונקציות לא async-signal-safe: locks ו-deadlock",
+          "handler מינימלי: self-pipe/eventfd/sig_atomic_t",
+          "signalfd מבטל handler אסינכרוני"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q18",
@@ -747,7 +847,17 @@
         "באפר גדול יותר רק מקטין את הסיכוי שיישארו נתונים, אבל אם הגיעו יותר בתים מגודל הבאפר הבעיה חוזרת. התיקון האמיתי הוא לרוקן עד EAGAIN.",
         "socket לא חוסם שכבר יש בו נתונים לא נחסם, ולכן EINTR כמעט לא רלוונטי כאן. גם טיפול ב-EINTR לא היה מונע את ההיתקעות, כי הנתונים שנשארו עדיין לא יגרמו לאירוע.",
         "נכון: הבאג בשורת ה-read. ב-EPOLLET האירוע מגיע רק כשנכנסים נתונים חדשים, ו-read יחיד של 4KB משאיר את השאר ב-socket בלי אירוע נוסף. צריך לקרוא בלולאה עד -1 עם EAGAIN (0 הוא EOF)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תיקנת עם לולאה עד EAGAIN. מה הסיכון של הלולאה הזו בשרת עם הרבה חיבורים, כשחיבור אחד שולח נתונים מהר מכפי שאתה קורא, ואיך מטפלים בזה?",
+        "modelAnswer": "אם הצד השני שולח מהר, ייתכן שה-socket לעולם לא יתרוקן לגמרי, והלולאה עד EAGAIN תטפל רק בחיבור הזה ותרעיב את כל שאר ה-fds שה-epoll_wait החזיר, כלומר unfairness ועלייה ב-latency לחיבורים אחרים. הפתרון: להגביל את מספר הקריאות או הבתים לכל חיבור בכל סבב (budget, למשל 64KB), ואם לא הגענו ל-EAGAIN, לשים את ה-fd ברשימת \"ready\" פנימית של ה-event loop ולחזור אליו בסבב הבא, אחרי שאחרים קיבלו תור. ב-ET זה הכרחי, כי epoll לא יזכיר לנו שוב. חלופה: לעבור ל-level-triggered לחיבורים כאלה, ששם אפשר לקרוא מעט בכל פעם בלי לאבד אירועים, במחיר wakeups נוספים.",
+        "rubric": [
+          "socket שלא מתרוקן מרעיב חיבורים אחרים",
+          "budget לכל חיבור בכל סבב",
+          "רשימת ready פנימית כי ET לא יזכיר שוב",
+          "level-triggered כחלופה"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q25",
@@ -768,7 +878,17 @@
         "write לא נכשל בשקט: שגיאה מדווחת כ-1- עם errno, ודיסק איטי גורם לכל היותר לחסימה (dirty throttling). כאן כל הקריאות באמת הצליחו.",
         "fsck או journal replay משחזרים עקביות של מטא-דאטה, ולא מוחקים רשומות שהגיעו לדיסק. הרשומות האחרונות פשוט מעולם לא הגיעו לדיסק.",
         "O_DIRECT עוקף את ה-page cache, אבל לא מבטיח שה-write cache של הדיסק עצמו נשטף לאחסון יציב. לכן לבדו אינו ערובה לעמידות, ועדיין צריך fsync או O_DSYNC."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלטת לבצע fdatasync כל 100ms. מה ההבדל בין fsync ל-fdatasync, ולמה בקובץ שגדל (append) fdatasync לא חוסך כמו שחשבת?",
+        "modelAnswer": "fsync כותב לדיסק את הנתונים ואת כל ה-metadata של ה-inode (גודל, זמני שינוי, הרשאות), ומחכה שהדיסק יאשר (כולל flush של ה-cache של הדיסק). fdatasync כותב את הנתונים ורק את ה-metadata שנחוץ כדי לקרוא אותם נכון, כלומר מדלג על mtime ו-atime. בקובץ שגדל, הגודל של הקובץ והקצאת הבלוקים החדשים הם metadata נחוץ, ולכן fdatasync חייב לכתוב גם אותם, כמעט כמו fsync. החיסכון האמיתי של fdatasync הוא כשכותבים בתוך קובץ שכבר מוקצה, למשל קובץ log בגודל קבוע שהוקצה מראש עם `fallocate` וכותבים לתוכו. לכן loggers ו-databases מקצים מראש קבצים וממחזרים אותם. אחרי יצירת קובץ חדש צריך גם fsync על התיקייה, אחרת השם עלול להיעלם בקריסה.",
+        "rubric": [
+          "fsync: נתונים + כל ה-metadata; fdatasync: רק נחוץ",
+          "append משנה גודל והקצאה = metadata נחוץ",
+          "הקצאה מראש עם fallocate מאפשרת חיסכון",
+          "fsync על התיקייה לקובץ חדש"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q26",
@@ -789,7 +909,17 @@
         "root בקונטיינר הוא UID 0 (אלא אם יש user namespace), אבל עם פחות capabilities ועם סינון seccomp. הוא מוגבל, לא חסר משמעות.",
         "נכון: Docker מתקין פרופיל seccomp ברירת מחדל שחוסם syscalls מסוכנים, וביניהם perf_event_open, ומחזיר EPERM לפני שהקרנל בודק הרשאות. הפתרון: פרופיל מותאם, ו-perf_event_paranoid או capabilities מתאימות.",
         "perf_event_open קיים ועובד בתוך namespaces כשמתירים אותו. החסימה מגיעה מהמדיניות של ה-runtime, לא ממגבלה של הקרנל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה כותב פרופיל seccomp משלך לשירות. איך תמצא את רשימת ה-syscalls הנדרשים, ומה הסיכון של allow-list שבנית מריצה אחת?",
+        "modelAnswer": "דרך נפוצה: להריץ את השירות עם `strace -f -c` או `perf trace -s` תחת עומס מייצג, ולאסוף את כל ה-syscalls שהופיעו; או להריץ עם seccomp במצב log (`SCMP_ACT_LOG`) שרושם הפרות בלי לחסום, לאורך זמן. הסיכון: ריצה אחת לא מכסה נתיבים נדירים, למשל טיפול בשגיאות, rotation של לוגים, reload של config, או שדרוג של glibc שמחליף syscall (למשל `open` ב-`openat`, `stat` ב-`statx` או `newfstatat`, `clone` ב-`clone3`). ואז השירות נופל ב-production על EPERM או SIGSYS בנתיב שלא נבדק. לכן מתחילים במצב log, מוסיפים בדיקות שמכסות נתיבי שגיאה, מחליטים מה החזרה לחסום (EPERM או ENOSYS, שגורם ל-glibc לנסות fallback), ומבצעים בדיקה מחודשת בכל שדרוג של libc או kernel.",
+        "rubric": [
+          "איסוף עם strace/perf trace תחת עומס מייצג",
+          "מצב log (SCMP_ACT_LOG) לאורך זמן",
+          "נתיבים נדירים ושדרוג glibc שמחליף syscalls",
+          "ENOSYS מאפשר fallback; בדיקה מחודשת בשדרוגים"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q27",
@@ -810,7 +940,17 @@
         "נכון: Linux חותך כל read או write בודד ל-MAX_RW_COUNT = 0x7ffff000 = 2147479552 בתים (2GB פחות דף אחד). זה short write חוקי, וקוד נכון ממשיך בלולאה עם השארית.",
         "ב-x86-64 ssize_t הוא 64 ביט ומחזיק 3GB בקלות. ההנחה נובעת מחשיבה על מערכות 32 ביט, שם ההגבלה הייתה אחרת.",
         "ה-page cache לא מלא בבת אחת: כשיש יותר מדי dirty pages הקרנל מאט את הכותב (balance_dirty_pages), כלומר חוסם, ולא מחזיר ערך חלקי קבוע כזה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "כתבת `write_all` בלולאה. אילו מקרים שונים הלולאה צריכה להבחין ביניהם (ערך חיובי, 0, ‎-1 עם errno שונים), ומה הייתה טעות אם הקובץ פתוח עם O_NONBLOCK?",
+        "modelAnswer": "ערך חיובי: מקדמים את המצביע ומקטינים את הנותר, וממשיכים. 0 מ-write עם count חיובי לא אמור לקרות לקובץ רגיל, ולכן מתייחסים אליו כשגיאה כדי לא להיכנס ללולאה אינסופית. ‎-1 עם EINTR: מנסים שוב, כי signal קטע את הקריאה לפני שנכתב משהו. ‎-1 עם EAGAIN: אפשרי רק ב-fd לא חוסם (socket או pipe); אם הלולאה מנסה שוב מיד, היא הופכת ל-busy loop שורף CPU, ולכן צריך לחכות עם poll על POLLOUT, או להחזיר לקורא כמה נכתב כדי שימשיך דרך ה-event loop. ‎-1 עם ENOSPC, EIO או EPIPE: שגיאה אמיתית שמחזירים. בנוסף, לקבצים רגילים O_NONBLOCK לא משפיע, כך ש-EAGAIN בא רק מ-sockets ו-pipes.",
+        "rubric": [
+          "חיובי: לקדם ולהמשיך",
+          "EINTR: לנסות שוב",
+          "EAGAIN: לחכות ב-poll, לא busy loop",
+          "שגיאות אמיתיות (ENOSPC/EIO/EPIPE) מוחזרות"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q28",
@@ -831,7 +971,17 @@
         "epoll לא תומך בקבצים רגילים ולא מדווח עליהם דבר. את ההבחנה בין נתונים ב-page cache ללא נותן preadv2 עם RWF_NOWAIT, לא epoll.",
         "O_NONBLOCK רק מבטל חסימה באובייקטים שתומכים בזה, ולא הופך קריאה ל-asynchronous עם הודעת סיום. התיאור מזכיר את O_ASYNC או את POSIX AIO, שהם מנגנונים אחרים.",
         "נכון: קבצים רגילים תמיד נחשבים מוכנים, ולכן epoll_ctl נכשל עליהם עם EPERM. O_NONBLOCK לא משפיע, ו-read נחסם על הדיסק. החלופות: io_uring, thread pool, או preadv2 עם RWF_NOWAIT ונפילה ל-thread כשמתקבל EAGAIN."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת `preadv2` עם `RWF_NOWAIT`. מה בדיוק מחזיר EAGAIN במצב הזה, ואיך ה-event loop משתמש בזה כדי לקבל את הטוב משני העולמות?",
+        "modelAnswer": "`RWF_NOWAIT` אומר לקרנל לקרוא רק אם הנתונים כבר נמצאים ב-page cache (או שאפשר לספק אותם בלי לחסום על I/O או על locks). אם חלק מהנתונים לא ב-cache, הוא מחזיר EAGAIN, או קריאה חלקית של מה שכן היה זמין. ה-event loop משתמש בזה כ-fast path: מנסה `preadv2(RWF_NOWAIT)` ישירות ב-thread הראשי; אם הצליח (קובץ חם, המקרה הנפוץ), אין שום העברה ל-thread pool ואין latency נוסף. אם קיבל EAGAIN, הוא שולח את הבקשה ל-thread pool (או ל-io_uring), שיבצע קריאה חוסמת, ויחזיר את התוצאה לולאה דרך eventfd. כך משלמים על העברה ל-thread רק כשבאמת צריך לגשת לדיסק. החסרון: לא כל filesystem תומך ב-RWF_NOWAIT באותה רמה.",
+        "rubric": [
+          "RWF_NOWAIT קורא רק מה שכבר ב-page cache",
+          "EAGAIN או קריאה חלקית אם לא ב-cache",
+          "fast path בלולאה, fallback ל-thread pool",
+          "התוצאה חוזרת דרך eventfd"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q29",
@@ -852,7 +1002,17 @@
         "SCHED_FIFO מקטין את ה-wakeup latency ואת ה-jitter, אבל השינה עדיין יחסית, ולכן זמן העבודה וה-latency שנותר עדיין מתווספים לכל סיבוב.",
         "נכון: עם TIMER_ABSTIME ו-next += period, כל סיבוב מתעורר בזמן מוחלט שאינו תלוי בזמן העבודה, כך שהאיחור מופיע כ-jitter של סיבוב אחד ולא מצטבר. CLOCK_MONOTONIC לא קופץ בשינוי שעון, ו-EINTR מטופל בקריאה חוזרת עם אותו next.",
         "usleep הוא עוד שינה יחסית (וב-glibc ממומש מעל nanosleep), ולכן הוא סובל מאותה הצטברות בדיוק. הוא גם מיושן ב-POSIX."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עם TIMER_ABSTIME, מה הלולאה צריכה לעשות כשסיבוב אחד לקח 5ms בגלל תקלה, כלומר `next` כבר בעבר בכמה מחזורים? ומה ההבדל לעומת timerfd?",
+        "modelAnswer": "אם `next` בעבר, `clock_nanosleep` חוזר מיד, והלולאה תרוץ כמה סיבובים ברצף בלי שינה כדי \"להשלים\" את המחזורים שפוספסו. לפעמים זה רצוי (צריך לעבד כל מחזור), ולפעמים זה גורם ל-burst שמחמיר את המצב. החלטה מודעת: לבדוק אחרי ההתעוררות כמה מחזורים פוספסו (`(now - next) / period`), לתעד overrun, ולהחליט אם לדלג קדימה (`next` = המחזור הבא אחרי now) או לעבד את כולם. timerfd עם interval עושה את החשבון בשבילך: read מחזיר uint64 עם מספר הפקיעות מאז הקריאה הקודמת, כך שרואים ישירות כמה מחזורים פוספסו, והוא משתלב ב-epoll. בשני המקרים CLOCK_MONOTONIC מגן משינויי שעון.",
+        "rubric": [
+          "next בעבר = חזרה מיידית, burst של סיבובים",
+          "לחשב כמה מחזורים פוספסו ולתעד overrun",
+          "החלטה: לדלג קדימה או לעבד הכל",
+          "timerfd מחזיר מספר פקיעות ומשתלב ב-epoll"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q30",
@@ -868,7 +1028,17 @@
         "מודעות לביצועי ה-SSD לאורך זמן ומדידה"
       ],
       "explanation": "השאלה מחברת syscalls, page cache ו-RT. מועמד חזק מסביר למה write פשוט נכשל בקצב הזה, ולא רק מציין io_uring.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "בחרת io_uring עם O_DIRECT. איזה דרישות alignment יש ל-O_DIRECT, ומה קורה ל-throughput אם תגיש בקשות של 4KB במקום 1MB?",
+        "modelAnswer": "O_DIRECT דורש שהכתובת בזיכרון, ה-offset בקובץ והאורך יהיו מיושרים לגודל הבלוק הלוגי של ההתקן (בדרך כלל 512 בתים או 4KB), אחרת מקבלים EINVAL (או, בחלק מה-filesystems, נפילה שקטה ל-buffered I/O). בפועל מקצים עם `posix_memalign(4096)` וכותבים בגדלים שהם כפולה של 4KB. ב-1.6 GB/s, בקשות של 4KB הן 400K פעולות בשנייה, כל אחת עם overhead של submission, completion, ופקודת NVMe, ואפילו עם io_uring זה צורך הרבה CPU וקשה להגיע לרוחב הפס. בקשות של 1MB הן רק 1600 פעולות בשנייה, ומעט בקשות במקביל (queue depth של 4-8) מספיקות כדי למלא את ה-NVMe. לכן אוספים דגימות לבאפרים גדולים לפני ההגשה, ושומרים כמה בקשות in-flight.",
+        "rubric": [
+          "alignment של כתובת, offset ואורך לבלוק הלוגי",
+          "EINVAL או fallback כשלא מיושר; posix_memalign",
+          "חישוב: 4KB = 400K IOPS, 1MB = 1600",
+          "בקשות גדולות + queue depth קטן ממלאים את ה-NVMe"
+        ]
+      }
     },
     {
       "id": "sys.syscalls.q31",
@@ -1008,7 +1178,17 @@
         "שגוי: malloc היא פונקציית ספרייה, אבל היא חייבת לקבל זיכרון מהקרנל מתישהו, דרך brk או mmap."
       ],
       "explanation": "malloc היא library call שמבצעת syscall רק כשנגמר לה המקום. סף ה-mmap של glibc הוא דינמי: אחרי free של בלוק גדול, הסף עולה, ובלוקים בגודל הזה יוקצו מה-heap מעכשיו.",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "התוכנית משחררת ומקצה בלוקים של 1MB אלף פעמים בשנייה. מה יראה strace לפני ואחרי שהסף הדינמי עולה, ולמה בתהליך RT כדאי לקבע את הסף בעצמך?",
+        "modelAnswer": "בהתחלה כל `malloc(1MB)` הוא mmap וכל free הוא munmap, כלומר אלפיים syscalls בשנייה, ובנוסף כל mmap חדש מתחיל ב-page faults על כל 256 הדפים כשנוגעים בהם. אחרי ה-free הראשון של בלוק כזה, glibc מעלה את `M_MMAP_THRESHOLD` לגודל שלו (עד מקסימום של 32MB ב-64 ביט), ומאז בלוקים כאלה מוקצים מה-heap בלי syscalls, אם יש בו מקום. בתהליך RT ההתנהגות הדינמית לא צפויה: זמן ההקצאה תלוי בהיסטוריה, ו-munmap גורם ל-TLB shootdowns לכל ה-threads. לכן קובעים במפורש `mallopt(M_MMAP_THRESHOLD, ...)` גבוה ו-`M_TRIM_THRESHOLD` גבוה (קביעה מפורשת גם מבטלת את ההתאמה הדינמית), נוגעים בזיכרון מראש, ו-`mlockall`. עדיף עוד יותר להקצות pool בזמן האתחול ולמחזר בלוקים בלי malloc בנתיב החם.",
+        "rubric": [
+          "בהתחלה mmap/munmap לכל בלוק + page faults",
+          "הסף עולה אחרי free, ואז הקצאה מה-heap",
+          "ב-RT: התנהגות לא צפויה ו-TLB shootdowns",
+          "mallopt (מבטל דינמיות), mlockall, pool מראש"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1053,7 +1233,17 @@
       ],
       "explanation": "ההרחבה נעשית ב-shell. לכן ההתנהגות כשאין התאמה תלויה באפשרויות של bash (`nullglob`, `failglob`, `dotglob`), לא ב-ls. בסקריפטים זה מקור באגים נפוץ, למשל לולאת `for f in *.log` שרצה פעם אחת על המחרוזת `*.log`.",
       "id": "sys.syscalls.q38",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "בסקריפט bash אתה רוצה לעבור על כל קבצי `*.log` בתיקייה ולמחוק אותם, כולל מקרה שאין אף קובץ ומקרה של שמות עם רווחים. איך תכתוב את הלולאה נכון?",
+        "modelAnswer": "שתי בעיות: כשאין התאמה, `for f in *.log` ירוץ פעם אחת עם המחרוזת `*.log`, ו-rm ינסה למחוק קובץ בשם הזה. ושמות עם רווחים יתפצלו אם המשתנה לא במרכאות. הפתרון: `shopt -s nullglob` לפני הלולאה, כך שתבנית בלי התאמה מתרחבת לכלום והלולאה לא רצה; ובתוך הלולאה תמיד `rm -- \"$f\"` עם מרכאות, ו-`--` כדי ששם שמתחיל במקף לא ייקרא כאופציה. חלופה: לבדוק `[ -e \"$f\" ] || continue` בתחילת הלולאה. לכמויות גדולות או לחיפוש רקורסיבי, `find . -maxdepth 1 -name '*.log' -delete` עוקף גם את מגבלת ARG_MAX וגם את בעיות ה-glob. ובסקריפטים: `set -euo pipefail` כדי לתפוס שגיאות.",
+        "rubric": [
+          "nullglob כדי שלולאה לא תרוץ על המחרוזת",
+          "מרכאות סביב \"$f\" לשמות עם רווחים",
+          "-- למניעת פירוש שם כאופציה",
+          "find -delete כחלופה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1074,7 +1264,17 @@
       ],
       "explanation": "ההבדל בין שתי הפקודות מראה מי עושה מה: עם `*` ה-shell מעביר את כל השמות דרך execve. בלי `*` ls קורא את התיקייה בעצמו, ואין מגבלה על argv.",
       "id": "sys.syscalls.q39",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "הצעת `find -exec ... {} +`. מה ההבדל בינו לבין `-exec ... {} \\;` ולבין `xargs`, ומה הבעיה של xargs עם שמות קבצים מסוימים?",
+        "modelAnswer": "`-exec cmd {} \\;` מריץ את הפקודה פעם אחת לכל קובץ, כלומר 2 מיליון fork ו-exec, איטי מאוד. `-exec cmd {} +` אוסף כמה שיותר שמות לכל הרצה, עד מגבלת ARG_MAX, ומריץ מעט מאוד פעמים, כמו xargs. `xargs` קורא שמות מ-stdin ומפצל לפי רווחים ושורות חדשות כברירת מחדל, ולכן שמות עם רווחים, מרכאות או newline נשברים או מתפרשים לא נכון, וזו גם בעיית אבטחה. הפתרון: `find ... -print0 | xargs -0 cmd`, שמפריד ב-NUL, תו שאסור בשמות קבצים. היתרון של xargs: אפשר להריץ במקביל עם `-P`. ובכל מקרה, אם הפקודה יכולה לקרוא את התיקייה בעצמה (כמו `ls -l` או `find -delete`), זה הכי יעיל.",
+        "rubric": [
+          "\\; = הרצה לכל קובץ, + = batching עד ARG_MAX",
+          "xargs מפצל לפי רווחים/newline כברירת מחדל",
+          "-print0 | xargs -0",
+          "xargs -P להרצה מקבילית"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1130,7 +1330,17 @@
       ],
       "problem": "Google SRE-SE Linux internals round: inode and its components",
       "id": "sys.syscalls.q41",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "מה היה קורה אם במקום `ln a b` היית עושה `ln -s a b`, ומה המגבלות של hard links שגורמות לאנשים להשתמש ב-symlinks?",
+        "modelAnswer": "symlink הוא קובץ נפרד עם inode משלו, שתוכנו הוא הנתיב `a`. אחרי `rm a`, ה-symlink נשאר אבל מצביע לשם שלא קיים (dangling), ו-`cat b` נכשל עם \"No such file or directory\". אם ייווצר קובץ חדש בשם `a`, b יצביע אליו. המגבלות של hard links: הם לא יכולים לחצות filesystems, כי מספר inode ייחודי רק בתוך filesystem אחד; אסור ליצור hard link לתיקייה (כדי למנוע מעגלים בעץ ובלבול של `..`); וכל ה-links שווים, כך שאין דרך לדעת מי \"המקורי\". symlinks עובדים בין filesystems ולתיקיות, וברורים למשתמש, אבל נשברים כשהיעד זז, ויש להם סיכוני אבטחה (symlink attacks ב-/tmp), ולכן יש `O_NOFOLLOW` ו-`protected_symlinks`.",
+        "rubric": [
+          "symlink = inode נפרד שמכיל נתיב",
+          "אחרי rm, symlink נשבר (dangling)",
+          "hard link: לא בין filesystems ולא לתיקיות",
+          "symlink: גמיש אבל נשבר, סיכוני אבטחה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1151,7 +1361,17 @@
       ],
       "explanation": "זו תקלה קלאסית ב-log rotation. לכן logrotate עובד עם `copytruncate`, או שולח לשירות signal כדי שיסגור ויפתח מחדש את הקובץ.",
       "id": "sys.syscalls.q42",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "עשית truncate דרך `/proc/<pid>/fd/<n>` והמקום התפנה. אבל השירות כותב עם `O_APPEND`? ובלי `O_APPEND`? מה יקרה לקובץ בכל אחד מהמקרים אחרי ה-truncate?",
+        "modelAnswer": "עם O_APPEND, כל write מתחיל בסוף הקובץ הנוכחי, ולכן אחרי truncate לגודל 0 הכתיבה הבאה תתחיל מ-offset 0 והקובץ יגדל כרגיל. בלי O_APPEND, לכל fd יש offset משלו שנשאר, למשל 40GB. הכתיבה הבאה תכתוב ב-offset 40GB, והקובץ יקבל \"חור\": הוא ייראה בגודל 40GB (ls), אבל כ-sparse file רק הבלוקים שנכתבו באמת יתפסו מקום (du). כלים שקוראים אותו יראו 40GB של אפסים בהתחלה. זו בדיוק הסיבה ש-`copytruncate` ב-logrotate עובד טוב רק עם שירותים שכותבים עם O_APPEND. עם שירות בלי O_APPEND, הדרך הנכונה היא signal (למשל SIGHUP) שגורם לו לסגור ולפתוח מחדש את הקובץ.",
+        "rubric": [
+          "O_APPEND: כתיבה מסוף הקובץ הנוכחי, מתחיל מ-0",
+          "בלי O_APPEND: ה-offset הישן נשמר",
+          "נוצר sparse file עם חור (ls גדול, du קטן)",
+          "copytruncate מתאים רק ל-O_APPEND; אחרת signal ל-reopen"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1185,7 +1405,17 @@
       ],
       "explanation": "עדכון אטומי של קובץ מבוסס על ההפרדה בין שם ל-inode: בונים inode חדש בצד, ומחליפים את המצביע בפעולה אחת. זה הדפוס של עורכים, package managers וכלי config.",
       "id": "sys.syscalls.q44",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "השירות הקורא לא פותח את הקובץ מחדש, אלא מבצע mmap פעם אחת בהפעלה. אחרי ה-rename, מה הוא רואה? ואיך הוא אמור לגלות שהיה עדכון?",
+        "modelAnswer": "ה-mmap מקושר ל-inode שהיה פתוח בזמן המיפוי, לא לשם. אחרי ה-rename השם מצביע ל-inode חדש, אבל המיפוי עדיין מצביע ל-inode הישן, כך שהשירות ממשיך לראות את הגרסה הישנה במלואה, לנצח. ה-inode הישן לא ישוחרר כל עוד המיפוי קיים. כדי לגלות עדכון: inotify על התיקייה (לא על הקובץ, כי הקובץ עצמו לא השתנה), לאירועים `IN_MOVED_TO` או `IN_CLOSE_WRITE` עם השם הרלוונטי; או polling תקופתי של `stat` על השם והשוואה של `st_ino` (ו-`st_dev`) למה שנשמר. כשמזהים שינוי, פותחים את השם מחדש, ממפים את ה-inode החדש, מאמתים אותו, ורק אז מחליפים את המצביע (atomic) ומבטלים את המיפוי הישן.",
+        "rubric": [
+          "mmap קשור ל-inode הישן, רואה גרסה ישנה",
+          "inode ישן לא משוחרר עד unmap",
+          "inotify על התיקייה (IN_MOVED_TO) או השוואת st_ino",
+          "מיפוי חדש, אימות, החלפה אטומית"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1255,7 +1485,17 @@
       ],
       "explanation": "בשכבת buffering יש שני אינדקסים: כמה כבר העתקנו ליעד (`done`) ואיפה אנחנו במאגר (`pos`). באג נפוץ הוא לעדכן אינדקס בלי להשתמש בו בכתובת המקור.",
       "id": "sys.syscalls.q47",
-      "lesson": "sys.syscalls"
+      "lesson": "sys.syscalls",
+      "followUp": {
+        "prompt": "השכבה הזו עוטפת driver שקורא 512 בתים. מתי שכבת buffering כזו מזיקה ולא מועילה, ומה עדיף לעשות כשהמשתמש מבקש קריאה של 64KB?",
+        "modelAnswer": "buffering מועיל כשהמשתמש מבקש חתיכות קטנות: במקום syscall או גישה ל-driver לכל 100 בתים, יש גישה אחת לכל 512. אבל כשהמשתמש מבקש קריאה גדולה, למשל 64KB, השכבה מעתיקה כל בלוק פעמיים: מה-driver ל-cache ואז מה-cache ליעד. זה כפול רוחב פס זיכרון ומאות קריאות drv_read שהיו יכולות להיות פחות. הפתרון הנפוץ (כמו ב-stdio וב-BufferedReader): קודם להעביר את מה שנשאר ב-cache, ואז אם הנותר גדול מגודל ה-cache, לקרוא ישירות ל-`out` בלי לעבור דרך ה-cache (bypass), ורק את הזנב הקטן לקרוא דרך ה-cache. אם ה-driver תומך בקריאות גדולות, כדאי גם לבקש ממנו את כל הכמות בבת אחת.",
+        "rubric": [
+          "buffering מועיל לקריאות קטנות",
+          "קריאה גדולה דרך cache = העתקה כפולה",
+          "bypass: לקרוא ישירות ליעד כשהנותר גדול",
+          "לרוקן קודם את ה-cache, זנב דרך ה-cache"
+        ]
+      }
     },
     {
       "level": 2,

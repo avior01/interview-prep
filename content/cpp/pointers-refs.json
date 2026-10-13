@@ -406,7 +406,16 @@
         "שגוי. אותה טעות ביתר שאת: גם a לא קשור ל-b. `r = b` רק העתיק את 2 לתוך a, ואז b השתנה לבד.",
         "שגוי. אחרי `r = b` הערך של a הוא 2 ולא 1, כי השמה ל-reference כותבת לאובייקט שהוא מכנה.",
         "נכון. `r = b` מעתיק 2 לתוך a, ו-r ממשיך להיות alias של a. השינוי של b ל-9 לא נוגע ב-a: a=2, r=2, b=9."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם reference אי אפשר לקשור מחדש, איך הקומפיילר מממש reference בפועל? האם reference תמיד תופס זיכרון, ומה ההבדל בקוד המכונה בין גישה דרך `int&` לגישה דרך `int* const`?",
+        "modelAnswer": "התקן לא מחייב ש-reference יתפוס storage (sizeof של reference מחזיר את גודל הטיפוס המופנה). reference מקומי שהקומפיילר יודע למה הוא קשור פשוט נעלם: כל שימוש ב-r מתורגם ישירות ל-a. כש-reference הוא member של struct, פרמטר לפונקציה שלא עברה inlining או משהו שנשמר, הוא ממומש כ-pointer (8 bytes ב-x86-64), והגישה היא load של הכתובת ו-load או store דרכה, בדיוק כמו `int* const`. ההבדלים הם ברמת השפה: reference חייב להיות מאותחל, אין לו null (קשירה ל-*nullptr היא UB), ואי אפשר לקשור אותו מחדש, ולכן התחביר `r = b` הוא השמה לאובייקט. בקוד המכונה, אחרי אופטימיזציה, אין הבדל.",
+        "rubric": [
+          "reference מקומי בדרך כלל לא תופס זיכרון",
+          "כ-member או פרמטר ממומש כ-pointer",
+          "קוד המכונה זהה ל-int* const; ההבדלים הם חוקי שפה (אתחול, null, rebind)"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q09",
@@ -427,7 +436,16 @@
         "שגוי. optional by value מעתיק את כל ה-buffer הגדול בכל קריאה. `std::optional<const T&>` גם לא קיים ב-C++20.",
         "נכון. pointer ל-const מבטא בדיוק את החוזה: אופציונלי (nullptr), לקריאה בלבד, בלי בעלות ובלי העתקה.",
         "שגוי. shared_ptr מבטא בעלות משותפת, וכאן הפונקציה לא לוקחת בעלות. הוא גם כופה על הקורא להחזיק את ה-buffer ב-shared_ptr ומוסיף atomic refcount."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-C++20 יש std::span. האם `std::span<const float>` היה מתאים כאן במקום pointer ל-vector, ומה ההבדל בחוזה בין span ריק לבין nullptr? ומה היית בוחר אם הספרייה תיקרא גם מ-C?",
+        "modelAnswer": "span<const float> מתאים אם הפונקציה צריכה רק את הנתונים הרציפים ולא את ה-vector עצמו (לא capacity ולא resize), והוא מקבל גם array, vector ו-buffer של DMA בלי העתקה. הבעיה היא שהחוזה היה להבחין בין אין buffer לבין buffer ריק: span ריק (size 0) ו-span עם data() == nullptr שניהם size 0, ואין דרך נקייה להבחין, כך שמאבדים את הסמנטיקה. אפשר `std::optional<std::span<const float>>`, שגודלו בערך 24 bytes ומבטא את ההבדל בבירור. עבור C API, מעבירים `const float* data, size_t n`, כש-data == NULL מסמן אין buffer, ובצד ה-C++ עוטפים ב-span. זה גם ABI יציב, בניגוד ל-vector שה-layout שלו תלוי במימוש הספרייה.",
+        "rubric": [
+          "span מתאים כשצריך רק נתונים רציפים, ומקבל כל מקור",
+          "span ריק לא מבחין בין אין buffer ל-buffer ריק; optional<span> פותר",
+          "ל-C: pointer + size, עם NULL כאין buffer"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q10",
@@ -465,7 +483,17 @@
         "נכון. כש-size()==capacity(), push_back מקצה buffer חדש ומשחרר את הישן, וכל reference לאיבר נפסל ([vector.modifiers]). הקריאה של first היא UB.",
         "שגוי. מותר להחזיק reference לאיבר של vector; צריך רק לדעת אילו פעולות פוסלות אותו. at() מוסיף בדיקת גבולות ולא משנה דבר לגבי invalidation.",
         "שגוי. push_back לא זורק כשה-capacity מלא; הוא מקצה זיכרון גדול יותר. הוא יזרוק רק אם ההקצאה עצמה נכשלת (bad_alloc)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הבאג הזה לפעמים לא קורס בכלל בבדיקות, ומופיע רק ב-production. למה, ואיך היית מבטיח שהבדיקות תופסות אותו גם כשה-capacity מספיק במקרה?",
+        "modelAnswer": "ה-UB קורה רק כש-push_back גורם ל-reallocation, כלומר רק כש-size == capacity. ה-capacity גדל גאומטרית (פי 2 ב-libstdc++, פי 1.5 ב-MSVC), ולכן תלוי בכמה איברים הוכנסו לפני. בבדיקות עם נתונים קטנים אולי אף פעם לא נוגעים בגבול. וגם כשיש reallocation, הזיכרון הישן שוחרר אבל לרוב עדיין מכיל את הערכים, ולכן הקריאה מחזירה ערך נכון במקרה. AddressSanitizer תופס את זה כ-heap-use-after-free בכל פעם שיש reallocation. כדי לתפוס גם כשאין reallocation, יש debug mode של הספרייה: `-D_GLIBCXX_DEBUG` ב-libstdc++, ו-MSVC `_ITERATOR_DEBUG_LEVEL=2`, שמבטלים iterators בכל push_back ומזהים שימוש בהם. ל-references ול-pointers הם לא עוזרים, ולכן בבדיקות כדאי גם shrink_to_fit לפני, כדי להבטיח שה-push_back הבא יעשה reallocation.",
+        "rubric": [
+          "UB רק ב-reallocation, שתלוי ב-capacity",
+          "הזיכרון הישן עדיין מכיל ערכים ולכן נראה תקין",
+          "ASan תופס heap-use-after-free",
+          "debug mode של הספרייה ל-iterators, או shrink_to_fit בבדיקות"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q12",
@@ -486,7 +514,16 @@
         "שגוי. (2) לא תלוי: member access על prvalue הוא xvalue שמתייחס לתת-אובייקט, וקשירת reference אליו מאריכה את חיי ה-S השלם.",
         "שגוי. lifetime extension קיימת מאז C++98 עבור const& שנקשר ישירות ל-temporary, ולכן (1) תקין.",
         "שגוי. ההנחה ש-reference ל-member לא מאריך היא טעות נפוצה: התקן מאריך את חיי האובייקט השלם גם כשקושרים לתת-אובייקט שלו. ובנוסף (3) כן תלוי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "לפי הכלל הזה, האם `const std::string& r = std::max(make_a(), make_b());` בטוח? ומה לגבי `const auto& x = std::get<0>(make_tuple_func());`? תסביר את הדפוס הכללי.",
+        "modelAnswer": "שניהם dangling. std::max מקבל `const T&` ומחזיר `const T&` לאחד הפרמטרים, כלומר ל-temporary שנקשר לפרמטר של max, וה-temporary מת בסוף ה-full-expression. בדיוק כמו g בשאלה. std::get על tuple זמני מחזיר `T&&` לאיבר בתוך ה-tuple הזמני; ה-reference r נקשר לתוצאה של פונקציה ולא ישירות ל-temporary, ולכן אין lifetime extension וה-tuple נהרס. הדפוס הכללי: lifetime extension חל רק כשה-reference נקשר ישירות ל-prvalue או ל-subobject שלו דרך member access; כל קריאה לפונקציה שמחזירה reference שוברת את השרשרת. התיקון: לקבל by value, `auto r = std::max(...)`. GCC 13 מזהיר על חלק מהמקרים עם -Wdangling-reference.",
+        "rubric": [
+          "std::max מחזיר reference לפרמטר זמני, ולכן dangling",
+          "std::get על tuple זמני מחזיר reference ל-tuple שמת",
+          "כלל: lifetime extension רק בקשירה ישירה; תיקון by value"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q13",
@@ -507,7 +544,16 @@
         "שגוי. p < q איננו UB אלא unspecified: התוכנית תקינה, רק שהתקן לא קובע איזה ערך bool יתקבל.",
         "שגוי. התקן לא מחייב השוואה של כתובות מספריות עבור `<` בין אובייקטים לא קשורים. רק std::less ודומיו מחויבים לסדר מלא ועקבי.",
         "נכון. `p < q` נותן תוצאה unspecified, בעוד ש-std::less<T*> מחויב ל-implementation-defined strict total order ([comparisons.general]). לכן std::map<T*,X> בטוח."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך `std::set<Node*>` שהסדר שלו קובע את סדר העיבוד, והתוצאות לא דטרמיניסטיות בין ריצות. למה, ואיך תתקן אם אתה צריך סדר יציב?",
+        "modelAnswer": "std::set<Node*> משתמש ב-std::less<Node*>, כלומר סדר לפי כתובות. הכתובות משתנות בין ריצות בגלל ASLR, סדר הקצאות ב-allocator, ומספר threads, ולכן גם סדר האיטרציה משתנה. ה-set עצמו תקין, אבל כל אלגוריתם שתלוי בסדר האיטרציה (למשל סכום של floats, שאינו אסוציאטיבי, או סדר פלט) הופך לא דטרמיניסטי. התיקון: comparator לפי מזהה יציב, למשל id שנקבע בבנייה (`a->id < b->id`), או לפי תוכן. חלופה: unordered_set לחיפוש ו-vector נפרד לשמירת סדר ההכנסה. זה חשוב גם לבדיקות רגרסיה ולשחזור באגים.",
+        "rubric": [
+          "הסדר לפי כתובות, שמשתנות בין ריצות (ASLR, allocator)",
+          "comparator לפי id יציב או תוכן",
+          "חלופה: vector לשמירת סדר הכנסה"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q14",
@@ -534,7 +580,16 @@
         "נכון. `__restrict` הוא הבטחה של המתכנת שאין alias דרך pointer אחר, וזה מאפשר vectorization בלי בדיקה. זו הרחבה, לא חלק מתקן C++ (בניגוד ל-restrict של C99).",
         "שגוי. const על הפרמטר רק אוסר לכתוב דרך a; הוא לא מבטיח שהזיכרון לא משתנה דרך pointer אחר כמו out. זו בדיוק הטעות של \"const אומר immutable\".",
         "שגוי. שלושה `std::vector<float>&` יכולים להיות אותו vector בדיוק, ולכן בעיית ה-aliasing נשארת כמו שהיא."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הוספת `__restrict` לשלושת הפרמטרים, ומישהו קורא ל-`add(x, x, y, n)` כדי לעשות x += y. מה קורה, והאם זה באמת שבור? ומה היה קורה עם `add(x + 1, x, y, n)`?",
+        "modelAnswer": "restrict מבטיח שאובייקט שנכתב דרך pointer אחד לא נגיש דרך pointer restrict אחר באותו scope. ב-add(x, x, y, n), out ו-a מצביעים לאותו זיכרון, ו-out נכתב, ולכן לפי ההגדרה זו הפרה ו-UB. בפועל, כיוון שכל איטרציה קוראת a[i] וכותבת out[i] באותו אינדקס, גם קוד וקטורי יעבוד, אבל זה לא מובטח ואסור להסתמך על כך. ב-add(x + 1, x, y, n) יש חפיפה עם הסטה: out[i] הוא a[i+1], והלולאה הסקלרית התכוונה לקרוא את הערך החדש של a[i+1] באיטרציה הבאה (תלות בין איטרציות). קוד וקטורי שטוען 8 ערכים של a בבת אחת יקרא את הערכים הישנים ויחזיר תוצאה שונה לגמרי. זה בדיוק למה הקומפיילר מוסיף בדיקת חפיפה בלי restrict.",
+        "rubric": [
+          "add(x, x, ...) מפר את restrict ולכן UB, גם אם בפועל עובד",
+          "add(x+1, x, ...) יוצר תלות בין איטרציות שהקוד הווקטורי שובר",
+          "בלי restrict הקומפיילר מוסיף בדיקת חפיפה בדיוק בשביל זה"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q15",
@@ -550,7 +605,16 @@
         "מזכיר lifetime או aliasing כשיקול"
       ],
       "explanation": "מראיין סניור מחפש שתבחר סוג פרמטר לפי החוזה (בעלות, nullability, רצף) ושתזכיר את ההשלכות על ביצועים, ולא רק את התחביר.",
-      "lesson": "cpp.pointers-refs"
+      "lesson": "cpp.pointers-refs",
+      "followUp": {
+        "prompt": "מישהו בצוות מציע להשתמש ב-`const std::shared_ptr<Filter>&` בכל הפרמטרים כדי לחסוך את ה-atomic increment. מה דעתך, ומתי פרמטר מסוג shared_ptr (by value או by const&) בכלל מוצדק?",
+        "modelAnswer": "const shared_ptr& חוסך את ה-increment, אבל מבטא חוזה מבלבל: הפונקציה לא לוקחת בעלות, ולכן היא לא צריכה shared_ptr בכלל; עדיף `const Filter&` או `Filter*`, שמקבלים גם אובייקטים שלא מנוהלים ב-shared_ptr. בנוסף יש סכנה: אם ה-shared_ptr שמועבר by reference הוא member או גלובלי שמשתנה במהלך הקריאה (למשל callback שמאפס אותו), האובייקט יכול להיהרס בזמן שהפונקציה משתמשת בו. shared_ptr by value מוצדק כשהפונקציה שומרת עותק (sink, למשל רישום ל-registry), ואז עושים std::move לתוך ה-member. const shared_ptr& מוצדק רק כשהפונקציה אולי שומרת עותק ואולי לא, ורוצים לחסוך increment כשלא. לפי C++ Core Guidelines (R.30-R.36) פרמטר smart pointer רק כשהפונקציה מטפלת בבעלות.",
+        "rubric": [
+          "פונקציה שלא לוקחת בעלות צריכה T& או T*",
+          "סכנה: shared_ptr by ref שמשתנה בזמן הקריאה",
+          "by value כש-sink ששומר עותק, עם std::move"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q16",
@@ -591,7 +655,16 @@
         "שגוי. ארבע הראשונות נכונות, אבל `static_cast<const int&&>(x)` הוא const xvalue: int&& לא יכול להיקשר אליו כי זה מוריד const, ולכן נבחר const int& ולא R.",
         "נכון. x→int& (L); cx→const int& (C); rr בשם הוא lvalue→int& (L); `std::move(rr)` הוא xvalue לא-const→int&& (R); const xvalue נקשר רק ל-const int& (C).",
         "שגוי. שתי טעויות: rr עם שם הוא lvalue ולא rvalue, ו-const xvalue לא נקשר ל-int&& כי reference binding לא יכול להוריד const."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה הוחלט שמשתנה עם שם מטיפוס `int&&` הוא lvalue? מה היה נשבר אם הוא היה rvalue?",
+        "modelAnswer": "הכלל הוא שכל דבר עם שם הוא lvalue, כי אפשר להשתמש בו שוב. אילו `T&& x` היה rvalue בכל שימוש, השימוש הראשון ב-x כמו `v.push_back(x)` היה מזיז ממנו, וכל שימוש אחריו, כמו `log(x)`, היה רואה אובייקט ריק. כלומר כל פונקציה שמקבלת rvalue reference ומשתמשת בפרמטר פעמיים הייתה מכילה באג שקט. בגלל הכלל, ההזזה צריכה להיות מפורשת: std::move(x) בשימוש האחרון בלבד. המחשבה היא ש-T&& אומר רק שהקורא הרשה להזיז, לא שהפונקציה חייבת להזיז מיד. אותו עיקרון מסביר למה צריך std::forward ב-forwarding references.",
+        "rubric": [
+          "לשם יש זהות ואפשר להשתמש בו שוב",
+          "אם היה rvalue, שימוש ראשון היה מזיז ושימושים הבאים רואים ריק",
+          "ההזזה מפורשת עם std::move בשימוש האחרון"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q18",
@@ -612,7 +685,16 @@
         "נכון. רק (1) קורא אובייקט float דרך glvalue מטיפוס uint32_t, וזו הפרת strict aliasing (UB). memcpy ו-bit_cast הן דרכי ה-type punning המוגדרות, וגישה דרך unsigned char מותרת.",
         "שגוי. memcpy בין שני אובייקטים trivially copyable באותו גודל מוגדר היטב, וזו בדיוק הדרך המסורתית לעשות type punning. גם (4) מותר.",
         "שגוי. שוויון גדלים לא מתיר גישה דרך טיפוס לא קשור. כלל strict aliasing תלוי בטיפוס ה-glvalue, לא בגודל, ו-(1) הוא UB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אמרת שהקומפיילר הופך memcpy להוראת mov אחת. אז למה strict aliasing קיים בכלל, כלומר איזו אופטימיזציה הוא מאפשר? תן דוגמה של לולאה ש-`-fno-strict-aliasing` היה מאט.",
+        "modelAnswer": "strict aliasing מאפשר לקומפיילר להניח שכתיבה דרך pointer מטיפוס אחד לא משנה אובייקט מטיפוס אחר. דוגמה: `void scale(float* out, const int* n) { for (int i = 0; i < *n; ++i) out[i] *= 2; }`. בזכות strict aliasing, הקומפיילר יודע שכתיבה ל-out[i] (float) לא משנה את *n (int), ולכן טוען את *n פעם אחת לפני הלולאה ויכול לבצע vectorization. בלי הכלל, כל כתיבה ל-out[i] עשויה לשנות את *n, והקומפיילר חייב לטעון אותו מחדש בכל איטרציה, מה שגם מונע vectorization. -fno-strict-aliasing (שה-Linux kernel משתמש בו) מבטל את ההנחה. הסיבה ש-char פטור: כדי לאפשר memcpy וגישה ל-bytes, אבל זה גם אומר שכתיבה דרך char* (למשל uint8_t*) מכריחה טעינות מחדש, מקור ידוע לאיטיות בקוד עם buffers של uint8_t.",
+        "rubric": [
+          "ההנחה: כתיבה דרך T1* לא משנה אובייקט T2",
+          "דוגמה: טעינה של גבול הלולאה פעם אחת ו-vectorization",
+          "char/uint8_t פטורים, ולכן כתיבה דרכם מכריחה טעינות מחדש"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q19",
@@ -639,7 +721,16 @@
         "UB. כבר יצירת pointer מחוץ לטווח [a, a+3] היא UB, גם בלי dereference. הטעות היא לחשוב שרק קריאה מהכתובת מסוכנת.",
         "UB. pointer לפני תחילת המערך גם הוא מחוץ לטווח המותר; לולאות שיורדות `for (p = end-1; p >= a; --p)` נופלות בדיוק כאן.",
         "לא UB. השוואת == בין one-past-the-end לכתובת של אובייקט אחר מוגדרת, אבל התוצאה unspecified, ועשויה להיות true אם other צמוד למערך."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה התקן מתיר pointer ל-one-past-the-end אבל לא a+4 או a-1? מה היה נשבר בחומרה או במימוש אם a-1 היה מותר, ואיך זה משפיע על לולאה שרצה אחורה עם pointers?",
+        "modelAnswer": "one-past-the-end נחוץ לחצי-טווחים [begin, end), שעליהם בנויים ה-iterators וה-STL, ולכן המימוש חייב להבטיח שהכתובת הזו ניתנת לייצוג ולהשוואה (למשל, מערך לא יכול להסתיים בכתובת האחרונה של מרחב הזיכרון). a-1 או a+4 לא נדרשים, והתקן לא מבטיח שהם ניתנים לייצוג: במערך שמתחיל בכתובת 0 בסגמנט, או בארכיטקטורות עם segmented או tagged pointers (למשל CHERI), חישוב כזה עלול ל-overflow או להיכשל. האופטימייזר גם מנצל את זה, למשל מניח ש-p+i לא מתגלגל. לולאה אחורה כמו `for (int* p = a + n - 1; p >= a; --p)` שבורה: בסוף הלולאה p מגיע ל-a-1, שזה UB. הצורה הנכונה: `for (int* p = a + n; p != a; ) { --p; ... }`, או std::reverse_iterator, שממומש בדיוק כך.",
+        "rubric": [
+          "one-past-the-end נחוץ לחצי-טווח [begin, end)",
+          "a-1 לא חייב להיות ניתן לייצוג (overflow, segmented/CHERI) והאופטימייזר מנצל",
+          "לולאה אחורה עם p >= a שבורה; תיקון: p != a והקטנה לפני גישה"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q20",
@@ -660,7 +751,16 @@
         "שגוי. הקומפיילר לא מייצר השמה שכותבת דרך ה-reference; הוא מגדיר אותה כ-deleted. השמה כזו גם הייתה משנה את ה-int המקורי ולא את W, ושוברת את sort.",
         "שגוי. ה-copy constructor קיים: הוא מאתחל reference חדש, וזה מותר. לכן push_back עובד; מה שחסר הוא ההשמה ש-sort צריך.",
         "שגוי. mutable לא חל על references (`mutable int& r` לא מתקמפל), ובכל מקרה הוא נוגע ל-const ולא לקשירה מחדש."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלפת את `int& r` ב-`int* p`. מה איבדת מבחינת החוזה, ואיך היית מחזיר את ההבטחה שהוא אף פעם לא null בלי לאבד את ה-assignability?",
+        "modelAnswer": "איבדת את ההבטחה שה-member תמיד קשור לאובייקט: עכשיו p יכול להיות nullptr, והקוד שמשתמש בו לא יודע אם לבדוק. std::reference_wrapper<int> שומר את שתי התכונות: הוא אף פעם לא null (נבנה רק מ-reference), וניתן להשמה (ההשמה קושרת אותו מחדש, כמו pointer). sizeof שלו כמו pointer, וה-copy וה-move שלו טריוויאליים. חלופה: `gsl::not_null<int*>` מ-Guidelines Support Library, שבודק בבנייה וב-debug שה-pointer לא null. כך ה-struct נשאר copyable, assignable ומתאים ל-sort, והחוזה מתועד בטיפוס. כמובן, אף אחד מהם לא מגן מ-dangling: האובייקט חייב לחיות כל עוד ה-wrapper בשימוש.",
+        "rubric": [
+          "pointer מאבד את ההבטחה של not-null",
+          "std::reference_wrapper: not-null ו-assignable",
+          "gsl::not_null כחלופה; אף אחד לא מגן מ-dangling"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q21",
@@ -783,7 +883,16 @@
         "נכון. `auto a = r` מסיק int (ה-reference יורד) ויוצר עותק; `auto& b = r` הוא alias של x. a=5 משנה רק את העותק, b=7 משנה את x. הפלט 75.",
         "שגוי. זה מניח ש-a הוא גם alias של x. אבל `auto` בלי & מוריד את ה-reference ויוצר משתנה חדש.",
         "שגוי. זה מניח ש-a ו-x קשורים ו-b לא. בפועל ההפך: b הוא ה-alias, ולכן x הופך ל-7."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה מוסק ב-`auto x = cr;` כש-cr הוא `const int&`, וב-`auto& y = cr;`? ולמה `for (auto e : vec_of_strings)` הוא באג ביצועים נפוץ?",
+        "modelAnswer": "auto מסיר גם reference וגם top-level const, ולכן `auto x = cr` מסיק int, עותק שניתן לשינוי. `auto& y = cr` שומר את ה-const כי הוא חלק מהטיפוס המופנה, ולכן y הוא const int&, ו-y = 5 לא מתקמפל. `for (auto e : vec_of_strings)` יוצר עותק של כל string בכל איטרציה: הקצאה והעתקה אם המחרוזת מעל SSO, כלומר בלולאה על מיליון מחרוזות, מיליון הקצאות. הנכון לקריאה בלבד הוא `const auto& e`, ולשינוי `auto& e`. clang-tidy מזהה את זה עם performance-for-range-copy. עבור טיפוסים קטנים כמו int, by value בסדר ואף עדיף.",
+        "rubric": [
+          "auto מסיר reference ו-top-level const",
+          "auto& שומר את ה-const המופנה",
+          "for (auto e : strings) מעתיק כל איבר; const auto& הוא התיקון"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q27",
@@ -807,7 +916,16 @@
         "שגוי. `std::string + const char*` מחזיר std::string חדש (prvalue) ולא const char*. הבעיה היא שה-string הזה זמני.",
         "שגוי. operator<< של string_view כותב בדיוק size() תווים ולא מחפש '\\0'. בעיית ה-null-termination רלוונטית רק כשמעבירים `sv.data()` ל-API של C.",
         "נכון. ה-std::string הזמני נהרס ב-; ו-sv נשאר מצביע ל-buffer ששוחרר. ההדפסה היא UB (dangling); הפתרון הוא לשמור את התוצאה ב-std::string."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בהינתן הבאג הזה, מתי כן נכון להחזיר std::string_view מפונקציה, ומתי לקבל אותו כפרמטר? תן כלל שאפשר להעביר לצוות.",
+        "modelAnswer": "string_view כפרמטר הוא כמעט תמיד בטוח: הארגומנט, גם אם temporary, חי עד סוף ה-full-expression, ולכן כל עוד הפונקציה לא שומרת את ה-view, היא בטוחה, ומקבלת גם literal, std::string ו-char* בלי העתקה. החזרת string_view בטוחה רק כשהנתונים חיים יותר מהקורא: literal (`return \"name\"sv;`), member של אובייקט שחי מספיק (`std::string_view name() const { return name_; }`, אבל אז אסור לקרוא לזה על temporary), או view לתוך buffer שהקורא סיפק. כלל לצוות: לקבל string_view בפרמטרים; לא לשמור string_view כ-member או בקונטיינר אלא אם ה-lifetime מתועד ומוכח; לא לאתחל משתנה string_view מ-std::string שאינו שם של משתנה (ביטוי זמני). GCC ו-Clang מזהירים על חלק מהמקרים (-Wdangling-gsl).",
+        "rubric": [
+          "פרמטר string_view בטוח כל עוד לא שומרים אותו",
+          "החזרה בטוחה רק כשהנתונים חיים יותר: literal, member, buffer של הקורא",
+          "לא לשמור כ-member ולא לאתחל מ-temporary"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q28",
@@ -836,7 +954,17 @@
         "לא נפסל. rehash פוסל iterators בלבד; כל איבר של unordered_map נמצא ב-node משלו שלא זז, ולכן references ו-pointers נשארים תקפים.",
         "לא נפסל. list היא node-based, והוספה לא פוסלת שום iterator או reference קיים.",
         "נפסל. reserve עם n גדול מה-capacity גורם ל-reallocation, ולכן כל references, pointers ו-iterators נפסלים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה צריך מבנה נתונים עם הכנסות רבות שבו references לאיברים קיימים חייבים להישאר תקפים, וגם גישה רציפה וזולה. מה האפשרויות, ומה ה-trade-off של כל אחת?",
+        "modelAnswer": "std::deque: הוספה בקצוות לא פוסלת references לאיברים קיימים, גישה אקראית O(1), אבל הזיכרון מחולק ל-chunks (512 bytes ב-libstdc++) ולכן יש indirection נוסף ו-vectorization פחות טוב. std::list או std::map: references יציבים תמיד, אבל הקצאה לכל איבר ו-locality גרוע. vector עם reserve לגודל המקסימלי: גישה רציפה מושלמת, references יציבים כל עוד לא חורגים מה-capacity, אבל צריך לדעת חסם עליון. vector של unique_ptr<T>: האיברים עצמם יציבים, הסריקה עם pointer chasing. החזקת אינדקסים במקום references ב-vector רגיל: יציבים בהוספה בסוף וזולים, אבל לא במחיקה מהאמצע. לסיכום, אם יש חסם עליון: reserve; אחרת deque או אינדקסים.",
+        "rubric": [
+          "deque: references יציבים בהוספה בקצוות, chunks",
+          "vector עם reserve: רציף ויציב עד ה-capacity",
+          "אינדקסים במקום references",
+          "list/map/unique_ptr: יציבים אבל locality גרוע"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q29",
@@ -860,7 +988,16 @@
         "נכון. `auto&& __range = load().items();` קושר ל-reference שמוחזר, וה-Batch הזמני מת בסוף האתחול, ו-__range dangling (UB). C++23 (P2718) מאריך את כל ה-temporaries בביטוי ה-range.",
         "שגוי. אתחול `int x` מ-`const int&` הוא העתקה רגילה ומתקמפל בלי בעיה. const חשוב רק אם x היה reference.",
         "שגוי. guaranteed copy elision קובע שה-prvalue מאותחל ישירות ביעד, אבל לא משנה את חיי ה-temporary: הוא עדיין מת בסוף ה-full-expression."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה תקוע ב-C++20. תן שתי דרכים לכתוב את הלולאה הזו נכון, ואחת שנראית כמו תיקון אבל עדיין שבורה.",
+        "modelAnswer": "דרך ראשונה: לשמור את ה-Batch במשתנה: `auto batch = load(); for (auto& x : batch.items()) ...`, ואז ה-Batch חי עד סוף ה-scope. דרך שנייה: C++20 range-for עם init-statement: `for (auto batch = load(); auto& x : batch.items())`, שמגביל את ה-Batch ל-scope של הלולאה ועדיין חי לאורכה. מה שנראה כמו תיקון אבל שבור: `for (auto& x : std::as_const(load()).items())` או לעטוף את load() בכל פונקציה שמחזירה reference: כל שרשרת של קריאות שמחזירות reference לאובייקט זמני משאירה את אותה בעיה. גם `const auto& b = load().self();` שבור מאותה סיבה. ב-C++23 (P2718) כל ה-temporaries בביטוי ה-range מוארכים, והקוד המקורי עובד.",
+        "rubric": [
+          "שמירת ה-Batch במשתנה לפני הלולאה",
+          "range-for עם init-statement (C++20)",
+          "עטיפה בפונקציה שמחזירה reference עדיין שבורה"
+        ]
+      }
     },
     {
       "id": "cpp.pointers-refs.q30",
@@ -876,7 +1013,16 @@
         "דוגמה מעשית ל-dangling (getter על temporary, range-for, string_view)"
       ],
       "explanation": "מראיין סניור בודק אם אתה מבין את המנגנון שמאחורי move, copy elision ו-dangling, ולא רק זוכר דוגמאות. הנקודה העדינה היא ש-xvalue מפונקציה לא מאריך חיים.",
-      "lesson": "cpp.pointers-refs"
+      "lesson": "cpp.pointers-refs",
+      "followUp": {
+        "prompt": "C++17 שינה את המשמעות של prvalue כדי להבטיח copy elision. מה בדיוק השתנה בהגדרה, ותן דוגמה לקוד שמתקמפל רק בזכות השינוי הזה.",
+        "modelAnswer": "לפני C++17 prvalue היה temporary object, ואתחול ממנו היה העתקה או move שהקומפיילר רשאי, אבל לא חייב, לבטל, ולכן ה-copy או move constructor היה חייב להיות נגיש. מ-C++17 prvalue הוא לא אובייקט אלא מתכון לאתחול: הוא מתממש (temporary materialization) רק כשצריך glvalue, למשל כשקושרים אליו reference או ניגשים ל-member. כשמאתחלים אובייקט מ-prvalue מאותו טיפוס, האתחול קורה ישירות ביעד, ואין copy או move בכלל, גם לא מבחינה סמנטית. לכן `std::atomic<int> f() { return std::atomic<int>(0); }` ו-`auto m = std::mutex();` (שני טיפוסים non-copyable ו-non-movable) מתקמפלים ב-C++17 ולא קודם. גם factory functions שמחזירים טיפוסים כאלה by value נעשו אפשריים.",
+        "rubric": [
+          "prvalue הוא מתכון לאתחול, לא אובייקט",
+          "temporary materialization רק כשצריך glvalue",
+          "דוגמה: החזרת טיפוס non-movable (atomic, mutex) by value"
+        ]
+      }
     },
     {
       "level": 2,
@@ -937,7 +1083,16 @@
         "שגוי: const pointer ל-int רגיל. אי אפשר להזיז את p5, אבל `*p5 = 1` מותר."
       ],
       "id": "cpp.pointers-refs.q32",
-      "lesson": "cpp.pointers-refs"
+      "lesson": "cpp.pointers-refs",
+      "followUp": {
+        "prompt": "יש לך `using IntPtr = int*;` ופונקציה `void f(const IntPtr p)`. מה מוגן כאן בפועל, ואיך היית מגדיר alias כך שה-const יחול על ה-int? ולמה מיקום ה-const בהצהרה לא משנה כשיש alias, בניגוד לכתיבה הישירה?",
+        "modelAnswer": "`const IntPtr p` הוא `int* const p`: ה-pointer לא ניתן לשינוי בתוך f, אבל אפשר לכתוב `*p = 5`. כפרמטר by value זה כמעט חסר משמעות לקורא, כי ממילא f מקבלת עותק של ה-pointer. כדי שה-const יחול על ה-int צריך alias נפרד: `using ConstIntPtr = const int*;`. alias הוא טיפוס שלם ואטומי, ו-const שמוסיפים עליו תמיד חל על הטיפוס כולו, כלומר top-level, בין אם כותבים `const IntPtr` או `IntPtr const`. זה לא החלפת טקסט כמו macro: `#define IntPtr int*` היה נותן `const int*` ומשנה את המשמעות. לכן ספריות מגדירות pointer aliases בזוגות, למשל ב-Win32 (LPSTR ו-LPCSTR).",
+        "rubric": [
+          "const IntPtr = int* const: ה-pointer קבוע, לא ה-int",
+          "צריך alias נפרד const int*",
+          "alias הוא טיפוס אטומי, לא החלפת טקסט כמו macro"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1115,7 +1270,16 @@
         "שגוי: v הוא const pointer ולכן אי אפשר להפנות אותו מחדש. בנוסף, להקצות וקטור חדש בתוך הפונקציה לא משנה את הוקטור של הקורא."
       ],
       "id": "cpp.pointers-refs.q39",
-      "lesson": "cpp.pointers-refs"
+      "lesson": "cpp.pointers-refs",
+      "followUp": {
+        "prompt": "עברת ל-`std::vector<float>&`. מה החיסרון של החתימה הזו לעומת `std::span<float>`, ומה span לא יכול לעשות ש-vector& כן יכול? מה היית בוחר לפונקציית DSP בספרייה?",
+        "modelAnswer": "vector& קושר את ה-API לסוג קונטיינר אחד: אי אפשר לקרוא לו עם std::array, מערך C, buffer מ-DMA או חלק מוקטור (למשל רק 1024 הדגימות האחרונות) בלי העתקה. span<float> מקבל כל רצף רציף, כולל תת-טווח עם `subspan`, בלי העתקה, והוא pointer ו-size בלבד שעוברים ברגיסטרים. מה ש-span לא יכול: לשנות גודל (resize, push_back) או לשחרר זיכרון, כי הוא לא בעלים. לפונקציית DSP שמנרמלת במקום בלי לשנות אורך, span<float> הוא הבחירה הנכונה, ואם התוצאה בגודל אחר הפונקציה מקבלת span של פלט שהקורא הקצה, כך שאין הקצאות בתוך הפונקציה. vector& מתאים רק כשבאמת צריך לשנות את הגודל.",
+        "rubric": [
+          "vector& מגביל לסוג קונטיינר אחד ולא מקבל תת-טווח",
+          "span מקבל כל רצף רציף ו-subspan בלי העתקה",
+          "span לא יכול לשנות גודל; vector& רק כשצריך resize"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1195,7 +1359,16 @@
         "שגוי: ב-node-based containers נפסלים רק ה-iterators וה-pointers לאיבר שנמחק. הבעיה היא שזה בדיוק האיבר ש-v מצביע אליו."
       ],
       "id": "cpp.pointers-refs.q42",
-      "lesson": "cpp.pointers-refs"
+      "lesson": "cpp.pointers-refs",
+      "followUp": {
+        "prompt": "אם היו משתמשים ב-std::unordered_map במקום std::map, האם pointer לאיבר שלא נמחק שורד הכנסה שגורמת ל-rehash? ומה לגבי iterators? איך זה שונה מ-absl::flat_hash_map?",
+        "modelAnswer": "ב-std::unordered_map כל איבר יושב ב-node נפרד, ולכן rehash מסדר מחדש את ה-buckets אבל לא מזיז את ה-nodes: pointers ו-references לאיברים נשארים תקפים, אבל iterators נפסלים (כי הם מתייחסים גם למבנה ה-buckets). זו דרישה של התקן, והיא הסיבה העיקרית ש-unordered_map עושה הקצאה לכל איבר ואיטי יחסית. absl::flat_hash_map (ו-boost::unordered_flat_map) שומרים את האיברים עצמם במערך פתוח (open addressing), ולכן rehash מזיז את האיברים, ו-pointers ו-references נפסלים. בתמורה הם מהירים פי כמה בזכות locality. אם צריך יציבות עם ביצועים קרובים, יש absl::node_hash_map, או לאחסן unique_ptr כ-value.",
+        "rubric": [
+          "std::unordered_map: references שורדים rehash, iterators לא",
+          "יציבות כזו מחייבת node לכל איבר (הקצאה)",
+          "flat_hash_map מזיז איברים ב-rehash ולכן references נפסלים"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1249,7 +1422,16 @@
         "שגוי: אין כאן []. זו הצהרה של פונקציה."
       ],
       "id": "cpp.pointers-refs.q44",
-      "lesson": "cpp.pointers-refs"
+      "lesson": "cpp.pointers-refs",
+      "followUp": {
+        "prompt": "כתוב במילים טבלת dispatch שממפה opcode (0-255) ל-handler, עם function pointers, והסבר מה עלות קריאה דרכה לעומת switch, ומתי היית בוחר std::function במקום.",
+        "modelAnswer": "מגדירים `using Handler = int(*)(double);` ומערך `std::array<Handler, 256> table`, שמאותחל ב-constexpr או ב-init, וקריאה היא `table[op](x)`. העלות היא load של ה-pointer ו-indirect call, כ-1-3 ננו-שניות כשה-branch predictor צודק, וקריאה עקיפה מונעת inlining. switch צפוף על 256 ערכים מתקמפל בדרך כלל ל-jump table, שגם הוא indirect jump, אבל ה-cases עצמם יכולים לעבור inlining ואופטימיזציה משותפת, ולכן לרוב מהיר יותר כשה-handlers קטנים. היתרון של הטבלה הוא גמישות: אפשר להחליף handler בזמן ריצה או לטעון plugins. std::function מתאים רק כש-handler צריך state (closure עם captures), והמחיר הוא אובייקט של 32 bytes לכל רשומה, אולי הקצאה, וקריאה עקיפה דרך invoker.",
+        "rubric": [
+          "מערך של 256 function pointers עם alias",
+          "indirect call מונע inlining; switch הופך ל-jump table עם inlining",
+          "std::function רק כשצריך state, עם עלות גודל והקצאה"
+        ]
+      }
     },
     {
       "level": 2,

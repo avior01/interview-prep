@@ -381,7 +381,17 @@
         "atomic לא נדרש, כי כל thread כותב רק לתא שלו ואין race. ו-atomic גם לא יעזור: ה-layout נשאר זהה, וכל עדכון יהיה עוד יקר יותר (lock add).",
         "is_event יכולה להיות איטית, אבל זה לא מסביר למה 8 threads איטיים מ-thread אחד. עבודה שמתחלקת בין threads רק אמורה להאיץ.",
         "אין data race: כל thread ניגש ל-counts[tid] משלו, ואלה אובייקטים שונים בזיכרון. הבלבול נובע מכך שמדובר באותו מערך."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הצעת שני תיקונים: צבירה במשתנה local או ריפוד כל מונה ל-64 בתים. איזה מהם עדיף כאן ולמה, ואיך היית מוכיח במדידה שהבעיה הייתה false sharing ולא משהו אחר?",
+        "modelAnswer": "צבירה ב-local עדיפה: המונה יושב ברגיסטר או ב-L1 הפרטי, ויש כתיבה אחת לזיכרון המשותף בסוף, כך שאין תעבורת coherence בכלל. ריפוד פותר את ה-false sharing אבל עדיין משאיר store לזיכרון בכל אירוע, ומבזבז 64 בתים (או 128) לכל thread. ריפוד נדרש כשמישהו צריך לקרוא את הערך בזמן ריצה, למשל thread ניטור. להוכחה: `perf c2c record/report` יראה HITM גבוה על ה-line של `stats` עם offsets שונים מ-threads שונים. בדיקה משלימה: למדוד scaling לפני ואחרי ריפוד; אם הזמן עם 8 threads יורד בערך פי 8 ביחס ל-thread יחיד, הבעיה הייתה ה-line המשותף.",
+        "rubric": [
+          "צבירה ב-local מבטלת כתיבות לזיכרון המשותף לגמרי, ריפוד רק מפריד lines",
+          "ריפוד נחוץ כשצריך לקרוא את המונים בזמן ריצה",
+          "perf c2c מראה HITM על אותו line עם offsets שונים",
+          "השוואת scaling לפני ואחרי התיקון"
+        ]
+      }
     },
     {
       "id": "sys.caches.q08",
@@ -409,7 +419,17 @@
         "שגוי: coherence מבטיח ערך אחד לכל line, אבל ++x הוא load, add, store. שני cores יכולים לקרוא את אותו ערך לפני שאחד כותב, ועדכון אובד. צריך atomic.",
         "נכון: זה HITM. core A חייב לספק את הנתון העדכני (cache-to-cache) ועובר ל-Shared (או Owned/Forward בווריאנטים), כי הזיכרון מחזיק ערך ישן.",
         "נכון: כתיבה דורשת M או E. מ-S שולחים invalidate (או RFO) לכל שאר העותקים לפני שהכתיבה מותרת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-MESI, למה בכלל צריך את המצב Exclusive? מה היה קורה לתוכנית single-threaded שקוראת משתנה ואז כותבת אליו, אילו היו רק M, S ו-I?",
+        "modelAnswer": "Exclusive אומר שה-line נקי (זהה לזיכרון) ואין לו עותק באף core אחר. כשה-core כותב ל-line במצב E הוא עובר ל-M בשקט, בלי שום הודעה על ה-bus או ב-interconnect. בלי E, קריאה ראשונה הייתה מביאה את ה-line ל-S, וכתיבה אחריה הייתה דורשת invalidate או upgrade request לכל ה-cores, גם כשאף אחד אחר לא מחזיק עותק. זה המקרה הנפוץ ביותר (קריאה ואחריה כתיבה לנתונים פרטיים), ולכן E חוסך תעבורה ו-latency בדיוק בקוד single-threaded. פרוטוקולים כמו MOESI או MESIF מוסיפים מצבים נוספים (Owned, Forward) כדי שקריאות ישותפו בלי לכתוב קודם לזיכרון.",
+        "rubric": [
+          "E = נקי ויחיד, אין עותקים אחרים",
+          "מעבר E ל-M בלי תעבורת coherence",
+          "בלי E כל כתיבה אחרי קריאה דורשת upgrade/invalidate",
+          "מזכיר MOESI/MESIF כהרחבה (Owned או Forward)"
+        ]
+      }
     },
     {
       "id": "sys.caches.q09",
@@ -463,7 +483,17 @@
         "alignas עובד על משתנים גלובליים, סטטיים ומקומיים. הבעיה הייתה רק אם מקצים דינמית בלי allocator מודע ל-alignment (לפני C++17).",
         "L3 משותף לא גורם לתעבורת coherence בין cores כשהמשתנים ב-lines נפרדים, ויש פתרון ידוע: ריפוד ל-128.",
         "נכון: ה-adjacent line (spatial) prefetcher של L2 משלים זוגות lines מיושרים ל-128. גישה ל-line שלך מושכת את השכן, שבו thread אחר כותב, ויוצרת תעבורה. לכן folly ו-crossbeam מרפדים ל-128."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ריפוד ל-128 בתים לכל מונה פר-thread נשמע זול, אבל מה המחיר כשיש 64 threads ומאות מבנים כאלה? ואיך תחליט בין 64 ל-128 בפרויקט אמיתי שאמור לרוץ גם על ARM וגם על x86?",
+        "modelAnswer": "המחיר הוא זיכרון ו-cache footprint: 64 threads כפול 128 בתים זה 8KB למבנה אחד, ומאות מבנים כאלה הם כבר מאות KB שמתחרים על L2/L3 ומגדילים TLB pressure. אם יש הרבה שדות קטנים פר-thread עדיף לאגד אותם ב-struct פר-thread אחד מרופד, ולא לרפד כל שדה בנפרד. ב-C++17 יש `std::hardware_destructive_interference_size` אבל הערך שלו נקבע בזמן קומפילציה ובחלק מהמימושים הוא 64 בלבד, ו-GCC אף מזהיר שהוא לא יציב ב-ABI. על חלק ממעבדי ARM (למשל Apple M1) ה-line עצמו הוא 128 בתים, ולכן 128 הוא ברירת מחדל בטוחה ונייד. ההחלטה צריכה להיות מבוססת על מדידה עם perf c2c על חומרת היעד, לא על ניחוש.",
+        "rubric": [
+          "חישוב עלות: threads × 128 בתים × מספר מבנים, ולחץ על cache/TLB",
+          "לאגד שדות פר-thread ל-struct אחד מרופד במקום לרפד כל שדה",
+          "hardware_destructive_interference_size קבוע בזמן קומפילציה ולא תמיד מדויק",
+          "יש ARM עם line של 128 בתים"
+        ]
+      }
     },
     {
       "id": "sys.caches.q12",
@@ -484,7 +514,17 @@
         "memcheck מוצא שגיאות זיכרון (גישה לא חוקית, leaks, ערכים לא מאותחלים). הוא לא מדמה caches ולא coherence.",
         "נכון: perf c2c דוגם loads ו-stores עם כתובות (PEBS ב-Intel), סופר HITM לכל line, ומראה offsets ופונקציות, כך שרואים threads שונים שנוגעים בשדות שונים של אותו line.",
         "top מראה ניצול CPU ברמת process. false sharing נראה שם רק כ-CPU גבוה, בלי שום מידע על lines."
-      ]
+      ],
+      "followUp": {
+        "prompt": "perf c2c מראה line עם HITM גבוה, אבל כל הגישות אליו הן לאותו offset מ-threads שונים. מה זה אומר, ולמה ריפוד לא יעזור כאן? מה כן?",
+        "modelAnswer": "אותו offset מ-threads שונים פירושו true sharing: כולם ניגשים לאותו משתנה בדיוק, למשל מונה גלובלי, lock, או דגל. ריפוד מפריד משתנים שונים ל-lines שונים, אבל משתנה יחיד תמיד יושב ב-line אחד, ולכן הוא חייב לעבור בין cores בכל כתיבה. הפתרון הוא לשנות את האלגוריתם: sharding פר-thread וסכימה בקריאה, batching (לעדכן פעם ב-N אירועים), או להחליף lock משותף במבנה פר-core. אם זה lock, צריך לבדוק contention עם perf lock או עם מדידת זמן המתנה, ולשקול חלוקה של ה-lock לפי מפתח. offsets שונים באותו line הם הסימן ל-false sharing, ושם ריפוד כן עוזר.",
+        "rubric": [
+          "אותו offset = true sharing, offsets שונים = false sharing",
+          "משתנה יחיד לא ניתן לפצל עם ריפוד",
+          "פתרון: sharding פר-thread או batching של עדכונים",
+          "ל-lock משותף: פיצול lock לפי מפתח או מבנה פר-core"
+        ]
+      }
     },
     {
       "id": "sys.caches.q13",
@@ -505,7 +545,17 @@
         "נכון: NT stores נאספים ב-write-combining buffers ונשלחים כ-line מלא לזיכרון בלי RFO ובלי להיכנס ל-cache. חוסך את הקריאה המיותרת (כמעט חצי מהתעבורה) ולא דוחק את ה-working set החם.",
         "גישה אקראית מזיקה: מבטלת את ה-prefetcher ואת ה-write-combining, ומוסיפה TLB misses. אין כאן עומס שצריך \"לפזר\".",
         "prefetch מביא את ה-lines ל-cache, כלומר עושה את ה-RFO מוקדם יותר. זה מסתיר latency אבל משאיר את אותה תעבורה ואת אותו זיהום cache."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שהבאפר הוא 512KB במקום 512MB, והשלב הבא ב-pipeline קורא אותו מיד. האם עדיין תשתמש ב-NT stores? ומה עוד צריך לזכור כשמשתמשים בהם בסביבה multi-threaded?",
+        "modelAnswer": "לא. 512KB נכנס ל-L2 או ל-L3, והשלב הבא היה נהנה מ-hits; NT stores מוציאים את הנתונים ל-DRAM, והקורא ישלם על misses מלאים, כלומר זה היה מאט. NT stores משתלמים רק כשהבאפר גדול משמעותית מה-LLC או שלא ייקרא בקרוב. בנוסף, הם עובדים טוב רק כשכותבים lines שלמים של 64 בתים ברצף; כתיבה חלקית מרוקנת את ה-write-combining buffer בחלקים ומבזבזת bandwidth. מבחינת סדר, NT stores הם weakly ordered גם ב-x86, ולכן לפני שמפרסמים לצרכן דגל או אינדקס צריך `sfence`. עוד מגבלה: מספר ה-WC buffers קטן (בערך 10-12 לכל core), ולכן לכתוב במקביל לעשרות streams שונים פוגע ביעילות.",
+        "rubric": [
+          "באפר קטן שנקרא מיד: NT stores מזיקים כי הקורא יקבל misses",
+          "כדאי לכתוב lines שלמים ברצף כדי לנצל write-combining",
+          "חייבים sfence לפני פרסום לצרכן",
+          "מספר WC buffers מוגבל"
+        ]
+      }
     },
     {
       "id": "sys.caches.q14",
@@ -521,7 +571,17 @@
         "מדידה לפני ואחרי עם perf"
       ],
       "explanation": "מראיינים ב-NVIDIA אוהבים את השאלה הזו כי היא מחברת DSP לארכיטקטורת מחשבים. המילה החשובה היא memory-bound.",
-      "lesson": "sys.caches"
+      "lesson": "sys.caches",
+      "followUp": {
+        "prompt": "אחרי ה-fusion, איך תחליט מה גודל הבלוק האופטימלי לעיבוד, ומה ישתנה אם תריץ את אותה שרשרת על 16 cores במקביל, כל core על ערוץ אחר?",
+        "modelAnswer": "גודל בלוק נבחר כך שה-working set של כל השלבים יחד (קלט, פלט, טבלאות twiddle וחלון) ייכנס ב-L2 של core אחד: 64K דגימות complex<float> הן 512KB, ולכן לחלק לבלוקים או להשתמש ב-FFT שמפורק לתתי-בעיות שנכנסות ל-L1/L2. בודקים בפועל עם sweep על גודל הבלוק ומדידה של זמן ו-L2 misses ב-perf. עם 16 cores ה-L2 פרטי, אבל ה-L3 ורוחב הפס ל-DRAM משותפים: אם כל core מזרים מ-DRAM, הקוד נעשה חסום ברוחב הפס הכולל (למשל 16 × כמה GB/s מגיע לתקרת ה-memory controller) וה-scaling נעצר. לכן fusion ושימוש חוזר ב-cache חשובים עוד יותר במקביל. צריך גם לוודא שבאפרי פלט של ערוצים שונים לא חולקים lines, ועל מכונה עם כמה NUMA nodes להקצות את הזיכרון ב-node של ה-core שמעבד אותו.",
+        "rubric": [
+          "חישוב: 64K × 8 בתים = 512KB, להשוות לגודל L2",
+          "sweep על גודל הבלוק עם מדידת L2 misses",
+          "ב-multi-core רוחב פס DRAM ו-L3 משותפים הם צוואר הבקבוק",
+          "NUMA: הקצאת זיכרון מקומית ל-core"
+        ]
+      }
     },
     {
       "id": "sys.caches.q15",
@@ -542,7 +602,17 @@
         "ל-x86 יש false sharing, ככל מעבד עם caches פרטיים ו-coherence ברזולוציית line. ההסבר הוא שהקוד כמעט לא ניגש לזיכרון.",
         "ה-store buffer קטן (עשרות רשומות) ומתרוקן ל-cache כל הזמן. הוא לא יכול לבלוע 10^9 כתיבות, וכל store שיוצא ממנו עדיין צריך בעלות על ה-line.",
         "נכון: בלי atomics ובלי synchronization הקומפיילר רשאי להניח שאף thread לא קורא את counts[tid], ולבצע scalar replacement (ברגיסטר וכתיבה אחת בסוף) או אפילו לחשב += 10^9 ישירות. בלי גישות לזיכרון אין תעבורת coherence."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלטת לתקן את ה-benchmark עם `std::atomic<long>` ו-`fetch_add(relaxed)`. עכשיו הגרסה הצמודה איטית פי 10, אבל גם הגרסה המרופדת איטית בהרבה מהלולאה המקורית. למה, ואיך היית בונה benchmark שמבודד רק את אפקט ה-false sharing?",
+        "modelAnswer": "ב-x86 `fetch_add` הוא `lock xadd`, הוראה עם latency של כ-15-20 cycles גם כשה-line נמצא ב-L1 של ה-core, כי היא מרוקנת את ה-store buffer ומונעת מקביליות. לכן גם הגרסה המרופדת איטית ביחס ל-`add` רגיל ברגיסטר. כדי לבודד את false sharing משווים שתי גרסאות שזהות בכל דבר חוץ מהמרחק בין המונים: אותה פעולה בדיוק (למשל `load(relaxed)` ואז `store(relaxed)` שמתורגמים ל-mov רגילים, בלי lock prefix), אותו מספר איטרציות, threads מוצמדים ל-cores פיזיים שונים עם taskset. כך ההבדל בזמן הוא רק תעבורת coherence. בנוסף מומלץ לבדוק את ה-assembly כדי לוודא שהלולאה לא קופלה, ולאמת עם perf c2c שה-HITM קיים רק בגרסה הצמודה.",
+        "rubric": [
+          "fetch_add = lock xadd, יקר גם בלי sharing",
+          "להשוות גרסאות שנבדלות רק במרחק בין המונים",
+          "store/load relaxed נותן mov רגיל בלי lock",
+          "להצמיד threads ל-cores ולבדוק assembly או perf c2c"
+        ]
+      }
     },
     {
       "id": "sys.caches.q16",
@@ -563,7 +633,17 @@
         "נכון: inclusion מחייב שכל line ב-L1/L2 יהיה גם ב-L3. כשה-process הרועש דוחק lines מ-L3, ה-L3 שולח back-invalidation ומוציא אותם גם מה-caches הפרטיים שלך.",
         "ה-prefetcher של core אחר מביא lines ל-caches של ה-core שלו (ו-L3). הוא לא יכול לפנות ישירות את ה-L1/L2 של core אחר; זה קורה רק בעקיפין דרך inclusion.",
         "processes מבודדים בזיכרון וירטואלי; ה-process השני לא כותב לדפים שלך. אילו כתב, זו הייתה בעיית נכונות, לא misses."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם המכונה תומכת ב-Intel CAT, איך היית מחלק את ה-L3 בין ה-RT thread לבין ה-process הרועש, ומה ה-trade-off? ואיך תוכיח שהשיפור אמיתי?",
+        "modelAnswer": "CAT מגדיר Classes of Service, ולכל אחד bitmask של ways ב-L3 שבהם מותר לו להקצות lines. ב-Linux עושים זאת דרך `resctrl` (mount של `/sys/fs/resctrl`), יוצרים קבוצה ל-RT עם ways ייעודיים, וקבוצה ל-process הרועש עם ways אחרים שלא חופפים. ה-trade-off: ה-process הרועש מקבל פחות L3 ועלול להאט, וה-ways שהוקצו ל-RT מבוזבזים כשהוא לא משתמש בהם. CAT מגביל רק הקצאה, כלומר lines קיימים יכולים עדיין לפגוע (hit) בכל way. להוכחה: למדוד את ה-latency של ה-RT (worst-case ו-p99.9, לא ממוצע) ואת L2/L3 misses שלו עם ובלי ה-process הרועש, לפני ואחרי ההגדרה. גם CMT (Cache Monitoring) מאותה משפחה מראה תפוסת L3 לכל קבוצה.",
+        "rubric": [
+          "CAT = bitmask של ways לכל Class of Service",
+          "ב-Linux דרך resctrl",
+          "trade-off: פחות L3 לאחרים, ways מבוזבזים",
+          "מדידת worst-case/p99.9 latency עם ובלי רעש"
+        ]
+      }
     },
     {
       "id": "sys.caches.q17",
@@ -584,7 +664,17 @@
         "NT stores כן נכתבים לזיכרון, רק עוקפים את ה-cache. הבעיה היא סדר הנראות ביחס לדגל, לא אובדן.",
         "הצרכן בסדר: acquire מספיק בצד הקורא. הבעיה בצד היצרן, ש-stores שלו נראים בסדר שגוי; seq_cst בצרכן לא מסדר את ה-NT stores של היצרן.",
         "release עובד ב-x86 עבור stores רגילים: TSO שומר סדר StoreStore ולכן mov רגיל מספיק. החריג הוא NT stores, שלא חלים עליהם כללי TSO."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה הצרכן עצמו לא צריך שום fence מיוחד, ומה היה משתנה אם במקום NT stores היצרן היה מבצע DMA מכרטיס רשת או מ-SDR לאותו באפר?",
+        "modelAnswer": "בצד הצרכן משתמשים ב-loads רגילים, וב-x86 TSO כבר מבטיח LoadLoad ordering, כך ש-acquire מספיק (זה mov רגיל ומחסום לקומפיילר). הבעיה הייתה רק בצד הכותב, שבו NT stores יכולים לעקוף את ה-release. ב-DMA המצב שונה: הכותב הוא התקן, וב-x86 DMA בדרך כלל cache-coherent, כלומר ה-snoop מבטל lines ישנים ב-cache. אבל הסדר נקבע על ידי ההתקן: הדרייבר צריך לקרוא descriptor או סטטוס שההתקן כתב אחרון, ורק אז לקרוא את הנתונים, עם barrier של קריאה (`dma_rmb()` ב-Linux) ביניהם. על ARM ופלטפורמות לא coherent צריך גם cache invalidate לפני קריאת הבאפר, דרך ה-DMA API (`dma_sync_single_for_cpu`).",
+        "rubric": [
+          "בצד הקורא x86 TSO מבטיח LoadLoad, acquire מספיק",
+          "ב-DMA קוראים קודם descriptor/status ואז נתונים עם read barrier",
+          "ב-x86 DMA בדרך כלל coherent, בפלטפורמות אחרות צריך invalidate",
+          "מזכיר dma_rmb או dma_sync_single_for_cpu"
+        ]
+      }
     },
     {
       "id": "sys.caches.q18",
@@ -719,7 +809,17 @@
         "ה-cache הוא 8-way, לא direct-mapped. ב-direct-mapped אכן רק line אחד היה שורד, אבל כאן נשארים 8, ועדיין 16 לא נכנסים.",
         "prefetcher לא מוסיף מקום ב-set. גם אם הוא מביא lines מראש, הם נוחתים באותו set ומפנים אחרים. וחוץ מזה, stride של 4KB חוצה דף בכל גישה, ורוב ה-prefetchers עוצרים בגבול דף.",
         "נכון: 32768 / (64 × 8) = 64 sets, index בביטים 6–11. הפרש של 4096 משאיר את ה-index זהה, כך ש-16 lines מתחרים על 8 ways, ועם LRU בגישה מחזורית כל גישה היא conflict miss."
-      ]
+      ],
+      "followUp": {
+        "prompt": "במטריצה של float בגודל 1024×1024, איזו פעולה נפוצה נותנת בדיוק את הדפוס הזה? ומה הגודל המינימלי של padding לכל שורה שפותר את הבעיה?",
+        "modelAnswer": "שורה של 1024 floats היא 4096 בתים, ולכן מעבר על עמודה (למשל בטרנספוז או בכפל מטריצות נאיבי) ניגש לכתובות במרחק 4096 בדיוק, וכולן נופלות לאותו set. עם 8 ways, כבר מהעמודה ה-9 יש פינויים. padding של line אחד (16 floats = 64 בתים) לכל שורה הופך את ה-stride ל-4160, וכך כל שורה עוברת ל-set הבא, ו-64 שורות מתפזרות על כל 64 ה-sets. גם padding קטן יותר, למשל float אחד, מזיז את הכתובת, אבל אז שורות סמוכות חולקות lines באופן לא מיושר; 64 בתים שומר על alignment. חלופה טובה יותר היא loop tiling (blocking), שמעבד בלוקים קטנים כך שלא עוברים על עמודה שלמה.",
+        "rubric": [
+          "שורה של 1024 floats = 4096 בתים, מעבר על עמודה",
+          "padding של 64 בתים (16 floats) לכל שורה מזיז ל-set הבא",
+          "64 sets → 64 שורות מתפזרות",
+          "חלופה: loop tiling/blocking"
+        ]
+      }
     },
     {
       "id": "sys.caches.q25",
@@ -743,7 +843,17 @@
         "חזקה של 2 מאפשרת להחליף modulo ב-AND, וזו אופטימיזציה חישובית. היא לא משפיעה על HITM על ה-line הראשון.",
         "נכון: head ו-tail צמודים (16 בתים) ב-line הראשון. כל כתיבה של צד אחד מבטלת את ה-line אצל השני, שקורא אותו בכל פעולה. alignas(64) או 128 על כל אחד, ועדיף גם עותק מקומי של האינדקס של הצד השני.",
         "volatile לא מתאים לסנכרון בין threads ולא משנה layout. ה-HITM הוא על ה-line של האינדקסים, לא על הנתונים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הפרדת את head ו-tail ל-lines נפרדים. עכשיו perf c2c עדיין מראה HITM, אבל פחות. מאיפה עוד הוא מגיע ב-SPSC ring, ואיך ה-cached index שמוזכר בתשובה מקטין אותו?",
+        "modelAnswer": "גם אחרי ההפרדה, היצרן קורא את head (שהצרכן כותב) בכל push כדי לבדוק אם יש מקום, והצרכן קורא את tail בכל pop. כל קריאה כזו אחרי כתיבה של הצד השני היא HITM, כי ה-line נמצא Modified אצל השני. הפתרון: כל צד שומר עותק פרטי של האינדקס של הצד השני (`cachedHead` אצל היצרן, `cachedTail` אצל הצרכן) ב-line שלו, וקורא את האטומי המשותף רק כשהעותק מראה שהתור מלא או ריק. כשהתור רחוק מהקצוות, זה הופך עשרות או מאות פעולות לקריאה משותפת אחת. מקור נוסף: הנתונים ב-`buf` עצמם עוברים מהיצרן לצרכן, וזה true sharing הכרחי; batching (לפרסם tail פעם בכמה איברים) מקטין גם אותו.",
+        "rubric": [
+          "כל צד קורא את האינדקס שהצד השני כותב → HITM",
+          "עותק cached מקומי שמתרענן רק כשהתור נראה מלא/ריק",
+          "ה-buf עצמו הוא true sharing הכרחי",
+          "batching של פרסום האינדקס"
+        ]
+      }
     },
     {
       "id": "sys.caches.q26",
@@ -775,7 +885,17 @@
         "נכון: זה true sharing: כל fetch_add צריך את אותו line במצב Modified, וההעברה בין cores עולה עשרות ns, כך שהקצב הכולל חסום ולא גדל עם threads. sharding פר-thread מרופד וסכימה בקריאה הופכים כל הגדלה לגישה מקומית.",
         "זה לא false sharing: כולם כותבים לאותו משתנה בדיוק. padding מפריד משתנים שונים, אבל כאן אין מה להפריד.",
         "atomic<uint64_t> הוא lock-free בכל פלטפורמה של 64 ביט (ב-x86 זה lock xadd). גם mutex היה מראה אותה מגבלת scalability, כי השורש הוא אותו line משותף."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עברת למונים פר-thread מרופדים. עכשיו ה-thread שקורא את הסכום רואה ערך שלפעמים לא \"עקבי\": סכום שלא היה קיים באף רגע אמיתי. זה באג? מתי זה כן בעיה, ומה היית עושה אז?",
+        "modelAnswer": "קריאת N מונים אינה snapshot אטומי: בזמן שהקורא עובר על המונים, threads אחרים ממשיכים להגדיל, ולכן הסכום הוא ערך שנמצא בין הסכום בתחילת הקריאה לסכום בסופה. למוני סטטיסטיקה מונוטוניים זה לא באג: הערך מדויק במסגרת חלון הזמן של הקריאה, וכל הגדלה נספרת בדיוק פעם אחת בסופו של דבר. זה כן בעיה כשצריך עקביות בין כמה מונים יחד, למשל `bytes / packets` או invariant בין שני ערכים. אז אפשר להשתמש ב-seqlock פר-thread (הכותב מגדיל sequence לפני ואחרי העדכון, והקורא מנסה שוב אם ה-sequence השתנה או אי-זוגי), או לאגד את המונים הקשורים ולעדכן אותם כמבנה אחד. lock גלובלי מחזיר בדיוק את ה-contention שרצינו להעלים.",
+        "rubric": [
+          "הסכום הוא ערך בין תחילת הקריאה לסופה, לא snapshot",
+          "למונים מונוטוניים זה מקובל",
+          "בעיה כשצריך עקביות בין כמה מונים",
+          "פתרון: seqlock פר-thread"
+        ]
+      }
     },
     {
       "id": "sys.caches.q28",
@@ -796,7 +916,17 @@
         "RFO קשור לכתיבות ול-coherence, לא לגודל הדף. lookup הוא בעיקר קריאה, ו-huge pages לא משנים את ההתנהגות של RFO.",
         "נכון: ב-4KB ה-STLB מכסה בערך 1536 × 4KB = 6MB מתוך 256MB, אז כמעט כל lookup הוא גם TLB miss ו-page walk (עד 4 גישות). ב-2MB הכיסוי פי 512 (כ-3GB), ה-page walks נעלמים, וה-LLC misses על הנתונים נשארים כשהיו.",
         "נכון שה-prefetcher מוגבל לגבולות דף, אבל בגישה אקראית אין דפוס שאפשר לחזות. huge pages לא הופכים גישה אקראית לרציפה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תפעיל huge pages לטבלה הזו ב-Linux, ומה הסיכונים של Transparent Huge Pages בתהליך עם דרישות latency?",
+        "modelAnswer": "שתי דרכים: hugetlbfs, עם הקצאה מראש (`vm.nr_hugepages`) ו-`mmap` עם `MAP_HUGETLB`, שנותנת דפים מובטחים אבל דורשת קונפיגורציה; או THP, עם `madvise(ptr, len, MADV_HUGEPAGE)` על אזור מיושר ל-2MB. הסיכונים של THP: כשאין 2MB רציפים פנויים ה-kernel עשוי לבצע compaction סינכרוני בזמן page fault, וזה יכול לקחת מילישניות; khugepaged ממזג דפים ברקע ומשנה page tables; ופיצול huge page (למשל ב-`munmap` חלקי או ב-fork עם COW) עולה זמן. לכן במערכות RT מעדיפים הקצאה מראש עם hugetlbfs או THP עם `MAP_POPULATE` ו-`mlock` בזמן אתחול, ולוודא עם `/proc/<pid>/smaps` (שדה `AnonHugePages`) שהדפים באמת גדולים. בנוסף, בודקים את השיפור עם `perf stat -e dTLB-load-misses`.",
+        "rubric": [
+          "hugetlbfs עם MAP_HUGETLB מול THP עם madvise",
+          "סיכון: compaction סינכרוני ב-page fault",
+          "הקצאה ונגיעה מראש בזמן אתחול (populate/mlock)",
+          "אימות עם smaps AnonHugePages או dTLB-load-misses"
+        ]
+      }
     },
     {
       "id": "sys.caches.q29",
@@ -817,7 +947,17 @@
         "x86 אינו sequentially consistent אלא TSO: הוא שומר StoreStore, LoadLoad ו-LoadStore, אבל מתיר StoreLoad reordering. זה בדיוק המקרה כאן.",
         "התופעה קורה גם על socket יחיד, כי היא נובעת מה-store buffer הפרטי, לא מהמרחק בין sockets.",
         "נכון: כל store יושב ב-store buffer, וה-load לכתובת אחרת מבוצע לפניו מה-cache. שני ה-threads קוראים 0. זה StoreLoad reordering שמותר ב-TSO, ומונעים אותו עם mfence או seq_cst (xchg)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה יצרני מעבדים בכלל מאפשרים StoreLoad reordering? מה היה עולה לשמור על sequential consistency בחומרה, וכמה עולה `mfence` בפועל?",
+        "modelAnswer": "ה-store buffer קיים כדי שה-core לא יחכה ל-RFO של כל store: כתיבה ל-line שלא נמצא ב-cache יכולה לקחת מאות cycles, והמעבד ממשיך לבצע הוראות בינתיים. כדי לשמור על SC, כל load היה צריך לחכות עד שכל ה-stores הקודמים נכתבו ל-cache, כלומר להשבית בפועל את ה-store buffer לגבי loads, וזה היה מאט קוד רגיל משמעותית. TSO נותן כמעט את כל הביצועים, ומשאיר את המחיר רק לקוד שצריך סדר מלא. `mfence` או הוראה עם `lock` מרוקנים את ה-store buffer, ועולים בדרך כלל עשרות cycles (תלוי מעבד, וב-store buffer מלא אף יותר). לכן `store(seq_cst)` יקר יחסית ל-`store(release)`, שהוא mov רגיל ב-x86.",
+        "rubric": [
+          "store buffer מסתיר latency של RFO/miss בכתיבה",
+          "SC מחייב לחכות לריקון ה-store buffer לפני load",
+          "mfence/lock מרוקנים את ה-store buffer, עשרות cycles",
+          "store release ב-x86 הוא mov רגיל, seq_cst דורש xchg/mfence"
+        ]
+      }
     },
     {
       "id": "sys.caches.q30",
@@ -838,7 +978,17 @@
         "a ו-b אולי באותו set, אבל רק 2 streams לא ממלאים 8 ways. conflict misses דורשים יותר lines פעילים מ-ways, כפי שגם נאמר בשאלה.",
         "false sharing דורש כמה threads שכותבים ל-line משותף. כאן יש thread יחיד ו-a ו-b לא חולקים line.",
         "ה-TLB מחזיק בקלות שני דפים עם אותו offset; התרגום לפי מספר דף, וה-offset לא משנה. זה בלבול בין הבעיה האמיתית (12 ביטים נמוכים) לבין TLB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איזה מונה ב-perf היית בודק כדי לאשר 4K aliasing, ואיך היית מונע את הבעיה באופן כללי בספרייה שמקצה באפרי עבודה רבים לעיבוד DSP?",
+        "modelAnswer": "ב-Intel יש מונה `ld_blocks_partial.address_alias` שסופר loads שנחסמו בגלל התאמה חלקית של כתובת ל-store קודם. אם הוא גבוה ביחס למספר ה-loads, וירידה שלו אחרי שינוי ההקצאה מתואמת עם השיפור בזמן, זו ההוכחה. מניעה כללית: לא להקצות כל באפר בנפרד ב-`aligned_alloc` של 4096, כי allocators מחזירים הקצאות גדולות מיושרות לדף (לעיתים דרך mmap), וכך כל הבאפרים חולקים offset 0 mod 4096. במקום זה מקצים pool אחד גדול ומזיזים כל באפר ב-offset שונה (למשל כפולה של 64 או 128 בתים שאינה כפולה של 4096), או מוסיפים padding משתנה. זה שומר על alignment ל-SIMD וה-cache line, אבל מפזר את 12 הביטים הנמוכים.",
+        "rubric": [
+          "מונה ld_blocks_partial.address_alias",
+          "allocators מחזירים באפרים גדולים מיושרים לדף",
+          "offset שונה לכל באפר (כפולה של 64 שאינה כפולה של 4096)",
+          "שמירה על alignment ל-SIMD"
+        ]
+      }
     },
     {
       "id": "sys.caches.q31",
@@ -854,7 +1004,17 @@
         "NUMA, מונים של 64-bit, ומדידה עם perf c2c"
       ],
       "explanation": "השאלה בודקת אם אפשר לחבר coherence, memory model וארכיטקטורה לתכנון אחד, כמו שעושים ב-DPDK ובמערכות רשת.",
-      "lesson": "sys.caches"
+      "lesson": "sys.caches",
+      "followUp": {
+        "prompt": "ה-thread המנטר רוצה עכשיו להציג גם rate (packets per second) מדויק לכל core. האם המבנה שתכננת מאפשר את זה בלי לגעת בנתיב החם, ומה קורה ל-counter של 32 ביט במצב הזה?",
+        "modelAnswer": "כן: המנטר קורא את המונה של כל core פעמיים, במרווח ידוע (למשל עם `CLOCK_MONOTONIC`), ומחשב הפרש חלקי זמן. הנתיב החם לא משתנה, הוא ממשיך לכתוב למונה פר-core שלו עם store relaxed, והמנטר קורא עם load relaxed. ב-10 Mpps על core אחד, מונה packets של 32 ביט יגלוש אחרי כ-430 שניות, ומונה bytes של 32 ביט יגלוש אחרי פחות משנייה (10 Mpps × 64 בתים = 640MB/s), ולכן חובה 64 ביט. על פלטפורמה של 64 ביט load/store מיושר של 64 ביט הוא אטומי, אבל על 32 ביט צריך atomic מתאים כדי לא לקרוא חצי ערך (torn read). אם בכל זאת יש מונה 32 ביט, חישוב הפרש בחשבון unsigned מתמודד נכון עם גלישה אחת בין דגימות.",
+        "rubric": [
+          "rate = הפרש בין שתי קריאות חלקי זמן, בלי לשנות נתיב חם",
+          "חישוב גלישה: bytes ב-32 ביט גולש בפחות משנייה",
+          "64 ביט, ו-torn read על פלטפורמת 32 ביט",
+          "הפרש unsigned מטפל בגלישה אחת"
+        ]
+      }
     },
     {
       "id": "sys.caches.q32",
@@ -1030,7 +1190,17 @@
         "נכון: המקרה הנפוץ והמהיר."
       ],
       "explanation": "TLB ו-cache הם שני מבנים בלתי תלויים, ולכן כל ארבעת השילובים אפשריים. גישה אקראית למבנה גדול סובלת לרוב משניהם, ו-huge pages מטפלים בחלק של ה-TLB.",
-      "lesson": "sys.caches"
+      "lesson": "sys.caches",
+      "followUp": {
+        "prompt": "ה-L1 ב-x86 הוא VIPT (virtually indexed, physically tagged). למה זה מאפשר לבדוק את ה-TLB וה-L1 במקביל, ואיזו מגבלה זה מטיל על גודל ה-L1? ",
+        "modelAnswer": "ב-VIPT ה-index של ה-set נלקח מביטים של הכתובת הווירטואלית, וה-tag משווים מול הכתובת הפיזית. אם כל ביטי ה-index (וה-offset בתוך ה-line) נמצאים בתוך ה-page offset של 12 ביט, הם זהים בכתובת הווירטואלית ובפיזית, ולכן אפשר לבחור את ה-set בזמן שה-TLB מתרגם את שאר הכתובת. המגבלה: מספר sets × גודל line ≤ 4096, כלומר גודל way ≤ 4KB. לכן L1 של 32KB הוא 8-way (4KB × 8), ו-48KB הוא 12-way. כדי להגדיל את ה-L1 בלי לשבור את זה צריך להגדיל את ה-associativity, שעולה באנרגיה ובזמן השוואה. אחרת נוצרת בעיית aliasing: אותה כתובת פיזית בשני sets שונים.",
+        "rubric": [
+          "index מתוך ה-page offset → זהה בווירטואלי ובפיזי",
+          "בדיקת TLB ו-set במקביל",
+          "גודל way ≤ 4KB, לכן 32KB = 8-way",
+          "הגדלת L1 דורשת associativity גבוהה יותר"
+        ]
+      }
     },
     {
       "id": "sys.caches.q40",
@@ -1100,7 +1270,17 @@
         "שגוי: זה סכום הגדלים בלי padding בכלל."
       ],
       "explanation": "סידור מחדש מהגדול לקטן חסך כאן שליש מהגודל. במערך של מיליון structs זה 8MB, ויותר איברים בכל cache line.",
-      "lesson": "sys.caches"
+      "lesson": "sys.caches",
+      "followUp": {
+        "prompt": "יש לך מערך של מיליון structs כאלה ואתה בעיקר סורק רק את השדה `d`. האם סידור השדות מחדש הוא באמת האופטימיזציה הנכונה, או שיש משהו טוב יותר? מה ה-trade-off?",
+        "modelAnswer": "סידור מחדש מקטין את ה-struct מ-24 ל-16 בתים, אבל כשסורקים רק את `d` עדיין מביאים ל-cache גם את `s` ו-`a`: מכל line של 64 בתים רק 32 שימושיים. מעבר ל-Structure of Arrays (מערך נפרד לכל שדה) נותן סריקה רציפה של `double` בלבד: 8 איברים שימושיים בכל line, ואפשרות ל-SIMD נקי. ה-trade-off: כשניגשים לכל השדות של אותו איבר יחד (למשל lookup לפי אינדקס), AoS נותן line אחד במקום שלושה. בנוסף, SoA מסבך את הקוד ואת ה-API. הבחירה נקבעת לפי דפוס הגישה הדומיננטי, ואפשר גם hybrid (AoSoA) עם בלוקים קטנים של SoA.",
+        "rubric": [
+          "גם ב-16 בתים רק חצי מה-line שימושי בסריקת d",
+          "SoA: רק double ברצף, 8 בכל line, SIMD",
+          "AoS עדיף לגישה לכל השדות של איבר אחד",
+          "AoSoA כפשרה"
+        ]
+      }
     },
     {
       "id": "sys.caches.q43",
@@ -1121,7 +1301,17 @@
         "נכון: GCC ו-Clang אפילו מזהירים על זה (-Waddress-of-packed-member). גישה דרך ה-struct נעשית byte אחר byte או עם load לא מיושר, אבל pointer רגיל מניח alignment מלא."
       ],
       "explanation": "packed מתאים לתיאור פורמט של חבילה או header, אבל לא לגישה ישירה לשדות דרך pointers. הדרך הבטוחה: לקרוא מה-buffer עם memcpy למשתנה מיושר, או לסדר את השדות כך שלא יהיה צורך ב-packed.",
-      "lesson": "sys.caches"
+      "lesson": "sys.caches",
+      "followUp": {
+        "prompt": "אתה מפרסר header של פרוטוקול מבאפר שהגיע מהרשת. הצג את שתי הדרכים הבטוחות לקרוא שדה של 32 ביט, ומה העלות של `memcpy` בפועל ב-`-O2`. מה עוד חייבים לטפל בו מלבד alignment?",
+        "modelAnswer": "דרך אחת: `uint32_t v; memcpy(&v, buf + off, 4);` שהיא חוקית לכל alignment. דרך שנייה: להרכיב מבתים עם shifts, למשל `buf[0] << 24 | buf[1] << 16 | ...`, שמגדירה גם את סדר הבתים במפורש. ב-`-O2` הקומפיילר מזהה `memcpy` בגודל קבוע ומתרגם אותו לטעינה אחת של 32 ביט (ב-x86 load לא מיושר חוקי), ולכן אין קריאה לפונקציה. מלבד alignment חייבים לטפל ב-endianness: פרוטוקולי רשת הם big-endian, ולכן צריך `ntohl` או `be32toh` (או את ה-shifts). עוד דבר: לוודא שאורך הבאפר מספיק לפני הקריאה, כי חבילה קצרה מהצפוי היא קריאה מחוץ לגבולות.",
+        "rubric": [
+          "memcpy לתוך משתנה מיושר",
+          "הרכבה מבתים עם shifts",
+          "memcpy בגודל קבוע מתקמפל ל-load יחיד",
+          "endianness (ntohl/be32toh) ובדיקת אורך"
+        ]
+      }
     },
     {
       "id": "sys.caches.q44",
@@ -1170,7 +1360,17 @@
         "שגוי: כפל floats לוקח כמה cycles, הרבה פחות מ-miss לזיכרון."
       ],
       "explanation": "כתובות שההפרש ביניהן הוא כפולה של (גודל ה-cache חלקי מספר ה-ways) נופלות לאותו set. ב-direct-mapped שני streams כאלה מפנים זה את זה כל הזמן. זה מקרה קיצוני של conflict miss, ומטפלים בו עם padding או associativity.",
-      "lesson": "sys.caches"
+      "lesson": "sys.caches",
+      "followUp": {
+        "prompt": "אם ה-cache היה 2-way set-associative באותו גודל, האם הבעיה הייתה נעלמת? ומה אם הלולאה הייתה `c[i] = a[i] * b[i]` עם מערך שלישי באותו דפוס?",
+        "modelAnswer": "ב-2-way, a ו-b עדיין נופלים לאותו set (כי ההפרש הוא כפולה של גודל way = 16KB), אבל יש שני ways ולכן שני ה-lines יכולים לשבת יחד. בלולאת dot product עם שני streams הבעיה נעלמת כמעט לגמרי. עם מערך שלישי c באותו דפוס יש שלושה lines שמתחרים על set עם 2 ways, ועם LRU כל גישה מפנה את ה-line שיידרש בעוד רגע, כך שה-thrashing חוזר. הכלל: conflict misses מופיעים כשמספר ה-streams שממופים לאותו set גדול מה-associativity. לכן מוסיפים padding בין המערכים (למשל line אחד או כמה), כך שה-streams מתפזרים על sets שונים בלי קשר למספר ה-ways.",
+        "rubric": [
+          "ב-2-way שני streams נכנסים יחד",
+          "שלושה streams על 2 ways → thrashing חוזר",
+          "כלל: streams לאותו set > associativity",
+          "padding בין המערכים פותר בלי תלות ב-ways"
+        ]
+      }
     },
     {
       "id": "sys.caches.q46",

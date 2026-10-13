@@ -394,7 +394,16 @@
         "שגוי: volatile לא מוסיף אטומיות; credits כבר atomic, והבעיה היא הצירוף של שתי פעולות."
       ],
       "explanation": "כל פעולה אטומית בנפרד, אבל הצירוף לא. כש-credits=1 שני threads יכולים לראות 1 ושניהם מורידים ל-1-. זה race condition בלי data race. תיקון: לולאת compare_exchange שמורידה רק אם הערך שנקרא עדיין חיובי, או `fetch_sub` ובדיקת הערך הקודם עם החזרה (`fetch_add(1)`) אם הוא היה 0 או פחות. ברירת המחדל של load ו-fetch_sub היא כבר seq_cst.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "כתבת לולאת compare_exchange. תחת 32 threads שמנסים לקחת credits בו זמנית, מה קורה לביצועים של הלולאה, ולמה גרסת fetch_sub עם החזרה יכולה להיות מהירה יותר דווקא כאן?",
+        "modelAnswer": "בלולאת CAS כל thread קורא, מחשב ומנסה להחליף; אם thread אחר שינה את הערך ביניהם, ה-CAS נכשל והוא מנסה שוב. עם 32 threads על אותו cache line, רוב הניסיונות נכשלים, וכל ניסיון כזה עולה העברת בעלות על ה-line בין ליבות, עשרות עד מאות ננו-שניות, כך שה-throughput קורס. fetch_sub הוא RMW יחיד שתמיד מצליח (lock xadd ב-x86), בלי ניסיונות חוזרים, ולכן מספר פעולות ה-coherence קבוע. החיסרון: כשנגמרים credits, threads מורידים מתחת לאפס זמנית ואז מחזירים עם fetch_add, וקורא אחר יכול לראות ערך שלילי לרגע, כך שצריך שה-invariant יהיה מבוסס רק על הערך שהוחזר מ-fetch_sub. אם ה-contention באמת גבוה, פתרון מבני הוא לחלק credits מראש בין threads.",
+        "rubric": [
+          "CAS נכשל וחוזר תחת contention, כל כשל = העברת cache line",
+          "fetch_sub תמיד מצליח בפעולה אחת",
+          "חיסרון: ערך שלילי זמני; פתרון מבני: credits מקומיים לכל thread"
+        ]
+      }
     },
     {
       "id": "bugs.races.q08",
@@ -418,7 +427,16 @@
         "שגוי: sleep לא יוצר סנכרון; הוא אולי מסתיר את הבעיה, אבל זה עדיין data race שהקומפיילר רשאי לנצל."
       ],
       "explanation": "מאחר ש-data race הוא UB, הקומפיילר רשאי להניח שאף thread אחר לא משנה את `stop`. כש-processBlock inlined ולא נוגע ב-stop, `while(!stop)` הופך ל-`if(!stop) for(;;)`. התיקון: `std::atomic<bool> stop{false}` (אפשר load עם relaxed או acquire). volatile 'עובד' בפועל ב-GCC/Clang אבל זה עדיין data race לפי התקן ולא נותן ordering לנתונים אחרים.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "החלפת ל-std::atomic<bool> עם load relaxed. מה relaxed מבטיח ומה לא, ומתי הלולאה הזו הייתה צריכה acquire דווקא?",
+        "modelAnswer": "relaxed מבטיח שהקריאה אטומית ושבסופו של דבר הלולאה תראה את הכתיבה (התקן אומר שכתיבה צריכה להיות גלויה בזמן סביר), והקומפיילר לא רשאי להוציא את הקריאה מהלולאה. הוא לא מבטיח שום סדר ביחס לנתונים אחרים. אם ה-thread שכותב stop = true גם כותב לפני כן נתונים שה-rxLoop צריך לקרוא אחרי היציאה, למשל סיבת העצירה או מצב סופי, צריך store-release בכותב ו-load-acquire בקורא, אחרת rxLoop עלול לקרוא נתונים ישנים. כאן, אם stop משמש רק לעצירה בלי נתונים נלווים, relaxed מספיק. ב-x86 load-acquire עולה בדיוק כמו relaxed (mov רגיל), כך שבספק עדיף acquire.",
+        "rubric": [
+          "relaxed: אטומיות ונראות בסופו של דבר, בלי ordering",
+          "acquire/release נדרש כשיש נתונים נלווים לדגל",
+          "ב-x86 acquire load הוא mov רגיל, אותה עלות"
+        ]
+      }
     },
     {
       "id": "bugs.races.q09",
@@ -442,7 +460,16 @@
         "שגוי: shared_mutex הוא אופטימיזציה לקוראים רבים. מה שחובה הוא שגם get ייקח את אותו mutex."
       ],
       "explanation": "'רק קורא' זה לא פטור: קריאה בלי lock מול כתיבה עם lock היא data race. `table[k]` עם מפתח חדש מכניס צומת ועלול לעשות rehash, ובזמן הזה get עובר על buckets משוחררים. תיקון: אותו lock ב-get (shared_mutex הוא אופטימיזציה, לא חובה). `at` אכן זורק על מפתח חסר, אבל זה exception מוגדר ולא crash אקראי.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "הוספת את ה-lock ל-get. ה-monitoring קורא הרבה יותר מה-update כותב. האם shared_mutex ישפר כאן, ומה המחיר הנסתר שלו כשהמקטע הקריטי קצר מאוד?",
+        "modelAnswer": "shared_mutex מאפשר לכמה קוראים להחזיק נעילה בו זמנית, וזה עוזר כשהמקטע הקריטי ארוך והקוראים רבים. אבל גם נעילה משותפת כותבת ל-state של ה-mutex, מונה קוראים אטומי, ולכן כל קורא עדיין עושה RMW על אותו cache line, שקופץ בין ליבות. כשהמקטע הקריטי הוא lookup של עשרות ננו-שניות, העלות הזו שולטת ו-shared_mutex יכול להיות איטי יותר מ-mutex רגיל, שגם הוא מימוש כבד יותר. אם הקריאות באמת דומיננטיות, חלופות טובות יותר הן snapshot בלתי משתנה ב-atomic shared_ptr (RCU-style), או seqlock לנתונים קטנים. כך או כך, מודדים תחת עומס אמיתי לפני ההחלטה.",
+        "rubric": [
+          "shared_mutex: מונה קוראים אטומי, אותו cache line",
+          "במקטע קצר עלול להיות איטי מ-mutex רגיל",
+          "חלופות: snapshot ב-atomic shared_ptr או seqlock"
+        ]
+      }
     },
     {
       "id": "bugs.races.q10",
@@ -466,7 +493,16 @@
         "שגוי: RLock נחוץ רק כשאותו thread נועל שוב; כאן אין נעילה רקורסיבית."
       ],
       "explanation": "check-then-act. שני threads עוברים את הבדיקה, אחד נכנס ל-lock ופותח, השני מחכה ואז פותח שוב ודורס. תיקון: לבדוק שוב בתוך ה-lock (double-checked), או לבצע את כל הבדיקה בתוך ה-lock. ב-CPython קריאה בודדת מ-dict בטוחה, ו-with משחרר את ה-lock גם ב-exception.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "עברת ל-double-checked בתוך ה-lock. עכשיו expensive לוקח 2 שניות, ומפתחות שונים נחסמים זה בזה. איך היית מבנה את זה כך שרק בקשות לאותו מפתח מחכות?",
+        "modelAnswer": "ה-lock הגלובלי מחזיק את כל ה-cache במשך 2 שניות, כך שגם בקשה למפתח אחר שכבר קיים נחסמת. הפתרון הוא להחזיק את ה-lock הגלובלי רק לזמן קצר כדי לרשום placeholder לכל מפתח, למשל `concurrent.futures.Future` או Event, ולבצע את expensive מחוץ ל-lock הגלובלי. ה-thread הראשון למפתח יוצר את ה-Future, משחרר את ה-lock, מריץ את expensive ומשלים את ה-Future; threads נוספים לאותו מפתח מוצאים את ה-Future ומחכים ל-`result()`. צריך לטפל בכישלון: אם expensive זורק, ה-Future מקבל את ה-exception, ומחליטים אם להסיר את הרשומה כדי לאפשר ניסיון חוזר. אפשרות פשוטה יותר היא lock לכל מפתח, אבל צריך לנהל את יצירתם בעצמו תחת lock גלובלי.",
+        "rubric": [
+          "lock גלובלי קצר רק לרישום placeholder",
+          "expensive רץ מחוץ ל-lock; אחרים מחכים ל-Future של אותו מפתח",
+          "טיפול ב-exception: הפצה והסרה לניסיון חוזר"
+        ]
+      }
     },
     {
       "id": "bugs.races.q11",
@@ -490,7 +526,16 @@
         "נכון: הקריאה בשורה 5 בלי סנכרון מול הכתיבה, ואין release/acquire. thread יכול לראות מצביע לא-null ולקרוא שדות של Config שעוד לא נראים לו. תיקון: magic static, call_once או atomic עם acquire/release."
       ],
       "explanation": "הקריאה בשורה 5 לא מוגנת, וה-write ל-g_cfg לא release, ולכן אין happens-before בין בניית Config לקריאת השדות שלו ב-thread אחר. גם הקומפיילר רשאי לכתוב את המצביע לפני שסיים לאתחל. תיקונים: `static Config cfg = load(); return cfg;` (magic statics, thread-safe מ-C++11), `std::call_once`, או `std::atomic<Config*>` עם acquire בקריאה ו-release בכתיבה.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "הצעת magic static. איך הקומפיילר מממש את זה, מה העלות בכל קריאה אחרי האתחול, ומה קורה אם load() זורק?",
+        "modelAnswer": "הקומפיילר מוסיף guard variable לכל static מקומי. בכל קריאה יש בדיקה מהירה של ה-guard עם acquire load, שב-x86 היא mov והשוואה, כלומר כמעט חינם אחרי האתחול. רק אם ה-guard לא מסומן, נקראת `__cxa_guard_acquire` שנועלת, ו-threads אחרים מחכים בזמן שהראשון מאתחל; בסוף `__cxa_guard_release` מסמן את ה-guard ב-release. אם load() זורק, האתחול לא הושלם, `__cxa_guard_abort` משחרר את ה-guard, וה-exception עובר לקורא; הקריאה הבאה תנסה לאתחל מחדש. כלומר אין מצב של אובייקט חצי מאותחל. מלכודת אחת: אם האתחול קורא רקורסיבית לאותה פונקציה, זה deadlock או UB.",
+        "rubric": [
+          "guard variable עם acquire load מהיר אחרי האתחול",
+          "__cxa_guard_acquire נועל רק באתחול",
+          "exception: האתחול מבוטל ויתבצע שוב בקריאה הבאה"
+        ]
+      }
     },
     {
       "id": "bugs.races.q12",
@@ -514,7 +559,16 @@
         "שגוי: make_shared כבר מחזיר rvalue, כך ש-std::move לא משנה דבר; ובכל מקרה זה לא נוגע ל-race."
       ],
       "explanation": "ה-refcount אכן מעודכן אטומית, ולכן שני threads יכולים להחזיק עותקים נפרדים בבטחה. אבל קריאה וכתיבה של אותו אובייקט shared_ptr (שני מצביעים) אינן אטומיות: הקורא יכול לקרוא את מצביע האובייקט החדש עם control block ישן, או להעלות refcount של בלוק שכבר שוחרר. תיקון: `std::atomic<std::shared_ptr<const Params>>` (C++20) או mutex קצר סביב ההעתקה. זה גם הדפוס הנכון ל-RCU פשוט.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "עברת ל-`std::atomic<std::shared_ptr>`. ב-libstdc++ זה לא lock-free. מה זה אומר לגבי thread ה-DSP שקורא את זה בכל בלוק, ואיזו חלופה יש אם צריך wait-free מלא?",
+        "modelAnswer": "ב-libstdc++ ו-MSVC המימוש משתמש בנעילה פנימית קצרה (spinlock), ולכן `is_lock_free()` מחזיר false. ל-thread ה-DSP זה אומר שבמקרה נדיר, אם ה-control thread מחזיק את הנעילה בדיוק ברגע הקריאה, ה-DSP מחכה, ואם ה-control thread נקטע על ידי ה-scheduler באמצע, ההמתנה יכולה להיות ארוכה. בנוסף, ה-load מעלה refcount אטומי, וכשה-DSP משחרר את העותק האחרון של Params ישן, ה-destructor וה-free רצים על thread ה-real-time. חלופה wait-free: שני buffers של Params (double buffer) עם אינדקס אטומי, או תור SPSC שבו ה-control שולח מצביע חדש וה-DSP מחזיר את הישן לשחרור ב-thread אחר. RCU מלא (כמו liburcu) נותן קריאה wait-free עם שחרור מושהה.",
+        "rubric": [
+          "לא lock-free: spinlock פנימי, ה-DSP עלול לחכות",
+          "שחרור Params ישן עלול לקרות על thread ה-real-time",
+          "חלופה: double buffer עם אינדקס אטומי או SPSC שמחזיר ישנים לשחרור"
+        ]
+      }
     },
     {
       "id": "bugs.races.q13",
@@ -538,7 +592,16 @@
         "שגוי: condition_variable::wait דורש unique_lock, כי הוא משחרר ולוקח מחדש את ה-lock; lock_guard לא יתקמפל."
       ],
       "explanation": "condition variable לא זוכר הודעות. התיקון: `cv.wait(lk, []{ return ready; });`, שבודק את ה-predicate לפני ההמתנה ואחרי כל התעוררות, תחת ה-lock. notify מחוץ ל-lock תקין ואף חוסך התעוררות מיותרת. lock_guard לא עובד עם wait.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "הוספת predicate. למה התקן מתיר spurious wakeups מלכתחילה, ומה זה אומר על המימוש של condition variable מעל futex ב-Linux?",
+        "modelAnswer": "התקן מתיר spurious wakeups כדי לא לחייב מימוש שמבטיח שכל התעוררות מתאימה בדיוק להודעה, דבר שהיה יקר או בלתי אפשרי בחלק מהמערכות. ב-Linux, condition variable מבוסס על futex: ה-wait משחרר את ה-mutex וקורא ל-futex_wait על מונה רצף, וה-notify מגדיל את המונה וקורא ל-futex_wake. futex_wait יכול לחזור בגלל signal (EINTR), בגלל שינוי ערך בין הבדיקה להירדמות, או בגלל notify_all ש-threads אחרים כבר צרכו את התנאי שלו. בנוסף, בין ההתעוררות לבין רכישה מחדש של ה-mutex, thread אחר עלול לשנות את התנאי. מכל הסיבות האלה, ה-predicate בלולאה הוא הדרך היחידה להבטיח נכונות, וזה מכסה גם stolen wakeups.",
+        "rubric": [
+          "התקן מתיר spurious כדי לאפשר מימוש יעיל",
+          "futex_wait יכול לחזור בגלל signal או שינוי ערך",
+          "predicate בלולאה מכסה גם stolen wakeup"
+        ]
+      }
     },
     {
       "id": "bugs.races.q14",
@@ -564,7 +627,16 @@
         "שגוי: סנכרון ב-inline asm שקוף ל-TSan; בלי annotations הוא ידווח false positives."
       ],
       "explanation": "TSan הוא happens-before detector: הוא תופס race גם אם ה-threads לא התנגשו בפועל באותו רגע, אבל רק על נתיבי קוד שרצו. TSan ו-ASan לא משתלבים באותו build. גישות atomic אינן data race, גם relaxed. סנכרון ידני ב-asm שקוף לו ודורש annotations, אחרת יהיו false positives.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אמרת ש-TSan הוא happens-before detector. הקוד שלך משתמש ב-lock-free queue שכתוב עם atomic_thread_fence ו-relaxed atomics. למה TSan עלול לדווח false positive, ומה עושים?",
+        "modelAnswer": "TSan עוקב אחרי happens-before שנוצר מפעולות atomic עם acquire ו-release על אותו משתנה, וממנעולים. fences עצמאיים, כלומר atomic_thread_fence יחד עם relaxed load או store, נתמכים רק חלקית ב-TSan, ובגרסאות רבות הוא פשוט מתעלם מהם. לכן סנכרון נכון לפי התקן שמבוסס על fences עלול להיראות לו כ-race, ותקבל דיווח על הגישה לנתונים. הפתרונות: להחליף את ה-fences ב-acquire/release על ה-atomic עצמו, שהוא ממילא קריא יותר ובדרך כלל באותה עלות; או להוסיף annotations כמו `__tsan_acquire` ו-`__tsan_release` במקומות שבהם הסנכרון קורה; ובמקרה הגרוע להשתיק עם suppressions, אחרי שמוכיחים נכונות בכלי אחר כמו CDSChecker או בבדיקה מדוקדקת.",
+        "rubric": [
+          "TSan לא מבין atomic_thread_fence עם relaxed",
+          "החלפה ל-acquire/release על ה-atomic עצמו",
+          "annotations של __tsan_acquire/__tsan_release או suppressions"
+        ]
+      }
     },
     {
       "id": "bugs.races.q15",
@@ -605,7 +677,16 @@
         "שגוי: release על tail.store כבר מספיק לפרסום ה-slot הפנוי; seq_cst לא נדרש."
       ],
       "explanation": "publish דורש זוג release/acquire: כתיבת הנתונים, ואז store עם release על האינדקס; הצד השני load עם acquire ורק אז קורא את הנתונים. עם relaxed אין synchronizes-with, ולכן הקריאה של `buf` היא data race. על x86 (TSO) ה-store לא מוקדם בחומרה, אז זה 'עובד' כל עוד הקומפיילר לא מסדר מחדש; ARM מסדר מחדש stores. `% N` נכון לכל N כש-head ו-tail רצים מונוטונית (wrap של size_t דורש N חזקה של 2, אבל זה רק אחרי 2^64). `tail.store` עם release כבר נכון.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "תיקנת את head.store ל-release. עכשיו ה-queue נכון אבל איטי. כל push קורא את tail וכל pop קורא את head, ושניהם על cache lines שהצד השני כותב. איך מקטינים את תעבורת ה-coherence?",
+        "modelAnswer": "קודם כל מפרידים את head ו-tail ל-cache lines נפרדים (alignas(64) או 128 ב-Apple ו-Intel עם prefetcher זוגי), כדי שכתיבה של צד אחד לא תפסול את ה-line של המשתנה שהצד הזה כותב. השיפור הגדול הוא caching מקומי: ה-producer מחזיק עותק פרטי של tail ומרענן אותו מה-atomic רק כשהעותק מראה שהתור מלא, וה-consumer מחזיק עותק פרטי של head ומרענן רק כשנראה ריק. כך רוב הפעולות לא נוגעות כלל ב-line של הצד השני. אופטימיזציה נוספת היא batching: לדחוף או לשלוף כמה דגימות בבת אחת ולפרסם את האינדקס פעם אחת, מה שמתאים בדיוק ל-DSP שעובד בבלוקים. זה הדפוס של rigtorp SPSCQueue ושל folly ProducerConsumerQueue.",
+        "rubric": [
+          "head ו-tail ב-cache lines נפרדים",
+          "עותק פרטי של האינדקס של הצד השני, רענון רק כשנראה מלא/ריק",
+          "batching: פרסום אינדקס פעם לבלוק"
+        ]
+      }
     },
     {
       "id": "bugs.races.q17",
@@ -626,7 +707,16 @@
         "נכון: עם כותב יחיד אין צורך ב-RMW אטומי. load ו-store relaxed נפרדים מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם."
       ],
       "explanation": "volatile עדיין data race לפי התקן (גם אם עובד בפועל). `fetch_add` נכון אבל מתקמפל ל-`lock xadd`, RMW עם lock prefix שעולה בערך 20 מחזורים ויותר. כשיש כותב יחיד, אין צורך ב-RMW אטומי: load ו-store נפרדים עם relaxed מתקמפלים ל-mov רגילים, בלי tearing ובלי UB, והקורא תמיד רואה ערך שלם. mutex נכון אבל היקר מכולם במסלול החם.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "עם כותב יחיד, load ו-store relaxed נפרדים. מה היה קורה לפתרון הזה על ARM32, שבו uint64_t לא נכתב אטומית בהוראה רגילה, ואיך std::atomic מתמודד עם זה?",
+        "modelAnswer": "ב-ARM32, mov של 64 ביט הוא שתי כתיבות של 32 ביט, ולכן בלי atomic הקורא היה יכול לראות חצי ישן וחצי חדש (tearing), למשל בזמן מעבר מ-0xFFFFFFFF ל-0x100000000. std::atomic<uint64_t> מבטיח אטומיות בכל פלטפורמה: ב-ARMv7 עם LPAE משתמשים ב-LDRD/STRD שהם אטומיים ליישור של 8 בתים, או בזוג LDREXD/STREXD; בפלטפורמות בלי תמיכה כזו המימוש נופל לנעילה פנימית, ואז `is_lock_free()` מחזיר false. לכן הקוד נשאר נכון, אבל העלות משתנה לפי הארכיטקטורה, ובקוד real-time כדאי לבדוק `std::atomic<uint64_t>::is_always_lock_free` עם static_assert. ב-x86-64 ו-ARM64 זה mov או str רגיל.",
+        "rubric": [
+          "ARM32: 64 ביט = שתי כתיבות, tearing בלי atomic",
+          "atomic משתמש ב-LDRD/STRD או LDREXD, או נעילה פנימית",
+          "static_assert על is_always_lock_free"
+        ]
+      }
     },
     {
       "id": "bugs.races.q18",
@@ -642,7 +732,16 @@
         "מניעה: טסט רגרסיה ו-TSan ב-CI"
       ],
       "explanation": "מראיין מחפש גישה שיטתית ולא 'להוסיף mutex בכל מקום': הבנת מגבלות הכלי, הגדלת כיסוי, וזיהוי הגורם לפני תיקון.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אמרת שמריצים את ה-pipeline המלא תחת TSan. אם ההאטה של פי 10 גורמת ל-overflows שמשנים את התזמון כולו, איך עוד אפשר להגדיל את הסיכוי לשחזר race נדיר בלי TSan?",
+        "modelAnswer": "קודם, להפעיל TSan עם קלט מוקלט מקובץ במקום מהחומרה, כך שאין דד-ליין והאטה לא גורמת ל-overflow. בלי TSan, מגדילים את הסיכוי להתנגשות: מריצים על מכונה עם הרבה ליבות ועומס רקע (stress-ng), מזריקים השהיות אקראיות קצרות בנקודות שיתוף (yield או sleep של מיקרו-שניות) כדי לשנות את ה-interleaving, ומריצים הרבה מופעים במקביל לילה שלם. במקביל מוסיפים בדיקות invariants זולות בזמן ריצה, למשל checksum או מונה רצף בכל בלוק, כדי לתפוס את הרגע שבו ה-corruption נוצר ולא רק את התוצאה. rr עם `--chaos` מקליט ריצה עם scheduling אקראי, וכשה-corruption קורה אפשר להריץ אחורה ולמצוא את הכתיבה הבעייתית עם watchpoint.",
+        "rubric": [
+          "TSan על קלט מוקלט בלי דד-ליין",
+          "stress ועיכובים אקראיים בנקודות שיתוף, הרבה ריצות",
+          "invariants בזמן ריצה ו-rr --chaos עם watchpoint"
+        ]
+      }
     },
     {
       "id": "bugs.races.q19",
@@ -815,7 +914,16 @@
         "שגוי: std::mutex מסנכרן threads באותו תהליך; המתחרה כאן הוא תהליך אחר."
       ],
       "explanation": "זה check-then-act מול מערכת הקבצים. שני תהליכים רואים שהקובץ לא קיים, ושניהם יוצרים או פותחים אותו בהצלחה. mutex לא עוזר כי המתחרה הוא תהליך אחר. התיקון הוא שה-OS יבצע check ו-act יחד: `O_CREAT | O_EXCL` (POSIX), `CREATE_NEW` (Windows) או `std::ios::noreplace` (C++23). ofstream נסגר ב-destructor (RAII), ו-`fs::exists` שזורק היה מפיל את הפונקציה, לא מחזיר true.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "עברת ל-O_CREAT | O_EXCL. אם התהליך שמחזיק את ה-lock קורס, הקובץ נשאר והמערכת נתקעת לנצח. איך פותרים את זה, ולמה flock עדיף כאן?",
+        "modelAnswer": "קובץ שנוצר עם O_EXCL הוא lock שלא משתחרר אוטומטית: קריסה משאירה אותו, וכל ניסיון הבא נכשל. ניסיון לזהות lock יתום לפי ה-PID שבתוכו הוא שביר, כי PID יכול להיות ממוחזר לתהליך אחר, ובדיקה ומחיקה הן שוב TOCTOU. `flock(fd, LOCK_EX | LOCK_NB)` או `fcntl` עם F_SETLK קושרים את הנעילה ל-file descriptor פתוח, והקרנל משחרר אותה אוטומטית כשהתהליך מת מכל סיבה. הקובץ עצמו יכול להישאר קיים לצמיתות, ומה שקובע הוא הנעילה עליו. יש להיזהר: נעילות fcntl משתחררות כשהתהליך סוגר כל fd לאותו קובץ, ושני הסוגים לא עובדים באמינות על NFS ישן. ב-Windows, פתיחה עם share mode 0 נותנת התנהגות דומה.",
+        "rubric": [
+          "קובץ O_EXCL נשאר אחרי קריסה; בדיקת PID שבירה",
+          "flock/fcntl משתחררים אוטומטית במות התהליך",
+          "מלכודות: fcntl משתחרר בסגירת כל fd, NFS"
+        ]
+      }
     },
     {
       "id": "bugs.races.q27",
@@ -838,7 +946,16 @@
         "שגוי: גם 'רק אחרי שהלולאה מסתיימת' לא מובטח, ובכל מקרה אז i כבר מחוץ ל-scope, כך שהקריאה UB ולא בהכרח 3."
       ],
       "explanation": "`[&]` לוכד את i עצמו, לא את ערכו. ה-threads קוראים אותו בזמן שה-main מגדיל אותו (data race), ואחרי סוף הלולאה הוא יוצא מה-scope, אז threads שעוד לא רצו קוראים משתנה מת. בהרצה עם g++ -O2 התקבל `3 3 3`, אבל זה לא מובטח. עם `[i]` כל thread מקבל עותק, והפלט הוא אז 0, 1, 2 בסדר כלשהו: סדר הריצה של threads לא מובטח, וגם לא שהם מתחילים מיד או רק בסוף.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "תיקנת ל-`[i]`. עכשיו כל thread צריך לגשת ל-vector גדול של דגימות שנמצא ב-main. מה ההבדל בין לכידת ה-vector by value, by reference ו-std::cref, ואיך יודעים שהלכידה by reference כאן בטוחה?",
+        "modelAnswer": "by value מעתיק את כל ה-vector לכל thread, וזה בזבוז זיכרון וזמן אם הוא גדול, אבל בטוח לחלוטין. by reference, `[&v]`, לא מעתיק, וזה בטוח כל עוד ה-vector חי עד אחרי ה-join ואף thread לא משנה אותו בזמן שאחרים קוראים: כאן ה-join באותו scope מבטיח את החיים, וקריאה בלבד ממספר threads אינה data race. `std::cref(v)` רלוונטי כשמעבירים ארגומנט ל-std::thread ולא דרך lambda, כי ה-constructor של std::thread מעתיק את הארגומנטים כברירת מחדל גם אם הפונקציה מקבלת reference. אם ה-vector צריך לחיות מעבר ל-scope, למשל threads מנותקים, מעבירים shared_ptr<const vector>. ה-const מבטיח בקומפילציה שאף thread לא כותב.",
+        "rubric": [
+          "by value: העתקה לכל thread",
+          "by reference בטוח כש-join באותו scope וקריאה בלבד",
+          "std::thread מעתיק ארגומנטים, לכן std::cref; shared_ptr<const> לחיים ארוכים"
+        ]
+      }
     },
     {
       "id": "bugs.races.q28",
@@ -854,7 +971,16 @@
         "מציין ש-TSan תופס data races אבל לא race conditions לוגיים"
       ],
       "explanation": "מראיינים בודקים שהמועמד לא משתמש בשני המושגים כמילים נרדפות, ושהוא מבין ש-atomic פותר data race אבל לא בהכרח race condition.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "נתת את check-then-act כדוגמה ל-race condition בלי data race. איך היית מוצא race condition כזה בקוד שעובר TSan נקי, ולמה כלים אוטומטיים כמעט לא תופסים אותו?",
+        "modelAnswer": "TSan מחפש data races, כלומר גישות לא מסונכרנות לאותו location. ב-race condition כל גישה מסונכרנת כהלכה, והבאג הוא בלוגיקה: invariant שמחייב כמה פעולות להתבצע יחד, אבל הן לא אטומיות כקבוצה. כלי לא יודע מה ה-invariant, ולכן לא יכול לדעת שהוא נשבר. מוצאים את זה ב-review ממוקד: לכל משתנה משותף לשאול מה ה-invariant, ואיפה קוראים ערך ואז פועלים לפיו מחוץ לאותו מקטע אטומי (load ואחריו store נפרד, exists ואחריו create, size ואחריו pop). בטסטים, stress עם הרבה threads ובדיקת ה-invariant בסוף, למשל שסכום הכסף נשמר. יש גם כלים כמו model checkers (CDSChecker, Relacy) שמריצים את כל ה-interleavings של קוד קטן ובודקים assertions.",
+        "rubric": [
+          "TSan מחפש רק data races, לא הפרת invariant",
+          "review: קריאה ואז פעולה מחוץ למקטע אטומי אחד",
+          "stress עם בדיקת invariant או model checker"
+        ]
+      }
     },
     {
       "id": "bugs.races.q29",
@@ -877,7 +1003,16 @@
         "שגוי: 1 1 אפשרי כששני ה-stores קודמים לשני ה-loads בסדר הכולל, ו-0 0 הוא דווקא הבלתי אפשרי."
       ],
       "explanation": "ללא ארגומנט, הפעולות הן seq_cst, ויש סדר כולל אחד על ארבעתן. הפעולה האחרונה בסדר הזה היא load, ושני ה-stores קודמים לה, ולכן היא קוראת 1: לפחות אחד מ-r1, r2 הוא 1. `1 1` אפשרי כששני ה-stores קודמים לשני ה-loads. עם release/acquire או relaxed, `0 0` מותר וקורה בפועל אפילו ב-x86 בגלל ה-store buffer, ולכן seq_cst store ב-x86 עולה `xchg` או `mfence`. r1 ו-r2 הרגילים נקראים אחרי join, ש-synchronizes, ולכן אין עליהם data race.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אמרת שעם acquire/release `0 0` מותר וקורה ב-x86 בגלל ה-store buffer. הסבר את המנגנון, ולמה acquire/release לא מספיקים כדי למנוע אותו.",
+        "modelAnswer": "ב-x86 כל ליבה כותבת stores ל-store buffer פרטי ומשם הם נכתבים ל-cache מאוחר יותר; load יכול לקרוא מה-cache לפני שה-store הקודם של אותה ליבה התפרסם. thread a כותב x=1 ל-buffer שלו וקורא y מה-cache, שעדיין 0; במקביל thread b כותב y=1 ל-buffer שלו וקורא x, שעדיין 0, וכך `0 0`. זה store-load reordering, הסידור היחיד ש-x86 TSO מתיר. acquire מונע מפעולות מאוחרות לעלות מעל ה-load, ו-release מונע מפעולות מוקדמות לרדת מתחת ל-store, אבל אף אחד מהם לא מונע מ-load מאוחר לעבור store מוקדם, ולכן הם לא מספיקים. seq_cst מכריח את זה: ה-store מתקמפל ל-xchg או mov ואחריו mfence, שמרוקנים את ה-store buffer לפני ה-load, ולכן הוא יקר יותר.",
+        "rubric": [
+          "store buffer: load עוקף store קודם של אותה ליבה",
+          "acquire/release לא מונעים store-load reordering",
+          "seq_cst store = xchg או mfence, מרוקן את ה-buffer"
+        ]
+      }
     },
     {
       "id": "bugs.races.q30",
@@ -901,7 +1036,16 @@
         "שגוי: notify_all רק מעיר יותר consumers ומחמיר את התחרות; עם if הבעיה נשארת."
       ],
       "explanation": "זה stolen wakeup: C1 ממתין, ה-producer מוסיף ומודיע, אבל C2 שהגיע זה עתה תופס את ה-lock ראשון, רואה איבר ולוקח אותו. C1 מתעורר עם התנאי שוב שקרי. תיקון: `while not queue: cv.wait()` או `cv.wait_for(lambda: queue)`. wait כן משחרר את ה-lock בזמן ההמתנה. כל הגישות ל-list כאן תחת ה-lock, כך שהוא לא הבעיה (`queue.Queue` הוא חלופה טובה, לא התיקון לבאג). notify_all רק מעיר יותר threads ומחמיר את התחרות.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "תיקנת ל-while. ה-producer מוסיף איבר אחד וקורא notify_all במקום notify. מה ההבדל, ולמה זה יכול להיות בעיית ביצועים עם 32 consumers?",
+        "modelAnswer": "notify מעיר consumer אחד, ו-notify_all מעיר את כולם. עם איבר אחד ו-32 consumers, notify_all מעיר את כל ה-32: כל אחד צריך לרכוש מחדש את ה-lock בתורו, לבדוק את התנאי, ו-31 מהם יגלו שהתור ריק ויחזרו לישון. זו thundering herd: 32 מעברי הקשר ו-31 התעוררויות מבוזבזות לכל איבר, עם contention על ה-lock. notify אחד מספיק כשכל איבר יכול להיות מטופל ע״י כל consumer וכל ממתין ממתין לאותו תנאי. notify_all נחוץ כשיש ממתינים לתנאים שונים על אותו Condition, למשל producers שמחכים למקום ו-consumers שמחכים לאיבר, או בשינוי מצב גלובלי כמו shutdown. עם while, notify_all תמיד נכון, רק יקר.",
+        "rubric": [
+          "notify_all מעיר את כולם, 31 חוזרים לישון",
+          "thundering herd: מעברי הקשר ו-contention",
+          "notify_all נחוץ לתנאים שונים או shutdown"
+        ]
+      }
     },
     {
       "id": "bugs.races.q31",
@@ -924,7 +1068,16 @@
         "נכון: כל תא הוא memory location נפרד, ו-join יוצר happens-before לקריאה בסוף, ולכן 4000000. הבעיה: false sharing, כי ה-line קופץ בין ארבע הליבות."
       ],
       "explanation": "data race דורש אותו memory location; תאים שונים במערך הם locations נפרדים, וקריאת הסכום באה אחרי join, שיוצר happens-before. ה-coherence של ה-cache לא דורס בתים שכנים. אבל כל כתיבה דורשת בעלות בלעדית על ה-line, והוא קופץ בין ארבע הליבות. ב-O2 הקומפיילר עשוי לצבור ברגיסטר ולהעלים את התופעה ב-micro-benchmark, אבל בקוד אמיתי עם עבודה בין ההגדלות היא חוזרת. תיקון: struct עם `alignas(64)` לכל counter, או משתנה מקומי וכתיבה אחת בסוף.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אמרת שיש false sharing. איך היית מוכיח את זה במדידה על Linux, ומה התיקון המינימלי במבנה הנתונים?",
+        "modelAnswer": "קודם משווים זמן ריצה עם 4 threads מול thread אחד: אם 4 threads לוקחים יותר זמן כולל מאשר thread אחד עם פי 4 עבודה, זה סימן חזק. הכלי הייעודי הוא `perf c2c`, שמשתמש בדגימה של loads ו-stores ומראה cache lines עם HITM, כלומר פגיעות ב-line שנמצא במצב modified בליבה אחרת, יחד עם ההיסטים בתוך ה-line והקוד שניגש אליהם. אפשר גם לראות עלייה במונים כמו `mem_load_l3_hit_retired.xsnp_hitm` עם perf stat. התיקון: לרפד כל מונה ל-cache line משלו, למשל `struct alignas(64) Counter { long v; }; Counter counts[4];`, או `std::hardware_destructive_interference_size` מ-C++17. פתרון טוב עוד יותר הוא לצבור במשתנה מקומי בתוך ה-thread ולכתוב לתא המשותף פעם אחת בסוף.",
+        "rubric": [
+          "השוואה מול thread בודד: scaling שלילי",
+          "perf c2c מראה HITM ו-offsets בתוך ה-line",
+          "alignas(64) לכל מונה או צבירה מקומית"
+        ]
+      }
     },
     {
       "id": "bugs.races.q32",
@@ -953,7 +1106,16 @@
         "שגוי: exchange עם relaxed הוא RMW אטומי בלי סמנטיקת release, ולכן לא מפרסם את data."
       ],
       "explanation": "acquire בצד אחד לא מספיק; צריך פעולת release בצד הכותב שה-acquire קורא את ערכה. store-release עושה זאת, וגם store seq_cst (שהוא גם release). release fence שבא **לפני** store relaxed מסתנכרן עם ה-acquire שקורא את ערך ה-store, לפי כללי ה-fences בתקן. fence אחרי ה-store לא מסדר את `data = 42` ביחס ל-store. volatile לא יוצר happens-before, ו-exchange עם relaxed הוא RMW אטומי בלי סמנטיקת release.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "שלושת התיקונים נכונים. עכשיו ה-consumer משתמש ב-`memory_order_consume` במקום acquire. מה consume היה אמור לחסוך, ולמה בפועל כל הקומפיילרים מתייחסים אליו כ-acquire?",
+        "modelAnswer": "consume היה אמור לתת ordering רק לפעולות שתלויות בנתונים בערך שנקרא, למשל dereference של מצביע שנטען, ולא לכל פעולה שאחריו. על ARM ו-POWER, שבהם החומרה כבר מכבדת תלות כתובת, זה היה חוסך את ה-barrier של acquire. אבל ההגדרה בתקן דורשת מהקומפיילר לעקוב אחרי שרשראות תלות דרך כל הביטויים והפונקציות ולא לשבור אותן באופטימיזציה, למשל כשהוא מגלה שהערך ידוע ומחליף אותו בקבוע. זה התגלה כבלתי מעשי, ולכן GCC, Clang ו-MSVC פשוט מקדמים consume ל-acquire. בקוד הזה זה לא היה עוזר בכל מקרה, כי `data` לא נקרא דרך תלות בערך של ready. מ-C++26 consume מסומן deprecated. ה-RCU בקרנל של Linux משיג את אותו חיסכון עם READ_ONCE ומוסכמות קוד, לא דרך התקן.",
+        "rubric": [
+          "consume: ordering רק לתלויות נתונים, חוסך barrier ב-ARM/POWER",
+          "מעקב אחרי שרשראות תלות לא מעשי, מקודם ל-acquire",
+          "כאן data לא תלוי בערך של ready"
+        ]
+      }
     },
     {
       "id": "bugs.races.q33",
@@ -977,7 +1139,16 @@
         "שגוי: notify מחוץ ל-lock תקין. מה שחשוב הוא שהשינוי של stop ייעשה תחת ה-lock, לא שה-notify יהיה בתוכו."
       ],
       "explanation": "`wait(lk, pred)` הוא לולאה של בדיקה ואז שחרור-והירדמות, וזה אטומי רק ביחס למי שלוקח את m. shutdown לא לוקח את m, ולכן יכול לשנות את stop ולהודיע בדיוק בחלון בין הבדיקה להירדמות. תיקון: `{ std::lock_guard<std::mutex> g(m); stop = true; } cv.notify_all();`. ה-notify עצמו יכול להישאר מחוץ ל-lock; מה שחשוב הוא שהשינוי נעשה תחתיו (אפילו lock ו-unlock ריקים בין ה-store ל-notify מספיקים). atomic לא פותר את זה, כי הבעיה היא החלון ולא ה-visibility; ה-load כבר seq_cst כברירת מחדל.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "תיקנת עם lock סביב השינוי של stop. אז האם stop עדיין צריך להיות atomic? מתי כן ומתי לא?",
+        "modelAnswer": "אם כל הגישות ל-stop, כתיבה וקריאה, נעשות תחת m, אז m כבר נותן happens-before ו-stop יכול להיות bool רגיל. ה-predicate של wait רץ תמיד כשה-lock מוחזק, וה-shutdown כותב תחת ה-lock, כך שזה תקין. stop צריך להיות atomic אם יש קריאות שלו מחוץ ל-lock, למשל לולאת עבודה בתוך worker שבודקת `if (stop) break;` בין משימות בלי לקחת את m. במקרה כזה הכתיבה צריכה להיות גם תחת ה-lock (בשביל ה-cv) וגם atomic (בשביל הקוראים בלי lock). כלל אצבע: משתנה ש-predicate של cv תלוי בו חייב להשתנות תחת ה-mutex של ה-cv, גם אם הוא atomic.",
+        "rubric": [
+          "כל הגישות תחת m: bool רגיל מספיק",
+          "atomic נדרש אם יש קריאות מחוץ ל-lock",
+          "שינוי של משתנה ה-predicate תמיד תחת ה-mutex"
+        ]
+      }
     },
     {
       "id": "bugs.races.q34",
@@ -1001,7 +1172,16 @@
         "שגוי: unsigned ברוחב ביט אחד מחזיק 0 ו-1; דווקא signed ברוחב ביט אחד בעייתי (0 ו-−1)."
       ],
       "explanation": "לפי התקן, רצף bit-fields סמוכים ברוחב שונה מאפס הוא memory location אחד. אין לחומרה כתיבה של ביט בודד, ולכן הקומפיילר קורא את המילה, משנה ביט וכותב: TX יכול לכתוב חזרה ערך ישן של rxOverflow. זה data race אמיתי, לא false sharing. תיקון: bit-field ברוחב אפס (`unsigned : 0;`) בין השדות, שדות bool נפרדים, או `std::atomic<uint32_t>` עם `fetch_or`. `{}` מאפס את כל השדות, ו-unsigned של ביט אחד מחזיק 0 ו-1 (דווקא signed של ביט אחד בעייתי).",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אמרת שאפשר `unsigned : 0;` בין השדות. למה זה מתקן את ה-race, ולמה זה לא מבטיח שאין false sharing בין שני הדגלים?",
+        "modelAnswer": "bit-field ברוחב אפס מאלץ את השדה הבא להתחיל ביחידת הקצאה חדשה, ולפי התקן הוא מפריד בין memory locations. לכן rxOverflow ו-txUnderflow הופכים ל-locations נפרדים, והקומפיילר מחויב לכתוב כל אחד בלי לגעת בשני, למשל בכתיבה של byte או של מילה נפרדת. כך כבר אין data race ואין דריסה. אבל שני ה-locations עדיין צמודים, בדרך כלל באותו cache line של 64 בתים, ולכן כל כתיבה של thread אחד מבטלת את ה-line אצל השני: false sharing, שהוא בעיית ביצועים ולא נכונות. כאן, כשמדובר בדגלים שנכתבים לעיתים רחוקות, זה זניח. אם הם נכתבים בתדירות גבוהה, מפרידים אותם ל-cache lines שונים עם alignas(64).",
+        "rubric": [
+          "bit-field ברוחב 0 מפריד memory locations לפי התקן",
+          "הקומפיילר כותב כל אחד בנפרד, בלי RMW משותף",
+          "עדיין באותו cache line: false sharing, ביצועים בלבד"
+        ]
+      }
     },
     {
       "id": "bugs.races.q35",
@@ -1050,7 +1230,16 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-for-system-software-engineer-internship/"
       ],
       "problem": "NVIDIA: use semaphores so thread A prints before thread B",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "תיקנת ל-0. עכשיו A ו-B רצים בלולאה: A מייצר בלוק, B צורך אותו, 1000 פעמים, ו-A לא צריך לחכות ל-B. מה קורה לערך ה-semaphore אם A מהיר יותר, ואיך מגבילים את A?",
+        "modelAnswer": "semaphore סופר post-ים, ולכן אם A מהיר, הערך עולה עם כל בלוק שעוד לא נצרך, ו-B יעבד את כולם בהמשך. זה נכון כל עוד יש מקום לכל הבלוקים, אבל אם A כותב לבאפר בגודל קבוע, הוא ידרוס בלוקים שעוד לא נקראו. הפתרון הקלאסי של bounded buffer הוא שני semaphores: `full` שמתחיל ב-0 וסופר בלוקים מוכנים, ו-`empty` שמתחיל ב-N וסופר מקומות פנויים. A עושה wait(empty) לפני כתיבה ו-post(full) אחריה, ו-B עושה wait(full) לפני קריאה ו-post(empty) אחריה. כך A נחסם כשכל N המקומות מלאים. עם producer ו-consumer יחידים, זה מספיק בלי mutex נוסף על הבאפר, כי כל אינדקס נכתב ע״י צד אחד.",
+        "rubric": [
+          "הערך עולה עם כל בלוק שלא נצרך",
+          "שני semaphores: empty (מתחיל ב-N) ו-full (מתחיל ב-0)",
+          "A חוסם ב-wait(empty) כשהבאפר מלא"
+        ]
+      }
     },
     {
       "id": "bugs.races.q37",
@@ -1071,7 +1260,16 @@
         "שגוי: mutex מונע ריצה בו-זמנית, אבל לא קובע סדר. כל אחד מהשלושה יכול לנעול ראשון."
       ],
       "explanation": "סדר בין N threads דורש N-1 נקודות סנכרון. אותו רעיון אפשר לממש עם condition variable ומונה שלב משותף, או ב-C++20 עם std::binary_semaphore או std::latch.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "עכשיו A, B ו-C צריכים להדפיס בסדר הזה מחזורית, 1000 סבבים: ABCABC... כמה semaphores צריך, מה הערכים ההתחלתיים, ואיך היית עושה את זה עם condition variable אחד?",
+        "modelAnswer": "עם semaphores צריך שלושה, אחד לכל thread: sA מתחיל ב-1, ו-sB ו-sC מתחילים ב-0. A עושה wait(sA), מדפיס, post(sB); B עושה wait(sB), מדפיס, post(sC); C עושה wait(sC), מדפיס, post(sA). ה-1 ההתחלתי ב-sA הוא שמתניע את הסבב הראשון, וכל post מעביר את התור ל-thread הבא, כך שבכל רגע בדיוק semaphore אחד חיובי. עם condition variable אחד ומשתנה turn תחת mutex: כל thread מחכה עם `cv.wait(lk, [&]{ return turn == myId; })`, מדפיס, מקדם `turn = (turn + 1) % 3` וקורא ל-notify_all. צריך notify_all ולא notify, כי ה-thread שמתעורר ב-notify יחיד עלול להיות לא זה שתורו, ואז ההודעה הולכת לאיבוד וכולם נתקעים.",
+        "rubric": [
+          "שלושה semaphores: sA=1, sB=0, sC=0, מעגל post",
+          "cv עם turn משותף ו-predicate של turn == myId",
+          "notify_all נחוץ, notify יחיד עלול להעיר את הלא נכון"
+        ]
+      }
     },
     {
       "id": "bugs.races.q38",
@@ -1120,7 +1318,16 @@
         "https://www.geeksforgeeks.org/?p=152508"
       ],
       "problem": "Qualcomm: two threads update a counter without a mutex",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "המינימום הוא 2. תאר את ה-interleaving המדויק שמוביל ל-2, ולמה עם N הגדלות לכל thread המינימום נשאר 2 ולא תלוי ב-N.",
+        "modelAnswer": "קוראים ל-threads T1 ו-T2. T1 קורא count=0. T2 מבצע את כל ההגדלות שלו חוץ מהאחרונה, וכותב 1. T1 כותב את ה-1 שלו (0+1) ודורס את כל מה ש-T2 עשה. עכשיו T2 קורא count=1 לפני ההגדלה האחרונה שלו ומחזיק אותו. T1 מסיים את כל שאר ההגדלות שלו. T2 כותב 1+1=2 ודורס את כל מה ש-T1 עשה מאז. התוצאה 2. זה לא תלוי ב-N, כי כל thread יכול 'להחזיק' ערך ישן בזמן שהשני עושה כמות עבודה בלתי מוגבלת, ואז לדרוס את כולה בכתיבה אחת. לכן lost updates יכולים לבלוע כמעט את כל העבודה, לא רק עדכון אחד.",
+        "rubric": [
+          "T1 קורא 0, T2 עובד, T1 כותב 1 ודורס",
+          "T2 קורא 1 ומחזיק, T1 מסיים, T2 כותב 2 ודורס",
+          "ערך ישן מוחזק דורס כמות עבודה בלתי מוגבלת"
+        ]
+      }
     },
     {
       "id": "bugs.races.q40",
@@ -1158,7 +1365,16 @@
         "נכון: CAS הוא הבסיס לכל עדכון אטומי מורכב. למונה פשוט fetch_add עדיף, כי הוא פקודה אחת (lock xadd ב-x86)."
       ],
       "explanation": "אפשר לשתף נתונים בלי mutex בשתי דרכים: פעולות אטומיות (atomic RMW או CAS), או ביטול השיתוף (נתונים פרטיים לכל thread ואיחוד בסוף). הדרך השנייה היא בדרך כלל המהירה ביותר.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "שלושת הפתרונות נכונים. דרג אותם לפי throughput עם 8 threads שסופרים מיליוני אירועים בשנייה, והסבר מה המגבלה של כל אחד.",
+        "modelAnswer": "הכי מהיר: מונה פרטי לכל thread, מרופד ל-cache line, כי כל הגדלה היא פעולה מקומית בלי תעבורת coherence, כ-cycle אחד, ו-throughput גדל ליניארית עם מספר ה-threads. המגבלה: הסכום זמין רק בסכימה, ואם צריך לקרוא אותו בזמן ריצה, המונים הפרטיים חייבים להיות atomic עם relaxed. אחריו fetch_add: RMW יחיד שתמיד מצליח, אבל כל פעולה מעבירה את ה-cache line בין ליבות, כ-20 עד 100 ננו-שניות תחת contention, כך שה-throughput הכולל מוגבל ולא גדל עם threads. הכי איטי: לולאת CAS, כי בנוסף לאותה העברת line, תחת contention רוב הניסיונות נכשלים וחוזרים. CAS מוצדק רק כשהעדכון אינו חיבור פשוט, למשל max או עדכון מותנה.",
+        "rubric": [
+          "מונה פרטי: הכי מהיר, scaling ליניארי",
+          "fetch_add: תמיד מצליח, אבל cache line קופץ",
+          "CAS: הכי איטי תחת contention, מוצדק לעדכון לא-חיבורי"
+        ]
+      }
     },
     {
       "id": "bugs.races.q42",
@@ -1186,7 +1402,16 @@
         "https://www.geeksforgeeks.org/?p=338497"
       ],
       "problem": "Microsoft: thread-safe vs thread-unsafe functions, rand() vs rand_r()",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "rand_r פותר את בעיית ה-thread safety. למה rand_r עדיין גרוע לסימולציה, ואיך היית מייצר רעש גאוסי ב-C++ ב-8 threads בצורה נכונה ומהירה?",
+        "modelAnswer": "rand_r שומר state של unsigned int אחד, כלומר מחזור של לכל היותר 2^32, וב-glibc זה LCG פשוט עם איכות סטטיסטית חלשה; POSIX גם סימן אותו כ-obsolescent. בנוסף, RAND_MAX יכול להיות קטן כמו 32767. ב-C++ מחזיקים מחולל לכל thread, למשל `thread_local std::mt19937_64` או מחולל מהיר יותר כמו PCG או xoshiro256++, ו-`std::normal_distribution<float>` שגם הוא per-thread כי יש לו state. חשוב לזרוע כל thread אחרת, למשל seed בסיסי ועוד מזהה ה-thread דרך seed_seq, כדי שלא יפיקו את אותו רצף. אם צריך ביצועים גבוהים מאוד, מייצרים בלוקים של רעש בבת אחת עם ספרייה וקטורית או Box-Muller/Ziggurat וקטוריים.",
+        "rubric": [
+          "rand_r: state של 32 ביט, LCG חלש, obsolescent",
+          "מחולל ו-distribution לכל thread (thread_local)",
+          "seed שונה לכל thread דרך seed_seq"
+        ]
+      }
     },
     {
       "id": "bugs.races.q43",
@@ -1210,7 +1435,16 @@
         "שגוי: הלולאה ממשיכה עד ש-strtok מחזירה nullptr, כלומר אחרי האסימון האחרון."
       ],
       "explanation": "strtok היא דוגמה לפונקציה שלא בטוחה ל-threads ולא reentrant: אפילו בתוך thread אחד, לולאה מקוננת עם strtok תשבור את החיצונית. ב-C++ אפשר להימנע ממנה לגמרי עם string_view ו-find.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אמרת שאפשר להימנע מ-strtok עם string_view ו-find. מה עוד strtok עושה שהופך אותו לבעייתי גם ב-thread אחד, ומה ההבדל בהתנהגות בשדות ריקים בין strtok לבין split ידני?",
+        "modelAnswer": "strtok משנה את המחרוזת המקורית: הוא כותב '\\0' במקום כל מפריד, ולכן אי אפשר להשתמש בו על string literal או על const buffer, והמקור נהרס. בנוסף, הוא מתייחס לרצף של מפרידים כמפריד אחד ומדלג על מפרידים בהתחלה, ולכן בשורת CSV כמו `a,,c` הוא מחזיר שני tokens, a ו-c, ומאבד את השדה הריק. ב-CSV זה באג חמור, כי העמודות זזות. split ידני עם string_view ו-find(',') מחזיר שלושה שדות, a, ריק ו-c, לא משנה את המקור, ולא מחזיק מצב סטטי. גם strtok_r וגם strsep סובלים מחלק מהבעיות האלה, אבל strsep דווקא מחזיר שדות ריקים. ל-CSV אמיתי עם מרכאות צריך parser ייעודי.",
+        "rubric": [
+          "strtok כותב \\0 לתוך המקור",
+          "מאחד מפרידים רצופים ומאבד שדות ריקים",
+          "split עם string_view: שדות ריקים נשמרים, בלי שינוי המקור"
+        ]
+      }
     },
     {
       "id": "bugs.races.q44",
@@ -1231,7 +1465,16 @@
         "שגוי: signal handler רץ על thread קיים, וקוטע אותו."
       ],
       "explanation": "שתי תכונות שונות: thread-safe (בטוחה בקריאות מקבילות מ-threads שונים) ו-reentrant (בטוחה גם כשקריאה קוטעת קריאה אחרת באותו thread, כמו ב-ISR או ב-signal handler). פונקציה בלי מצב משותף בכלל היא שתיהן.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "אז מה כן מותר לעשות בתוך signal handler, ואיך מעבירים את המידע מה-handler ל-thread רגיל שיטפל בו?",
+        "modelAnswer": "ב-handler מותר לקרוא רק לפונקציות async-signal-safe שמופיעות ברשימה של POSIX, כמו write, read, _exit ו-sem_post, ולכתוב למשתנה מסוג `volatile sig_atomic_t` או ל-std::atomic שהוא lock-free. אסור malloc, printf, נעילת mutex או כל דבר שעלול להיות באמצע ב-thread שנקטע. הדפוס המקובל הוא self-pipe: ה-handler כותב בית אחד ל-pipe עם write, ו-thread רגיל או לולאת אירועים מחכה על הצד השני עם poll ומטפל בבטחה. ב-Linux יש גם signalfd, שמאפשר לחסום את הסיגנלים ולקרוא אותם כ-fd רגיל בלי handler בכלל. בתוכנית multi-threaded מקובל לחסום סיגנלים בכל ה-threads ולהקדיש thread אחד שקורא ל-sigwait.",
+        "rubric": [
+          "רק פונקציות async-signal-safe ו-sig_atomic_t / atomic lock-free",
+          "self-pipe: write מה-handler, poll ב-thread רגיל",
+          "signalfd או thread ייעודי עם sigwait"
+        ]
+      }
     },
     {
       "id": "bugs.races.q45",
@@ -1280,7 +1523,16 @@
         "שגוי: ה-mutexes עדיין בלעדיים. זו כל המטרה שלהם."
       ],
       "explanation": "כדי למנוע deadlock מספיק לשבור תנאי אחד. lock ordering שובר circular wait, נעילה של הכל מראש שוברת hold and wait, ו-try_lock עם שחרור שובר no preemption.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "סדר נעילה גלובלי שובר circular wait. בקוד גדול עם מאות mutexes, איך אוכפים בפועל שהסדר נשמר, ואיך מגלים הפרה לפני שהיא גורמת ל-deadlock ב-production?",
+        "modelAnswer": "בקוד גדול אי אפשר לסמוך על משמעת בלבד. דרך אחת היא היררכיית נעילות: לכל mutex רמה מספרית, ו-wrapper שבודק בכל lock שהרמה נמוכה מכל הנעילות שה-thread כבר מחזיק (thread_local stack), ו-assert אם לא. כך הפרה נתפסת בכל ריצה שעוברת בנתיב, גם אם ה-deadlock עצמו לא קרה. הקרנל של Linux עושה זאת עם lockdep, שלומד את גרף התלויות בין מחלקות נעילה בזמן ריצה ומדווח על כל מעגל אפשרי. במרחב המשתמש, TSan מזהה lock-order inversion באותו אופן ומדווח עליו גם בלי deadlock בפועל. בנוסף, מצמצמים את הבעיה מראש: לא לקרוא ל-callbacks או לקוד זר בזמן החזקת lock.",
+        "rubric": [
+          "היררכיית נעילות עם בדיקה בזמן ריצה",
+          "lockdep או TSan מזהים inversion בלי deadlock בפועל",
+          "לא לקרוא לקוד זר בזמן החזקת lock"
+        ]
+      }
     },
     {
       "id": "bugs.races.q47",
@@ -1304,7 +1556,16 @@
         "שגוי: זו דרישה עסקית חשובה, אבל היא לא מה שגורם ל-deadlock."
       ],
       "explanation": "deadlock בגלל סדר נעילה שתלוי בקלט הוא הגרסה הנפוצה בקוד אמיתי. הפתרון הכללי: נעילה של כמה mutexes עם std::lock או scoped_lock, או סדר נעילה לפי מזהה יציב (כתובת או ID).",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "הצעת לנעול לפי סדר כתובות. מה קורה כש-from ו-to הם אותו חשבון, ואיך std::scoped_lock מתמודד עם זה?",
+        "modelAnswer": "אם from ו-to הם אותו אובייקט, הקוד המקורי וגם גרסת סדר הכתובות ינסו לנעול את אותו std::mutex פעמיים מאותו thread, וזה UB, בפועל deadlock מיידי. לכן צריך בדיקה מפורשת: `if (&from == &to) return;` או נעילה אחת בלבד. std::scoped_lock עם שני mutexes זהים גם הוא לא חוקי, כי הוא קורא ל-std::lock שמניח mutexes שונים, כך שהבדיקה נדרשת גם איתו. לגבי deadlock בין mutexes שונים, std::lock משתמש באלגוריתם try-and-back-off: נועל אחד ומנסה try_lock על השני, ואם נכשל משחרר ומנסה בסדר אחר, כך שאין deadlock בלי צורך בסדר גלובלי. חסרונו הוא livelock אפשרי תחת contention כבד, אבל במימושים בפועל זה נדיר.",
+        "rubric": [
+          "from == to: נעילה כפולה של אותו mutex = UB/deadlock",
+          "בדיקה מפורשת נדרשת גם עם scoped_lock",
+          "std::lock משתמש ב-try-and-back-off"
+        ]
+      }
     },
     {
       "id": "bugs.races.q48",
@@ -1338,7 +1599,16 @@
         "https://www.geeksforgeeks.org/amazon-interview-experience-sde-i/"
       ],
       "problem": "Amazon: detect deadlock in a wait-for graph",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "זיהית מעגל P1, P2, P3. אם המערכת חייבת להתאושש לבד, את מי היית בוחר להרוג, ומה השיקולים? ומה קורה ל-P4 ול-P5?",
+        "modelAnswer": "מספיק לשבור את המעגל ע״י הריגה (או rollback) של process אחד מתוכו, כי זה משחרר את המשאב שלו ומאפשר לקודם לו במעגל להתקדם. השיקולים בבחירת הקורבן: כמה עבודה הוא כבר עשה ויאבד, כמה משאבים הוא מחזיק, האם אפשר לעשות לו rollback בבטחה (טרנזקציה במסד נתונים כן, תהליך שכבר שלח פקודות לחומרה לא), עדיפות, וכמה פעמים כבר נבחר, כדי למנוע starvation. מסדי נתונים בוחרים לרוב את הטרנזקציה הצעירה או זו עם הכי מעט עבודה. P4 מחכה ל-P1 ו-P5 מחכה ל-P4; הם לא חלק מהמעגל, ולכן אחרי ששוברים אותו ו-P1 מסיים, P4 ממשיך ואחריו P5, בלי צורך לגעת בהם.",
+        "rubric": [
+          "הריגה או rollback של process אחד מהמעגל מספיקה",
+          "שיקולים: עבודה שאבדה, אפשרות rollback, עדיפות, starvation",
+          "P4 ו-P5 ממשיכים לבד אחרי שבירת המעגל"
+        ]
+      }
     },
     {
       "id": "bugs.races.q49",
@@ -1359,7 +1629,16 @@
         "שגוי: זה נכון רק כשכל משאב בעותק יחיד."
       ],
       "explanation": "עם משאבים בעותק יחיד: מעגל = deadlock. עם עותקים מרובים: מעגל הכרחי אבל לא מספיק, וצריך לדמות את ההקצאה. בפועל, רוב הקוד מונע deadlocks בתכנון (סדר נעילה) ולא מזהה אותם בזמן ריצה.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "ב-3 ערוצי DMA זהים, איך היית מונע deadlock בתכנון בלי להריץ אלגוריתם detection בזמן ריצה?",
+        "modelAnswer": "הבעיה מתעוררת כש-process מחזיק ערוץ אחד ומחכה לשני, בזמן שאחרים עושים אותו דבר. הדרך הפשוטה היא לשבור hold and wait: process מבקש את כל הערוצים שהוא צריך בבת אחת, בפעולה אטומית אחת תחת mutex של המאגר, ואם אין מספיק פנויים הוא מחכה בלי להחזיק כלום. חלופה היא להגביל את הביקוש: אם כל process צריך לכל היותר k ערוצים, ומספר ה-processes שמשתתפים לכל היותר n, אז עם יותר מ-n·(k-1) ערוצים deadlock בלתי אפשרי, כי תמיד לפחות אחד יכול להשלים. כאן עם 3 ערוצים ו-processes שצריכים 2, זה מתקיים עבור עד 2 processes מתחרים, ולכן מגבילים את המקביליות ב-semaphore. אפשר גם לשבור no preemption: try עם timeout ושחרור כל מה שמוחזק.",
+        "rubric": [
+          "הקצאת כל הערוצים בבת אחת שוברת hold and wait",
+          "עם יותר מ-n·(k-1) עותקים אין deadlock",
+          "הגבלת מקביליות ב-semaphore או timeout עם שחרור"
+        ]
+      }
     },
     {
       "id": "bugs.races.q50",
@@ -1408,7 +1687,16 @@
         "https://www.geeksforgeeks.org/interview-experiences/microsoft-interview-experience-set-111-1-5-years-experienced/"
       ],
       "problem": "Microsoft: make a BitSet thread-safe",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "הבעיה היא RMW על מילה משותפת. אם כל thread היה מקבל טווח רציף של ביטים במקום זוגי/אי-זוגי, האם היה צריך סנכרון, ואיך חוצים את הגבול בין הטווחים בבטחה?",
+        "modelAnswer": "אם כל thread מקבל טווח של מילים שלמות, כלומר הגבולות בין הטווחים מתיישרים לכפולות של 64 ביט, אף מילה לא נכתבת ע״י שני threads ואין צורך בשום סנכרון, ו-join בסוף מספיק לקריאה. אם הגבולות לא מיושרים, רק המילה שבגבול משותפת לשני threads. הפתרונות: לעגל את הגבולות לכפולות של 64 (או של 512 ביט, כדי שגם cache lines לא ישותפו ולא יהיה false sharing), או לבצע fetch_or אטומי רק על מילות הגבול ופעולות רגילות על כל השאר. זה בדיוק הדפוס של עיבוד מקבילי של bitmap גדול: חלוקה מיושרת ל-cache lines נותנת גם נכונות וגם ביצועים.",
+        "rubric": [
+          "טווחים מיושרים למילים: אין שיתוף, אין צורך בסנכרון",
+          "רק מילת הגבול משותפת אם לא מיושר",
+          "יישור ל-cache line (512 ביט) או atomic רק בגבולות"
+        ]
+      }
     },
     {
       "id": "bugs.races.q52",
@@ -1429,7 +1717,16 @@
         "שגוי: yield רק משנה את התזמון. ה-race נשאר."
       ],
       "explanation": "לעדכונים על ביטים במילה משותפת: fetch_or להדלקה, fetch_and עם מסכה הפוכה לכיבוי, fetch_xor להיפוך. כש-set ו-test צריכים להיות פעולה אחת (test-and-set), משתמשים בערך שהוחזר מ-fetch_or.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "השתמשת ב-fetch_or עם relaxed. אם thread אחר בודק את הביט ואז קורא נתונים שה-thread הכותב הכין לפני שהדליק אותו, מה צריך לשנות, ולמה?",
+        "modelAnswer": "relaxed מבטיח שה-RMW על המילה אטומי ושאף עדכון לא יאבד, אבל לא נותן שום סדר ביחס לזיכרון אחר. אם הביט משמש דגל 'הנתונים של פריט i מוכנים', הכותב צריך `fetch_or(mask, std::memory_order_release)` אחרי שכתב את הנתונים, והקורא צריך `load(std::memory_order_acquire)` ולבדוק את הביט לפני שהוא קורא את הנתונים. רק כך יש happens-before בין כתיבת הנתונים לקריאתם. ב-x86, fetch_or הוא lock or שממילא full barrier, כך שאין הבדל בעלות, אבל ב-ARM ההבדל אמיתי. בנוסף, אם fetch_or מחזיר את הערך הקודם ומשתמשים בו כ-test-and-set כדי לבחור מי מטפל בפריט, acq_rel מתאים.",
+        "rubric": [
+          "relaxed: RMW אטומי בלי ordering לנתונים אחרים",
+          "release בכותב ו-acquire בקורא כשהביט מפרסם נתונים",
+          "ב-x86 אין הבדל בעלות (lock prefix), ב-ARM יש"
+        ]
+      }
     },
     {
       "id": "bugs.races.q53",
@@ -1450,7 +1747,16 @@
         "שגוי: כל פעולה שמחזיקה שתי נעילות יוצרת סיכון ל-deadlock, אם אין סדר אחיד."
       ],
       "explanation": "lock striping נותן מקביליות עם הרבה נעילות קטנות, ומחייב סדר נעילה בכל פעולה שנוגעת ביותר מ-stripe אחד. זה בדיוק מה ש-two-phase locking עם סדר קבוע נותן: לנעול הכל בסדר, לבצע, ולשחרר.",
-      "lesson": "bugs.races"
+      "lesson": "bugs.races",
+      "followUp": {
+        "prompt": "הסדר העולה פותר את ה-deadlock. copyRange עכשיו צריך לגעת בטווח שחוצה 50 stripes במקור ו-50 ביעד. מה הבעיה בלנעול את כל ה-100, ואיזה trade-off יש כאן?",
+        "modelAnswer": "נעילת 100 stripes בסדר עולה נכונה, אבל היא מחזיקה עשירית מהמבנה נעול לאורך כל ההעתקה, וחוסמת כל פעולה אחרת על הטווחים האלה, כך שה-lock striping כמעט מאבד את המשמעות שלו. בנוסף, רכישת 100 נעילות עולה בפני עצמה, וזמני ההמתנה לכל אחת מצטברים. האפשרות השנייה היא להעתיק stripe אחר stripe ולנעול רק זוג אחד בכל פעם, וזה מהיר ומקבילי, אבל הפעולה כולה כבר לא אטומית: thread אחר יכול לראות העתקה חלקית או לשנות את המקור באמצע. ה-trade-off הוא בין אטומיות לבין מקביליות, וההחלטה תלויה בסמנטיקה שה-API מבטיח. אם צריך גם אטומיות וגם מקביליות, משתמשים בגרסאות (snapshot) או ב-lock גלובלי ברמת קורא/כותב מעל ה-stripes.",
+        "rubric": [
+          "נעילת כל ה-100 מחזיקה חלק גדול מהמבנה, הורגת מקביליות",
+          "העתקה stripe אחר stripe: מהירה אבל לא אטומית",
+          "trade-off אטומיות מול מקביליות; snapshot כחלופה"
+        ]
+      }
     }
   ]
 }

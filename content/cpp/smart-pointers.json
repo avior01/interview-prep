@@ -361,7 +361,16 @@
         "שגוי. make_shared בונה Node רגיל; מבנים רקורסיביים עם smart pointers תקינים לגמרי. הבעיה היא במעגל הבעלות.",
         "שגוי. בעלות צריכה לזרום מההורה לילדים. אם children היו weak_ptr, אף אחד לא היה מחזיק את הילדים והם היו נהרסים מיד.",
         "נכון. root מחזיק את kid ו-kid מחזיק את root, ולכן אחרי הריסת המשתנים המקומיים לכל אחד נשאר strong count של 1. back-pointer צריך להיות weak_ptr או pointer גולמי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בעץ גדול עם parent כ-weak_ptr, כל גישה להורה דורשת lock(). כמה זה עולה בסריקה של מיליון צמתים, ומתי היית מעדיף `Node* parent` גולמי? מה ההנחה שהופכת את הגולמי לבטוח?",
+        "modelAnswer": "lock() הוא CAS loop אטומי על ה-strong count (increment אם הוא לא 0), ואז decrement כשה-shared_ptr הזמני נהרס, כלומר שתי פעולות RMW אטומיות לכל גישה, בערך 10-40 ננו-שניות בלי contention, ועם כמה threads על אותו צומת (למשל השורש) הרבה יותר בגלל cache line ping-pong. במיליון גישות זה עשרות מילישניות. Node* גולמי עולה load אחד. הוא בטוח כשמובטח שההורה חי כל עוד הילד חי, וזה בדיוק המצב בעץ שבו ההורה הוא הבעלים של הילדים (unique_ptr ל-children): ילד לא יכול לחיות יותר מההורה שלו. weak_ptr נחוץ רק כשמישהו מחוץ לעץ יכול להחזיק ילד ולהשאיר אותו בחיים אחרי שההורה נהרס.",
+        "rubric": [
+          "lock(): CAS ו-decrement אטומיים לכל גישה",
+          "עם contention על צמתים עליונים העלות גדלה",
+          "raw parent בטוח כשההורה הוא הבעלים של הילדים (ילד לא חי יותר מהורה)"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q09",
@@ -388,7 +397,16 @@
         "שגוי. ה-destructor של T רץ כשה-strong count מתאפס, אבל הזיכרון של T שייך לאותו בלוק עם ה-control block ומשתחרר רק כשגם ה-weak count מתאפס.",
         "נכון. make_shared קורא ל-constructor מתוך קוד של הספרייה, ושם constructor פרטי לא נגיש (גם friend ל-make_shared לא עובד באופן נייד).",
         "שגוי. make_shared מחזיר shared_ptr<T> ישירות. זו טעות של בלבול עם make_unique, שאכן אפשר להמיר את התוצאה שלו ל-shared_ptr."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך מיליון אובייקטים קטנים (16 bytes) שנוצרים ונהרסים כל הזמן ב-shared_ptr. כמה זיכרון עולה כל אחד עם make_shared לעומת new, ואיך היית מקטין את העלות אם הפרופיילר מראה שההקצאות הן צוואר בקבוק?",
+        "modelAnswer": "control block ב-libstdc++ מכיל vptr, strong count ו-weak count, בערך 16 bytes, ועם make_shared הוא והאובייקט בהקצאה אחת של כ-32 bytes ועוד overhead של malloc (בערך 16). עם new יש שתי הקצאות: האובייקט (16 + overhead) וה-control block (שמחזיק גם את ה-pointer, כ-24 + overhead), ושני malloc ו-free לכל אובייקט. ה-shared_ptr עצמו 16 bytes. כך שבמקרה הטוב, יותר מ-64 bytes לכל אובייקט של 16 bytes של נתונים. שיפורים: allocate_shared עם pool allocator (הקצאה מ-arena בגודל קבוע, בלי malloc); אם הבעלות לא באמת משותפת, unique_ptr או אובייקטים by value ב-vector; ואם צריך refcount, intrusive refcount (המונה בתוך האובייקט, כמו boost::intrusive_ptr) שחוסך את ה-control block.",
+        "rubric": [
+          "make_shared: הקצאה אחת עם control block; new: שתיים",
+          "overhead כולל גדול פי כמה מ-16 bytes",
+          "allocate_shared עם pool, unique_ptr/by value, או intrusive_ptr"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q10",
@@ -409,7 +427,16 @@
         "שגוי. זה חוסך את העלות, אבל קושר את render ל-shared_ptr בלי סיבה: אי אפשר לקרוא לה עם אובייקט על ה-stack או ב-unique_ptr (Core Guidelines R.36).",
         "נכון. הפונקציה לא משתתפת בבעלות, ולכן מקבלת את האובייקט עצמו: const Widget&, או const Widget* אם הוא יכול להיות null (F.7, R.30).",
         "שגוי. weak_ptr מתאים למי ששומר צפייה לטווח ארוך. כאן הוא מחייב lock() בכל קריאה ומוסיף עלות ומסלול כישלון בלי צורך."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו render צריכה לשמור את ה-Widget ב-cache כדי לצייר אותו שוב בפריים הבא. איך משתנה החתימה, ומה ההבדל בין לקבל `std::shared_ptr<Widget>` by value לבין `std::weak_ptr<Widget>`?",
+        "modelAnswer": "כשהפונקציה שומרת עותק, היא משתתפת בבעלות, ולכן מקבלים `std::shared_ptr<Widget>` by value ומבצעים std::move לתוך ה-cache: מי שמעביר rvalue לא משלם increment, ומי שמעביר lvalue משלם increment אחד בדיוק. ההחלטה בין shared ל-weak היא סמנטית: shared_ptr ב-cache משאיר את ה-Widget חי גם אחרי שהבעלים המקורי ויתר עליו, ואז ה-cache מחזיק אובייקטים מתים לוגית וזיכרון נשאר תפוס. weak_ptr ב-cache לא מאריך חיים: בכל פריים עושים lock(), ואם ה-Widget כבר נהרס, מסירים אותו מה-cache. ל-render cache, weak_ptr הוא בדרך כלל הנכון, כי ה-cache לא אמור להחליט מתי ה-Widget מת.",
+        "rubric": [
+          "שומרת עותק: shared_ptr by value ו-std::move לתוך ה-cache",
+          "shared ב-cache מאריך חיים של אובייקטים מתים לוגית",
+          "weak_ptr עם lock() בכל שימוש והסרה כשפג"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q11",
@@ -433,7 +460,16 @@
         "נכון. `shared_ptr<Session>(this)` הוא בנייה מ-pointer גולמי ויוצר control block שני; כש-s ו-t נהרסים יש double delete. enable_shared_from_this ו-shared_from_this() חולקים את ה-control block הקיים.",
         "שגוי. `make_shared<Session>(this)` מנסה לבנות Session חדש עם this כארגומנט, כלומר אובייקט אחר לגמרי (ובדרך כלל לא מתקמפל).",
         "שגוי. shared_ptr לא מזהה אובייקטים שכבר מנוהלים, אלא אם המחלקה יורשת מ-enable_shared_from_this; גם אז זה עובד רק דרך shared_from_this()."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ירשת מ-enable_shared_from_this. מה קורה אם מישהו יוצר Session על ה-stack, או עם unique_ptr, וקורא למתודה שמשתמשת ב-shared_from_this()? ואיך היית מונע את זה בעיצוב?",
+        "modelAnswer": "enable_shared_from_this מחזיק weak_ptr פנימי שמאותחל רק כשהאובייקט נלקח לבעלות של shared_ptr. אם האובייקט על ה-stack או ב-unique_ptr, ה-weak_ptr ריק, ו-shared_from_this() זורק std::bad_weak_ptr (מ-C++17; לפני כן זה היה UB). ב-C++17 יש גם weak_from_this() שמחזיר weak_ptr ריק בלי לזרוק. מניעה בעיצוב: הופכים את ה-constructors ל-private (או passkey), ומספקים factory סטטי `static std::shared_ptr<Session> create(...)` שמחזיר make_shared, כך שאי אפשר ליצור Session שלא מנוהל ב-shared_ptr. זה הדפוס המקובל, למשל ב-Boost.Asio, שבו ה-handlers האסינכרוניים לוכדים shared_from_this() כדי לשמור על ה-session חי.",
+        "rubric": [
+          "בלי shared_ptr בעלים, shared_from_this זורק bad_weak_ptr (C++17)",
+          "weak_from_this מחזיר ריק בלי לזרוק",
+          "factory סטטי עם constructor פרטי מבטיח ניהול ב-shared_ptr"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q12",
@@ -460,7 +496,16 @@
         "שגוי. האטומיות חלה רק על ה-control block. גישה במקביל לאובייקט T עצמו צריכה סנכרון משלה.",
         "נכון. `std::atomic<std::shared_ptr<T>>` (C++20) נותן load/store/exchange אטומיים על אותו מופע, במקום הפונקציות std::atomic_load הישנות.",
         "נכון. ה-destructor רץ על ה-thread שמוריד את ה-strong count ל-0, וזה יכול להיות כל thread, כולל thread זמן-אמת שלא אמור לבצע free."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש config גלובלי ב-shared_ptr שה-UI thread מחליף מדי פעם ו-worker threads קוראים בכל בלוק. כתוב במילים את המימוש עם `std::atomic<std::shared_ptr<Config>>`, ותסביר אם הוא lock-free ומה החלופה אם צריך lock-free אמיתי.",
+        "modelAnswer": "ה-UI בונה Config חדש ב-make_shared ועושה `g_cfg.store(new_cfg)`. כל worker עושה `auto cfg = g_cfg.load();` בתחילת הבלוק ועובד עם ה-snapshot המקומי עד סופו, כך שהוא רואה תמיד Config עקבי, וה-Config הישן משתחרר כשאחרון הקוראים מסיים. ה-load והחלפת ה-pointer אטומיים ביחד עם ה-refcount, מה שקשה לממש בלי lock. ב-libstdc++ ו-MSVC המימוש משתמש ב-spinlock פנימי (ב-libstdc++ ביט נעילה בתוך ה-pointer), ולכן is_lock_free() מחזיר false. ל-real-time זה עלול להיות בעייתי. חלופות: RCU או hazard pointers (C++26 מוסיף std::hazard_pointer ו-std::rcu), או דפוס פשוט: atomic<Config*> עם גרסאות שאף פעם לא נמחקות בזמן ריצה (מוחזקות ברשימה עד ה-shutdown), כש-Config immutable.",
+        "rubric": [
+          "store של Config חדש, load ל-snapshot מקומי לכל בלוק",
+          "המימושים הנפוצים לא lock-free (spinlock פנימי)",
+          "חלופות: RCU/hazard pointers, או atomic raw pointer לגרסאות שלא נמחקות"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q13",
@@ -481,7 +526,16 @@
         "שגוי. lambda בלי captures לא תופסת מקום: libstdc++ שומר את ה-deleter ב-tuple עם empty base optimization, ולכן B הוא 8.",
         "שגוי. function pointer הוא ערך של זמן ריצה שחייב להישמר בכל מופע, ולכן A לא יכול להיות 8.",
         "שגוי. זה הפוך: הטיפוס של ה-lambda נושא את הפונקציה בטיפוס עצמו, וה-function pointer הוא זה שדורש storage."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה unique_ptr עם deleter ריק נשאר בגודל של pointer, ומה המנגנון בפועל במימוש? ומה יקרה ל-sizeof אם ה-deleter הוא lambda שלוכדת משתנה אחד מסוג int?",
+        "modelAnswer": "unique_ptr מחזיק את ה-pointer ואת ה-deleter ביחד, ובמימושים זה נעשה דרך tuple (libstdc++) או compressed_pair (libc++), או [[no_unique_address]] ב-MSVC/חדשים. כשה-deleter הוא טיפוס ריק, EBO או no_unique_address מאפשרים לו לא לתפוס bytes, כך ש-sizeof הוא 8. lambda שלוכדת int היא טיפוס עם state של 4 bytes, ולכן ה-unique_ptr מחזיק pointer (8) ועוד int (4), עם padding ל-16. כלומר הגודל תלוי ב-state של ה-deleter, ולא בכך שהוא lambda. זה גם אומר שלשני unique_ptr עם lambdas שונות יש טיפוסים שונים, ואי אפשר להחזיק אותם באותו vector בלי type erasure (למשל std::function כ-deleter, שעולה 32 bytes ויותר).",
+        "rubric": [
+          "המימוש: tuple/compressed_pair/no_unique_address עם EBO",
+          "lambda עם int: 16 bytes (pointer + int + padding)",
+          "deleters שונים = טיפוסים שונים; std::function כ-deleter יקר"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q14",
@@ -504,7 +558,16 @@
         "שגוי. py מצביע ל-y (2) ולא ל-x. ה-use_count אכן 1.",
         "שגוי. אחרי sp.reset() נשאר רק בעלים אחד (py), ולכן use_count הוא 1 ולא 2.",
         "נכון. aliasing constructor: py חולק את ה-control block של sp אבל מצביע ל-sp->y. ה-P נשאר חי, *py הוא 2, ו-use_count הוא 1."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן שימוש מעשי ל-aliasing constructor בקוד שמעבד buffers, ותסביר מה הסכנה אם מעבירים לו shared_ptr ריק או pointer שלא קשור לאובייקט.",
+        "modelAnswer": "שימוש מעשי: יש buffer גדול של IQ samples ב-`shared_ptr<Buffer>`, וכל שלב ב-pipeline צריך רק תת-טווח. יוצרים `std::shared_ptr<float> part(buf, buf->data() + offset)`: part מצביע לתחילת התת-טווח, אבל חולק את ה-control block של buf, ולכן ה-buffer כולו חי כל עוד יש מישהו שמחזיק חלק ממנו. אין הקצאה נוספת ואין העתקה. הסכנה: ה-constructor לא בודק שום קשר בין ה-pointer לבעלים. אם מעבירים pointer לאובייקט שלא בבעלות של ה-shared_ptr, מקבלים shared_ptr שמחזיק בחיים משהו אחר, וה-pointer יכול להיות dangling. אם הבעלים ריק ומעבירים pointer לא null, מקבלים shared_ptr שה-use_count שלו 0 אבל get() לא null, כלומר מראה כאילו הוא תקף אבל לא מנהל שום דבר. C++20 הוסיף גרסת move של ה-aliasing constructor.",
+        "rubric": [
+          "שימוש: תת-טווח של buffer משותף בלי הקצאה",
+          "אין בדיקה שה-pointer שייך לבעלים",
+          "בעלים ריק עם pointer לא null: use_count 0 אבל get() לא null"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q15",
@@ -543,7 +606,16 @@
         "שגוי. ~Big נקרא, אבל עם make_shared ה-Big וה-control block הם הקצאה אחת, ולכן הזיכרון של ה-Big לא מוחזר כל עוד ה-weak count גדול מ-0.",
         "נכון. ה-destructor רץ ב-strong count 0 (משאבים פנימיים של Big משתחררים), אבל sizeof(Big) עצמו יושב באותו בלוק עם ה-control block, ומשוחרר רק כשה-weak count מתאפס.",
         "שגוי. weak_ptr לאובייקט שנהרס הוא מצב תקין לגמרי: expired() מחזיר true ו-lock() מחזיר ריק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מתכנן cache של אובייקטים גדולים עם weak_ptr כך שהבעיה הזו לא תקרה, ומה עוד צריך לטפל בו כדי שה-cache עצמו לא יגדל לנצח?",
+        "modelAnswer": "יוצרים את האובייקטים עם `std::shared_ptr<Big>(new Big)` (או עם custom allocator), כך שהאובייקט וה-control block בהקצאות נפרדות, והזיכרון של Big חוזר כשה-strong count מתאפס; נשאר רק ה-control block הקטן (כמה עשרות bytes) כל עוד ה-weak_ptr קיים. בנוסף, ה-cache עצמו מצטבר ב-weak_ptrs פגים: map של key ל-weak_ptr שאף פעם לא מנוקה גדל עם כל key שהיה פעם. פתרונות: לנקות ב-lookup (אם lock() מחזיר ריק, מוחקים את הרשומה), סריקה תקופתית שמסירה רשומות עם expired(), או custom deleter שמסיר את הרשומה מה-cache כשהאובייקט נהרס (עם הגנה על ה-cache ב-mutex, וזהירות מ-deadlock אם ה-deleter רץ בזמן שה-mutex מוחזק).",
+        "rubric": [
+          "shared_ptr(new Big) מפריד את האובייקט מה-control block",
+          "רשומות weak_ptr פגות מצטברות",
+          "ניקוי ב-lookup, סריקה תקופתית או deleter שמסיר את הרשומה"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q17",
@@ -564,7 +636,16 @@
         "נכון. ה-destructor המרומז של Widget הוא inline ונוצר בכל TU שהורס Widget, ושם Impl לא שלם, ו-default_delete נכשל ב-static_assert. הגדרת ~Widget() ב-cpp מעבירה את ה-instantiation למקום שבו Impl שלם.",
         "שגוי. זה עובד, אבל מבטל את כל המטרה של pimpl: הסתרת המימוש והפחתת תלויות קומפילציה.",
         "שגוי. unique_ptr<Impl[]> מיועד למערכים, ויש לו את אותה דרישה ל-complete type בהריסה. זה לא קשור לבעיה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תיקנת עם `~Widget();` מוגדר ב-cpp. עכשיו מישהו מנסה `Widget w2 = std::move(w1);` וזה לא מתקמפל. למה, ומה בדיוק צריך להצהיר ב-header ולהגדיר ב-cpp כדי ש-Widget יהיה movable ו-copyable?",
+        "modelAnswer": "הצהרה על destructor מבטלת את ההצהרה המרומזת של move constructor ו-move assignment, ולכן Widget כבר לא movable. ה-copy המרומז גם הוא לא קיים בפועל, כי unique_ptr לא copyable. ב-header מצהירים: `Widget(Widget&&) noexcept; Widget& operator=(Widget&&) noexcept;` ובשביל copy גם `Widget(const Widget&); Widget& operator=(const Widget&);`. ב-cpp, אחרי ההגדרה של Impl: `Widget::Widget(Widget&&) noexcept = default;` ו-`Widget& Widget::operator=(Widget&&) noexcept = default;`, וה-copy constructor נכתב ידנית: `p_(std::make_unique<Impl>(*other.p_))`. move assignment צריך גם הוא להיות ב-cpp, כי הוא הורס את ה-Impl הקודם. אם כותבים `= default` ב-header, חוזרת אותה בעיה של Impl לא שלם.",
+        "rubric": [
+          "destructor מוצהר מבטל move מרומז",
+          "הצהרת move ב-header ו-= default ב-cpp אחרי הגדרת Impl",
+          "copy ידני עם deep copy של Impl"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q18",
@@ -588,7 +669,16 @@
         "לא UB. make_shared<Derived> יוצר control block שהורס Derived; ההמרה ל-shared_ptr<Base> לא משנה את ה-deleter.",
         "UB. unique_ptr<Base> משתמש ב-default_delete<Base>, כלומר delete על Base* של אובייקט Derived בלי virtual destructor ([expr.delete]).",
         "UB. ה-pointer הומר ל-Base* לפני ש-shared_ptr ראה אותו, ולכן ה-deleter שנשמר הוא delete על Base*. ה\"קסם\" של shared_ptr עובד רק כשהוא מקבל את הטיפוס הדינמי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם shared_ptr<Base> מ-new Derived עובד נכון בלי virtual destructor, למה לא להסתמך על זה תמיד ולוותר על virtual destructors? תן מקרה שבו זה נשבר.",
+        "modelAnswer": "ה-deleter הנכון נלכד רק בבנייה הראשונה, כשהטיפוס הסטטי של ה-pointer הוא עדיין Derived*. ברגע שה-pointer עבר דרך Base* גולמי, כמו בשורה d, המידע אבד. כלומר זה תלוי בכך שכל מי שיוצר את האובייקט יעטוף אותו מיד ב-shared_ptr מהטיפוס המדויק. זה נשבר כש: factory מחזיר `Base*` גולמי ומישהו עוטף אותו; האובייקט מנוהל ב-unique_ptr<Base> (default_delete<Base>); מישהו קורא ל-`delete` ידני דרך Base*; או ממירים unique_ptr<Derived> ל-unique_ptr<Base>, ואז ה-deleter הופך ל-default_delete<Base>. בנוסף, Derived שמכיל vptr (כי יש לו virtual functions) כבר משלם על vptr, כך שהחיסכון ב-virtual destructor זניח. לכן הכלל נשאר: base פולימורפי מקבל virtual destructor, או protected non-virtual.",
+        "rubric": [
+          "ה-deleter נלכד רק בבנייה מ-Derived*",
+          "נשבר דרך Base* גולמי, unique_ptr<Base> או delete ידני",
+          "הכלל: virtual destructor או protected non-virtual"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q19",
@@ -604,7 +694,17 @@
         "מדבר על מדידה של tail latency ולא רק ממוצע"
       ],
       "explanation": "שאלה בסגנון NVIDIA ו-systems: לא מספיק לדעת מה shared_ptr עושה, צריך להבין מה הוא עולה ב-hot path ומה עושים במקומו.",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "הצעת להחליף את ה-shared_ptr ב-pool של buffers עם תורי SPSC. איך היית מוכיח לפני ואחרי שה-jitter נעלם ושהסיבה הייתה באמת ה-shared_ptr? אילו מדדים היית אוסף?",
+        "modelAnswer": "לפני: מודדים latency לכל בלוק (timestamp בתחילת ובסוף העיבוד עם clock_gettime(CLOCK_MONOTONIC) או rdtsc) ושומרים histogram: ממוצע, p99, p99.9 ומקסימום, כי jitter הוא זנב ולא ממוצע. במקביל, perf record על ה-thread הקריטי ממקם זמן ב-malloc/free וב-lock xadd, ו-perf c2c מראה contention על ה-control blocks. ספירת הקצאות ב-thread הקריטי עם hook על operator new מראה אם יש malloc בנתיב החם. אחרי: אותו histogram, ציפייה שה-p99.9 והמקסימום יורדים משמעותית ושהקצאות ב-thread הקריטי הן אפס. ניסוי מבודד: להשאיר את ה-shared_ptr ורק להוסיף pool allocator (allocate_shared), כדי להפריד בין עלות ההקצאה לעלות ה-atomics. זה מאפשר להגיד איזה חלק מהשיפור בא מכל שינוי.",
+        "rubric": [
+          "histogram של latency לכל בלוק עם p99/p99.9/max",
+          "perf record / perf c2c לאיתור malloc ו-atomics",
+          "ספירת הקצאות ב-thread הקריטי (אפס אחרי)",
+          "ניסוי מבודד להפרדת גורמים"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q20",
@@ -732,7 +832,16 @@
         "מתקמפל. shared_ptr<D> ממיר ל-shared_ptr<B> כי D* ממיר ל-B*.",
         "מתקמפל. unique_ptr<D> rvalue ממיר ל-unique_ptr<B>, ו-B עם virtual destructor אז ההריסה נכונה.",
         "לא מתקמפל. ה-constructor של shared_ptr מ-pointer גולמי הוא explicit, ולכן copy-initialization עם = לא עובד; צריך `std::shared_ptr<int> p(new int(1));`."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה המרה מ-unique_ptr ל-shared_ptr מותרת אבל לא להפך? ואם יש לך API ישן שמחזיר shared_ptr ואתה בטוח שאתה הבעלים היחיד, איך תעבור ל-unique_ptr?",
+        "modelAnswer": "unique_ptr מבטא בעלות בלעדית, ולכן מותר לוותר עליה ולהפוך אותה למשותפת: shared_ptr לוקח את ה-pointer ואת ה-deleter ויוצר control block. ההפך אסור כי shared_ptr לא יודע אם קיימים עותקים אחרים, ואין לו release(): אם היה מוותר על הבעלות, העותקים האחרים היו מחזיקים pointer שמישהו אחר ימחק. גם אם use_count() == 1, זה snapshot, ו-weak_ptr יכול לעשות lock() מיד אחרי. לכן אין דרך בטוחה להמיר. מה כן: לשנות את ה-API שיחזיר unique_ptr (הקוראים שצריכים shared יכולים להמיר בעצמם, זה זול), או, אם אי אפשר, להעתיק או להזיז את התוכן לאובייקט חדש בבעלות unique_ptr: `std::make_unique<T>(std::move(*sp))`.",
+        "rubric": [
+          "unique->shared: ויתור על בלעדיות, מותר",
+          "shared->unique: אין release, use_count לא אמין",
+          "פתרון: API שמחזיר unique_ptr, או העברת התוכן לאובייקט חדש"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q26",
@@ -756,7 +865,16 @@
         "שגוי. lock() לא זורק; הוא מחזיר shared_ptr ריק כשהאובייקט מת. bad_weak_ptr נזרק רק מה-constructor של shared_ptr שמקבל weak_ptr.",
         "שגוי. ההעברה by const& או by value לא משנה את ה-race: הבעיה היא הפער בין expired() ל-lock().",
         "נכון. זה TOCTOU: בין expired() ל-lock() ה-reference האחרון עלול להשתחרר, ואז lock() מחזיר ריק ויש dereference של nullptr. `if (auto s = w.lock())` בודק ומחזיק אטומית."
-      ]
+      ],
+      "followUp": {
+        "prompt": "התיקון עם lock() שומר את ה-Listener חי בזמן on_event. אבל מה קורה אם ה-thread שמחזיק את ה-Listener מנסה להרוס אותו ומחכה שה-callbacks יסתיימו, וה-destructor עצמו רץ על ה-thread של ה-callbacks? איזה מצב מסוכן נוצר?",
+        "modelAnswer": "כש-lock() מצליח, ה-callback thread מחזיק עכשיו strong reference. אם בזמן הזה הבעלים המקורי משחרר את ה-shared_ptr שלו, ה-reference האחרון הוא זה של ה-callback, וכשהוא יוצא מה-scope, ~Listener רץ על ה-thread של ה-callbacks. אם ה-destructor של Listener מבטל רישום מה-dispatcher, ממתין לכך שה-callbacks יסתיימו (join, או mutex שה-dispatcher מחזיק בזמן שהוא קורא ל-callbacks), נוצר deadlock עם עצמו: הוא מחכה לסיום של callback שהוא עצמו בתוכו. או שהוא נועל mutex שכבר נעול על ידי ה-dispatcher באותו thread. פתרונות: ה-destructor לא מחכה לסיום callbacks (unregister לא חוסם), או שחרור נדחה: ה-callback thread לא הורס אלא מעביר את ה-shared_ptr לתור לשחרור ב-thread אחר.",
+        "rubric": [
+          "ה-reference האחרון יכול להיות זה של ה-callback, וה-destructor רץ ב-thread שלו",
+          "destructor שמחכה ל-callbacks או נועל mutex של dispatcher = deadlock עצמי",
+          "unregister לא חוסם או שחרור נדחה ל-thread אחר"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q27",
@@ -777,7 +895,16 @@
         "נכון. C++17 הוסיף תמיכה ב-T[] ל-shared_ptr (delete[] ו-operator[]), ו-C++20 הוסיף make_shared<T[]>(n) עם הקצאה אחת.",
         "שגוי. מ-C++17 shared_ptr<float[]> נתמך. shared_ptr<vector<float>> עובד, אבל מוסיף הקצאה ו-indirection.",
         "שגוי. make_shared למערכים נוסף רק ב-C++20."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת `shared_ptr<float[]>`. מה ההבדל מול `shared_ptr<std::vector<float>>` במספר הקצאות, ב-indirection בגישה, ובמה שאפשר לעשות עם כל אחד? מה היית בוחר ל-buffer של DSP שעובר בין threads?",
+        "modelAnswer": "make_shared<float[]>(n) (C++20) מבצע הקצאה אחת לנתונים ול-control block; shared_ptr<float[]>(new float[n]) שתיים. shared_ptr<vector<float>> עם make_shared מבצע שתיים: control block יחד עם אובייקט ה-vector (24 bytes), ועוד הקצאה לנתונים של ה-vector. בגישה, float[] נותן `p[i]` עם indirection אחד (pointer לנתונים), ואילו vector דורש לטעון את ה-vector ואז את ה-data pointer שלו, שני loads (שהקומפיילר בדרך כלל מוציא מהלולאה). vector יודע את הגודל שלו ויכול לגדול; float[] לא שומר את n, וצריך לשמור אותו בנפרד. ל-buffer של DSP בגודל קבוע שעובר בין threads, shared_ptr<float[]> עם גודל ידוע (או struct שמחזיק גם size) מתאים, ועוד יותר טוב buffer מ-pool שלא משתחרר בנתיב החם.",
+        "rubric": [
+          "make_shared<float[]>: הקצאה אחת; vector: שתיים",
+          "vector: indirection נוסף, אבל שומר גודל ויכול לגדול",
+          "float[] לא שומר את n"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q28",
@@ -798,7 +925,16 @@
         "שגוי. הפרמטר נהרס ריק כי הוא עבר move לתוך ה-vector, ולכן אין decrement בהריסה שלו.",
         "שגוי. ה-push_back מקבל rvalue (std::move(w)) ומשתמש ב-move constructor, שלא נוגע במונה.",
         "שגוי. אסור לבטל העתקה מ-lvalue בעל שם (copy elision חל רק על prvalues ועל return/throw של locals). כדי לחסוך אותה כותבים `add(std::move(sp))`."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו `add` מקבלת `const std::shared_ptr<W>&` ומבצעת `v_.push_back(w)`. כמה פעולות אטומיות יש עם `reg.add(sp)` ועם `reg.add(std::move(sp))`, ולמה הגרסה by value עדיפה כאן?",
+        "modelAnswer": "עם const&: add(sp) לא מעתיק בכניסה, ו-push_back(w) מעתיק: increment אחד, כמו בגרסה by value. אבל add(std::move(sp)) גם הוא נקשר ל-const&, ו-push_back עדיין מעתיק: increment אחד, ובנוסף sp אצל הקורא לא התרוקן, ולכן כשהוא ייהרס יהיה עוד decrement. כלומר הקורא שניסה לוותר על הבעלות משלם שתי פעולות במקום אפס. בגרסה by value: add(sp) עולה increment אחד, ו-add(std::move(sp)) עולה אפס. by value מאפשר לקורא לבחור, עם מחיר מינימלי בשני המקרים. גרסה עם שני overloads (const& ו-&&) משיגה את אותו דבר אבל עם כפילות קוד.",
+        "rubric": [
+          "const&: increment אחד בשני המקרים, ו-move של הקורא לא עוזר",
+          "by value: אחד עם lvalue, אפס עם move",
+          "by value מאפשר לקורא לבחור"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q29",
@@ -819,7 +955,16 @@
         "שגוי. unique_ptr<Node> בתוך Node תקין, והצמתים כן משתחררים (אם ה-stack מספיק). הבעיה היא עומק הרקורסיה.",
         "נכון. כל ~Node קורא ל-~unique_ptr של next, שקורא ל-~Node הבא: רקורסיה בעומק 10 מיליון שחורגת מה-stack. destructor איטרטיבי שמנתק next בלולאה פותר את זה.",
         "שגוי. ההצהרה תקינה: ה-destructor של unique_ptr<Node> עובר instantiation רק כשה-destructor של Node מוגדר, ואז Node כבר שלם."
-      ]
+      ],
+      "followUp": {
+        "prompt": "כתבת destructor איטרטיבי לרשימה. האם אותה בעיה קיימת בעץ בינארי עם `unique_ptr<Node> left, right`, והאם הפתרון האיטרטיבי הפשוט עובד שם? איך מממשים destructor לא רקורסיבי לעץ?",
+        "modelAnswer": "כן, בעץ לא מאוזן (למשל עץ שהוכנס בסדר ממוין והפך לשרשרת) העומק יכול להיות n, וההריסה הרקורסיבית תגלוש מה-stack. בעץ מאוזן העומק log n והרקורסיה בסדר. הפתרון של הרשימה לא מספיק כי לכל צומת יש שני ילדים. מימוש: stack מפורש על ה-heap, `std::vector<std::unique_ptr<Node>> st; st.push_back(std::move(root));` ובלולאה: שולפים צומת, מזיזים את left ו-right שלו לתוך st, והצומת נהרס כשהוא יוצא מה-scope, בלי ילדים ולכן בלי רקורסיה. טכניקה בלי זיכרון נוסף: rotation, כשיש left מבצעים סיבוב ימינה כך שהעץ הופך בהדרגה לשרשרת ימנית, ומוחקים את השורש כשאין לו left; זה O(n) ו-O(1) זיכרון.",
+        "rubric": [
+          "עץ לא מאוזן יכול להגיע לעומק n",
+          "stack מפורש על ה-heap שמזיז ילדים לפני הריסת הצומת",
+          "חלופה O(1) זיכרון: rotations לשרשרת"
+        ]
+      }
     },
     {
       "id": "cpp.smart-pointers.q30",
@@ -846,7 +991,16 @@
         "שגוי. owner_less לא משווה לפי get() אלא לפי ה-control block. השוואה לפי get() הייתה מבדילה בין pointer לאובייקט לבין pointer ל-member שלו.",
         "נכון. aliasing shared_ptr חולק את ה-control block של ה-Session, ולכן לפי owner_less הוא שקול ל-weak_ptr של ה-Session עצמו.",
         "שגוי. owner_less עובד ישירות על weak_ptr בלי lock(). lock() גם היה מחזיר ריק לאובייקטים שמתו ושובר את הסדר ב-set."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-set של weak_ptrs עם owner_less מחזיק גם sessions מתים. אם במקום זה תשמור `std::set<Session*>` של pointers גולמיים, מה הבאג החמור שיכול לקרות, ואיך owner_less מונע אותו?",
+        "modelAnswer": "עם Session* גולמי, אחרי שה-Session נהרס והזיכרון שלו שוחרר, ה-allocator יכול להקצות Session חדש באותה כתובת בדיוק. אז set.contains(new_ptr) יחזיר true, וה-session החדש ייחשב כאילו כבר טופל: זו בעיית ABA. weak_ptr עם owner_less משווה control blocks, ו-control block לא משתחרר כל עוד יש weak_ptr אליו (ה-weak count מחזיק אותו). לכן session חדש תמיד מקבל control block בכתובת אחרת, ואין התנגשות עם הישן. המחיר: כל weak_ptr ב-set משאיר control block חי, כ-16-32 bytes, ואם יצרו עם make_shared, את כל הבלוק כולל האובייקט, עד שמנקים את הרשומה. לכן מנקים רשומות expired מדי פעם.",
+        "rubric": [
+          "raw pointer: שימוש חוזר בכתובת אחרי שחרור (ABA)",
+          "control block לא משתחרר כל עוד weak_ptr קיים, לכן אין התנגשות",
+          "מחיר: control blocks (ואולי האובייקט עם make_shared) נשארים עד ניקוי"
+        ]
+      }
     },
     {
       "level": 4,
@@ -893,7 +1047,16 @@
         "שגוי: self-assignment הוא קוד חוקי (ויכול לקרות בעקיפין, כמו `v[i] = v[j]` עם i == j). כל assignment חייב לטפל בו."
       ],
       "id": "cpp.smart-pointers.q32",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "מעבר ל-`this != &o`, יש מקרה עדין יותר: a ו-b הם שני SharedPtr שונים לאותו אובייקט, ו-o הוא member בתוך האובייקט שמוחזק על ידי *this. תאר את הבאג ואת הסדר הבטוח של הפעולות שפותר את שני המקרים.",
+        "modelAnswer": "נניח ש-*this הוא הבעלים היחיד של אובייקט X, ו-o הוא SharedPtr שנמצא בתוך X (למשל node->next). release() מוריד את ה-count של X ל-0 ומוחק את X, כולל o עצמו, ואז הקריאה ל-o.p_ ו-o.c_ היא use-after-free. הבדיקה this != &o לא עוזרת, כי הם אובייקטים שונים. הסדר הבטוח: קודם להגדיל את ה-count של o (`if (o.c_) ++o.c_->refs;`), לשמור את p_ ו-c_ של o במשתנים מקומיים, ורק אחרי זה לשחרר את הישן ולהציב את המקומיים. גרסה קצרה: copy-and-swap, `SharedPtr tmp(o); swap(tmp); return *this;`, שבה העותק נבנה לפני שנוגעים ב-*this, והישן משתחרר כש-tmp נהרס. זה פותר גם self-assignment.",
+        "rubric": [
+          "o יושב בתוך האובייקט ש-release מוחק, ולכן use-after-free",
+          "this != &o לא מספיק",
+          "קודם increment ושמירה מקומית, אחר כך release; או copy-and-swap"
+        ]
+      }
     },
     {
       "level": 2,
@@ -944,7 +1107,16 @@
       ],
       "problem": "NVIDIA onsite: thread-safe reference count memory ordering",
       "id": "cpp.smart-pointers.q34",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "למה לא פשוט להשתמש ב-seq_cst בכל הפעולות על ה-refcount? כמה זה עולה בפועל ב-x86 וב-ARM, ולמה זה משנה בקוד שמעתיק shared_ptrs הרבה?",
+        "modelAnswer": "seq_cst היה נכון, אבל עולה יותר במקומות מסוימים. ב-x86 כל RMW אטומי (lock xadd) הוא כבר full barrier, ולכן relaxed, acq_rel ו-seq_cst על fetch_add ו-fetch_sub מתקמפלים לאותה הוראה: אין הבדל ב-x86. ב-ARMv8, relaxed increment הוא ldadd או לולאת ldxr/stxr בלי barriers, acq_rel משתמש ב-ldaddal, ו-seq_cst על RMW דומה, אבל seq_cst loads/stores סמוכים יכולים להכניס dmb נוספים. ב-ARMv7 ההבדל גדול: כל seq_cst מוסיף dmb ish לפני ואחרי. ההבדל העיקרי הוא ב-increment: relaxed מאפשר לקומפיילר ול-CPU לא לסדר זיכרון סביבו, ובקוד שמעתיק הרבה shared_ptrs בלולאה זה חוסך barriers. העלות הגדולה בפועל היא בדרך כלל contention על ה-cache line, לא ה-memory order.",
+        "rubric": [
+          "x86: RMW אטומי הוא lock xadd בכל order, אין הבדל",
+          "ARM: relaxed בלי barriers, ARMv7 seq_cst מוסיף dmb",
+          "העלות העיקרית היא contention על ה-cache line"
+        ]
+      }
     },
     {
       "level": 4,
@@ -965,7 +1137,16 @@
         "שגוי: כל thread שמחזיק עותק יכול ליצור עותקים נוספים, ולכן increment קורה מכל thread."
       ],
       "id": "cpp.smart-pointers.q35",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "אם ה-increment יכול להיות relaxed, למה weak_ptr::lock() לא יכול פשוט לעשות fetch_add relaxed על ה-strong count? מה צריך במקום, ולמה?",
+        "modelAnswer": "weak_ptr אינו בעלים, ולכן בזמן lock() ה-strong count יכול להיות 0, כלומר האובייקט כבר בתהליך הריסה או נהרס. fetch_add עיוור היה מעלה את ה-count מ-0 ל-1 ומחזיר shared_ptr לאובייקט מת, וגם ה-thread שהוריד ל-0 כבר קורא ל-destructor. לכן lock() משתמש ב-CAS loop: קורא את ה-count, ואם הוא 0 מחזיר shared_ptr ריק; אחרת מנסה compare_exchange מ-n ל-n+1, ואם נכשל (מישהו שינה) מנסה שוב. ה-CAS מבטיח שה-increment קורה רק אם ה-count לא התאפס בינתיים. ה-memory order שבו משתמשים ב-CAS משתנה בין מימושים (libstdc++ משתמש ב-acq_rel), והדרישה המהותית היא האטומיות של הבדיקה וההגדלה יחד. ב-contention, CAS loop יקר יותר מ-fetch_add.",
+        "rubric": [
+          "weak_ptr אינו בעלים ולכן ה-count יכול להיות 0",
+          "fetch_add עיוור היה מחייה אובייקט מת",
+          "CAS loop: increment רק אם ה-count לא 0"
+        ]
+      }
     },
     {
       "level": 5,
@@ -986,7 +1167,17 @@
         "שגוי: make_shared בטוח. הבעיה היא בלוגיקה של check-then-act."
       ],
       "id": "cpp.smart-pointers.q36",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "איך מממשים copy-on-write נכון לאובייקט Data שמשותף בין threads, כך שכותב לא פוגע בקוראים? תאר את ה-API ואת הסנכרון.",
+        "modelAnswer": "הנתונים immutable: כל shared_ptr<const Data> שמישהו מחזיק לא משתנה לעולם, ולכן קוראים מקבילים בטוחים בלי locks. הכותב לא משנה במקום: הוא טוען את הגרסה הנוכחית, יוצר עותק (`auto next = std::make_shared<Data>(*cur)`), משנה את העותק, ומפרסם אותו כגרסה החדשה. אם יש כותב אחד, מספיק store אטומי (std::atomic<std::shared_ptr<const Data>> או mutex קצר סביב ההחלפה). אם יש כמה כותבים, צריך לולאת compare_exchange על ה-atomic shared_ptr: אם מישהו פרסם בינתיים, בונים מחדש מהגרסה החדשה. הקוראים לוקחים snapshot ב-load ועובדים עליו עד הסוף. המחיר: העתקה מלאה לכל כתיבה, ולכן מתאים לנתונים שנקראים הרבה ונכתבים מעט (config, routing tables). הבדיקה של use_count מיותרת כאן לגמרי.",
+        "rubric": [
+          "shared_ptr<const Data>: הגרסאות immutable",
+          "כותב מעתיק, משנה ומפרסם אטומית",
+          "כמה כותבים: compare_exchange loop",
+          "מתאים לקריאות רבות וכתיבות מעטות"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1017,7 +1208,17 @@
       ],
       "problem": "Microsoft interview: write a smart pointer class that frees memory at scope exit",
       "id": "cpp.smart-pointers.q37",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "מחקת את ה-copy והגדרת move. כתוב במילים את ה-move constructor וה-move assignment הנכונים של Scoped, ואיזו מתודה נוספת ש-unique_ptr מספק חשובה כשעובדים מול C API שלוקח בעלות?",
+        "modelAnswer": "move constructor: `Scoped(Scoped&& o) noexcept : p_(std::exchange(o.p_, nullptr)) {}`, כלומר לוקח את ה-pointer ומאפס את המקור, כדי שה-destructor של המקור לא ימחק. move assignment: `Scoped& operator=(Scoped&& o) noexcept { if (this != &o) { delete p_; p_ = std::exchange(o.p_, nullptr); } return *this; }`, כלומר משחרר את מה שכבר מוחזק לפני הלקיחה, עם הגנה מ-self-move; או `reset(o.release())`. שני ה-moves צריכים להיות noexcept כדי ש-vector ישתמש בהם. המתודה הנוספת: `release()`, שמחזירה את ה-pointer ומוותרת על הבעלות בלי למחוק. היא נחוצה כשמעבירים את המשאב ל-C API שמשחרר אותו בעצמו, ויש גם `reset(p)` להחלפת המשאב ו-`get()` להעברה בלי ויתור.",
+        "rubric": [
+          "move constructor עם std::exchange שמאפס את המקור",
+          "move assignment: delete של הקיים, בדיקת self-move",
+          "noexcept על שניהם",
+          "release() להעברת בעלות ל-C API"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1041,7 +1242,17 @@
         "שגוי: הקומפיילר רואה רק int*, ולכן הקוד מתקמפל. הבאג מתגלה רק בזמן ריצה."
       ],
       "id": "cpp.smart-pointers.q38",
-      "lesson": "cpp.smart-pointers"
+      "lesson": "cpp.smart-pointers",
+      "followUp": {
+        "prompt": "למה ערבוב new[] עם delete הוא UB ולא סתם בעיה ב-destructors? מה המימוש הנפוץ שומר לפני המערך, ולמה עם int הקוד אולי לא יקרוס בפועל אבל עם std::string כן?",
+        "modelAnswer": "new[] של טיפוס עם destructor לא טריוויאלי צריך לדעת בזמן delete[] כמה destructors להריץ, ולכן ב-Itanium ABI הוא מקצה מקום נוסף לפני המערך (array cookie, בדרך כלל 8 bytes) ושומר שם את מספר האיברים, ומחזיר pointer אחרי ה-cookie. delete רגיל על ה-pointer הזה מעביר ל-operator delete כתובת שאינה תחילת ההקצאה, וזה משחית את ה-heap, ומריץ destructor אחד בלבד. עבור int (destructor טריוויאלי) אין cookie, הכתובת שמוחזרת היא תחילת ההקצאה, ולכן delete במקום delete[] בפועל משחרר נכון ולא קורס, וזה מה שמסתיר את הבאג. עם std::string יש cookie, והקריסה קורית מיד ב-free או מאוחר יותר. ASan מזהה את שני המקרים כ-alloc-dealloc-mismatch.",
+        "rubric": [
+          "array cookie לפני המערך עם מספר האיברים (לטיפוסים עם destructor)",
+          "delete רגיל מעביר כתובת שגויה ומריץ destructor אחד",
+          "עם int אין cookie ולכן לא קורס בפועל",
+          "ASan alloc-dealloc-mismatch"
+        ]
+      }
     },
     {
       "level": 2,

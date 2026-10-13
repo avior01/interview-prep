@@ -423,7 +423,16 @@
         "נכון: בזמן B() חלק ה-D עוד לא נבנה וה-vptr מצביע ל-vtable של B, ולכן B::hello. בגוף D() ה-vptr כבר עודכן ל-D, ולכן D::hello.",
         "שגוי: בגוף ה-constructor של D ה-vptr כבר עודכן ל-vtable של D, ולכן הקריאה השנייה מגיעה ל-D::hello.",
         "שגוי: קריאה ל-virtual מ-constructor מוגדרת היטב לפי [class.cdtor]: היא נשלחת לפי המחלקה שנבנית כרגע. UB יש רק אם הפונקציה pure virtual."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הכלל הזה מונע ממך לקרוא ל-virtual `init()` מתוך ה-constructor של ה-base כדי שכל derived יאתחל את עצמו. אילו דפוסים מקובלים פותרים את זה, ומה ה-trade-off של כל אחד?",
+        "modelAnswer": "דפוס ראשון: two-phase init, constructor רגיל ואחריו קריאה מפורשת ל-`obj->init()`; הבעיה היא שקל לשכוח את השלב השני ויש אובייקט חצי-מאותחל. דפוס שני: factory function, `template<class T, class... A> std::unique_ptr<T> create(A&&... a)` שבונה ואז קורא ל-init, וה-constructors נעשים protected כך שאי אפשר לעקוף; זה מבטיח את שני השלבים אבל מחייב יצירה דרך ה-factory. דפוס שלישי: להעביר את המידע שה-derived צריך כפרמטר ל-constructor של ה-base (למשל תוצאת פונקציה static של ה-derived), כך שלא צריך virtual כלל. דפוס רביעי: CRTP, שבו ה-base הוא template ומכיר את הטיפוס הנגזר, אבל גם שם אסור לגשת ל-members של ה-derived בזמן בניית ה-base כי הם עוד לא נבנו.",
+        "rubric": [
+          "two-phase init והסיכון לשכוח",
+          "factory function עם constructors protected",
+          "העברת המידע כפרמטר ל-constructor של ה-base"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q09",
@@ -446,7 +455,16 @@
         "שגוי: מניח שגם ה-default argument נבחר דינמית. ערכי ברירת המחדל מוחלפים בנקודת הקריאה לפי ההצהרה שהקומפיילר רואה.",
         "שגוי: הקריאה דרך B& עדיין virtual ומגיעה ל-D::f. רק ה-default argument נלקח מ-B.",
         "שגוי: ב-d.f() הטיפוס הסטטי הוא D, וההצהרה שנראית היא D::f עם ברירת מחדל 2."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך base עם `virtual void log(int level = 1)` ו-12 מחלקות נגזרות, חלקן עם default שונה. איך היית מתקן את העיצוב כך שהבעיה לא תוכל לקרות, בלי לשבור את הקוראים הקיימים?",
+        "modelAnswer": "הפתרון הקלאסי הוא NVI: ב-base מגדירים פונקציה ציבורית לא-וירטואלית `void log(int level = 1) { do_log(level); }`, ואת ה-virtual הופכים ל-`virtual void do_log(int level)` (private או protected) בלי default argument. כך ה-default מוגדר במקום אחד בלבד, והקוראים ממשיכים לכתוב log() כרגיל. במחלקות הנגזרות דורסים רק את do_log. חלופה בלי NVI: overloads, `virtual void log(int)` ו-`void log() { log(1); }` לא-וירטואלית ב-base, אבל אז מחלקה נגזרת שדורסת log(int) מסתירה את log() ונדרש `using Base::log;`. clang-tidy יכול לאכוף זאת עם google-default-arguments, שמזהיר על default arguments בפונקציות virtual.",
+        "rubric": [
+          "NVI: public לא-וירטואלית עם default שקוראת ל-virtual בלי default",
+          "ה-default מוגדר במקום אחד והקוראים לא משתנים",
+          "clang-tidy google-default-arguments או חלופה עם overloads ו-using"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q10",
@@ -470,7 +488,16 @@
         "שגוי: virtual ב-Fir לא היה עוזר, כי החתימה עדיין שונה (חסר const). זה רק היה יוצר virtual חדשה שמסתירה את המקורית.",
         "שגוי: אפשר לדרוס פונקציה עם כל סוג פרמטרים, כולל pointers. הדרישה היא שהחתימה תהיה זהה.",
         "נכון: const על מתודה הוא חלק מהחתימה, כי הוא משנה את טיפוס ה-this. Fir::process בלי const היא פונקציה אחרת שמסתירה את המקורית ולא דורסת אותה. override היה הופך את זה לשגיאת קומפילציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בקוד legacy גדול אין override בשום מקום. איך היית מוסיף אותו בצורה בטוחה ובקנה מידה, ומה עוד הוא תופס מלבד const חסר?",
+        "modelAnswer": "כלים: clang-tidy עם `modernize-use-override` מוסיף override אוטומטית לכל פונקציה שבאמת דורסת, ומוריד את virtual המיותר. אחרי זה מפעילים `-Wsuggest-override` (GCC ו-Clang) או `-Winconsistent-missing-override` עם -Werror, כך שכל פונקציה חדשה שדורסת בלי override נכשלת. מה ש-override תופס: const או volatile חסר, ref-qualifier שונה (& או &&), סוג פרמטר שונה (float במקום double, int במקום size_t), שינוי חתימה ב-base שלא עודכן ב-derived (הסיכון הגדול ב-refactoring), שם עם שגיאת כתיב, ופונקציה ב-base שאינה virtual בכלל. כל אלה מתקמפלים בשקט בלי override ויוצרים פונקציה חדשה שמסתירה את המקורית.",
+        "rubric": [
+          "clang-tidy modernize-use-override",
+          "-Wsuggest-override / -Winconsistent-missing-override עם -Werror",
+          "תופס: סוג פרמטר שונה, ref-qualifier, שינוי חתימה ב-base, base לא virtual"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q11",
@@ -491,7 +518,16 @@
         "שגוי: ההצהרה virtual ~I() = 0 חוקית לגמרי, והקומפיילר לא דורש גוף ב-TU. הבעיה מתגלה רק בשלב ה-link.",
         "נכון: כל destructor של derived קורא ל-destructors של ה-bases, ולכן ~Impl צריך את הסימבול של I::~I. בלי הגדרה יש undefined reference ב-link. התיקון: I::~I() = default; מחוץ למחלקה.",
         "שגוי: הסימבול החסר נדרש בזמן ה-link, ולכן התוכנית לא נבנית בכלל ולא מגיעה לזמן ריצה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה בכלל להצהיר על destructor כ-pure virtual, אם הוא חייב גוף? מתי זה הכלי הנכון, ומה החלופה ב-C++ מודרני?",
+        "modelAnswer": "pure virtual destructor משמש כשרוצים שהמחלקה תהיה abstract אבל אין לה אף פונקציה וירטואלית אחרת שמתאימה להיות pure, למשל base של היררכיית tags או interface שכל המתודות שלו כבר יש להן מימוש ברירת מחדל. הוא הופך את המחלקה ל-abstract בלי לחייב את הנגזרות לדרוס משהו, כי ה-destructor המובלע שלהן ממילא דורס אותו. החלופה הנפוצה היא constructor שהוא protected: גם הוא מונע יצירה ישירה של ה-base, בלי virtual ובלי vptr אם אין צורך בפולימורפיזם. אם יש פולימורפיזם, virtual destructor רגיל (`= default`) בתוספת pure virtual על מתודה אמיתית הוא העיצוב הנפוץ. בנוסף, כדאי להגדיר את גוף ה-pure destructor מחוץ למחלקה ב-cpp, וזה גם משמש כ-key function שקובע איפה ה-vtable נוצר.",
+        "rubric": [
+          "משמש כשאין מתודה אחרת שמתאימה להיות pure",
+          "הנגזרות לא צריכות לדרוס כלום כדי להיות concrete",
+          "חלופה: protected constructor"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q12",
@@ -518,7 +554,16 @@
         "נכון: final מבטיח שאין טיפוס נגזר יותר. לכן קריאה דרך pointer לאותה מחלקה נפתרת ישירות, ואפשר גם inline.",
         "שגוי: אין חיפוש לפי שם בזמן ריצה. לכל virtual function יש slot קבוע ב-vtable שנקבע בקומפילציה.",
         "שגוי: ה-indirect branch predictor מנבא היטב call sites monomorphic, שבהם הטיפוס כמעט לא משתנה. misprediction קורה כשהטיפוסים מתחלפים בצורה לא צפויה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-pipeline של DSP יש לולאה שקוראת `stage->process(sample)` לכל דגימה, 10 מיליון דגימות בשנייה, ו-profiler מראה שזה צוואר בקבוק. מה היית בודק, ואילו שינויים בעיצוב יבטלו את עלות ה-virtual בלי לוותר על הגמישות?",
+        "modelAnswer": "קודם בודקים: perf stat על branch-misses (אם ה-call site פולימורפי, ה-indirect predictor טועה), וב-disassembly אם יש indirect call בתוך הלולאה ואם הלולאה עברה vectorization. העלות הישירה של virtual call מנובא היא בערך 1-3 ננו-שניות, אבל הבעיה האמיתית היא שאין inlining ולכן אין SIMD: פעולה כמו הכפלה ב-gain שהייתה עולה 0.1 ננו-שניות לדגימה בוקטור, עולה פי 10-30. השינוי העיקרי: לשנות את ה-granularity ל-`process(std::span<float> block)`, כך שיש קריאה וירטואלית אחת לבלוק של 1024 או 4096 דגימות, ובתוך המימוש הלולאה עוברת inlining ו-vectorization. העלות של ה-virtual מתחלקת על כל הבלוק ונעשית זניחה. חלופות נוספות: final על המחלקות כדי לאפשר devirtualization, או variant עם visit על קבוצה סגורה.",
+        "rubric": [
+          "בדיקה: branch-misses ו-disassembly (indirect call, vectorization)",
+          "הבעיה העיקרית: אובדן inlining ו-SIMD, לא ה-call עצמו",
+          "virtual לבלוק (span) במקום לדגימה"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q13",
@@ -541,7 +586,16 @@
         "נכון: ההמרה ל-B* מצליחה (1). ההמרה ל-C* נכשלת ומחזירה nullptr (0). ב-reference אין null, ולכן dynamic_cast<C&> שנכשל זורק std::bad_cast ומודפס X.",
         "שגוי: שוכח שכישלון של dynamic_cast ל-reference לא יכול להחזיר null, ולכן לפי [expr.dynamic.cast] הוא זורק std::bad_cast, שנתפס ומדפיס X.",
         "שגוי: dynamic_cast שנכשל הוא התנהגות מוגדרת: nullptr ל-pointer או bad_cast ל-reference. UB היה רק עם static_cast לטיפוס שגוי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "dynamic_cast נראה בפרופיילר כחם בקוד שלך. מה העלות שלו בפועל, למה היא גדלה עם עומק וצורת ההיררכיה, ומה החלופות כשצריך להבחין בין טיפוסים בנתיב חם?",
+        "modelAnswer": "ב-Itanium ABI, dynamic_cast קורא ל-__dynamic_cast, שמוצא את ה-type_info של הטיפוס הדינמי מה-vtable, ואז הולך על גרף הירושה ומשווה type_info (לפעמים בהשוואת מחרוזות שמות, כשהטיפוסים מוגדרים בכמה shared libraries). בהיררכיה עמוקה או עם ירושה מרובה ווירטואלית זה מאות ננו-שניות, לעומת ננו-שניות בודדות ל-virtual call. מקרה מיוחד: casting לטיפוס final או בדיקת טיפוס מדויק אפשר לבצע בהשוואת typeid, `typeid(*p) == typeid(C)`, שזה השוואת pointers ברוב המקרים. החלופות: virtual function שעושה את הפעולה (במקום לשאול מה הטיפוס), enum kind ב-base ו-static_cast אחרי בדיקה (כמו LLVM עם isa/dyn_cast), או visitor pattern. לרוב, dynamic_cast בנתיב חם הוא סימן לבעיה בעיצוב.",
+        "rubric": [
+          "__dynamic_cast הולך על גרף הירושה ומשווה type_info",
+          "עלות של מאות ננו-שניות, גדלה עם עומק וירושה מרובה",
+          "חלופות: virtual function, enum kind + static_cast (LLVM), visitor"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q14",
@@ -562,7 +616,16 @@
         "שגוי: ההשוואה בין B* ל-C* לא משווה כתובות גולמיות. &c מומר קודם ל-B*, עם אותה התאמת offset, ולכן התוצאה true.",
         "שגוי: שני base subobjects לא ריקים לא יכולים לשבת באותה כתובת. B נמצא ב-offset שאינו 0, ולכן הכתובות כ-void* שונות.",
         "שגוי: upcast מ-derived ל-base public הוא המרה implicit שנקבעת בקומפילציה (הוספת offset קבוע). dynamic_cast נדרש רק ל-downcast או cross-cast."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה קורה אם עושים `delete pb;` כש-pb הוא ה-B* מהשאלה, בשני מקרים: כש-~B הוא virtual, וכשהוא לא virtual? ולמה המקרה השני גרוע במיוחד בירושה מרובה?",
+        "modelAnswer": "כש-~B virtual, delete pb מגיע דרך ה-vtable של B-in-C ל-deleting destructor של C (דרך thunk שמתקן את this לתחילת C), ושם נקרא ~C, ~B, ~A ו-operator delete על הכתובת המקורית של האובייקט. כש-~B לא virtual, זה UB: נקרא רק ~B, ובנוסף operator delete מקבל את הכתובת של ה-subobject B, שנמצאת ב-offset 16 מתחילת ההקצאה. כלומר free מקבל pointer שהוא לא מה ש-malloc החזיר, וזה משחית את ה-heap או קורס מיד. בירושה יחידה הכתובת בדרך כלל זהה ולכן הבעיה נראית רק כדליפה של members, אבל בירושה מרובה היא נעשית קריסה. כלל: כל base שעלול להימחק דרך pointer צריך virtual destructor.",
+        "rubric": [
+          "virtual: thunk מתקן this וכל ה-destructors רצים",
+          "לא virtual: UB, ו-operator delete מקבל כתובת עם offset",
+          "free על pointer שאינו מ-malloc משחית את ה-heap"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q15",
@@ -603,7 +666,16 @@
         "שגוי: מניח ש-A, הראשון ברשימת ה-bases, מאתחל את V. כש-A איננו ה-most derived, ה-V(1) שלו מתעלם.",
         "שגוי: virtual base נבנה פעם אחת בלבד, לא פעם אחת לכל מסלול. ובכל מקרה ה-V(1) וה-V(2) מתעלמים.",
         "נכון: לפי [class.base.init] ה-virtual base נבנה פעם אחת על ידי D, לפני A ו-B. D לא מציין initializer ל-V, ולכן נקרא V() ומודפס 0."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה התקן קבע שה-most derived class בונה את ה-virtual base, ולא אחד מה-bases הביניים? ומה ההשלכה המעשית כשמוסיפים class חדש E : D לספרייה שמישהו אחר כתב?",
+        "modelAnswer": "ב-diamond, ל-V יש subobject אחד שמשותף ל-A ול-B. אם כל אחד מהם היה בונה אותו, היה צריך לבחור מי מנצח, ו-V היה נבנה פעמיים או עם ערך שתלוי בסדר. הדרך העקבית היחידה היא שמי שמכיר את כל ההיררכיה, ה-most derived, יבנה אותו פעם אחת לפני כל השאר. ההשלכה המעשית: כל class חדש בתחתית ההיררכיה חייב לאתחל במפורש את V עם הארגומנטים הנכונים, כלומר E חייב לכתוב `E() : V(...), D() {}`, אחרת V נבנה ב-default constructor, גם אם D כתב V(1). אם ל-V אין default constructor, E לא יתקמפל בלי אתחול מפורש. זה דולף פרט מימוש של היררכיה לכל מי שיורש ממנה, ולכן virtual bases מתאימים בעיקר ל-interfaces בלי state ועם default constructor.",
+        "rubric": [
+          "subobject משותף חייב להיבנות פעם אחת על ידי מי שמכיר את כל ההיררכיה",
+          "כל derived חדש חייב לאתחל את ה-virtual base במפורש",
+          "virtual bases מתאימים ל-interfaces בלי state"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q17",
@@ -624,7 +696,17 @@
         "שגוי: הקריאה עוברת דרך init, ולכן הקומפיילר לא רואה בזמן קומפילציה שהיא קורית מ-constructor. הקוד מתקמפל.",
         "נכון: לפי [class.abstract] קריאה וירטואלית ל-pure virtual מתוך constructor היא UB. ב-GCC/Clang ה-slot ב-vtable של B מצביע ל-__cxa_pure_virtual, שמדפיס pure virtual method called ועושה abort.",
         "שגוי: ל-B::run אין גוף בכלל (= 0), ולכן אין מה להריץ. ה-slot ב-vtable מצביע ל-handler של ה-ABI שמפיל את התוכנית."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-production התוכנית נופלת עם pure virtual method called, אבל לא מתוך constructor. מה עוד יכול לגרום לזה, ואיך היית מאתר את הסיבה?",
+        "modelAnswer": "הסיבה הנפוצה ביותר אחרי constructors: קריאה וירטואלית לאובייקט שנמצא באמצע הריסה או שכבר נהרס. דוגמה: thread אחר קורא ל-callback על אובייקט בזמן שה-destructor שלו רץ; אחרי ש-~D הסתיים, ה-vptr הוחזר ל-vtable של ה-base, שבו ה-slot מצביע ל-__cxa_pure_virtual. גם use-after-free שבו הזיכרון עדיין מכיל את ה-vptr של ה-base מייצר את אותו סימפטום. לאיתור: core dump ו-backtrace מראים מאיפה הגיעה הקריאה; ThreadSanitizer מזהה race בין ה-destructor לקריאה (TSan מדווח על race על ה-vptr); AddressSanitizer תופס use-after-free. התיקון בדרך כלל: לבטל רישום של callbacks ולעצור threads לפני ההריסה, ב-destructor של ה-derived ולא של ה-base.",
+        "rubric": [
+          "קריאה לאובייקט באמצע הריסה (vptr חזר ל-base) או use-after-free",
+          "race בין thread שקורא ל-callback ל-destructor",
+          "TSan/ASan ו-backtrace מה-core dump",
+          "ביטול רישום ועצירת threads לפני ההריסה, ב-derived"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q18",
@@ -645,7 +727,16 @@
         "נכון: ב-Itanium ABI ה-vtable וה-type_info נוצרים רק ב-TU שמגדיר את ה-key function, הוירטואלית הראשונה שאינה inline ואינה pure. אם היא הוצהרה ולא הוגדרה, או שהקובץ שלה לא נכנס ל-link, אין vtable.",
         "שגוי: אותה הגדרת class בכמה headers או TUs היא תקינה כל עוד ההגדרות זהות (ODR). זה לא מונע יצירת vtable.",
         "שגוי: RTTI הוא תכונה של הקומפיילר וה-ABI, וה-linker רק מחבר סימבולים. השגיאה אומרת שאף TU לא הפיק את סימבול ה-vtable."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם כל ה-virtual functions במחלקה מוגדרות inline ב-header, איפה ה-vtable נוצר, ומה המחיר? ולמה זה גורם לבעיות עם dynamic_cast בין shared libraries?",
+        "modelAnswer": "כשאין key function (כל ה-virtuals inline או pure), כל TU שמשתמש ב-vtable מייצר עותק שלו ושל ה-type_info כ-weak/COMDAT symbol, וה-linker מאחד את העותקים בתוך כל binary. המחיר: זמן קומפילציה וגודל object files. הבעיה היא בין shared libraries: כל .so מקבלת עותק משלה של ה-type_info, ואם הסימבולים לא מיוצאים (למשל עם -fvisibility=hidden) או נטענים עם RTLD_LOCAL, ה-type_info בשתי הספריות הם אובייקטים שונים בכתובות שונות. השוואת type_info לפי כתובת נכשלת, ו-dynamic_cast או catch של exception מטיפוס שהוגדר בספרייה אחרת נכשלים. libstdc++ משווה גם לפי שם במקרים מסוימים, אבל לא תמיד. הפתרון: key function מוגדרת ב-cpp אחד (למשל destructor out-of-line) וייצוא הסימבולים של המחלקה.",
+        "rubric": [
+          "בלי key function: vtable ו-type_info בכל TU כ-weak/COMDAT",
+          "בין shared libraries עלולים להיות type_info כפולים",
+          "dynamic_cast ו-catch נכשלים; פתרון: key function out-of-line וייצוא"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q19",
@@ -661,7 +752,16 @@
         "מזכיר STL ו-exceptions בגבול ה-ABI"
       ],
       "explanation": "בחברות שמפיצות SDKs (כמו drivers ו-CUDA libraries), יציבות ABI היא שיקול תכנון מרכזי, ומראיין סניור מצפה שתכיר אותו.",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "אמרת שאפשר להשתמש ב-pimpl או ב-interface versioning. נניח שבחרת interface versioning (Device, DeviceV2 : Device). איך הלקוח החדש יודע אם הספרייה שנטענה תומכת ב-V2, ואיך ספרייה חדשה עובדת עם לקוח ישן?",
+        "modelAnswer": "הלקוח מקבל `Device*` מה-factory הקיים, ושואל בזמן ריצה אם הוא תומך ב-V2: דרך dynamic_cast<DeviceV2*> (דורש type_info עקבי בין הספריות), או בדרך יציבה יותר, מתודה וירטואלית שכבר קיימת ב-V1 כמו `void* query_interface(int id)` בסגנון COM, שמחזירה pointer ל-V2 או nullptr. לקוח ישן שמקושר לספרייה חדשה ממשיך לעבוד כי ה-vtable של Device לא השתנה: DeviceV2 רק מוסיף slots אחרי של Device, והלקוח הישן לא יודע עליהם. הספרייה החדשה לא יכולה להניח שאובייקטים שהלקוח מימש (אם הלקוח יורש מ-Device) תומכים ב-V2, ולכן היא שואלת באותה דרך. זה דורש לתכנן את query_interface כבר בגרסה הראשונה.",
+        "rubric": [
+          "זיהוי בזמן ריצה: dynamic_cast או query_interface בסגנון COM",
+          "ה-vtable של V1 לא משתנה, ולכן לקוח ישן עובד",
+          "מנגנון השאילתה חייב להיות קיים מהגרסה הראשונה"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q20",
@@ -793,7 +893,16 @@
         "נכון: ~D רץ ראשון ומדפיס ~D. אחר כך ~B רץ, וה-vptr כבר מצביע ל-vtable של B, ולכן name() מגיעה ל-B::name ומדפיסה B.",
         "שגוי: סדר ההריסה הפוך לסדר הבנייה: ~D רץ לפני ~B. וגם name ב-~B מגיעה ל-B ולא ל-D.",
         "שגוי: קריאה ל-virtual מתוך destructor מוגדרת היטב לפי [class.cdtor] ונשלחת לפי המחלקה שנהרסת כרגע. UB יש רק אם הפונקציה pure virtual."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-destructor של ה-base קורא ל-`flush()` וירטואלית כדי שכל derived יכתוב את ה-buffer שלו. למה זה לא עובד, ואיך היית מתכנן את זה נכון?",
+        "modelAnswer": "כש-~Base רץ, החלק של ה-derived כבר נהרס וה-vptr הוחזר ל-vtable של Base, ולכן flush() מגיע ל-Base::flush ולא לגרסה של ה-derived; ה-buffer של ה-derived לא נכתב. אם flush היא pure ב-Base, זה UB וקריסה. ממילא ה-buffer של ה-derived כבר נהרס. הפתרונות: כל derived קורא ל-flush() ב-destructor שלו, כשה-members שלו עדיין חיים. או מתודה מפורשת `close()` שהמשתמש קורא לה לפני ההריסה, עם assert ב-destructor שהיא נקראה. או להחזיק את ה-derived דרך wrapper (למשל unique_ptr עם deleter מותאם) שקורא ל-close() ורק אז מוחק. האפשרות האחרונה מבטיחה שהקריאה תקרה כשהאובייקט שלם.",
+        "rubric": [
+          "ב-~Base ה-vptr הוא של Base וה-derived כבר נהרס",
+          "כל derived קורא ל-flush ב-destructor שלו",
+          "close() מפורשת או deleter שקורא לה לפני מחיקה"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q26",
@@ -822,7 +931,16 @@
         "שגוי: [temp.mem] אוסר member function template virtual: מספר ה-instantiations לא ידוע, וה-vtable צריכה מספר slots קבוע.",
         "נכון: operator הוא member function רגילה לכל דבר, וגם operator== יכול להיות virtual.",
         "נכון: const member function יכולה להיות virtual. ה-const הוא חלק מהחתימה, והדריסה חייבת להיות גם היא const."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אמרת שאי אפשר virtual template. אז איך מממשים פעולה וירטואלית שצריכה לעבוד על כל טיפוס ארגומנט, למשל `serialize(const T& value)` ב-interface של Archive?",
+        "modelAnswer": "אפשרות ראשונה: type erasure על הארגומנט, כלומר virtual שמקבל טיפוס לא-template (למשל `virtual void write_bytes(std::span<const std::byte>)` או `std::any`), ו-template לא-וירטואלי ב-base שממיר כל T לשם וקורא ל-virtual. אפשרות שנייה: virtual overload לכל טיפוס בסיסי (int, double, string), ו-template עוטף שמפרק טיפוסים מורכבים לטיפוסים הבסיסיים; ככה עושות ספריות כמו cereal ו-boost.serialization. אפשרות שלישית: להפוך את ה-Archive כולו ל-template parameter של פונקציית ה-serialize של המשתמש (static polymorphism), כך שאין virtual בכלל, ומקבלים inlining. הבחירה תלויה אם ה-Archive צריך להיבחר בזמן ריצה.",
+        "rubric": [
+          "template לא-וירטואלי שקורא ל-virtual עם טיפוס לא-template (type erasure)",
+          "virtual overloads לטיפוסים בסיסיים ו-template שמפרק",
+          "static polymorphism: Archive כ-template parameter"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q27",
@@ -843,7 +961,17 @@
         "שגוי: visit בודק index, אבל זה מקביל ל-dispatch דרך vptr. בפועל variant בדרך כלל מהיר יותר בזכות זיכרון רציף ו-inlining.",
         "שגוי: הפוך: variant דורש לדעת את כל הטיפוסים בקומפילציה (קבוצה סגורה), ו-virtual מאפשר להוסיף טיפוסים, כולל מ-plugins, בלי לגעת בקוד הקיים.",
         "נכון: variant שומר את האובייקט by value, ולכן הוקטור רציף ובלי הקצאה לכל צעד, והקומפיילר יכול לבצע inline. המחיר: קבוצה סגורה, גודל לפי הטיפוס הגדול ביותר, וקימפול מחדש בהוספת טיפוס. virtual מתאים לקבוצה פתוחה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת variant. Decimator מכיל buffer פנימי של 4KB, ו-Fir ו-Mixer קטנים. מה זה עושה לגודל ה-vector ול-cache, ואיך היית מתקן בלי לחזור ל-virtual?",
+        "modelAnswer": "sizeof של variant הוא בערך הגודל של הטיפוס הגדול ביותר ועוד index, כלומר כל איבר, גם Mixer של 16 bytes, תופס יותר מ-4KB. vector של 100 צעדים תופס 400KB במקום כמה KB, וסריקה עליו מוציאה את כל ה-L1 וה-L2. התיקון: להחזיק את החלק הגדול מחוץ ל-variant, למשל ב-Decimator מחזיקים `std::unique_ptr<std::array<float,1024>>` או std::vector, כך ש-Decimator עצמו קטן, וה-variant קטן. לחלופין, מאחסנים כל סוג בוקטור נפרד (vector<Fir>, vector<Mixer>, vector<Decimator>) ורשימת סדר של (kind, index), כלומר SoA לפי טיפוס. מוודאים עם `static_assert(sizeof(Stage) <= 64)`.",
+        "rubric": [
+          "גודל variant = הגדול ביותר, כל איבר תופס 4KB+",
+          "השפעה על cache ב-sweep",
+          "החזקת ה-buffer הגדול ב-heap או וקטורים נפרדים לכל סוג",
+          "static_assert על sizeof"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q28",
@@ -866,7 +994,16 @@
         "שגוי: P פולימורפי (virtual destructor), ולכן typeid(*p) מחזיר את הטיפוס הדינמי Q דרך ה-type_info שב-vtable.",
         "נכון: לפי [expr.typeid] typeid על glvalue של מחלקה פולימורפית מחזיר את הטיפוס הדינמי (Q). על מחלקה לא פולימורפית הוא מחזיר את הטיפוס הסטטי (N), ולכן 1 ואחריו 0.",
         "שגוי: הפוך: דווקא הטיפוס הפולימורפי מזוהה דינמית, ולטיפוס בלי virtual אין RTTI בזמן ריצה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה צריך מפתח ל-std::unordered_map לפי טיפוס דינמי של אובייקט (registry של handlers לפי טיפוס). למה לא להשתמש ב-`typeid(x).name()` כמפתח, ומה כן?",
+        "modelAnswer": "name() הוא implementation-defined: ב-GCC ו-Clang זה שם mangled כמו 1Q, ב-MSVC שם קריא, והוא לא מובטח ייחודי או יציב בין קומפיילרים. השוואת מחרוזות גם איטית יותר. המפתח הנכון הוא `std::type_index`, עוטף של type_info שמספק operator< ו-std::hash, ולכן מתאים ל-map ו-unordered_map, וההשוואה והגיבוב שלו מבוססים על זהות הטיפוס. נקודות לשים לב: typeid מחזיר טיפוס דינמי רק למחלקות פולימורפיות, ולכן ה-registry לפי טיפוס דינמי עובד רק אם ל-base יש virtual; ובין shared libraries ייתכנו בעיות של type_info כפולים. אם RTTI כבוי (-fno-rtti), משתמשים במזהה ידני, למשל static member או virtual `kind()`.",
+        "rubric": [
+          "name() implementation-defined ולא מובטח ייחודי",
+          "std::type_index כמפתח עם hash ו-operator<",
+          "typeid דינמי רק למחלקות פולימורפיות; בלי RTTI צריך מזהה ידני"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q29",
@@ -887,7 +1024,16 @@
         "נכון: access control נבדק בקומפילציה לפי הטיפוס הסטטי B, שבו f היא public. ה-dispatch בזמן ריצה בוחר את D::f ומודפס D. d.f() לא היה מתקמפל, כי ב-D השם f פרטי.",
         "שגוי: private לא משפיע על ה-vtable. D::f דורסת את B::f ונכנסת ל-slot שלה, בלי קשר להרשאות.",
         "שגוי: אין כאן גישה לא חוקית: הביטוי b.f() חוקי לפי B, והתקן לא בודק הרשאות בזמן ריצה. זה בסיס דפוס NVI."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תאר את דפוס NVI במלואו: מה public, מה private, ומה היתרון האמיתי שלו מעבר לסגנון? תן דוגמה של משהו שה-base יכול לאכוף רק עם NVI.",
+        "modelAnswer": "ב-NVI ה-base חושף מתודה ציבורית לא-וירטואלית, למשל `void process(Block& b)`, והיא קוראת ל-`virtual void do_process(Block& b)` שהוא private (או protected אם ה-derived צריך לקרוא לגרסה של ה-base). ה-derived דורס את do_process בלבד. היתרון: ה-base שולט במה שקורה סביב כל קריאה, בלי לסמוך על ה-derived. דוגמאות: לבדוק preconditions (b.size() > 0) ו-postconditions, למדוד זמן ולספור קריאות לכל stage, לנעול mutex, או לרשום ל-log. אם process הייתה virtual ישירות, כל derived היה צריך לזכור לעשות את זה בעצמו. היתרון השני הוא הפרדת ה-API הציבורי (יציב) מנקודות ההתאמה (customization points), כך שאפשר לשנות אחת בלי השנייה. std::basic_streambuf הוא דוגמה מהספרייה הסטנדרטית.",
+        "rubric": [
+          "public לא-וירטואלית קוראת ל-virtual private/protected",
+          "ה-base אוכף pre/postconditions, מדידה או locking סביב כל קריאה",
+          "הפרדת API ציבורי מנקודות התאמה; דוגמה streambuf"
+        ]
+      }
     },
     {
       "id": "cpp.polymorphism.q30",
@@ -913,7 +1059,16 @@
         "נכון: D& במקום B& הוא covariant return type מותר, בדיוק כמו ב-pointers.",
         "שגוי: החזרה ב-derived לא יכולה להיות יותר cv-qualified מזו של ה-base. B* לא const, ולכן const D* לא מתאים.",
         "שגוי: covariance קיימת רק ל-pointers ו-references למחלקות. int ו-long הם טיפוסים בסיסיים שונים, ולכן זו שגיאת קומפילציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "covariance לא עובד עם unique_ptr. איך מממשים `clone()` שמחזיר `std::unique_ptr<D>` כשקוראים דרך D, ו-`std::unique_ptr<B>` כשקוראים דרך B?",
+        "modelAnswer": "משתמשים ב-NVI עם covariance של raw pointer: ב-B מגדירים `std::unique_ptr<B> clone() const { return std::unique_ptr<B>(clone_impl()); }` ו-`virtual B* clone_impl() const = 0;` private. ב-D מגדירים `D* clone_impl() const override { return new D(*this); }`, שזו דריסה covariant חוקית, ובנוסף פונקציה לא-וירטואלית `std::unique_ptr<D> clone() const { return std::unique_ptr<D>(clone_impl()); }` שמסתירה את זו של B. קריאה דרך D& מחזירה unique_ptr<D>, ודרך B& מחזירה unique_ptr<B>, ושתיהן מגיעות לאותו clone_impl. ה-raw pointer קיים רק בתוך הפונקציה ומיד נעטף, כך שאין סיכון לדליפה. אפשר להכליל עם CRTP (template<class Derived, class Base> struct Cloneable) כדי לא לכתוב את זה בכל מחלקה.",
+        "rubric": [
+          "virtual פרטי שמחזיר raw pointer covariant",
+          "clone() לא-וירטואלית בכל רמה שעוטפת ב-unique_ptr של הטיפוס שלה",
+          "הכללה עם CRTP"
+        ]
+      }
     },
     {
       "level": 2,
@@ -957,7 +1112,16 @@
         "שגוי: ה-vptr הוא שדה נסתר בתוך כל אובייקט, וזה מה שמאפשר לקריאה דרך B* לגלות את הטיפוס הדינמי בזמן ריצה."
       ],
       "id": "cpp.polymorphism.q32",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "אם ה-vptr מוחלף בכל שלב של הבנייה, כמה כתיבות ל-vptr קורות בבניית אובייקט בעומק ירושה של 4, והאם הקומפיילר יכול לחסוך אותן? ומה זה אומר על thread אחר שקורא pointer לאובייקט שנמצא בבנייה?",
+        "modelAnswer": "בעומק 4 יש 4 כתיבות של ה-vptr, אחת בכל constructor. כשה-constructors עוברים inlining לתוך אותה פונקציה והקומפיילר מוכיח שאין קריאה וירטואלית או גישה ל-this שבורחת בין השלבים, הוא רשאי לבטל את הכתיבות הביניים (dead store elimination) ולהשאיר רק את האחרונה; בפועל הוא לא תמיד מצליח, כי קריאה לפונקציה לא-inline יכולה להשתמש ב-this. thread אחר שמקבל pointer לאובייקט שעדיין בבנייה (למשל ה-constructor של ה-base רשם את this ב-registry) יכול לקרוא לפונקציה וירטואלית ולהגיע לגרסה של ה-base, או לראות vptr באמצע עדכון: זה data race ו-UB. לכן לא מפרסמים this מתוך constructor, ופרסום אובייקט ל-thread אחר נעשה רק אחרי שהבנייה הסתיימה, עם סנכרון (release/acquire).",
+        "rubric": [
+          "כתיבה של vptr לכל רמה (4)",
+          "הקומפיילר יכול לבטל כתיבות ביניים רק אם הוכיח שאין שימוש ב-this",
+          "פרסום this מתוך constructor ל-thread אחר הוא race ו-UB"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1035,7 +1199,16 @@
         "שגוי: אין דילוג על רמות. כל destructor בשרשרת קורא אוטומטית ל-destructor של ה-base הישיר שלו."
       ],
       "id": "cpp.polymorphism.q35",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "מה קורה אם ~A אינו virtual ומוחקים `C` דרך `A*`? ואם C מכיל `std::vector` של 1MB? איך היית מגלה את זה בבדיקות?",
+        "modelAnswer": "זה UB לפי התקן. בפועל ב-GCC ו-Clang עם ירושה יחידה, רק ~A רץ, ~C ו-~B לא רצים, וה-members של C ו-B לא משוחררים: ה-vector של 1MB דולף בכל מחיקה. אם יש ירושה מרובה, operator delete עלול לקבל כתובת שגויה ולהשחית את ה-heap. אם ל-C יש operator delete משלו, גם הוא לא נקרא. גילוי: GCC ו-Clang מזהירים עם `-Wdelete-non-virtual-dtor` (ב-Wall) כשמוחקים דרך pointer למחלקה עם virtual functions בלי virtual destructor, ו-`-Wnon-virtual-dtor` מזהיר כבר בהגדרת המחלקה. בזמן ריצה, AddressSanitizer עם LeakSanitizer מוצא את הדליפה, ו-ASan מזהה new-delete-type-mismatch (גודל שגוי בשחרור).",
+        "rubric": [
+          "UB; בפועל רק ~A רץ וה-vector דולף",
+          "ירושה מרובה: כתובת שגויה ל-delete",
+          "-Wdelete-non-virtual-dtor / -Wnon-virtual-dtor ו-ASan/LSan"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1056,7 +1229,16 @@
         "שגוי: destructor מחוק הופך כל אובייקט מסוג Codec או נגזרת שלו ללא ניתן להריסה, ולכן אי אפשר ליצור אותם על ה-stack או למחוק אותם בכלל."
       ],
       "id": "cpp.polymorphism.q36",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "עם destructor שהוא protected ולא virtual, איך הקוד שיוצר את ה-Codecs מנהל את ה-lifetime שלהם? האם אפשר להחזיק `std::unique_ptr<Codec>`, ומה לגבי `std::shared_ptr<Codec>`?",
+        "modelAnswer": "unique_ptr<Codec> לא יתקמפל, כי ה-default_delete<Codec> קורא ל-`delete p` על Codec*, וה-destructor protected. לכן הבעלות צריכה להיות בטיפוס הקונקרטי: `std::unique_ptr<Mp3Codec>`, או משתנה by value, ואת Codec מעבירים כ-reference או pointer לא-בעלים. shared_ptr<Codec> דווקא כן עובד אם הוא נוצר מ-`std::make_shared<Mp3Codec>()` ומומר ל-shared_ptr<Codec>: ה-control block שומר deleter שנוצר עם הטיפוס הקונקרטי, וקורא ל-~Mp3Codec הנכון, כך שאין צורך ב-virtual destructor. זה מאפשר פולימורפיזם עם shared ownership בלי vptr ל-destructor. הדפוס של protected non-virtual מתאים במיוחד ל-CRTP ול-mixins שאף פעם לא אמורים להחזיק אובייקט דרכם.",
+        "rubric": [
+          "unique_ptr<Codec> לא מתקמפל כי default_delete צריך destructor נגיש",
+          "בעלות בטיפוס הקונקרטי, Codec כ-reference לא-בעלים",
+          "shared_ptr<Codec> מ-make_shared<Derived> עובד כי ה-deleter נשמר עם הטיפוס הקונקרטי"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1115,7 +1297,16 @@
         "שגוי: f היא virtual והאובייקט הוא D, ולכן p->f(1) מגיע ל-D::f."
       ],
       "id": "cpp.polymorphism.q38",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "איך היית מתקן את ה-name hiding כך ש-`d.g(1.5)` יגיע ל-B::g(double)? ומה קורה אם בנוסף ל-B::g(double) יש גם B::g(int) virtual, ו-D דורס רק אחד מהם?",
+        "modelAnswer": "מוסיפים `using B::g;` בתוך D, שמכניס את כל ה-overloads של g מ-B ל-scope של D. אז d.g(1.5) בוחר את B::g(double) כהתאמה מדויקת, ו-d.g(1) בוחר את D::g(int). אם ב-B יש גם g(int) virtual ו-g(double) virtual, ו-D דורס רק את g(int), אז בלי using הקריאה d.g(1.5) מגיעה ל-D::g(int) אחרי המרה מ-double ל-int, ו-g(double) לא נגיש דרך D בכלל, אף שהוא לא נדרס. עם using, D::g(int) עדיין דורס את ה-virtual (הדריסה גוברת על ההכנסה), ו-g(double) נגיש. clang מזהיר על זה עם -Woverloaded-virtual (GCC גם כן, ב-Wall מגרסה 13).",
+        "rubric": [
+          "using B::g; ב-D מכניס את כל ה-overloads",
+          "דריסה של overload אחד מסתירה את השאר",
+          "-Woverloaded-virtual מזהיר"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1136,7 +1327,16 @@
         "שגוי: overload resolution מוגדר במלואו בתקן ולא תלוי במימוש."
       ],
       "id": "cpp.polymorphism.q39",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "אתה צריך פעולה שתלויה בטיפוס הדינמי של שני אובייקטים, למשל `collide(Shape&, Shape&)`. תאר את double dispatch עם virtual, ומה החלופה עם std::variant ב-C++17?",
+        "modelAnswer": "double dispatch: ב-Shape מגדירים `virtual void collide(Shape& other)` ו-`virtual void collide_with(Circle&)`, `virtual void collide_with(Square&)` וכו'. Circle::collide(Shape& other) קורא ל-`other.collide_with(*this)`; כאן *this הוא Circle& סטטית, ולכן overload resolution בוחר collide_with(Circle&), וה-virtual dispatch על other בוחר את הטיפוס הדינמי שלו. שתי קריאות וירטואליות פותרות את שני הטיפוסים. המחיר: N טיפוסים דורשים N^2 פונקציות, וכל טיפוס חדש מחייב לשנות את כל המחלקות (visitor pattern). עם variant: `std::visit([](auto& a, auto& b) { collide(a, b); }, s1, s2);` מייצר את כל N^2 הצירופים בזמן קומפילציה, עם overloads רגילים, ונותן שגיאת קומפילציה אם צירוף חסר. המחיר הוא קבוצה סגורה.",
+        "rubric": [
+          "שתי קריאות וירטואליות: collide ואז collide_with(*this)",
+          "N^2 פונקציות ושינוי כל המחלקות בהוספת טיפוס",
+          "std::visit על שני variants פותר את כל הצירופים"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1198,7 +1398,16 @@
         "שגוי: default member initializer מותר מ-C++11 ואינו קשור לשאלה אם המחלקה abstract."
       ],
       "id": "cpp.polymorphism.q41",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "נניח שהוספת override, תיקנת את ה-const, ו-Sq מתקמפל. איך היית מוודא בזמן קומפילציה שכל מחלקה שיורשת מ-Shape באמת concrete, למשל ב-factory גנרי `make<T>()`?",
+        "modelAnswer": "בתוך ה-factory: `static_assert(!std::is_abstract_v<T>, \"T must implement all pure virtuals\");` ו-`static_assert(std::is_base_of_v<Shape, T>)`. ב-C++20 עדיף constraint: `template<class T> requires std::derived_from<T, Shape> && (!std::is_abstract_v<T>) std::unique_ptr<Shape> make();`, שנותן הודעת שגיאה ברורה בנקודת הקריאה. בנוסף, unit test שיוצר מופע של כל מחלקה נגזרת תופס את זה, אבל static_assert תופס כבר בקומפילציה. כדאי גם לבדוק `std::has_virtual_destructor_v<Shape>` פעם אחת ליד ה-base. בלי בדיקות כאלה, השגיאה מגיעה מתוך הקוד של new בתוך ה-template, וקשה לקרוא אותה.",
+        "rubric": [
+          "static_assert(!std::is_abstract_v<T>)",
+          "C++20 constraint עם derived_from",
+          "has_virtual_destructor_v על ה-base"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1221,7 +1430,16 @@
         "שגוי: I::f מוגדרת בקוד, ולכן ל-linker יש מה לקשר."
       ],
       "id": "cpp.polymorphism.q42",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "למה מישהו ייתן גוף ל-pure virtual function? תן שימוש מעשי, ותסביר מה ההבדל בינה לבין virtual רגילה עם מימוש ברירת מחדל.",
+        "modelAnswer": "pure virtual עם גוף אומרת שני דברים בבת אחת: כל derived חייב לדרוס אותה (אחרת הוא abstract), ובכל זאת יש מימוש משותף שהוא יכול לקרוא לו במפורש עם `I::f()`. שימוש מעשי: פעולה שיש לה חלק משותף, למשל `virtual void reset() = 0` שהגוף שלה ב-base מאפס מונים משותפים, וכל derived חייב לדרוס כדי לאפס את ה-state שלו ולקרוא ל-Base::reset(). כך אי אפשר לשכוח לטפל ב-state של ה-derived. ב-virtual רגילה עם מימוש ברירת מחדל, derived שלא דורס מקבל בשקט את המימוש של ה-base, וזה עלול להיות באג (שכחת לאפס state). ההבדל הוא אם הקומפיילר מכריח החלטה מפורשת.",
+        "rubric": [
+          "חובה לדרוס, אבל יש מימוש משותף שאפשר לקרוא לו במפורש",
+          "דוגמה: reset שמאפס state משותף וכל derived משלים",
+          "virtual רגילה מאפשרת לשכוח לדרוס בשקט"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1276,7 +1494,16 @@
         "שגוי: נכון שיש c, אבל האובייקט המוחזר הוא B, ולכן who מדפיסה B."
       ],
       "id": "cpp.polymorphism.q44",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "זה slicing. איך היית מתכנן את B כך שהשורה הזו לא תתקמפל בכלל, ומה המחיר לגבי העתקה של אובייקטים מ-D?",
+        "modelAnswer": "מוחקים או מגינים על פעולות ההעתקה ב-base: `B(const B&) = delete; B& operator=(const B&) = delete;` מונעים slicing לגמרי, אבל אז גם D לא ניתן להעתקה בדרך הרגילה, כי ה-copy constructor המובלע של D צריך להעתיק את ה-B שבו. פתרון מאוזן: להפוך את ה-copy constructor וה-assignment של B ל-protected. אז רק מחלקות נגזרות יכולות להעתיק את החלק של B (במסגרת העתקה של D שלם), ואילו `B b = d;` או החזרת B by value מ-D לא מתקמפלים בקוד חיצוני. כשצריך העתקה פולימורפית, מוסיפים `virtual std::unique_ptr<B> clone() const`. זו ההמלצה של C++ Core Guidelines (C.67) למחלקות base פולימורפיות.",
+        "rubric": [
+          "delete על copy ב-base מונע slicing אבל גם העתקה של D",
+          "protected copy constructor/assignment מאפשר העתקה רק מתוך derived",
+          "clone() וירטואלי להעתקה פולימורפית"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1357,7 +1584,16 @@
         "שגוי: static member function היא חלק מהמחלקה ויש לה גישה מלאה לחלקים הפרטיים. הקריאה ל-new פשוט לא נמצאת בה."
       ],
       "id": "cpp.polymorphism.q47",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "תאר את passkey idiom: איך הוא מאפשר ל-make_unique (או make_shared) לבנות את Widget, ולמה make_shared שווה את המאמץ לעומת `shared_ptr<Widget>(new Widget(n))`?",
+        "modelAnswer": "מגדירים בתוך Widget טיפוס ריק פרטי, `class Key { explicit Key() = default; friend class Widget; };`, וה-constructor הוא public אבל מקבל `Key` כפרמטר ראשון: `Widget(Key, int n)`. כל אחד יכול לראות את ה-constructor, אבל רק Widget יכול ליצור Key, ולכן רק create יכולה לקרוא ל-`std::make_shared<Widget>(Key{}, n)`. make_shared קורא ל-constructor הציבורי, כך שזה מתקמפל. ה-explicit על ה-default constructor של Key מונע יצירה עם `{}` מבחוץ. היתרון של make_shared: הקצאה אחת לאובייקט ול-control block במקום שתיים, ו-locality טובה יותר (ה-refcount ליד הנתונים). החיסרון: עם weak_ptrs שחיים זמן רב, הזיכרון של האובייקט משתחרר רק כשה-weak count מגיע לאפס.",
+        "rubric": [
+          "טיפוס Key פרטי, constructor ציבורי שמקבל Key",
+          "רק Widget יוצר Key ולכן רק הוא יכול לקרוא; explicit מונע {}",
+          "make_shared: הקצאה אחת, אבל זיכרון מוחזק עד שה-weak count מתאפס"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1378,7 +1614,16 @@
         "שגוי: חוסם העתקה, אבל `Session s;` עדיין מתקמפל ויוצר אובייקט על ה-stack."
       ],
       "id": "cpp.polymorphism.q48",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "עם destructor פרטי ו-destroy(), איך משתמשים ב-Session עם smart pointers כדי לא לחזור לניהול ידני? ומה הדרך ההפוכה, למנוע יצירה על ה-heap ולאפשר רק על ה-stack?",
+        "modelAnswer": "מחזיקים `std::unique_ptr<Session, Deleter>` כש-Deleter הוא struct שקורא ל-`p->destroy()`, או deleter שהוא friend של Session וקורא ל-delete ישירות. factory סטטי `static std::unique_ptr<Session, Deleter> create()` מחזיר אותו, וה-constructor גם הוא פרטי כדי שלא יוכלו לעשות new ידני. עם shared_ptr מעבירים את ה-deleter בבנייה: `std::shared_ptr<Session>(new Session, [](Session* s){ s->destroy(); })`. הדרך ההפוכה (רק stack): להגדיר `static void* operator new(std::size_t) = delete;` (וגם new[] ו-placement), ואז `new Session` לא מתקמפל, אבל משתנה מקומי עובד. זה לא מונע לגמרי, כי אפשר עדיין להכיל Session כ-member של אובייקט על ה-heap.",
+        "rubric": [
+          "unique_ptr עם deleter שקורא ל-destroy, ו-factory סטטי",
+          "shared_ptr עם deleter בבנייה",
+          "רק stack: operator new = delete, עם מגבלה של member באובייקט heap"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1401,7 +1646,17 @@
       ],
       "problem": "NVIDIA interview: how would you implement virtual functions in a compiler",
       "id": "cpp.polymorphism.q49",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "במימוש שתיארת, מה ההבדל בין קריאה וירטואלית דרך base ראשון לבין קריאה דרך base שני בירושה מרובה, ברמת ההוראות? ואיפה נכנס ה-offset-to-top ב-vtable?",
+        "modelAnswer": "דרך ה-base הראשון ה-subobject יושב ב-offset 0, ולכן הקריאה היא load של vptr, load של ה-slot ו-call, ו-this לא משתנה. דרך ה-base השני, pointer ל-B כבר מצביע לאמצע האובייקט (למשל offset 16). ה-slot ב-vtable של B-in-C מצביע ל-thunk: קטע קוד קטן שמחסיר 16 מ-this ואז קופץ למימוש של C. כלומר עוד הוראה אחת (sub או lea) וקפיצה נוספת. offset-to-top הוא שדה ב-vtable לפני ה-slots (ב-Itanium ABI, ב-offset שלילי מה-address point) ששומר את המרחק מה-subobject לתחילת האובייקט השלם. dynamic_cast<void*> וגם typeid משתמשים בו כדי למצוא את תחילת האובייקט מכל subobject. ב-virtual inheritance יש גם vbase offsets ב-vtable, כי מיקום ה-virtual base תלוי בטיפוס הדינמי.",
+        "rubric": [
+          "base ראשון: offset 0, אין התאמת this",
+          "base שני: thunk שמתקן this ואז קופץ",
+          "offset-to-top ב-vtable משמש dynamic_cast<void*> ו-typeid",
+          "virtual inheritance מוסיף vbase offsets"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1422,7 +1677,16 @@
         "שגוי: מערך סטטי וקבוע של function pointers הוא C תקני ונפוץ, למשל struct file_operations בקרנל."
       ],
       "id": "cpp.polymorphism.q50",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "יש אפשרות שלישית: לא לשמור שום pointer באובייקט, ולשמור את האובייקטים בוקטור נפרד לכל סוג. מתי זה מנצח את שתי האפשרויות, ומה אתה מאבד?",
+        "modelAnswer": "כשכל אובייקט מסוג ידוע יושב בוקטור משלו (vector<Circle>, vector<Square>), הלולאה על כל סוג קוראת לפונקציה הקונקרטית ישירות: אין vptr, אין indirect call, יש inlining ו-vectorization, והנתונים רציפים בלי pointer chasing. זה הדפוס של data-oriented design ו-ECS במשחקים, ולמיליון אובייקטים קטנים זה בדרך כלל פי כמה מהר יותר משתי האפשרויות. מה מאבדים: סדר עיבוד אחיד בין הסוגים (אם הוא חשוב צריך רשימת אינדקסים נפרדת), היכולת להחזיק pointer גנרי לאובייקט כלשהו בלי לדעת את הסוג, וקבוצה פתוחה של טיפוסים בזמן ריצה (plugins). גם מחיקה מאמצע וקטור מזיזה אובייקטים, ולכן צריך handles ולא pointers.",
+        "rubric": [
+          "וקטור לכל סוג: אין vptr, קריאות ישירות, inlining ו-vectorization",
+          "מתאים לאובייקטים רבים (data-oriented, ECS)",
+          "מאבדים סדר אחיד, pointer גנרי וקבוצה פתוחה"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1558,7 +1822,16 @@
       ],
       "explanation": "במהלך בנייה והריסה, קריאה וירטואלית מגיעה לגרסה של המחלקה שה-constructor או ה-destructor שלה רץ כרגע. זה מונע גישה לחלק נגזר שעוד לא נבנה או שכבר נהרס.",
       "id": "cpp.polymorphism.q56",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "אם היית רוצה לבדוק את הכלל הזה בקוד שלך באופן אוטומטי, כלומר לאתר כל קריאה וירטואלית מתוך constructor או destructor, איזה כלי היית מפעיל, ולמה הקומפיילר לא תמיד מזהיר?",
+        "modelAnswer": "clang-tidy עם `clang-analyzer-optin.cplusplus.VirtualCall` (וגם `bugprone-parent-virtual-call` לנושאים קרובים) מזהה קריאה וירטואלית מתוך constructor או destructor, גם דרך פונקציות עקיפות, כי ה-static analyzer עוקב אחרי ה-call graph. הקומפיילר מזהיר רק על קריאה ישירה ל-pure virtual מתוך constructor, כי קריאה ל-virtual רגילה מוגדרת היטב (היא פשוט מגיעה לגרסה של המחלקה הנוכחית), ואין לו סיבה להזהיר על קוד חוקי. וגם כשהקריאה עקיפה, דרך פונקציה ב-TU אחר, הקומפיילר לא רואה אותה. PVS-Studio ו-Coverity מזהים את זה גם כן. בזמן ריצה, קריאה ל-pure virtual מסתיימת ב-abort עם הודעה, שזה קל לזהות.",
+        "rubric": [
+          "clang static analyzer optin.cplusplus.VirtualCall",
+          "הקומפיילר מזהיר רק על pure virtual ישירה, כי השאר חוקי",
+          "קריאה עקיפה ב-TU אחר לא נראית לקומפיילר"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1579,7 +1852,16 @@
       ],
       "explanation": "virtual destructor לא חינם: כל אובייקט מקבל vptr (8 בתים ב-64 ביט, ועוד padding אפשרי), והמחלקה מפסיקה להיות trivially destructible. לכן מחלקות קטנות שלא נועדו לפולימורפיזם (כמו value types) לא מקבלות destructor וירטואלי.",
       "id": "cpp.polymorphism.q57",
-      "lesson": "cpp.polymorphism"
+      "lesson": "cpp.polymorphism",
+      "followUp": {
+        "prompt": "יש לך 10 מיליון אובייקטים מסוג V. כמה זיכרון עולה ה-vptr, ואם הפולימורפיזם נדרש רק כדי למחוק דרך pointer ל-base, אילו חלופות חוסכות את ה-8 bytes לאובייקט?",
+        "modelAnswer": "V הוא 16 bytes, מתוכם 4 נתונים: ה-vptr (8) וה-padding (4) הם 12 bytes, כלומר 120MB על 10 מיליון אובייקטים, ופי 4 בעומס על ה-cache בסריקה. חלופות: אם כל האובייקטים מאותו טיפוס, פשוט לא להשתמש ב-virtual ולהחזיק `std::vector<V>` by value. אם צריך כמה טיפוסים, std::variant מחזיק index של byte אחד במקום vptr (אבל גודל הטיפוס הגדול). אם הבעלות היא דרך shared_ptr<Base> שנוצר מ-make_shared<Derived>, ה-deleter הנכון נשמר ב-control block ואין צורך ב-virtual destructor. אם ה-destructor ממילא טריוויאלי, אפשר לשמור את הנתונים ב-arena או ב-pool שמשוחרר בבת אחת, בלי destructors כלל.",
+        "rubric": [
+          "חישוב: 12 bytes overhead לאובייקט, בערך 120MB",
+          "vector by value או variant במקום vptr",
+          "shared_ptr מ-make_shared שומר deleter קונקרטי, או arena בלי destructors"
+        ]
+      }
     }
   ]
 }

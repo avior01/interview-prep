@@ -356,7 +356,17 @@
         "לא נכון: לא צריך mutex. seq_cst מספיק, כי הוא מכניס את ארבע הפעולות לסדר כולל אחד.",
         "נכון: עם seq_cst כל הפעולות בסדר כולל S. אחד ה-stores ראשון ב-S, וה-load של ה-thread השני בא אחריו ב-S, ולכן חייב לראות 1. זו הסיבה ש-seq_cst store ב-x86 הוא xchg.",
         "לא נכון: relaxed לא נותן שום סדר בין משתנים שונים, ולכן הוא בוודאי מתיר 0/0. הוא החלש מכולם, לא החזק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה קורה פיזית ב-x86 שמייצר את התוצאה 0/0, ואיך היית מראה אותה בפועל על מכונה אמיתית?",
+        "modelAnswer": "כל core כותב את ה-store שלו ל-store buffer פרטי, וה-store נכנס ל-cache (ונעשה גלוי לאחרים) רק מאוחר יותר. ה-load שאחריו, לכתובת אחרת, לא מחכה ונענה מה-cache, שעדיין מכיל 0. store-to-load forwarding עוזר רק לאותה כתובת, ולכן כל thread רואה את ה-store של עצמו אבל לא את של השני, ושניהם קוראים 0. להדגמה: litmus test עם שני threads מוצמדים ל-cores פיזיים שונים, מיליוני איטרציות עם סנכרון (barrier) בין איטרציות כדי ששניהם יתחילו יחד, וספירה של 0/0. התוצאה מופיעה בתדירות קטנה אבל לא אפסית. עם seq_cst הקומפיילר מוציא `xchg` ל-store, שמרוקן את ה-store buffer לפני ה-load, במחיר של עשרות cycles, והתוצאה נעלמת.",
+        "rubric": [
+          "store buffer: ה-load נענה מה-cache לפני שה-store גלוי",
+          "forwarding עובד רק לאותה כתובת",
+          "litmus test עם threads מוצמדים, הרבה איטרציות וסנכרון בין איטרציות",
+          "seq_cst store כ-xchg שמרוקן את ה-store buffer"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q08",
@@ -383,7 +393,17 @@
         "לא נכון: סדר גלובלי אחד שכל ה-threads מסכימים עליו נותן רק seq_cst. עם acquire/release threads שונים יכולים לראות כתיבות בלתי תלויות בסדרים שונים (IRIW).",
         "נכון: זו ההגדרה של acquire: קריאות וכתיבות שבאות אחריו לא יכולות לעלות לפניו.",
         "נכון: הסנכרון קיים רק אם ה-acquire קרא את הערך שה-release כתב, או ערך מאוחר יותר ב-release sequence שלו (למשל RMW). acquire שקרה מאוחר יותר בזמן אבל קרא ערך אחר לא מסתנכרן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה התקן מתיר להכניס פעולות פנימה לתוך האזור שבין acquire ל-release, אבל לא להוציא החוצה? ואיזו אופטימיזציה בחומרה זה מאפשר?",
+        "modelAnswer": "להכניס פעולה לתוך האזור זה כאילו המתכנת כתב אותה שם מלכתחילה: היא רק נעשית מסודרת יותר, ושום הבטחה לא נשברת. להוציא פעולה החוצה, למשל כתיבה מתוך critical section אל אחרי ה-release, היה חושף נתונים מוגנים לפני שהסנכרון מכסה אותם. בזכות זה המחסומים יכולים להיות חד-כיווניים וזולים: ב-AArch64, `stlr` רק מוודא שהפעולות הקודמות גלויות לפניו, ו-`ldar` רק מונע מפעולות מאוחרות לעלות לפניו, בלי מחסום מלא (`dmb ish`) לשני הכיוונים. המעבד יכול להמשיך לבצע loads מאוחרים בזמן שה-release store עדיין ב-store buffer, וזה בדיוק ה-StoreLoad שנשאר מותר.",
+        "rubric": [
+          "הכנסה פנימה שקולה לקוד שנכתב כך, לא שוברת הבטחה",
+          "הוצאה החוצה חושפת נתונים מוגנים בלי סנכרון",
+          "מאפשר מחסומים חד-כיווניים (stlr/ldar) במקום מחסום מלא",
+          "loads מאוחרים ממשיכים בזמן שה-store ב-store buffer"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q09",
@@ -404,7 +424,17 @@
         "לא נכון: relaxed נותן הדדיות (רק אחד מצליח ב-exchange), אבל לא נראות של הנתונים המוגנים: מה שנכתב ב-critical section לא מובטח להיראות למחזיק הבא.",
         "לא נכון: unlock ב-relaxed שובר את צד הכותב: כתיבות מתוך ה-critical section יכולות לרדת מתחת לשחרור. seq_cst חזק ב-lock לא מפצה על זה.",
         "לא נכון: הכיוונים הפוכים. release ב-lock לא מונע מהגישות בפנים לעלות מעליו, ו-acquire הוא בכלל לא order חוקי ל-store."
-      ]
+      ],
+      "followUp": {
+        "prompt": "האם ה-release ב-unlock 'דוחף' את הכתיבות לזיכרון כך שה-thread הממתין יראה אותן מהר יותר? מה בעצם קובע כמה זמן לוקח לממתין לראות שה-lock שוחרר?",
+        "modelAnswer": "לא. memory order קובע סדר, לא תזמון. ה-caches קוהרנטיים בחומרה, ואין 'flush' שהקוד צריך לבקש. release רק מבטיח שכאשר הממתין יראה את ה-false, הוא יראה גם את כל מה שנכתב לפניו. הזמן עד שה-store נראה תלוי בריקון ה-store buffer ובהעברת ה-line דרך פרוטוקול ה-coherence, שהחומרה עושה מהר ככל האפשר, בסדר של עשרות עד מאות ns. התקן עצמו רק אומר שמימוש צריך לגרום ל-stores אטומיים להיראות 'תוך זמן סביר', בלי חסם. אפילו seq_cst store (xchg) לא מאיץ את הקורא: הוא גורם לכותב לחכות שה-store buffer שלו יתרוקן.",
+        "rubric": [
+          "memory order קובע סדר ולא latency",
+          "caches קוהרנטיים, אין flush ידני",
+          "הזמן נקבע על ידי ריקון ה-store buffer והעברת ה-line",
+          "התקן נותן רק 'זמן סביר', בלי חסם"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q10",
@@ -443,7 +473,17 @@
         "נכון: fence release שקודם ל-store, ו-load שקרא את הערך הזה וקודם ל-fence acquire, יוצרים synchronizes-with בין שני ה-fences. לכן `data = 42` happens-before `use(data)`.",
         "לא נכון: seq_cst לא נדרש. fence release ו-fence acquire מספיקים לזוג הזה, בדיוק כמו store-release ו-load-acquire.",
         "לא נכון: זה מוגדר בתקן ונכון בכל ארכיטקטורה. ב-ARM ה-fences מתקמפלים ל-dmb, ב-x86 כמעט לכלום."
-      ]
+      ],
+      "followUp": {
+        "prompt": "consumer שעובר על 8 תורים ובודק בכל אחד דגל ready. השווה acquire על כל load לעומת loads relaxed ו-fence אחד: מה הקוד המיוצר ב-x86 וב-AArch64, ומה המחיר הנסתר של ה-fence?",
+        "modelAnswer": "עם acquire על כל load: ב-AArch64 שמונה `ldar` (או `ldapr` ב-ARMv8.3 ומעלה), וב-x86 שמונה `mov` רגילים. עם relaxed ו-fence רק אחרי שמצאנו דגל מוכן: שמונה loads רגילים ו-`dmb ishld` אחד ב-AArch64, וב-x86 acquire fence לא מוציא שום הוראה, רק מגביל את הקומפיילר. המחיר הנסתר: fence מסדר את **כל** ה-loads שלפניו מול כל הפעולות שאחריו, לא רק את ה-load הרלוונטי, ולכן הוא יכול להיות כבד יותר מ-ldar בודד. הוא משתלם כשרוב הבדיקות נכשלות ומשלמים עליו רק בהצלחה. בנוסף, release fence ב-AArch64 הוא `dmb ish` מלא, יקר יותר מ-`stlr`.",
+        "rubric": [
+          "x86: acquire/release fences ו-loads הם בלי הוראה נוספת",
+          "AArch64: ldar לכל load מול dmb ishld אחד",
+          "fence מסדר את כל הפעולות, לא רק משתנה אחד",
+          "משתלם כשרוב הבדיקות נכשלות ומשלמים רק בהצלחה"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q12",
@@ -464,7 +504,17 @@
         "לא נכון: האטומיות כבר מבטיחה שרק אחד יראה 1; seq_cst לא מוסיף כאן כלום לשאלה הזו. מה שחסר הוא release ו-acquire לנראות של הגישות לאובייקט.",
         "לא נכון: נכון שרק אחד יראה 1, אבל זה לא מספיק. בלי release/acquire, ה-delete לא מסודר אחרי הגישות של owners אחרים לאובייקט, וזה race.",
         "נכון: owner שכתב לאובייקט ואז הוריד את ה-count צריך release, והמוחק צריך acquire, אחרת אין happens-before בין הכתיבות ל-destructor. ה-RMWs יוצרים release sequence, ולכן fence acquire אחד אצל המוחק מסתנכרן עם כל ה-releases הקודמים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה ההגדלה של ה-reference count יכולה להיות relaxed, ולמה לא פשוט לשים acq_rel על כל fetch_sub במקום release ו-fence רק במחיקה?",
+        "modelAnswer": "הגדלה מתבצעת רק על ידי מי שכבר מחזיק הפניה (מעתיק shared_ptr קיים), ולכן האובייקט לא יכול למות בזמן ההגדלה, וההגדלה לא מפרסמת שום נתון. לכן relaxed מספיק. בהקטנה, כל owner חייב release כדי שהגישות שלו לאובייקט יסתדרו לפני ה-delete. אבל acquire נחוץ רק ל-thread אחד, זה שמוחק. acq_rel על כל הקטנה היה גורם לכולם לשלם על acquire, למשל ב-AArch64 `ldaxr` במקום `ldxr` בלולאת ה-LL/SC, או הוראות חזקות יותר ב-POWER. ה-fence acquire במסלול הנדיר של המחיקה מספיק בזכות ה-release sequence. ב-x86 אין הבדל בקוד: כל RMW הוא `lock xadd` עם full barrier ממילא.",
+        "rubric": [
+          "הגדלה relaxed כי המגדיל כבר מחזיק הפניה ולא מפרסם נתונים",
+          "release בכל הקטנה, acquire רק אצל המוחק",
+          "acq_rel לכולם עולה יותר בארכיטקטורות חלשות",
+          "ב-x86 אותו קוד בדיוק"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q13",
@@ -485,7 +535,17 @@
         "לא נכון: ה-caches ב-ARM קוהרנטיים לגמרי בין cores. הבעיה היא סדר בין כתיבות למשתנים שונים, לא קוהרנטיות.",
         "נכון: x86 לא מסדר מחדש store-store ו-load-load בחומרה, ולכן באג של relaxed נשאר מוסתר (אם הקומפיילר לא סידר מחדש). ARM הוא weakly ordered, והדגל יכול להיראות לפני הנתונים. התיקון: release/acquire.",
         "לא נכון: הקומפיילר פעל כחוק: relaxed מתיר את הסידור הזה. הבאג בקוד, שהסתמך על התנהגות של x86 שהתקן לא מבטיח."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אמרת שגם ב-x86 הקומפיילר היה רשאי לשבור את הקוד הזה. תן טרנספורמציה קונקרטית שהקומפיילר מותר לעשות, ומתי סביר שתראה אותה.",
+        "modelAnswer": "בצד ה-producer, הכתיבות הלא-אטומיות ל-buffer מותר להזיז אל אחרי store relaxed של הדגל, למשל כשהקומפיילר משאיר את ערכי ה-buffer ברגיסטרים וכותב אותם בסוף הפונקציה, או ממזג כתיבות. בצד ה-consumer, הקומפיילר רשאי להעלות קריאה של buffer אל לפני לולאת ההמתנה, או להשתמש בערך שכבר טען קודם, כי בלי acquire אין שום אילוץ סדר בין הדגל לבין ה-buffer. טרנספורמציות כאלה מופיעות בעיקר אחרי inlining, LTO או שינוי של רמת האופטימיזציה, ולכן הקלאסיקה היא 'עובד ב-O0, נשבר ב-O2 אחרי שינוי לא קשור'. release/acquire מגבילים גם את הקומפיילר, לא רק את המעבד.",
+        "rubric": [
+          "producer: כתיבות לא-אטומיות יכולות לרדת אחרי store relaxed",
+          "consumer: קריאות buffer יכולות לעלות לפני הלולאה או להשתמש בערך ישן",
+          "מופיע אחרי inlining/LTO/שינוי אופטימיזציה",
+          "release/acquire מגבילים גם את הקומפיילר"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q14",
@@ -500,7 +560,17 @@
         "קושר ל-x86: store buffer ולמה seq_cst store הוא xchg"
       ],
       "explanation": "מראיינים בודקים כאן אם יש מודל מנטלי מדויק, ולא רק הכלל התמיד ב-seq_cst.",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "שלושה threads: A כותב data ואז store-release ל-x. B עושה load-acquire מ-x (רואה 1) ואז store-release ל-y. C עושה load-acquire מ-y (רואה 1) וקורא data. האם C בטוח לראות את data? ומה שובר את השרשרת?",
+        "modelAnswer": "כן. happens-before טרנזיטיבי: הכתיבה ל-data sequenced-before ה-release של A, שמסתנכרן עם ה-acquire של B, שהוא sequenced-before ה-release של B ל-y, שמסתנכרן עם ה-acquire של C, שהוא sequenced-before הקריאה של data. לכן הכתיבה happens-before הקריאה, ואין data race, למרות ש-C לא נגע ב-x בכלל. השרשרת נשברת אם חוליה אחת חלשה: אם B קורא את x ב-relaxed (אין synchronizes-with בין A ל-B), או כותב את y ב-relaxed (אין synchronizes-with בין B ל-C). זו הסיבה ש-handoff של mutex בין כמה threads ברצף עובד: כל unlock/lock הוא חוליה בשרשרת.",
+        "rubric": [
+          "כן, C רואה את data",
+          "שרשרת: sb, sw, sb, sw, sb, וטרנזיטיביות",
+          "relaxed בחוליה כלשהי שובר את השרשרת",
+          "אותו עיקרון שמאפשר handoff של mutex בין threads"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q15",
@@ -521,7 +591,17 @@
         "נכון: acquire/release מסדרים רק ביחס לכותב שקראת ממנו, ולא מחייבים הסכמה גלובלית על סדר כתיבות בלתי תלויות. התקן מתיר את התוצאה, וב-POWER היא נצפית. רק seq_cst בכל הפעולות אוסר אותה.",
         "לא נכון: acquire מסדר את הקריאות של אותו thread זו אחרי זו, אבל לא מחייב ש-T3 ו-T4 יראו את שתי הכתיבות הבלתי תלויות באותו סדר.",
         "לא נכון: התוצאה מותרת כבר עם release; לא צריך להחליש ל-relaxed. ה-release של כותבים נפרדים לא יוצר סדר ביניהם."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה זה multi-copy atomicity, ולמה POWER מסוגל פיזית לייצר את התוצאה של IRIW בעוד x86 ו-ARMv8 לא?",
+        "modelAnswer": "multi-copy atomicity אומרת ש-store נעשה גלוי לכל ה-cores האחרים באותו רגע, או לאף אחד. x86 ו-ARMv8 (מאז העדכון של המודל ב-2017) הם other-multi-copy-atomic: רק ה-core הכותב יכול לראות את ה-store שלו מוקדם (דרך ה-store buffer), ושאר ה-cores רואים אותו יחד. ב-POWER, threads שחולקים store buffer או cache קרוב (SMT באותו core) יכולים לראות store לפני שהוא הגיע ל-cores אחרים. כך T3, שקרוב ל-T1, רואה x קודם, ו-T4, שקרוב ל-T2, רואה y קודם. המחיר של seq_cst ב-POWER: המיפוי המקובל שם `hwsync` (מחסום מלא) לפני כל seq_cst load, וזה יקר מאוד ביחס ל-acquire.",
+        "rubric": [
+          "הגדרה: store נראה לכל האחרים בבת אחת",
+          "x86 ו-ARMv8 הם other-multi-copy-atomic",
+          "POWER: threads קרובים (SMT, cache משותף) רואים store מוקדם",
+          "seq_cst ב-POWER: sync מלא לפני loads, יקר"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q16",
@@ -544,7 +624,17 @@
         "לא נכון: דווקא ב-x86 זה נשבר בפועל, כי StoreLoad הוא הסידור מחדש היחיד ש-x86 מתיר בגלל ה-store buffer.",
         "לא נכון: release/acquire מסדרים store לפני store ו-load לפני load, אבל לא store לפני load שאחריו. זה בדיוק הסדר ש-Peterson צריך.",
         "לא נכון: volatile לא יוצר שום סדר בין threads ב-C++. גם turn כבר atomic, וזה לא מה שחסר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שתיקנת עם seq_cst. האם גם ה-unlock (`flag[i].store(false)`) חייב להיות seq_cst? ולמה Peterson כמעט לא בשימוש בקוד אמיתי היום?",
+        "modelAnswer": "ה-unlock יכול להישאר release: הוא רק צריך לפרסם את הכתיבות של ה-critical section למי שייכנס אחר כך, וה-load של flag[other] אצל הנכנס הוא seq_cst, שכולל acquire, ולכן הזוג מסתנכרן. ה-seq_cst נחוץ רק בכניסה, בין שני ה-stores של הכוונה לבין ה-loads, כדי לאסור StoreLoad. למה לא בשימוש: האלגוריתם עובד רק לשני threads (ההכללה ל-N, filter lock, עולה O(N) בכל כניסה), ממתין ב-busy-wait, ובכל כניסה הוא משלם על מחסום מלא ממילא (xchg או mfence), שעולה בערך כמו RMW אטומי אחד. כשיש לחומרה CAS או exchange, lock מבוסס RMW פשוט יותר, תומך בכל מספר threads, ולא יקר יותר.",
+        "rubric": [
+          "unlock release מספיק, כי ה-seq_cst load בכניסה כולל acquire",
+          "seq_cst נחוץ רק בין stores ל-loads בכניסה",
+          "Peterson משלם מחסום מלא בכל כניסה, בערך כמו RMW אחד",
+          "מוגבל לשני threads ו-busy-wait"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q17",
@@ -574,7 +664,17 @@
         "לא נכון: ב-x86 כל RMW הוא lock-prefixed ולכן full barrier ממילא. fetch_add עם acq_rel ועם seq_cst מתקמפלים לאותה הוראה (lock xadd).",
         "נכון: ldar ו-stlr ב-AArch64 הם RCsc, כלומר stlr ואחריו ldar לא מסודרים מחדש, ולכן הם מספיקים גם ל-seq_cst ולא רק ל-acquire ו-release.",
         "נכון: seq_cst store ב-x86 צריך למנוע StoreLoad, ולכן מתקמפל ל-xchg (שהוא locked) או ל-mov ואחריו mfence."
-      ]
+      ],
+      "followUp": {
+        "prompt": "פרדוקס לכאורה: x86 'חזק' יותר מ-ARM, ובכל זאת ב-x86 seq_cst store דורש `xchg` וב-AArch64 מספיק `stlr`. הסבר.",
+        "modelAnswer": "ב-AArch64 ה-`stlr` וה-`ldar` הם RCsc: יש כלל מיוחד ש-`ldar` לא יכול להתבצע לפני `stlr` שקדם לו בסדר התוכנית. לכן כשכל ה-stores וה-loads של seq_cst הם stlr ו-ldar, StoreLoad בין שתי פעולות seq_cst אסור, ו-SB מתוקן בלי מחסום מלא. ב-x86 אין הוראות load ו-store עם הערת סדר: כל mov זהה, ו-TSO מתיר StoreLoad לכל mov, אז הדרך היחידה לאסור אותו היא מחסום מלא (xchg או mfence) שמרוקן את ה-store buffer לגמרי. כלומר ARM שילמה בתכנון זוג הוראות ייעודי. התוצאה: ב-AArch64 seq_cst ו-acq_rel עולים כמעט אותו דבר ל-loads ו-stores. ARMv8.3 הוסיף `ldapr` (RCpc), acquire זול יותר שלא מחכה ל-stlr קודם, ומתאים ל-acquire שאינו seq_cst.",
+        "rubric": [
+          "RCsc: ldar לא עובר לפני stlr קודם",
+          "x86 בלי הוראות מסומנות, StoreLoad נאסר רק במחסום מלא",
+          "ב-AArch64 seq_cst כמעט זהה במחיר ל-acq_rel",
+          "ldapr (ARMv8.3) כ-acquire זול יותר"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q18",
@@ -710,7 +810,17 @@
         "נכון: אם r1 = 0 אין synchronizes-with, ו-x יכול להיראות או לא. למשל T2 קורא y לפני שנכתב, T1 רץ כולו, ואז T2 קורא x = 1.",
         "לא נכון: אם r1 = 1, ה-acquire קרא את ערך ה-release ומסתנכרן איתו. `x.store(1)` הוא sequenced-before ה-release, ולכן happens-before הקריאה של x, ו-r2 חייב להיות 1.",
         "נכון: T1 רץ כולו לפני T2, וה-acquire שקורא y = 1 מבטיח גם ש-x = 1 נראה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ואם T2 היה כותב `r1 = y.load(relaxed); r2 = x.load(acquire);`, כלומר ה-acquire על x במקום על y? אילו תוצאות אפשריות עכשיו ולמה?",
+        "modelAnswer": "גם (1, 0) נעשה אפשרי. acquire מסתנכרן רק אם הוא קורא ערך שנכתב ב-release store (או ב-release sequence שלו), וה-store ל-x הוא relaxed, אז ה-acquire על x לא מסתנכרן עם אף אחד. בנוסף, acquire מונע מפעולות **מאוחרות** לעלות מעליו, לא מסדר את ה-load שלפניו, ולכן הקריאה של y יכולה עדיין להתבצע 'אחרי' x. הכלל: ה-acquire חייב להיות על אותו משתנה שעליו נעשה ה-release, וה-load הזה חייב לבוא לפני הקריאות של הנתונים.",
+        "rubric": [
+          "(1, 0) אפשרי",
+          "acquire מסתנכרן רק כשהוא קורא ערך של release store",
+          "acquire מסדר רק פעולות שאחריו",
+          "ה-acquire וה-release חייבים להיות על אותו משתנה (y)"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q25",
@@ -731,7 +841,17 @@
         "לא נכון: הקומפיילרים לא מורידים אותו ל-relaxed, כי זה היה שובר את ההבטחה שלו. הם מחזקים אותו ל-acquire, שהוא תמיד בטוח.",
         "נכון: מעקב אחרי תלויות נתונים דרך האופטימייזר התגלה כלא מעשי, ולכן GCC, Clang ו-MSVC מממשים consume כ-acquire, והתקן ממליץ מאז C++17 לא להשתמש בו.",
         "לא נכון: consume הוא חלק מהתקן ומותר בכל פלטפורמה. ARM ו-POWER הם רק הפלטפורמות שבהן הוא היה אמור לחסוך מחסום."
-      ]
+      ],
+      "followUp": {
+        "prompt": "RCU בקרנל של Linux קורא pointers שפורסמו בלי שום מחסום (`rcu_dereference`). על מה זה נשען בחומרה, ואיך הקומפיילר יכול לשבור את זה?",
+        "modelAnswer": "על address dependency: ב-ARM ו-POWER, load שהכתובת שלו מחושבת מערך של load קודם (טוענים p ואז p->field) לא יכול להתבצע לפני ה-load הראשון, כך שהסדר מגיע בחינם מהחומרה. (Alpha הייתה החריגה, ולכן היה בקרנל barrier מיוחד ל-dependencies.) rcu_dereference הוא בעצם READ_ONCE, כלומר גישה volatile שמונעת מהקומפיילר לפצל או לשכפל את הקריאה. הקומפיילר יכול לשבור את התלות אם הוא מחליף ערך בקבוע: למשל אחרי `if (p == &default_obj)` הוא רשאי להשתמש ב-`&default_obj` ישירות, וזה כבר לא תלוי ב-load. גם חישוב כמו `p + (x - x)` יכול להעלם. לכן לקרנל יש כללים כתובים מה מותר לעשות עם pointer כזה. ב-C++ התקני משלמים acquire (ldar או ldapr ב-AArch64), זול אבל לא חינמי.",
+        "rubric": [
+          "address dependency מסודרת בחומרה ב-ARM/POWER (לא ב-Alpha)",
+          "READ_ONCE/volatile כדי שהקומפיילר לא ישנה את הקריאה",
+          "קומפיילר שובר תלות, למשל אחרי השוואה ל-pointer קבוע",
+          "ב-C++ משתמשים ב-acquire במקום"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q26",
@@ -755,7 +875,17 @@
         "נכון: הקריאה של g בשורה 5 בלי lock מתחרה בכתיבה בשורה 7, וזה data race. ה-thread שמוצא g לא-null לא לקח lock, ולכן אין happens-before מהבנייה אליו והוא יכול לראות שדות לא מאותחלים. התיקון: `std::atomic<Widget*>` עם acquire/release, או static מקומי.",
         "לא נכון: lock_guard משתחרר רק בסוף ה-scope, אחרי שה-new וההשמה ל-g הסתיימו.",
         "לא נכון: lock_guard הוא RAII ומשחרר את ה-mutex גם כש-new זורק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "התיקון הקל הוא static מקומי. איך הקומפיילר מממש אותו, מה עולה ה-fast path, ומה קורה אם הבנאי זורק או קורא בחזרה ל-get()?",
+        "modelAnswer": "הקומפיילר מוסיף guard variable. ה-fast path הוא load acquire של byte ה-guard ו-branch: ב-x86 mov רגיל, ב-AArch64 ldar, כמעט חינם. ב-slow path, לפי ה-Itanium C++ ABI, קוראים ל-`__cxa_guard_acquire`, שמשתמש ב-lock או futex ומחכה אם thread אחר באמצע האתחול, ואחרי הבנייה `__cxa_guard_release` מסמן הצלחה ומעיר ממתינים. אם הבנאי זורק, `__cxa_guard_abort` מחזיר את ה-guard למצב לא-מאותחל, והקריאה הבאה תנסה שוב. קריאה רקורסיבית ל-get() מתוך הבנאי היא UB, ובפועל deadlock או חריגה. `-fno-threadsafe-statics` מבטל את כל זה. מלכודת נוספת: סדר ההריסה ביציאה, ולכן לפעמים משתמשים ב-singleton שלא נהרס (new בלי delete).",
+        "rubric": [
+          "guard variable עם load acquire ב-fast path",
+          "slow path עם lock (__cxa_guard_acquire/release)",
+          "exception: ה-guard חוזר ונעשה ניסיון חוזר",
+          "רקורסיה באתחול: UB, בפועל deadlock"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q27",
@@ -776,7 +906,17 @@
         "נכון: בלי fence, הקריאות של d1 ו-d2 יכולות לרדת אחרי הקריאה של s2, והקורא יאמת s1 == s2 ורק אז יקרא נתונים של כתיבה חדשה. fence acquire אחרי קריאות הנתונים ולפני s2 קושר אותן לפניה.",
         "לא נכון: release אינו memory order חוקי ל-load. וגם רעיונית, release מונע מפעולות קודמות לרדת אחרי store, לא אחרי load.",
         "לא נכון: קריאה לא-atomic במקביל לכתיבה היא data race ו-UB, גם אם הקורא זורק אחר כך את הערך. זה בדיוק למה הנתונים ב-seqlock הם atomic relaxed."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו צד הכותב של ה-seqlock: איזה רצף פעולות ו-orders הוא צריך, ומה קורה אם יש שני כותבים?",
+        "modelAnswer": "הכותב: `seq.store(s + 1, relaxed)` (אי-זוגי, 'בכתיבה'), אחר כך `atomic_thread_fence(release)`, אחר כך כתיבת הנתונים ב-relaxed, ולבסוף `seq.store(s + 2, release)`. ה-release fence מבטיח שה-stores של הנתונים לא ייראו לפני שה-seq האי-זוגי נראה, כך שקורא שראה נתונים חדשים יראה גם seq שהשתנה. ה-release האחרון מבטיח שהנתונים גלויים לפני ה-seq הזוגי החדש. seqlock מניח כותב אחד: שני כותבים יכולים לקרוא אותו s, לכתוב יחד, ולערבב נתונים. לכן כותבים מסונכרנים ביניהם ב-mutex, או עוברים לאי-זוגי עם CAS מ-s זוגי ל-s + 1. התכונה המרכזית: קוראים אף פעם לא חוסמים את הכותב, אבל קוראים יכולים לעשות retry ללא סוף אם הכתיבות תכופות.",
+        "rubric": [
+          "seq אי-זוגי, release fence, נתונים, seq זוגי עם release",
+          "ה-fence מונע מהנתונים להיראות לפני ה-seq האי-זוגי",
+          "שני כותבים חייבים mutex או CAS על seq",
+          "הכותב לא נחסם, קוראים עלולים לעשות retry רבים"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q28",
@@ -797,7 +937,17 @@
         "לא נכון: C++20 הוציא מה-release sequence רק stores רגילים של אותו thread. RMWs מכל thread עדיין ממשיכים אותו.",
         "לא נכון: acq_rel ב-T2 נחוץ רק אם T2 עצמו צריך לראות את data. בשביל T3 מספיק שה-RMW ממשיך את ה-release sequence, בכל order.",
         "נכון: release sequence מתחיל ב-store-release וכולל כל RMW שאחריו ב-modification order, מכל thread ובכל order. הערך 2 נכתב ע״י RMW שקרא 1, ולכן ה-acquire של T3 מסתנכרן עם ה-release של T1 ו-`data = 7` נראה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ואם T2 היה מבצע `x.store(2, relaxed)` רגיל (אחרי שקרא 1) במקום fetch_add? ואיך T2 יכול לתקן את זה בלי RMW?",
+        "modelAnswer": "store רגיל אינו חלק מה-release sequence. מ-C++20 רק RMWs ממשיכים אותו, ו-store רגיל של thread אחר אף פעם לא המשיך. לכן כש-T3 קורא 2, הוא קרא store relaxed של T2, לא מסתנכרן עם אף אחד, והקריאה של data היא data race. התיקון בלי RMW: T2 קורא את x ב-acquire (רואה 1 ומסתנכרן עם T1) וכותב את 2 ב-release. אז נוצרת שרשרת T1 ל-T2 ל-T3, ו-happens-before עובר בטרנזיטיביות. כלומר RMW נותן המשכיות של ה-sequence בכל order, אבל store רגיל חייב acquire לפניו ו-release עליו כדי לשמור על הקשר.",
+        "rubric": [
+          "store רגיל לא ממשיך release sequence",
+          "T3 לא מסתנכרן עם אף אחד: data race על data",
+          "תיקון: acquire load ב-T2 ו-release store",
+          "שרשרת טרנזיטיבית T1 ל-T2 ל-T3"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q29",
@@ -818,7 +968,17 @@
         "לא נכון: fences עובדים עם פעולות relaxed; זה בדיוק השימוש שלהם. התקן מגדיר את הכלל של fence seq_cst על stores ו-loads כלשהם.",
         "לא נכון: fence seq_cst חזק מ-acq_rel בדיוק בזה שהוא אוסר StoreLoad. fence acq_rel לא היה אוסר את 0/0.",
         "לא נכון: זה כלל של התקן ומחייב כל פלטפורמה. ב-x86 זה mfence וב-ARM זה dmb ish, ובשתיהן התוצאה אסורה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "האם `atomic_thread_fence(acq_rel)` בשני ה-threads היה מספיק כאן? ולאילו הוראות מתקמפל fence של seq_cst ב-x86 וב-AArch64?",
+        "modelAnswer": "לא. fence של acq_rel מסדר קריאות קודמות מול כל פעולה מאוחרת וכתיבות מאוחרות מול כל פעולה קודמת, אבל לא אוסר store קודם מול load מאוחר, כלומר StoreLoad, ולכן 0/0 עדיין מותר. ב-x86 fence של acq_rel לא מוציא שום הוראה בכלל, רק compiler barrier, וה-store buffer מייצר את 0/0 בדיוק כמו בלי fence. fence של seq_cst ב-x86 הוא `mfence`, ויש קומפיילרים שמעדיפים `lock or` על כתובת במחסנית, שזול יותר ומשיג את אותו מחסום מלא. ב-AArch64 הוא `dmb ish`.",
+        "rubric": [
+          "acq_rel fence לא אוסר StoreLoad, 0/0 נשאר אפשרי",
+          "ב-x86 acq_rel fence הוא בלי הוראה",
+          "seq_cst fence ב-x86: mfence או lock-prefixed op",
+          "seq_cst fence ב-AArch64: dmb ish"
+        ]
+      }
     },
     {
       "id": "conc.memory-order.q30",
@@ -833,7 +993,17 @@
         "תיקון מינימלי עם נימוק, ואימות שהתוצאה האסורה נעלמה, ובדיקה קבועה ב-CI"
       ],
       "explanation": "מראיין רוצה לשמוע מתודולוגיה ולא ניחוש. סימן אדום: 'אוסיף sleep' או 'אשנה הכול ל-volatile'.",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "ב-litmus test הבאג הופיע פעם ב-10^7 איטרציות. אחרי התיקון הרצת 10^9 איטרציות בלי כישלון. כמה זה מוכיח, סטטיסטית ומהותית?",
+        "modelAnswer": "אם התיקון לא היה עושה כלום, בקצב של 10^-7 היינו מצפים לכ-100 כישלונות ב-10^9 איטרציות, וההסתברות לאפס היא בערך e^-100, כך שבוודאות התיקון שינה משהו. אבל עם אפס כישלונות ב-N ניסיונות, ה-'rule of three' נותן חסם עליון של 95% על ההסתברות של בערך 3/N, כלומר 3e-9 לאיטרציה. זה לא אפס: התיקון אולי רק הקטין את החלון. וזה תקף רק לחומרה, לתזמון ולעומס שנבדקו, ושבב אחר, תדר אחר או רעש של threads אחרים יכולים לשנות את התמונה. לכן מוסיפים טיעון פורמלי: לכל זוג פעולות, איזה synchronizes-with מבטיח את הסדר. ו-model checker (herd7 עם מודל C++ או ARM, או GenMC) שמכסה את כל ההרצות של ה-litmus test ולא רק מדגם.",
+        "rubric": [
+          "בלי תיקון היו צפויים כ-100 כישלונות, אז משהו השתנה",
+          "rule of three: חסם עליון של 95% בערך 3/N",
+          "בדיקה תקפה רק לחומרה ולתזמון שנבדקו",
+          "טיעון happens-before פורמלי ו-model checker להשלמה"
+        ]
+      }
     },
     {
       "level": 2,
@@ -882,7 +1052,16 @@
         "נכון: compiler barrier נגד הקומפיילר, ו-fence נגד הקומפיילר והמעבד."
       ],
       "id": "conc.memory-order.q32",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "מתי compiler barrier לבדו באמת מספיק? תן שני מקרים אמיתיים, ומקרה אחד שבו גם fence של seq_cst לא מספיק.",
+        "modelAnswer": "1. סנכרון מול signal handler או ISR שרץ על אותו thread או core: המעבד תמיד רואה את הפעולות שלו בסדר התוכנית, ורק הקומפיילר יכול לסדר מחדש. בתקן זה `std::atomic_signal_fence`, שמוציא compiler barrier בלבד. 2. מימוש acquire ו-release ב-x86: TSO כבר שומר על load-load, store-store ו-load-store, ולכן מספיק למנוע מהקומפיילר לסדר מחדש. בקוד C++ עדיין כותבים atomics, אבל זה מסביר למה release store שם הוא mov. מקרה שבו גם seq_cst fence לא מספיק: התקן חומרה או DMA. fence של C++ מסדר מול cores אחרים במערכת הקוהרנטית, אבל כתיבה ל-MMIO או ל-buffer שה-DMA קורא עשויה לדרוש מחסומים ייעודיים לפלטפורמה (למשל `dsb` ב-ARM, או ניהול cache מפורש כשה-DMA לא קוהרנטי), ו-volatile לגישות עצמן.",
+        "rubric": [
+          "signal handler או ISR על אותו core: atomic_signal_fence",
+          "acquire/release ב-x86 דורשים רק סדר של קומפיילר",
+          "התקנים/DMA/MMIO דורשים מחסומים ייעודיים (dsb) ו-volatile, מעבר ל-fence של C++"
+        ]
+      }
     },
     {
       "level": 3,
@@ -903,7 +1082,17 @@
         "שגוי: זה בדיוק מה ש-release אוסר. אחרת קורא שרואה flag = 1 עם acquire עלול לא לראות את data."
       ],
       "id": "conc.memory-order.q33",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "נניח שצריך למנוע גם את הסידור המותר כאן, כלומר שה-load של other לא יקדים את ה-store ל-flag. האם מספיק להפוך רק את ה-load ל-seq_cst? ומה זה עולה ב-x86?",
+        "modelAnswer": "לא. הסדר הכולל של seq_cst כולל רק פעולות seq_cst, ו-store עם release לא משתתף בו. כדי לאסור StoreLoad צריך ששני הצדדים יהיו seq_cst (ה-store וה-load), או `atomic_thread_fence(seq_cst)` ביניהם. ב-x86 store עם release הוא mov רגיל, ו-store של seq_cst הופך ל-`xchg` (או mov ו-mfence), שמרוקן את ה-store buffer לפני שה-load מתבצע. המחיר הוא עשרות cycles לכל store כזה, במקום כמעט אפס. ה-load של seq_cst נשאר mov רגיל.",
+        "rubric": [
+          "seq_cst על צד אחד בלבד לא מספיק",
+          "שניהם seq_cst או fence של seq_cst ביניהם",
+          "ב-x86: xchg או mfence על ה-store, ה-load נשאר mov",
+          "המחיר: ריקון store buffer, עשרות cycles"
+        ]
+      }
     },
     {
       "level": 4,
@@ -931,7 +1120,17 @@
         "https://leetcode.com/discuss/post/1262088/apple-ict3-april-2021-offer-by-anonymous-jsei/"
       ],
       "id": "conc.memory-order.q34",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "אז בשביל מה volatile קיים ב-C++, ותן מקרה שבו צריך גם volatile וגם atomic.",
+        "modelAnswer": "volatile אומר לקומפיילר שכל גישה היא side effect נצפה: אסור לבטל, למזג או לשכפל קריאות וכתיבות, והן מתבצעות בסדר שנכתב ביחס לגישות volatile אחרות. השימושים הלגיטימיים: רגיסטרים של חומרה ב-MMIO, משתנה מסוג `volatile std::sig_atomic_t` שמשותף עם signal handler, ומשתנים מקומיים ששורדים longjmp. הוא לא נותן אטומיות ולא happens-before בין threads. מקרה לשניהם: זיכרון שמשותף עם process אחר או עם התקן, שבו צריך גם אטומיות וסדר (atomic) וגם שהקומפיילר לא יבטל או ימזג גישות, כמו polling על ערך שמשתנה מחוץ לתוכנית. `volatile std::atomic<int>` אוסר על הקומפיילר למזג גישות אטומיות, מה שהתקן מתיר על atomic רגיל (גם אם קומפיילרים כמעט לא עושים זאת היום). C++20 הוציא ל-deprecated חלק מהשימושים ב-volatile, כמו `++` על משתנה volatile.",
+        "rubric": [
+          "volatile: כל גישה מתבצעת, בלי מיזוג או ביטול",
+          "שימושים: MMIO, sig_atomic_t ב-signal handler, longjmp",
+          "volatile atomic לזיכרון שמשתנה מחוץ לתוכנית, כדי למנוע מיזוג גישות",
+          "C++20 הוציא ל-deprecated חלק מהפעולות על volatile"
+        ]
+      }
     },
     {
       "level": 5,
@@ -952,7 +1151,17 @@
         "שגוי: (3) מתאימה ל-(1) שקורא בלי lock. בלי release אין עם מה להסתנכרן."
       ],
       "id": "conc.memory-order.q35",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "ה-store ב-(3) מתבצע תחת ה-mutex, וה-unlock הוא release ממילא. למה בכל זאת הוא חייב להיות release ולא relaxed?",
+        "modelAnswer": "ה-release של ה-unlock מסתנכרן רק עם lock מאוחר יותר של אותו mutex. ה-thread שקורא ב-(1) ומוצא pointer לא-null לא לוקח את ה-mutex בכלל, ולכן הוא יכול להסתנכרן רק עם ה-store ל-inst עצמו. אם (3) הוא relaxed, ה-acquire ב-(1) קורא ערך של store relaxed ולא מסתנכרן עם אף אחד. בנוסף, בתוך ה-critical section הקומפיילר והמעבד רשאים להחליף בין כתיבות הבנאי לבין ה-store ל-inst: ה-mutex רק מונע מהן לצאת מהאזור, לא מסדר אותן בתוכו. כך thread ב-(1) יכול לראות pointer לאובייקט שעוד לא נבנה. release על (3) מבטיח שכל הבנייה גלויה לפני ה-pointer.",
+        "rubric": [
+          "release של unlock מסתנכרן רק עם lock של אותו mutex",
+          "ה-fast path ב-(1) לא לוקח את ה-mutex",
+          "בתוך ה-critical section כתיבות הבנאי וה-store יכולים להתחלף",
+          "release על (3) בזוג עם acquire על (1)"
+        ]
+      }
     },
     {
       "level": 3,
@@ -973,7 +1182,16 @@
         "שגוי: threads אחרים חוסמים עד הסיום, אחרת הם היו משתמשים במשאב לא מאותחל."
       ],
       "id": "conc.memory-order.q36",
-      "lesson": "conc.memory-order"
+      "lesson": "conc.memory-order",
+      "followUp": {
+        "prompt": "השווה את ה-fast path (אחרי שהאתחול הסתיים) של call_once, static מקומי ו-DCL עם atomic. ומה קורה אם init קורא בחזרה ל-call_once עם אותו flag?",
+        "modelAnswer": "בשלושתם, אחרי האתחול, ה-fast path הוא בעצם load עם acquire של דגל ו-branch: mov ב-x86, ldar ב-AArch64. ההבדלים הם בנוחות, לא במהירות: static מקומי הכי פשוט והקומפיילר מטפל ב-exceptions, call_once מתאים כשהאובייקט הוא member או לא static מקומי, ו-DCL ידני הוא הכי מועד לטעויות ב-memory order. קריאה רקורסיבית ל-call_once עם אותו flag מתוך init: ה-thread מחכה לסיום של אתחול שהוא עצמו מבצע, ובפועל זה deadlock. אותו דבר ב-static מקומי שהבנאי שלו ניגש לעצמו, שם זה UB מפורש.",
+        "rubric": [
+          "fast path בשלושתם: acquire load ו-branch",
+          "ההבחנה היא בנוחות ובסיכון לטעות, לא במהירות",
+          "רקורסיה עם אותו flag: deadlock בפועל"
+        ]
+      }
     }
   ]
 }

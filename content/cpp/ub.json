@@ -384,7 +384,16 @@
         "נכון: signed overflow הוא UB, ולכן הקומפיילר מניח ש-x + 1 לא גולש. במתמטיקה של מספרים שלמים x + 1 < x תמיד false, והפונקציה מתקמפלת ל-return false.",
         "שגוי: הקוד חוקי תחבירית ומתקמפל. ה-UB קורה רק בזמן ריצה, עבור INT_MAX.",
         "שגוי: עבור x שלילי, x + 1 גדול מ-x בלי שום overflow, ולכן הביטוי false."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה צריך לחבר שני int32 שמגיעים מקלט לא מהימן (למשל אורכים בפרוטוקול) ולזהות overflow. תאר שתי דרכים נכונות, ומה ההבדל ביניהן בקוד המכונה.",
+        "modelAnswer": "דרך ראשונה: בדיקה לפני הפעולה, בלי לגרום ל-overflow: `if ((b > 0 && a > INT_MAX - b) || (b < 0 && a < INT_MIN - b)) error;` ואז a + b. זה portable לחלוטין, אבל מוסיף השוואות ו-branches. דרך שנייה: `__builtin_add_overflow(a, b, &r)` ב-GCC ו-Clang (או std::ckd_add מ-C23 ב-<stdckdint.h>), שמחזיר true אם היה overflow ושם את התוצאה העטופה ב-r. בקוד המכונה זה add ואחריו jo (jump on overflow flag) או seto, כלומר הוראה אחת נוספת, כי ה-CPU כבר מחשב את דגל ה-overflow. דרך שלישית: לחשב בטיפוס רחב יותר (int64_t) ולבדוק את הטווח. בקלט לא מהימן, אחרי הזיהוי צריך גם לדחות את הקלט, לא רק לעגל.",
+        "rubric": [
+          "בדיקה מוקדמת מול INT_MAX - b / INT_MIN - b",
+          "__builtin_add_overflow (או ckd_add) שמתקמפל ל-add + jo",
+          "חלופה: חישוב ב-int64 ובדיקת טווח"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q09",
@@ -408,7 +417,16 @@
         "שגוי: !p עובד על כל pointer, כולל pointer ל-const. ה-const חל על ה-Packet ולא על ה-pointer.",
         "שגוי: !p ו-p == NULL שקולים לגמרי. הבעיה היא סדר הפעולות, לא צורת הבדיקה.",
         "שגוי: סוג השדה size לא קשור לקריסה. הקריסה נובעת מה-dereference של null."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-Linux kernel נבנה עם `-fno-delete-null-pointer-checks`. למה פרויקט כמו הקרנל מוותר על האופטימיזציה הזו, ולמה אצלו כתובת 0 יכולה להיות זיכרון תקין?",
+        "modelAnswer": "בקרנל, ובמערכות embedded, כתובת 0 יכולה להיות ממופה: בקרנל ישן תוכנת משתמש יכלה למפות את הדף בכתובת 0 (mmap עם MAP_FIXED), ובבקרים רבים כתובת 0 היא תחילת ה-flash או טבלת הפסיקות. במצב כזה dereference של null לא קורס אלא קורא נתונים, ואם הקומפיילר מחק את בדיקת ה-null שאחרי ה-dereference, קוד ממשיך לרוץ עם pointer שתוקף שלט בתוכן שלו. זה מה שקרה בבאג של tun driver ב-2009, שהפך ל-privilege escalation. הקרנל מעדיף לשלם בביצועים זניחים כדי שבדיקות null יישארו תמיד. מאז גם נוסף vm.mmap_min_addr שמונע מיפוי של דפים נמוכים מ-user space. בקוד רגיל ב-user space הפתרון הנכון הוא פשוט לבדוק לפני הגישה.",
+        "rubric": [
+          "כתובת 0 יכולה להיות ממופה (קרנל, embedded)",
+          "מחיקת הבדיקה הפכה null deref לניצול (tun 2009)",
+          "mmap_min_addr והפתרון הרגיל: לבדוק לפני הגישה"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q10",
@@ -432,7 +450,16 @@
         "שגוי: השוואה INT_MIN < 0 מוגדרת ונכונה. רק פעולות אריתמטיות כמו -INT_MIN גולשות.",
         "שגוי: סוג ההחזרה int מתאים ל-1, -1 ו-0. הבעיה היא מסלול שלא מחזיר ערך בכלל.",
         "נכון: כש-x == 0 הביצוע מגיע לסוף פונקציה שאינה void בלי return. לפי [stmt.return] זה UB ב-C++ כבר בהגעה לשם, לא רק בשימוש בערך. Clang עלול לייצר קוד שנופל לפונקציה הבאה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש switch על enum class שמכסה את כל הערכים, ובכל case יש return. GCC עדיין מזהיר על control reaches end of non-void function. למה, ומה הדרך הנכונה לטפל בזה בלי להסתיר באגים?",
+        "modelAnswer": "enum class יכול להחזיק כל ערך של ה-underlying type, לא רק את ה-enumerators המוצהרים: `static_cast<Color>(42)` חוקי. לכן מבחינת הקומפיילר יש מסלול שבו אף case לא נבחר, והפונקציה מגיעה לסוף בלי return, שזה UB. הדרך הנכונה: אחרי ה-switch לשים טיפול מפורש במקרה הלא צפוי, למשל `std::abort()` או assert עם הודעה, או ב-C++23 `std::unreachable()` אם אתה בטוח שזה לא קורה (אבל זה עצמו UB אם טעית, ולכן עדיף abort בקלט לא מהימן). לא להוסיף default ל-switch עצמו: בלי default, -Wswitch מזהיר כשמוסיפים enumerator חדש ושוכחים case, וזו הגנה חשובה. עם default ההגנה הזו הולכת לאיבוד.",
+        "rubric": [
+          "enum class יכול להחזיק ערכים שאינם enumerators",
+          "טיפול אחרי ה-switch: abort/assert או std::unreachable (C++23)",
+          "לא default בתוך ה-switch כדי לשמור את -Wswitch"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q11",
@@ -453,7 +480,17 @@
         "שגוי: התקן לא מתייחס לארכיטקטורה. גם ב-x86 inc בלי lock הוא read-modify-write לא אטומי, והקומפיילר יכול להחזיק את counter ברגיסטר.",
         "נכון: [intro.races]: שתי גישות מתנגשות, לפחות אחת מהן כתיבה, בלי happens-before ביניהן, הן data race ו-UB. אין הבטחה לשום דבר, לא רק לערך הסופי.",
         "שגוי: volatile לא נותן אטומיות ולא happens-before בין threads. הפתרון הוא std::atomic<int> או mutex."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלפת ל-std::atomic<int> עם `counter++`. שני threads מבצעים 10 מיליון increments כל אחד. כמה זמן זה לוקח בערך לעומת int לא-אטומי ב-thread יחיד, למה, ואיך היית מאיץ?",
+        "modelAnswer": "counter++ על atomic הוא fetch_add עם seq_cst, ב-x86 זה lock xadd. בלי contention הוא עולה בערך 5-20 מחזורים, ועם שני threads על ליבות שונות ה-cache line קופץ ביניהן בכל פעולה, וזה יכול לעלות 50-100 ננו-שניות לפעולה, כך ש-20 מיליון פעולות לוקחות שנייה או יותר. int לא-אטומי ב-thread יחיד מתקמפל ללולאה שהקומפיילר מקפל ל-add אחד של 10 מיליון, כמעט אפס. האצה: כל thread צובר במשתנה מקומי ומוסיף ל-atomic פעם אחת בסוף, או מונה per-thread עם alignas(64) וסיכום בקריאה. memory_order_relaxed לא עוזר ב-x86 עבור RMW (זו אותה הוראה), אבל עוזר בארכיטקטורות אחרות. הבעיה העיקרית היא contention, לא ה-memory order.",
+        "rubric": [
+          "lock xadd ו-cache line ping-pong בין הליבות",
+          "סדר גודל: עשרות ננו-שניות לפעולה עם contention",
+          "צבירה מקומית או מונים per-thread עם alignas(64)",
+          "relaxed לא משנה RMW ב-x86"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q12",
@@ -481,7 +518,16 @@
         "שגוי: מ-C++17 צד ימין של השמה מבוצע לפני צד שמאל, ולכן i++ קורה לפני ש-a[i] מחושב. מוגדר.",
         "שגוי: ארגומנטים לפונקציה הם indeterminately sequenced: הסדר unspecified, אבל אין חפיפה ביניהם, ולכן זה לא UB.",
         "נכון: שני i++ כאופרנדים של + הם unsequenced, ושני side effects על אותו אובייקט בלי סדר הם UB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין unsequenced, indeterminately sequenced ו-unspecified order? תן דוגמה לכל אחד, ותסביר למה רק הראשון הוא UB.",
+        "modelAnswer": "unsequenced: אין שום סדר בין שתי הערכות, והן יכולות אפילו להשתלב (interleave) ברמת ההוראות. אם שתיהן נוגעות באותו אובייקט ולפחות אחת כותבת, זה UB, כי התוצאה יכולה להיות קריעה של כתיבות. דוגמה: האופרנדים של +, כמו `i++ + i++`. indeterminately sequenced: אחת מהן מסתיימת לפני שהשנייה מתחילה, אבל לא מוגדר איזו. אין UB, כי אין interleaving, רק אחת משתי תוצאות. דוגמה: אתחול של פרמטרים של פונקציה ב-C++17, `f(i++, i++)` נותן (0,1) או (1,0). unspecified order הוא המונח הכללי לכך שהתקן לא קובע סדר ולא מחייב תיעוד, וכך ההתנהגות יכולה להשתנות בין קריאות. ב-C++17 גם `a[i] = i++` מוגדר, כי בהשמה צד ימין sequenced לפני צד שמאל.",
+        "rubric": [
+          "unsequenced: יכול להשתלב, עם כתיבה לאותו אובייקט = UB (i++ + i++)",
+          "indeterminately sequenced: אחת אחרי השנייה בסדר לא ידוע, לא UB (ארגומנטים ב-C++17)",
+          "C++17 קבע סדר בהשמה ובאופרטורים כמו <<"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q13",
@@ -502,7 +548,16 @@
         "נכון: ב-i=3 המכפלה גולשת, וזה UB. הקומפיילר מניח שאין overflow, ולכן מסיק ש-i < 3. אחרי strength reduction תנאי היציאה מבוטא דרך המונה החדש ולא מתקיים, ו-GCC ב-O2 ייצר בפועל לולאה אינסופית.",
         "שגוי: הקוד חוקי ומתקמפל. ה-overflow קורה רק בזמן ריצה, כש-i מגיע ל-3.",
         "שגוי: הטיפוס של הביטוי i * 1000000000 הוא int, בלי קשר למה ש-cout מקבל. החישוב גולש לפני שהערך מגיע ל-cout."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מגלה באג כזה, שבו הלולאה הפכה לאינסופית רק ב-O2? אילו כלים תופסים אותו, ולמה -O0 לא מראה אותו?",
+        "modelAnswer": "ב-O0 הקומפיילר לא מבצע strength reduction ולא מסיק הנחות מ-UB, ולכן הכפל גולש בפועל (עטיפה של two's complement) והלולאה מסתיימת אחרי 4 איטרציות עם ערך שלילי באחרונה. ב-O2 ההנחה ש-overflow לא קורה משנה את תנאי הלולאה. כלים: UBSan (`-fsanitize=signed-integer-overflow` או `-fsanitize=undefined`) מדווח בזמן ריצה בדיוק על השורה והערכים, גם ב-O2. GCC מזהיר לעתים עם -Waggressive-loop-optimizations שהאיטרציה 3 מפעילה UB. כלי נוסף: -fsanitize-trap להפוך כל UB ל-trap בבדיקות. בבינארי: להשוות disassembly של O0 ו-O2, ולראות שאין השוואה של i עם 4. התיקון: לחשב בטיפוס רחב יותר (long long) או לשנות את הלוגיקה.",
+        "rubric": [
+          "ב-O0 אין אופטימיזציה שמנצלת את ה-UB",
+          "UBSan signed-integer-overflow מדווח בזמן ריצה",
+          "-Waggressive-loop-optimizations / השוואת disassembly"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q14",
@@ -523,7 +578,16 @@
         "שגוי: התוצאה המתמטית היא 2^31, לא INT_MAX. אין saturation בחלוקה של int.",
         "שגוי: signed overflow לא מוגדר כ-wrap ב-C++, וגם בחומרה idiv לא עושה wrap אלא זורקת exception של המעבד.",
         "שגוי: התוצאה לא ניתנת לייצוג, ולכן זה UB ולא implementation-defined."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה כותב parser לפרוטוקול שמקבל שני int32 מהרשת ומחשב a / b ו-a % b. כתוב במילים את כל הבדיקות הנדרשות כדי שהקוד יהיה בטוח, ותן מקרה פינה נוסף שקשור ל-abs או לשלילה.",
+        "modelAnswer": "שתי בדיקות לפני החלוקה: b != 0 (אחרת SIGFPE), ו-!(a == INT_MIN && b == -1) (אחרת overflow, שב-x86 גם הוא SIGFPE). שתיהן נדרשות גם ל-% כי idiv מחשב את שניהם יחד. מקרה פינה קרוב: `-a` או `std::abs(a)` כש-a == INT_MIN הם UB, כי +2^31 לא ניתן לייצוג; לכן אם צריך ערך מוחלט של קלט לא מהימן, ממירים קודם ל-uint32_t (`0u - static_cast<uint32_t>(a)`) או ל-int64_t. עוד מקרה: המרת uint32 מהרשת ל-int32 לפני הבדיקות, שעד C++20 הייתה implementation-defined לערכים מעל INT_MAX (מ-C++20 מוגדרת כ-modulo 2^32). ולסיום: כל ערך שמשמש אחר כך כאינדקס או גודל צריך בדיקת טווח משלו.",
+        "rubric": [
+          "b != 0",
+          "a == INT_MIN && b == -1",
+          "abs/שלילה של INT_MIN הם UB; לעבור ל-unsigned או int64"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q15",
@@ -539,7 +603,17 @@
         "מניעה בעיצוב הקוד (RAII, atomic, checked arithmetic, hardening)"
       ],
       "explanation": "מראיין סניור מצפה לתהליך מסודר ומדיד, ולא רק לרשימת כלים. גם חשוב להבין שאסור להשאיר flags כמו -fwrapv כ'תיקון'.",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "הצעת להריץ sanitizers ב-CI. איך היית מפעיל אותם על קוד CUDA ועל קוד multi-threaded, אילו sanitizers אי אפשר לשלב באותו build, ואיך היית מתעדף את הממצאים כשיש אלפי דיווחים בהתחלה?",
+        "modelAnswer": "ASan ו-TSan לא ניתנים לשילוב באותו build (שניהם מנהלים shadow memory בצורה שונה), וגם MSan לא משתלב עם ASan; לכן מגדירים כמה builds: ASan+UBSan, TSan נפרד, ו-MSan אם כל התלויות מקומפלות איתו (Clang בלבד). לקוד CUDA, sanitizers של המעבד חלים רק על קוד ה-host; לקוד ה-device משתמשים ב-compute-sanitizer של NVIDIA (memcheck, racecheck, initcheck, synccheck). חשוב: ASan דורש לפעמים ASAN_OPTIONS=protect_shadow_gap=0 עם הדרייבר של CUDA. לתעדוף: קודם מתקנים data races (TSan) ו-memory errors (ASan), כי הם גורמים לבאגים הלא דטרמיניסטיים. דיווחים כפולים מאחדים לפי stack trace. מוסיפים suppressions זמניים לספריות צד שלישי, ומפעילים מדיניות שקוד חדש לא מוסיף דיווחים חדשים (ratchet), כך שהמספר יורד לאורך זמן.",
+        "rubric": [
+          "ASan ו-TSan (ו-MSan) ב-builds נפרדים",
+          "compute-sanitizer לקוד device של CUDA",
+          "תעדוף races ו-memory errors, איחוד לפי stack",
+          "suppressions לצד שלישי ו-ratchet לקוד חדש"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q16",
@@ -560,7 +634,16 @@
         "שגוי: התקן גם לא מבטיח שההדפסה לא תתבצע. בפועל היא כמעט תמיד תודפס.",
         "שגוי: flush לא משנה את המצב מבחינת התקן. ריצה עם UB לא מקבלת שום הבטחה, עם flush או בלעדיו.",
         "נכון: לפי [intro.abstract] אין דרישות על ריצה עם UB, גם לא לגבי פעולות שקדמו לה (time travel). בפועל puts היא קריאה חיצונית שהקומפיילר לא יודע אם היא חוזרת, ולכן לא יזיז את הכתיבה לפניה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תן דוגמה קונקרטית שבה ה-time travel של UB באמת משנה התנהגות של קוד שרץ לפני הפעולה הלא מוגדרת, כלומר הקומפיילר יכול להזיז או למחוק קוד קודם.",
+        "modelAnswer": "דוגמה: `int table[4]; bool exists(int v) { for (int i = 0; i <= 4; ++i) if (table[i] == v) return true; return false; }`. באיטרציה i == 4 יש גישה מחוץ לגבולות, UB. הקומפיילר מסיק שאם הלולאה הגיעה ל-i == 4, היה UB, ולכן במסלול תקין הפונקציה חייבת להחזיר true לפני כן; GCC עלול לקמפל את הפונקציה ל-`return true;` כמעט בלי לבדוק כלום, כלומר גם האיטרציות התקינות הראשונות מושפעות. דוגמה נוספת: כתיבה ל-volatile או חישוב שאין לו side effects נצפים, שאחריו dereference של null בטוח; הקומפיילר יכול להניח שהמסלול לא קורה ולמחוק את כל הענף כולל מה שקדם ל-dereference. הסייג הוא שקריאות לפונקציות אטומות כמו puts, I/O ו-volatile, נחשבות כאלה שאולי לא חוזרות, ולכן בדרך כלל לא נמחקות.",
+        "rubric": [
+          "דוגמת table[i] עם i <= 4 שהופכת ל-return true",
+          "האיטרציות התקינות מושפעות מה-UB שבסוף",
+          "קריאות אטומות כמו I/O בדרך כלל נשמרות"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q17",
@@ -581,7 +664,16 @@
         "שגוי: הקוד חוקי תחבירית ומתקמפל. הבעיה היא סמנטית ונוגעת לאופטימיזציות.",
         "נכון: לפי [intro.progress] עד C++23 לולאה אינסופית בלי I/O, volatile, atomic או סנכרון היא UB, ו-Clang הסיר לולאות כאלה. C++26 (P2809) פטר לולאות אינסופיות טריוויאליות.",
         "שגוי: ה-forward progress guarantee חל על כל thread, כולל ה-thread הראשי שמריץ את main."
-      ]
+      ],
+      "followUp": {
+        "prompt": "במערכת embedded יש לולאת המתנה `while (!flag) {}` כש-flag משתנה ב-ISR. מה הבעיה עם forward progress ועם hoisting, ומה הדרך הנכונה לכתוב את הלולאה ב-C++?",
+        "modelAnswer": "אם flag הוא bool רגיל, הקומפיילר מניח שאין גישה מקבילה (ה-ISR לא נראה לו), מוציא את הקריאה של flag מהלולאה ומקבל `if (!flag) while (true) {}`. ובנוסף, לולאה אינסופית בלי side effects נצפים היא UB עד C++23 (forward progress), ו-Clang עלול למחוק אותה לגמרי. הדרך הנכונה: `std::atomic<bool> flag` (lock-free, ולכן בטוח גם ב-ISR) עם `while (!flag.load(std::memory_order_acquire)) {}`; טעינה אטומית היא פעולה נצפית, כך שהלולאה לא UB, והיא נקראת מחדש בכל איטרציה. ב-embedded חד-ליבתי, `volatile std::sig_atomic_t` או volatile bool עובדים בפועל, כי גישת volatile נחשבת side effect וכל קריאה מתבצעת, אבל זה לא נותן סדר מול נתונים אחרים שה-ISR כתב. בנוסף כדאי להכניס __WFI או הוראת השהיה בלולאה כדי לחסוך חשמל.",
+        "rubric": [
+          "bool רגיל: hoisting של הקריאה, ולולאה ריקה היא UB עד C++23",
+          "std::atomic<bool> עם acquire",
+          "volatile/sig_atomic_t עובד ב-single core אבל בלי סדר מול נתונים אחרים"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q18",
@@ -602,7 +694,16 @@
         "נכון: עד C++23 קריאה של ערך indeterminate היא UB. ב-C++26 (P2795) זה erroneous behavior: ערך כלשהו מוגדר, אבל מותר למימוש לאבחן ולעצור. [[indeterminate]] מחזיר את ההתנהגות הישנה.",
         "שגוי: זה לא unspecified אלא UB, וזה גרוע יותר מזבל: הקומפיילר רשאי להניח שהמסלול לא קורה ולמחוק קוד סביבו.",
         "שגוי: הקוד חוקי ומתקמפל. קומפיילרים לכל היותר מזהירים (-Wuninitialized)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל המעשי בין UB ל-erroneous behavior מבחינת מה שהקומפיילר מורשה לעשות? ואיך דגל כמו `-ftrivial-auto-var-init=pattern` עוזר כבר היום?",
+        "modelAnswer": "ב-UB הקומפיילר רשאי להניח שהמסלול לא קורה, ולכן קריאת משתנה לא מאותחל יכולה לגרום למחיקת ענפים, לערכים שמשתנים בין קריאות לאותו משתנה (למשל x == 0 וגם x != 0) או לקוד שנראה לא קשור. ב-erroneous behavior (C++26) התוצאה היא ערך מסוים, הקומפיילר לא רשאי להסיק ממנה הנחות, ומותר למימוש לאבחן (למשל לעצור ב-debug). כלומר הבאג נשאר באג, אבל מוגבל ומקומי. `-ftrivial-auto-var-init=pattern` (GCC 12, Clang) מאתחל כל משתנה מקומי לתבנית קבועה (למשל 0xAA בבתים), כך שהערך יציב וקל לזיהוי ב-debugger ובלוגים, וגם מונע דליפת מידע מה-stack. `=zero` מאתחל לאפס, ו-Chrome ו-Windows משתמשים בזה ב-production. העלות בדרך כלל קטנה (אחוזים בודדים), כי הקומפיילר מוחק אתחולים שנדרסים מיד.",
+        "rubric": [
+          "UB: הקומפיילר מניח שהמסלול לא קורה; EB: ערך מוגדר בלי הנחות",
+          "-ftrivial-auto-var-init=pattern/zero מאתחל משתנים מקומיים",
+          "pattern עוזר לזהות באגים, zero מונע דליפת מידע, עלות קטנה"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q19",
@@ -744,7 +845,16 @@
         "שגוי: union type punning מוגדר ב-C, אבל ב-C++ רק ה-member הפעיל חי. קריאה מ-member אחר היא UB.",
         "נכון: std::bit_cast (C++20) מעתיק את ה-bits לאובייקט חדש באותו גודל ומוגדר היטב, וגם עובד ב-constexpr.",
         "שגוי: static_cast ממיר את הערך המספרי (1.5 הופך ל-1), ולא שומר את ייצוג ה-bits."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השתמש ב-bit_cast כדי להסביר במילים איך מחלצים את ה-exponent וה-mantissa של float, ואיך מזהים NaN בלי להשתמש ב-std::isnan. למה זה שימושי כשקוד מקומפל עם -ffast-math?",
+        "modelAnswer": "`uint32_t u = std::bit_cast<uint32_t>(f);` ואז sign = u >> 31, exponent = (u >> 23) & 0xFF (עם bias של 127), mantissa = u & 0x7FFFFF. NaN הוא exponent == 0xFF ו-mantissa != 0; אינסוף הוא exponent == 0xFF ו-mantissa == 0; denormal הוא exponent == 0 ו-mantissa != 0. כלומר NaN: `(u & 0x7FFFFFFF) > 0x7F800000`. זה שימושי עם -ffast-math, כי הדגל הזה כולל -ffinite-math-only, שמתיר לקומפיילר להניח שאין NaN ואינסוף, ולכן הוא עלול לקפל את std::isnan(x) ל-false ואת x != x ל-false. בדיקה על ה-bits עוברת דרך פעולות על שלמים, שהקומפיילר לא יכול להניח עליהן כלום, ולכן היא שורדת. זה חשוב ב-DSP שמקומפל עם fast-math אבל צריך לזהות ערכים פגומים מהקלט.",
+        "rubric": [
+          "חלוקת הביטים: sign, exponent (8, bias 127), mantissa (23)",
+          "NaN: exponent 0xFF ו-mantissa שאינו 0",
+          "fast-math מניח שאין NaN ומקפל את isnan; בדיקת ביטים שורדת"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q26",
@@ -770,7 +880,16 @@
         "נכון: ב-C++ רק ה-member הפעיל של union חי. קריאה מ-member אחר היא קריאה של אובייקט שלא קיים, וזה UB.",
         "שגוי: memcpy בין טיפוסים trivially copyable באותו גודל מוגדר היטב. זו הדרך הקלאסית ל-type punning.",
         "שגוי: השוואה רלציונית בין pointers לאובייקטים שונים היא unspecified לפי [expr.rel], לא UB. std::less מבטיח סדר מלא."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השוואה של `<` בין pointers לא קשורים היא לא UB אלא unspecified. מה ההבדל המעשי בין unspecified, implementation-defined ו-UB? תן דוגמה לכל אחד מעולם ה-C++.",
+        "modelAnswer": "implementation-defined: המימוש בוחר התנהגות מתוך אפשרויות סבירות וחייב לתעד אותה, והיא עקבית. דוגמאות: sizeof(int), האם char הוא signed, תוצאת right shift של מספר שלילי לפני C++20. unspecified: המימוש בוחר מתוך אפשרויות, אבל לא חייב לתעד, והבחירה יכולה להשתנות בין ריצות או קריאות. דוגמאות: סדר הערכת ארגומנטים לפונקציה, השוואת < בין pointers לא קשורים, האם string literals זהים חולקים כתובת. UB: התקן לא מטיל שום דרישה, והקומפיילר רשאי להניח שזה לא קורה. דוגמאות: signed overflow, dereference של null, data race. המשמעות המעשית: על implementation-defined אפשר להסתמך בפלטפורמה מתועדת, unspecified אסור שהנכונות תהיה תלויה בו, ו-UB אסור בכלל.",
+        "rubric": [
+          "implementation-defined: מתועד ועקבי (sizeof int, signedness של char)",
+          "unspecified: לא מתועד ויכול להשתנות (סדר ארגומנטים, < בין pointers)",
+          "UB: אין דרישות והקומפיילר מניח שלא קורה"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q27",
@@ -791,7 +910,16 @@
         "שגוי: הטיפוס של היעד לא משפיע על טיפוס החישוב. המכפלה מחושבת ב-int וגולשת לפני ההשמה ל-uint32_t.",
         "שגוי: אין כאן list-initialization, ולכן אין בדיקת narrowing. הקוד מתקמפל.",
         "נכון: a ו-b מקודמים ל-int, והמכפלה 4294836225 גדולה מ-INT_MAX. זה signed overflow, כלומר UB, אף שאין בקוד טיפוס signed. התיקון: std::uint32_t{a} * b."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-DSP אתה מכפיל דגימות int16_t ב-coefficients מסוג int16_t ומצבר לתוך int32_t (MAC). איפה בדיוק ה-UB יכול לקרות, ואיך כותבים את הלולאה כך שהיא נכונה וגם עוברת vectorization ל-pmaddwd?",
+        "modelAnswer": "int16 כפול int16 עובר promotion ל-int, והמכפלה מקסימלית בערך 2^30 (-32768 כפול -32768 = 2^30), שנכנסת ב-int32, ולכן המכפלה עצמה בטוחה. ה-UB יכול לקרות בצבירה: סכום של יותר משתי מכפלות מקסימליות עלול לעבור את INT_MAX, וזה signed overflow. אפשרויות: לצבור ב-int64_t (בטוח לכל אורך סביר, אבל vectorization פחות יעיל), להוכיח מתמטית שהסכום לא חורג עבור המקדמים בפועל (למשל ש-sum |coef| כפול 32768 קטן מ-2^31), או לצבור ב-uint32_t ולפרש בסוף, כי unsigned overflow מוגדר כ-modulo, ובמשלים ל-2 התוצאה נכונה אם הסכום הסופי בטווח. לולאה פשוטה `acc += int32_t(x[i]) * c[i];` עם int32 מזוהה על ידי GCC ו-Clang ב-O3 והופכת ל-pmaddwd או vpmaddwd, שמכפיל זוגות int16 ומחבר לזוגות int32.",
+        "rubric": [
+          "המכפלה int16*int16 נכנסת ב-int32, ה-UB בצבירה",
+          "צבירה ב-int64, הוכחת חסם, או uint32 עם modulo",
+          "הלולאה הפשוטה מתקמפלת ל-pmaddwd"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q28",
@@ -815,7 +943,16 @@
         "נכון: אין אובייקט uint32_t בכתובת, ולכן הגישה מפרה strict aliasing. buf + 1 גם לא מיושר ל-alignof(uint32_t). שניהם UB. x86 סובל גישה לא מיושרת, ARM או הוראות SIMD לא. התיקון: memcpy ל-uint32_t מקומי.",
         "שגוי: uint8_t* הוא בדיוק הדרך הנכונה להחזיק buffer של bytes. הבעיה היא הגישה אליו כאילו הוא uint32_t.",
         "שגוי: const על ערך מוחזר by value לא משנה דבר ולא קשור לקריסה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תיקנת עם memcpy. עכשיו ה-header מכיל 20 שדות בגדלים שונים. איך היית מארגן את הקוד כדי שלא יהיו 20 קריאות memcpy ידניות עם offsets, ואיך היית מוודא שה-offsets נכונים מול המפרט?",
+        "modelAnswer": "כותבים פונקציית עזר template `template<class T> T load_be(const std::byte* p)` שעושה memcpy ל-T ו-byteswap לפי std::endian, ו-reader קטן שמחזיק pointer ואורך ומתקדם אוטומטית: `r.read<uint16_t>()`, עם בדיקת גבולות פעם אחת לכל header (אם האורך קטן מ-sizeof של ה-header, דוחים). הפונקציות האלה עוברות inlining והופכות ל-mov ו-bswap בודדים. חלופה: struct עם `#pragma pack(1)` שתואם את המפרט ו-memcpy של כל ה-header אליו, ואז byteswap לכל שדה; packed structs נוחים אבל גישה לשדה לא מיושר דרך pointer או reference היא מלכודת. אימות מול המפרט: static_assert על sizeof ועל offsetof לכל שדה ב-struct, ו-unit tests עם חבילות אמיתיות (pcap) ו-fuzzing (libFuzzer עם ASan ו-UBSan) כדי לתפוס קריאות מחוץ לגבולות.",
+        "rubric": [
+          "פונקציית load_be עם memcpy ו-byteswap, reader שמתקדם",
+          "בדיקת אורך מראש",
+          "static_assert על sizeof/offsetof, tests מחבילות אמיתיות ו-fuzzing"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q29",
@@ -836,7 +973,16 @@
         "שגוי: הקומפיילר לא מוחק בדיקות אחרי כל קריאה ל-libc. הוא משתמש בתכונת nonnull שמסומנת על הפרמטרים של memcpy.",
         "נכון: תקן C, שעליו C++ נשען, דורש pointers תקינים ל-memcpy גם כש-n == 0. glibc מסמנת את הפרמטרים nonnull, ולכן הקומפיילר מסיק ש-src לא null ומוחק את הבדיקה. צריך לבדוק לפני הקריאה.",
         "שגוי: השוואה של const char* ל-nullptr חוקית ומתקמפלת. הבדיקה נמחקה באופטימיזציה, לא בגלל שגיאת טיפוס."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אותה בעיה קיימת עם `std::vector<T>::data()` של vector ריק, שעשוי להחזיר nullptr. תאר מקרה מעשי שבו זה נשבר, ואיך היית עוטף את ה-C API כדי שזה לא יקרה.",
+        "modelAnswer": "data() של vector ריק עשוי להחזיר nullptr (ב-libstdc++ זה בדרך כלל כך), ולכן `memcpy(dst, v.data(), v.size())` עם vector ריק מעביר null עם n == 0, UB, והקומפיילר יכול למחוק בדיקות null שבאות אחרי זה על אותו pointer. גם `std::copy` מעביר לפעמים ל-memmove, אבל מימושי הספרייה בודקים n > 0 לפני כן. מקרה מעשי: פונקציית serialize שמעתיקה payload אופציונלי, ואחריה if (src) שמחליט אם לכתוב header, שנמחק ב-O2. עטיפה: `inline void safe_copy(void* dst, const void* src, size_t n) { if (n) std::memcpy(dst, src, n); }`, או להשתמש ב-std::copy/std::ranges::copy על spans, שמטפלים במקרה הריק. UBSan עם `-fsanitize=nonnull-attribute` מזהה העברה של null לפרמטר nonnull בזמן ריצה.",
+        "rubric": [
+          "data() של vector ריק יכול להיות nullptr ולכן memcpy עם n=0 הוא UB",
+          "עטיפה שבודקת n לפני memcpy, או std::copy על spans",
+          "UBSan nonnull-attribute לזיהוי"
+        ]
+      }
     },
     {
       "id": "cpp.ub.q30",
@@ -863,7 +1009,16 @@
         "נכון: bit_cast דורש sizeof שווה ו-trivially copyable לשני הטיפוסים, והוא constexpr.",
         "שגוי: union punning מוגדר ב-C, אבל ב-C++ רק ה-member הפעיל חי, וקריאה מ-member אחר היא UB.",
         "נכון: memcpy בין טיפוסים trivially copyable באותו גודל מעתיק את ה-bits לאובייקט היעד, וזה מוגדר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך buffer של `std::byte` שהגיע מהרשת, ואתה רוצה להתייחס אליו כמערך של struct Header. ב-C++20 עם reinterpret_cast זה UB גם אם ה-alignment נכון. למה, ומה C++23 הוסיף כדי לפתור את זה בלי memcpy?",
+        "modelAnswer": "גם כשה-bytes נכונים וה-alignment מתאים, בכתובת הזו אין אובייקט Header חי: ה-lifetime שלו מעולם לא התחיל, ו-reinterpret_cast לא יוצר אובייקט. גישה דרך glvalue מטיפוס Header לאחסון שמכיל רק std::byte מפרה את חוקי ה-lifetime וה-aliasing. C++20 הוסיף implicit object creation לפעולות מסוימות (malloc, memcpy, operator new, ויצירת מערך של std::byte או unsigned char), שבהן אובייקטים מטיפוס implicit-lifetime (כמו Header trivially copyable) נוצרים אוטומטית אם זה נותן לתוכנית התנהגות מוגדרת. אבל buffer שמולא בקריאת recv לתוך מערך קיים לא תמיד נחשב כזה. C++23 הוסיף `std::start_lifetime_as<Header>(ptr)`, שמתחיל במפורש את ה-lifetime של Header באחסון הקיים, ושומר את ה-bytes כערך שלו, בלי העתקה. בפועל קומפיילרים לא מנצלים את זה לאופטימיזציה כאן, אבל זה הופך את הקוד לתקני.",
+        "rubric": [
+          "אין אובייקט Header חי, reinterpret_cast לא מתחיל lifetime",
+          "implicit object creation ב-C++20 לפעולות מסוימות בלבד",
+          "C++23: std::start_lifetime_as"
+        ]
+      }
     },
     {
       "level": 4,
@@ -891,7 +1046,16 @@
       ],
       "problem": "NVIDIA online test: output of printf with a++ and ++a",
       "id": "cpp.ub.q31",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "מה הייתה התשובה שלך למראיין שמתעקש שיש פלט אחד נכון לשאלה הזו? ואיך היית מראה לו את זה בפועל בתוך דקה, בלי להתווכח על התקן?",
+        "modelAnswer": "עונים בנימוס שהשאלה בודקת התנהגות של קומפיילר ספציפי ולא של השפה: ב-C זה UB, וב-C++17 הסדר בין הארגומנטים unspecified (ושינוי של a בכמה ארגומנטים בלי סדר מוגדר ב-printf הוא בעייתי), ולכן קומפיילרים שונים יכולים לתת פלט שונה. ההוכחה המהירה: Compiler Explorer עם אותו קוד ב-GCC, Clang ו-MSVC, ורואים פלטים שונים (GCC מעריך ארגומנטים מימין לשמאל על x86-64 בפועל, Clang משמאל לימין). מוסיפים שהקומפיילר מזהיר על זה עם -Wsequence-point (GCC) או -Wunsequenced (Clang). ואז מציעים את הגרסה הנכונה: לחשב את הערכים למשתנים נפרדים בסדר מפורש לפני הקריאה. זה גם מראה למראיין שאתה מבחין בין מה שהתקן מבטיח לבין מה שקומפיילר אחד עושה.",
+        "rubric": [
+          "תשובה: אין פלט מובטח, תלוי קומפיילר",
+          "הדגמה ב-Compiler Explorer עם כמה קומפיילרים",
+          "אזהרות -Wsequence-point / -Wunsequenced ותיקון עם משתנים נפרדים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -912,7 +1076,17 @@
         "שגוי: הערך שנכתב הוא i++ + 1 = 5 + 1 = 6, לא 5."
       ],
       "id": "cpp.ub.q32",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "C++17 קבע סדר לכמה אופרטורים. אילו מקרים נפוצים עדיין unsequenced או unspecified גם ב-C++17, שעדיין כדאי להימנע מהם ב-code review?",
+        "modelAnswer": "עדיין unsequenced: האופרנדים של אופרטורים אריתמטיים ובינאריים כמו +, -, *, ==, &, ולכן `i++ + i++` או `f(i) + g(i++)` הם UB אם שני הצדדים נוגעים באותו משתנה וכותבים. עדיין indeterminately sequenced (לא UB אבל סדר לא ידוע): ארגומנטים של קריאה לפונקציה, למשל `f(read(), read())` שקורא שני ערכים מ-stream בסדר לא ידוע, ובאג קלאסי עם `make_pair(it++, it++)`. גם אתחול של members ב-aggregate עם `{}` כן מסודר משמאל לימין (braced init list), ולכן `S{read(), read()}` מוגדר, בניגוד לקריאה עם סוגריים עגולים. מה ש-C++17 תיקן: <<, >>, השמה (ימין לפני שמאל), ->*, [] (שמאל לפני ימין), ו-ה-callee לפני הארגומנטים. כלל ל-review: לא לשנות משתנה ולקרוא אותו באותו ביטוי.",
+        "rubric": [
+          "אופרנדים של +, *, == עדיין unsequenced",
+          "ארגומנטים לפונקציה indeterminately sequenced (f(read(), read()))",
+          "braced init list מסודר משמאל לימין",
+          "כלל: לא לשנות ולקרוא אותו משתנה באותו ביטוי"
+        ]
+      }
     },
     {
       "level": 3,
@@ -935,7 +1109,16 @@
         "שגוי: הערכים לא יכולים להיות מודפסים לפני שהפונקציות שמחזירות אותם רצו."
       ],
       "id": "cpp.ub.q33",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "ב-C++17 הסדר של `<<` מוגדר. האם `std::cout << f() << g()` מבטיח גם שהפלט של f יופיע לפני הפלט של g כש-f ו-g עצמן כותבות ל-std::cout בתוכן? מה היה קורה לפני C++17?",
+        "modelAnswer": "ב-C++17, a << b מבטיח ש-a מוערך כולו (כולל side effects) לפני b. הביטוי הוא `(std::cout << f()) << g()`, ולכן f() נקראת, ואז operator<< כותב את התוצאה של f, ורק אחרי כן g() נקראת. אם f עצמה כותבת ל-cout בתוכה, הכתיבה הזו קורית לפני שהערך שהיא מחזירה מודפס, וכל זה לפני g. כלומר הסדר המלא מוגדר: הפלט הפנימי של f, הערך של f, הפלט הפנימי של g, הערך של g. לפני C++17 הקומפיילר היה יכול לקרוא קודם ל-g ואחר כך ל-f, ואז הפלטים הפנימיים היו מופיעים בסדר הפוך, לפני שהערכים מודפסים בכלל. בקוד ישן עם logging בתוך פונקציות, זה היה מקור לפלט מבולבל. עדיין, בין threads אין הבטחה של סדר שורות ב-cout.",
+        "rubric": [
+          "ב-C++17 a מוערך במלואו לפני b",
+          "הסדר: פלט פנימי של f, ערך f, פלט פנימי של g, ערך g",
+          "לפני C++17 g יכלה להיקרא לפני f"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1012,7 +1195,16 @@
         "שגוי: הפוך. ה-short הוא זה שמתנהג כ-signed אחרי promotion."
       ],
       "id": "cpp.ub.q36",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "השוואה של signed מול unsigned היא מקור קלאסי לבאגים, למשל `for (int i = 0; i < v.size() - 1; ++i)` עם v ריק. מה קורה בלולאה הזו, ומה כלי השפה של C++20 שעוזרים?",
+        "modelAnswer": "v.size() הוא size_t (unsigned), ו-v.size() - 1 עם v ריק הוא 0 - 1, שעוטף ל-SIZE_MAX (מוגדר ב-unsigned). i מומר ל-size_t להשוואה, והלולאה רצה כמעט לנצח וניגשת מחוץ לגבולות: UB בגישה ל-v[i], ובסוף גם signed overflow של i. GCC ו-Clang מזהירים עם -Wsign-compare (ב-Wall ל-C++). כלים של C++20: `std::ssize(v)` מחזיר גודל signed (ptrdiff_t), ואז `i < std::ssize(v) - 1` נותן -1 ל-vector ריק והלולאה לא רצה; ו-`std::cmp_less(i, v.size())` ושאר פונקציות cmp_* משווים signed ו-unsigned נכון מתמטית, בלי המרות מפתיעות. הכי פשוט: לכתוב `i + 1 < v.size()`, שאין בו חיסור.",
+        "rubric": [
+          "v.size() - 1 עוטף ל-SIZE_MAX ב-vector ריק",
+          "-Wsign-compare",
+          "std::ssize או std::cmp_less, או i + 1 < size()"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1040,7 +1232,16 @@
       ],
       "problem": "Qualcomm interview: what does malloc(0) return",
       "id": "cpp.ub.q37",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "יש לך wrapper `void* xmalloc(size_t n)` שעוצר את התוכנית אם malloc מחזיר null. איך היית מטפל ב-n == 0 כך שההתנהגות תהיה זהה בכל הפלטפורמות? ומה עם `realloc(p, 0)`?",
+        "modelAnswer": "הדרך הפשוטה: `if (n == 0) n = 1;` לפני הקריאה ל-malloc, כך שתמיד מתקבל pointer ייחודי שאינו null, ובדיקת null אומרת באמת out-of-memory. חלופה: להחזיר nullptr במפורש ל-n == 0 ולתעד שזה מותר, אבל אז כל הקוראים צריכים להבחין. realloc(p, 0) בעייתי עוד יותר: בעבר ההתנהגות הייתה implementation-defined (glibc משחרר את p ומחזיר null, מימושים אחרים מחזירים בלוק מינימלי), ו-C23 הפך אותו ל-UB. כלומר `p = realloc(p, 0)` יכול לגרום לדליפה או ל-double free בפלטפורמות שונות. לכן ה-wrapper של realloc צריך לטפל ב-0 במפורש: `if (n == 0) { free(p); return nullptr; }`. ב-C++ עדיף ממילא std::vector, שלא קורא ל-allocator עם 0.",
+        "rubric": [
+          "n == 0 ל-1 כדי לקבל התנהגות אחידה",
+          "realloc(p, 0) לא אחיד, ו-UB ב-C23",
+          "טיפול מפורש ב-0 ב-wrapper של realloc"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1061,7 +1262,17 @@
         "שגוי: memset היא פונקציה של C ולא זורקת. הכשל מגיע כסיגנל מהקרנל."
       ],
       "id": "cpp.ub.q38",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "שרת real-time שלך חייב לא להיהרג על ידי ה-OOM killer, וחייב שהקצאות ייכשלו בצורה צפויה ולא באמצע ה-memset. אילו הגדרות ברמת התהליך וברמת המערכת היית משנה?",
+        "modelAnswer": "ברמת המערכת: `vm.overcommit_memory=2` (strict overcommit), שבו הקרנל מסרב להקצאות מעבר ל-swap ועוד אחוז מה-RAM (vm.overcommit_ratio), ולכן malloc מחזיר null מראש במקום להצליח ולהיכשל בגישה. ברמת התהליך: `mlockall(MCL_CURRENT | MCL_FUTURE)` אחרי ה-init, שנועל את כל הדפים ב-RAM ומבטיח שאין page faults בנתיב החם; לפני כן מבצעים pre-fault לכל ה-buffers (כתיבה לכל דף). מגדירים `oom_score_adj` של התהליך ל--1000 ב-/proc/self/oom_score_adj (דורש הרשאות), כך שה-OOM killer יבחר תהליך אחר. ב-containers או ב-systemd, cgroups עם memory.max נותנים מגבלה מבודדת. בנוסף, כל ההקצאות הגדולות נעשות בשלב ה-init, כך שבזמן ריצה אין malloc בכלל.",
+        "rubric": [
+          "vm.overcommit_memory=2 כדי ש-malloc ייכשל מראש",
+          "mlockall ו-pre-fault ל-buffers",
+          "oom_score_adj -1000 ו/או cgroups",
+          "כל ההקצאות ב-init"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1088,7 +1299,16 @@
         "שגוי: bad_array_new_length נזרק לאורך שלילי או גדול מדי. אורך 0 חוקי."
       ],
       "id": "cpp.ub.q39",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "אם new int[0] מחזיר pointer תקין שצריך לשחרר, למה מימוש של vector לא קורא ל-allocator כש-capacity היא 0? ומה המשמעות לגבי `v.data()` של vector ריק לעומת `std::array<int, 0>::data()`?",
+        "modelAnswer": "vector ריק לא מקצה כלום כדי ש-default construction יהיה זול ו-noexcept: בלי malloc, בלי free, ובלי overhead של allocator. לכן ה-pointers הפנימיים הם nullptr, ו-v.data() של vector ריק שנוצר בלי reserve מחזיר בדרך כלל nullptr (התקן מבטיח רק ש-[data(), data()+size()) הוא טווח תקין, וטווח ריק מ-nullptr הוא תקין). std::array<int, 0>::data() גם הוא unspecified: יכול להיות nullptr או לא, והתקן לא מאפשר לעשות dereference. ההשלכה: קוד שמעביר v.data() ל-C API או ל-memcpy חייב לטפל בגודל 0 ולא להניח pointer לא-null. new int[0] קיים בעיקר כדי שקוד גנרי שמקצה מערכים לפי גודל משתנה לא יצטרך מקרה מיוחד, ובמחיר של הקצאה אמיתית.",
+        "rubric": [
+          "vector ריק לא מקצה כדי שבנייה תהיה זולה ו-noexcept",
+          "data() של vector ריק יכול להיות nullptr",
+          "מעבירים ל-C API/memcpy רק עם בדיקת גודל"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1122,7 +1342,16 @@
       ],
       "problem": "Qualcomm / NVIDIA interview: memcpy vs memmove",
       "id": "cpp.ub.q40",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "memmove מטפל בחפיפה. האם הוא איטי יותר מ-memcpy בפועל, ואיך הוא מחליט באיזה כיוון להעתיק? מתי כן הייתי בוחר memcpy במודע?",
+        "modelAnswer": "memmove משווה את הכתובות: אם dst < src (או שאין חפיפה), הוא מעתיק קדימה; אם dst > src עם חפיפה, הוא מעתיק מהסוף להתחלה, כך שכל byte נקרא לפני שהוא נדרס. במימושים מודרניים (glibc עם AVX) העלות הנוספת היא השוואה אחת ו-branch, ולגדלים גדולים ההבדל זניח; בהרבה מימושים memcpy ו-memmove חולקים את אותו קוד בפועל. לגדלים קטנים וקבועים הקומפיילר מבצע inlining לשניהם להוראות load ו-store. בוחרים memcpy במודע כשמבטיחים שאין חפיפה, כדי לתעד את ההנחה ולאפשר לכלים (ASan מזהה memcpy-param-overlap) לתפוס הפרה. בתחום הזה, הבחירה היא קודם כל של נכונות, ולא של ביצועים, כי ההבדל בביצועים כמעט אף פעם לא משמעותי.",
+        "rubric": [
+          "memmove בוחר כיוון לפי השוואת כתובות",
+          "העלות הנוספת היא השוואה ו-branch, זניחה",
+          "memcpy כשמבטיחים שאין חפיפה; ASan memcpy-param-overlap"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1161,7 +1390,16 @@
         "שגוי: הנתונים שובשו, אבל לא נעלמו. הקריאה התבצעה, רק בסדר העתקה אחר."
       ],
       "id": "cpp.ub.q42",
-      "lesson": "cpp.ub"
+      "lesson": "cpp.ub",
+      "followUp": {
+        "prompt": "מה זה ifunc ב-glibc, ואיך הוא מסביר שהבאג הופיע רק במעבדים מסוימים? איך היית בודק באיזה מימוש של memcpy התוכנית משתמשת בפועל על מכונה נתונה?",
+        "modelAnswer": "ifunc (GNU indirect function) הוא מנגנון שבו הסימבול memcpy מקושר לפונקציית resolver שרצה פעם אחת בזמן הטעינה, בודקת את יכולות ה-CPU (CPUID: SSE2, SSSE3, AVX2, AVX-512, ERMS) ומחזירה את המימוש המתאים ביותר. כך אותו binary משתמש ב-__memcpy_avx_unaligned_erms במעבד אחד וב-__memcpy_ssse3_back במעבד אחר. מימוש שמעתיק מהסוף להתחלה (ssse3_back) חשף את הקוד השבור רק במעבדים שבחרו בו. בדיקה: ב-gdb, `break memcpy` ואחרי הקריאה הראשונה `info symbol $pc` או disassemble, שמראים את שם המימוש שנבחר; או perf record שמראה את שם הסימבול בפרופיל; או LD_DEBUG=bindings. אפשר גם לכפות מימוש עם GLIBC_TUNABLES (glibc.cpu.hwcaps) כדי לשחזר את הבאג במכונה אחרת.",
+        "rubric": [
+          "ifunc: resolver שבוחר מימוש לפי CPUID בזמן טעינה",
+          "מימוש שמעתיק אחורה חשף את הבאג במעבדים מסוימים",
+          "בדיקה עם gdb/perf, ושחזור עם GLIBC_TUNABLES"
+        ]
+      }
     }
   ]
 }

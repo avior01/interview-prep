@@ -392,7 +392,17 @@
         "ה-scheduler לא יכול להפקיע את L לטובת H, כי H חסום על ה-mutex ולא מוכן לרוץ; מה שרץ הוא M.",
         "עדיפות גבוהה לא עוזרת כשה-thread חסום על mutex; זו בדיוק הבעיה."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "יש עוד פרוטוקול מלבד priority inheritance: priority ceiling. מה ההבדל ביניהם, ואיך מקבלים אחד מהם ב-C++ על Linux, כש-`std::mutex` לא נותן את זה?",
+        "modelAnswer": "ב-priority inheritance ה-L עולה לעדיפות של H רק כש-H באמת נחסם עליו, כלומר אין עלות בלי contention. אבל יכולה להיות שרשרת: H חסום על mutex של L1 שחסום על mutex של L2, ו-H מחכה לכל השרשרת. ב-priority ceiling (PTHREAD_PRIO_PROTECT) לכל mutex מוגדרת עדיפות תקרה, הגבוהה מכל מי שעשוי לנעול אותו, ומי שנועל עולה אליה מיד. זה מונע chained blocking, ובמעבד אחד גם deadlock, אבל משלם העלאת עדיפות בכל נעילה, גם בלי contention. `std::mutex` ב-Linux הוא pthread mutex עם PTHREAD_PRIO_NONE, ואי אפשר לשנות את ה-attribute אחרי היצירה, ולכן כותבים wrapper סביב `pthread_mutex_t` שמאותחל עם `pthread_mutexattr_setprotocol`.",
+        "rubric": [
+          "inheritance: העלאה רק כשיש חסימה; אפשרית שרשרת חסימות",
+          "ceiling: העלאה מיידית לתקרה בכל נעילה, מונע chained blocking",
+          "std::mutex הוא PRIO_NONE ואי אפשר לשנות אחרי יצירה",
+          "wrapper על pthread_mutex_t עם pthread_mutexattr_setprotocol"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q08",
@@ -413,7 +423,17 @@
         "buffer קטן יותר מקצר latency אבל לא מבטל את ה-jitter של ה-host; הזמן בפועל עדיין תלוי ברגע שבו send נקרא.",
         "שידור חוזר לא מתקן את הבעיה; ה-burst צריך לצאת בזמן הנכון, לא שוב ושוב."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך מחשבים בדיוק את ה-timestamp של השידור, כמה margin צריך, ומה המערכת עושה כשבכל זאת הפקודה מגיעה מאוחר?",
+        "modelAnswer": "זמן הדגימה שבה זוהה האות הוא ה-time_spec של הבלוק מה-metadata של ה-RX, ועוד האינדקס של הדגימה בבלוק חלקי קצב הדגימה. לזה מוסיפים 2 ms, ומפחיתים עיכוב קבוע שנמדד בכיול, כמו ה-group delay של ה-filters בשרשרת ה-TX, כדי שהאות יצא לאוויר בזמן הנכון ולא רק ייכנס ל-DAC בזמן. ה-margin נקבע לפי worst case נמדד של ה-host מהזיהוי עד שליחת הפקודה, למשל אם האחוזון הגבוה מאוד שנמדד הוא 1.2 ms, נשאר מרווח של 0.8 ms. אם הפקודה מגיעה מאוחר, ה-radio לא משדר בזמן שגוי אלא מדווח אירוע late (ב-UHD זו הודעה אסינכרונית של time error), וה-burst נזרק. סופרים את האירועים האלה ומתריעים עליהם כמו על deadline misses.",
+        "rubric": [
+          "timestamp = time_spec של הבלוק + אינדקס/קצב דגימה + 2 ms",
+          "תיקון לעיכוב קבוע מכויל של שרשרת ה-TX",
+          "margin לפי worst case נמדד של ה-host",
+          "פקודה מאוחרת: ה-radio מדווח late ולא משדר; סופרים ומתריעים"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q09",
@@ -434,7 +454,17 @@
         "נכון: מתיישרים ל-period הבא לפי השעון המוחלט, רושמים deadline miss, וממשיכים עם הנתונים העדכניים.",
         "שינוי period לצמיתות בגלל תקלה זמנית משנה את התכנון כולו; misses חוזרים דורשים חקירה, לא שינוי אוטומטי."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך בדיוק מממשים את הדילוג לפי שעון מוחלט? ולמה `usleep(period - elapsed)` היא דרך גרועה להחזיק לולאה של 1 ms?",
+        "modelAnswer": "שומרים next = זמן ההתחלה, ובכל איטרציה next += period ואז `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next)`. אחרי איטרציה ארוכה, אם now כבר אחרי next, מקדמים את next בכמה periods שצריך כדי שיהיה בעתיד, וסופרים את מספר ה-periods שדולגו כ-misses. עם sleep יחסי, השגיאה של כל איטרציה (זמן ה-wakeup, החישוב של elapsed) מצטברת, כך שהלולאה נסחפת לאט, למשל 1.003 ms לאיטרציה במקום 1 ms. בנוסף, אם ה-thread מופקע בין חישוב elapsed לקריאה ל-sleep, ההשהיה כבר שגויה. עם שעון מוחלט כל wakeup מתיישר לרשת קבועה, והשגיאה לא מצטברת. CLOCK_MONOTONIC ולא REALTIME, כדי ש-NTP לא יקפיץ את הזמנים.",
+        "rubric": [
+          "next += period ו-clock_nanosleep עם TIMER_ABSTIME",
+          "אחרי miss: קידום next לעתיד וספירת periods שדולגו",
+          "sleep יחסי צובר שגיאה ונסחף",
+          "CLOCK_MONOTONIC כדי ש-NTP לא ישפיע"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q10",
@@ -462,7 +492,17 @@
         "נכון: SMI עוצרים את ה-CPU לטובת ה-firmware, אפילו הקרנל לא רואה אותם, ויכולים להימשך מאות מיקרו-שניות.",
         "נכון: יציאה מ-C-state עמוק ושינוי תדר עולים עשרות עד מאות מיקרו-שניות; מגבילים C-states ומקבעים תדר."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך מודדים את ה-jitter של ה-platform ומייחסים אותו למקור הנכון, כולל SMIs שהקרנל לא רואה בכלל?",
+        "modelAnswer": "`cyclictest` (למשל עם עדיפות 99 ו-thread לכל core) מודד את ה-latency של ההתעוררות ב-thread RT ונותן histogram ו-max, וזו המדידה הבסיסית של ה-platform. לייחוס, ה-tracers `osnoise` ו-`timerlat` של ftrace (בקרנלים חדשים) מראים כמה רעש הגיע מ-IRQ, softirq, threads אחרים או מהחומרה. ל-SMIs יש את `hwlatdetect`: הוא מריץ לולאה הדוקה עם interrupts כבויים ומחפש פערים בזמן, ופער כזה יכול לבוא רק ממשהו שמתחת לקרנל, כמו SMI. אפשר גם לקרוא את מונה ה-SMI ב-MSR במעבדי Intel. מהמדידות האלה מחליטים: להזיז IRQs, לנעול C-states, או לשנות הגדרות BIOS.",
+        "rubric": [
+          "cyclictest ל-latency של wakeup על כל core",
+          "osnoise/timerlat ב-ftrace לייחוס לפי מקור",
+          "hwlatdetect: לולאה עם interrupts כבויים שמזהה פערים (SMI)",
+          "פעולה לפי הממצא: IRQ affinity, C-states, BIOS"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q11",
@@ -483,7 +523,17 @@
         "נכון: צריך max על פני שעות או ימים, תחת עומס מלאכותי מייצג, עם cyclictest לאפיון ה-platform, ולהשאיר margin; 85 מתוך 100 הוא margin קטן.",
         "ממוצע של 10 מיקרו-שניות לא נדרש; ה-deadline נוגע ל-worst case, לא לממוצע."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "הבלוק מגיע 10,000 פעמים בשנייה. כמה זמן צריך להריץ בלי אף miss כדי לטעון בביטחון של 95% שההסתברות ל-miss קטנה מ-10^-9 לבלוק?",
+        "modelAnswer": "לפי rule of three: אם ב-n ניסיונות בלתי תלויים לא נצפה אף כישלון, החסם העליון ב-95% ביטחון על ההסתברות הוא בערך 3/n. כדי ש-3/n יהיה 10^-9 צריך n = 3 × 10^9 בלוקים. ב-10,000 בלוקים בשנייה זה 300,000 שניות, כ-3.5 ימים של ריצה רציפה בלי miss, תחת עומס מייצג. ריצה של 10 דקות (6 מיליון בלוקים) מאפשרת לטעון רק משהו כמו 5 × 10^-7. גם זה בהנחה שהכשלים בלתי תלויים ושהעומס במבחן מייצג את ה-production, ולכן משלימים את זה בניטור deadline misses בשטח ובמרווח בתכנון.",
+        "rubric": [
+          "rule of three: חסם 95% ≈ 3/n כשאין כשלים",
+          "n = 3 × 10^9 בלוקים",
+          "כ-3.5 ימים ב-10,000 בלוקים בשנייה",
+          "הנחת אי-תלות ועומס מייצג; ניטור בשטח"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q12",
@@ -504,7 +554,17 @@
         "nice משפיע רק על SCHED_OTHER, ולא מבודד שום דבר מה-core.",
         "כיבוי HT יכול לעזור, כי ה-sibling חולק משאבים, אבל לא מונע tasks אחרים, IRQs ו-ticks על ה-core."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "עשית את כל הצעדים, ועדיין יש הפרעות קטנות ומחזוריות על core 3. מה עוד יכול לרוץ שם, ואיך תבדוק?",
+        "modelAnswer": "קודם בודקים את `/proc/interrupts` בעמודה של CPU 3, פעמיים בהפרש של כמה שניות, ורואים אילו מונים עולים: LOC (timer tick, אם nohz_full לא נכנס לתוקף כי יש יותר מ-task אחד מוכן לרוץ על ה-core), Rescheduling interrupts, Function call interrupts ו-TLB shootdowns. TLB shootdowns מגיעים כשתהליך עם threads על כמה cores משנה את מרחב הכתובות שלו, למשל `munmap` או `mprotect` ב-thread אחר של אותו תהליך. יש גם workqueues של הקרנל, כמו עדכון סטטיסטיקות ה-VM, שאפשר להאט עם `vm.stat_interval`. כדי לראות בדיוק מה רץ ומתי, מריצים `osnoise` או `perf sched` על ה-core ומקבלים רשימת הפרעות עם המקור שלהן.",
+        "rubric": [
+          "בדיקת /proc/interrupts לפי CPU והשוואה לאורך זמן",
+          "LOC: nohz_full לא פעיל כשיש יותר מ-task אחד",
+          "TLB shootdowns ו-IPIs משינויי זיכרון בתהליך",
+          "workqueues (vm.stat_interval) ואיתור עם osnoise/perf sched"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q13",
@@ -525,7 +585,17 @@
         "SCHED_OTHER רק מחמיר: הוא נמוך מכל עדיפות RT ויורעב באותה מידה.",
         "timeout ארוך יותר לא עוזר כשה-watchdog בכלל לא מקבל CPU כדי לבדוק אותו."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "תכנן את ה-watchdog ב-FPGA. מה בדיוק ה-heartbeat צריך להוכיח, איך קובעים את ה-timeout, ומה קורה אחרי שהוא פוקע?",
+        "modelAnswer": "ה-heartbeat צריך להוכיח התקדמות של הלולאה עצמה, לא רק שתהליך חי. לכן ה-RT loop כותב בכל איטרציה מונה עולה ל-register ב-FPGA (או מוסיף אותו ל-metadata של זרם ה-TX), וה-FPGA מאפס timer רק כשהערך השתנה. thread נפרד ששולח heartbeat היה ממשיך לשלוח גם כשהלולאה תקועה. ה-timeout נקבע מעל הפער הלגיטימי המקסימלי, למשל פי 10 מה-period, וקצר מספיק כדי שהשידור יפסיק בתוך הזמן שדרישת ה-safety מתירה. כשהוא פוקע, ה-FPGA מאפס את ה-DAC ומנתק את ה-PA, כלומר fail-safe. המצב ננעל (latching): גם אם ה-heartbeat חוזר, השידור לא מתחדש לבד, אלא רק אחרי re-arm מפורש.",
+        "rubric": [
+          "heartbeat = מונה עולה מהלולאה עצמה, לא thread נפרד",
+          "timeout מעל הפער הלגיטימי ומתחת לדרישת ה-safety",
+          "בפקיעה: DAC מאופס ו-PA מנותק (fail-safe)",
+          "latching: חזרה לשידור רק אחרי re-arm מפורש"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q14",
@@ -541,7 +611,17 @@
         "תיעוד ובדיקות fault injection"
       ],
       "explanation": "השאלה בודקת חשיבה על safety: לא רק 'איך זה עובד' אלא 'מה קורה כשזה נכשל', ועקרון ה-defense in depth.",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "כשלים כאלה נדירים. איך היית בודק שה-interlock באמת עובד, ומה בדיוק היית מודד?",
+        "modelAnswer": "fault injection על חומרה אמיתית: הריגת התהליך ב-`SIGKILL` באמצע שידור, `SIGSTOP` ל-thread ה-RT כדי לדמות תקיעה, ניתוק כבל הרשת בין ה-host ל-radio, config פגום, ו-power cycle של ה-host. בכל מקרה מודדים עם spectrum analyzer או power meter על יציאת ה-RF שהשידור נפסק, ואת הזמן מהתקלה עד שההספק ירד מתחת לסף, מול הדרישה. בודקים גם שהמצב ננעל: אחרי שהתקלה נפתרה המערכת לא חוזרת לשדר בלי arm מפורש. את המבחנים האלה מריצים אוטומטית ב-hardware-in-the-loop על כל שינוי בקוד שנוגע ל-TX, כי interlock שלא נבדק הוא interlock שלא קיים.",
+        "rubric": [
+          "fault injection: SIGKILL, SIGSTOP, ניתוק רשת, config פגום, power cycle",
+          "מדידה ביציאת ה-RF עם spectrum analyzer/power meter",
+          "מדידת זמן עד הפסקה מול הדרישה ובדיקת latching",
+          "אוטומציה ב-hardware-in-the-loop"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q15",
@@ -562,7 +642,17 @@
         "polling הוא בחירה מוצדקת במערכות כמו DPDK ו-HFT; \"תמיד מזיק\" מתעלם מה-trade-off.",
         "כשיש יותר threads מ-cores polling הוא דווקא הגרוע ביותר: הוא גונב CPU מ-threads שצריכים לרוץ."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "בלולאת ה-polling שמים הוראת `pause`. מה היא עושה, ומה השתנה בה במעבדי Intel החדשים שיכול לשבור קוד ישן?",
+        "modelAnswer": "`pause` אומרת למעבד שזו לולאת המתנה. היא מונעת את ה-pipeline flush שקורה ביציאה מהלולאה כשה-cache line משתנה (memory order mis-speculation), חוסכת חשמל, ומפנה משאבי ביצוע ל-hyperthread השכן. במעבדים ממשפחת Skylake ואילך Intel האריכה את ה-latency שלה מכעשרה cycles לכ-140 cycles. קוד שמכייל spin לפי מספר איטרציות, למשל 'spin 1,000 פעמים ואז לישון', פתאום מסתובב פי 10 יותר זמן לפני שהוא נרדם. לכן מכיילים spin לפי זמן (למשל `rdtsc` או שעון monotonic) ולא לפי מספר איטרציות. ובכל מקרה, core ב-100% מנצל את תקציב ההספק והחום של המעבד ויכול להוריד את ה-turbo של cores אחרים.",
+        "rubric": [
+          "pause מונעת flush ביציאה, חוסכת חשמל ומפנה משאבים ל-sibling",
+          "ב-Skylake ואילך ה-latency עלה לכ-140 cycles",
+          "spin מכויל לפי איטרציות משנה התנהגות; לכייל לפי זמן",
+          "core ב-100% משפיע על תקציב ההספק/turbo"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q16",
@@ -590,7 +680,17 @@
         "std::sort הוא in-place ולא מקצה; std::stable_sort הוא זה שמנסה להקצות buffer זמני.",
         "נכון: throw מקצה את אובייקט ה-exception (`__cxa_allocate_exception` ב-Itanium ABI), ובנוסף ה-unwinding עצמו לא דטרמיניסטי."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך מוודאים אוטומטית, ולא רק ב-code review, שאין הקצאה או קריאה חוסמת בנתיב ה-RT?",
+        "modelAnswer": "דרך אחת היא להחליף את `operator new` ו-`malloc` הגלובליים בגרסה שבודקת דגל thread_local 'אני בקטע RT', ואם הוא דלוק, סופרת או עושה abort. כך כל הקצאה נסתרת נתפסת בבדיקות. בקלאנג חדש יש RealtimeSanitizer (`-fsanitize=realtime`): מסמנים פונקציות כ-`[[clang::nonblocking]]`, ובזמן ריצה הוא מזהה בתוכן malloc, נעילת mutex או syscalls חוסמים. בנוסף בודקים page faults: אחרי warm-up ו-mlockall, מונה ה-minor faults של ה-thread (`getrusage` עם RUSAGE_THREAD) חייב להישאר קבוע. את כל אלה מריצים בבדיקות אינטגרציה עם עומס אמיתי, כי חלק מההקצאות קורות רק במסלולי שגיאה.",
+        "rubric": [
+          "החלפת operator new/malloc עם דגל thread_local שמזהה הקצאה בקטע RT",
+          "RealtimeSanitizer עם [[clang::nonblocking]]",
+          "מונה minor page faults שנשאר קבוע אחרי warm-up",
+          "הרצה גם במסלולי שגיאה ועומס אמיתי"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q17",
@@ -606,7 +706,17 @@
         "גרסאות ואימות שהשינוי נקלט"
       ],
       "explanation": "זו בעיה קלאסית של publication בין threads עם דרישת RT. נקודת המבחן הסניורית היא ה-reclamation: מי משחרר את הזיכרון הישן ומתי.",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "נתמקד ב-reclamation: ה-thread ה-RT אולי עדיין משתמש ב-config הישן. מי משחרר אותו ומתי, בלי שה-free יקרה אי פעם בתוך ה-thread ה-RT?",
+        "modelAnswer": "ה-thread ה-RT טוען בתחילת כל איטרציה את המצביע הנוכחי עם acquire, ובסוף האיטרציה מפרסם ב-atomic את מספר הגרסה (epoch) שבה הוא משתמש. ה-thread הלא-RT שמעדכן יוצר config חדש, מחליף את המצביע עם release, ואז ממתין עד שה-epoch שה-RT פרסם הגיע לגרסה החדשה. מאותו רגע ה-RT כבר לא יכול להחזיק את הישן, וה-thread הלא-RT משחרר אותו. כך ה-RT לעולם לא מחכה ולא משחרר. `std::shared_ptr` הוא מלכודת: אם ה-RT מחזיק את ה-reference האחרון, ה-delete קורה בתוך ה-RT. חלופה פשוטה: pool קבוע של, למשל, 3 configs מוקצים מראש שמסתובבים, בלי הקצאה בכלל.",
+        "rubric": [
+          "RT טוען מצביע ב-acquire ומפרסם epoch שבו הוא משתמש",
+          "ה-updater מחליף מצביע ב-release וממתין שה-epoch יתקדם",
+          "השחרור נעשה רק ב-thread לא-RT",
+          "shared_ptr מסוכן כי ה-delete יכול לקרות ב-RT; חלופה: pool קבוע"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q18",
@@ -745,7 +855,17 @@
         "זה הפוך: משימה עם period ארוך יכולה לחכות, ומשימה עם period קצר חייבת לרוץ קודם.",
         "SCHED_RR באותה עדיפות לא נותן הבטחות deadline; RMS דורש עדיפויות שונות."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "נניח שזמני הריצה הם 1, 3 ו-10 ms. האם הסט schedulable לפי מבחן Liu & Layland, ומה מיוחד דווקא ב-periods האלה?",
+        "modelAnswer": "U = 1/5 + 3/10 + 10/50 = 0.2 + 0.3 + 0.2 = 0.7. הגבול של Liu & Layland ל-3 משימות הוא n(2^(1/n) − 1) = 3 × (2^(1/3) − 1) ≈ 0.78, ו-0.7 מתחתיו, ולכן הסט schedulable ב-RMS. אבל ה-periods כאן הרמוניים: 10 הוא כפולה של 5, ו-50 כפולה של 10. לסט הרמוני RMS עובד עד U = 1, כלומר אפשר היה להגיע לניצול מלא בלי להפר deadlines. ככל ש-n גדל, הגבול הכללי יורד לכיוון ln 2 ≈ 0.69, ולכן תכנון periods הרמוניים הוא טריק מעשי שמאפשר לנצל את המעבד הרבה יותר.",
+        "rubric": [
+          "U = 0.7",
+          "גבול ל-3 משימות ≈ 0.78, לכן schedulable",
+          "periods הרמוניים: RMS עובד עד U = 1",
+          "הגבול הכללי שואף ל-ln 2 ≈ 0.69"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q25",
@@ -772,7 +892,17 @@
         "נכון: רוב ה-spinlocks בקרנל הופכים ל-rt_mutex עם priority inheritance.",
         "PREEMPT_RT לא מונע page faults, IRQs על ה-core או C-states; mlockall ובידוד עדיין נחוצים."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "ב-PREEMPT_RT ה-IRQ של ה-NIC הוא thread עם עדיפות. ה-thread ה-RT שלך ב-SCHED_FIFO 90 מקבל samples דרך ה-NIC הזה, על אותו core. מה יכול להשתבש, ואיך מגדירים את העדיפויות נכון?",
+        "modelAnswer": "IRQ threads מקבלים כברירת מחדל SCHED_FIFO 50. אם ה-thread שלך ב-90 עושה busy polling על אותו core, ה-IRQ thread של ה-NIC (וגם ה-softirq שמעבד את החבילות) לא ירוץ, ולכן החבילות לא יגיעו אליו: ה-thread מחכה לנתונים שהוא עצמו מונע. גם בלי polling, IRQ של דיסק בעדיפות גבוהה מה-NIC יכול לעכב את הנתונים שלך. הפתרון הוא להעלות עם `chrt` את ה-IRQ thread של תור ה-NIC הרלוונטי מעל ה-thread שצורך את הנתונים, או להריץ אותו על core אחר באותו NUMA node, ולהוריד את העדיפות של IRQs לא קשורים. כלומר העדיפויות צריכות לשקף את שרשרת התלות של הנתונים, ולא רק את חשיבות ה-thread.",
+        "rubric": [
+          "ברירת מחדל ל-IRQ threads היא FIFO 50",
+          "thread RT ב-90 על אותו core מרעיב את ה-IRQ שמביא לו נתונים",
+          "chrt ל-IRQ thread של ה-NIC מעל הצרכן, או core אחר",
+          "עדיפויות לפי שרשרת התלות של הנתונים"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q26",
@@ -806,7 +936,17 @@
         "69% (ln 2) הוא הגבול האסימפטוטי של RMS כשמספר המשימות שואף לאינסוף, וגם הוא תנאי מספיק בלבד.",
         "נכון: גבול RMS מספיק ולא הכרחי, ולכן בודקים response-time analysis; ב-EDF הסט schedulable כי U ≤ 1."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "בצע response-time analysis על הסט (C, T): (1, 4), (2, 6), (3, 12), עם RMS. U ≈ 0.83, מעל הגבול. האם הוא schedulable?",
+        "modelAnswer": "הנוסחה: R_i = C_i + Σ על המשימות בעדיפות גבוהה יותר של ⌈R_i / T_j⌉ × C_j, ומחשבים באיטרציה עד נקודת שבת. משימה 1: R = 1 ≤ 4. משימה 2: מתחילים ב-2, אז 2 + ⌈2/4⌉ × 1 = 3, ושוב 2 + ⌈3/4⌉ × 1 = 3, כלומר R = 3 ≤ 6. משימה 3: 3 → 3 + 1 + 2 = 6 → 3 + ⌈6/4⌉ + ⌈6/6⌉ × 2 = 3 + 2 + 2 = 7 → 3 + 2 + ⌈7/6⌉ × 2 = 9 → 3 + ⌈9/4⌉ + 2 × 2 = 3 + 3 + 4 = 10 → 3 + ⌈10/4⌉ + ⌈10/6⌉ × 2 = 3 + 3 + 4 = 10, נקודת שבת. R = 10 ≤ 12, ולכן הסט schedulable למרות ש-U ≈ 0.83 מעל 0.78. זו בדיוק הדוגמה לכך שהגבול הוא תנאי מספיק בלבד.",
+        "rubric": [
+          "נוסחה: R_i = C_i + Σ ⌈R_i/T_j⌉ C_j באיטרציה עד נקודת שבת",
+          "R1 = 1, R2 = 3",
+          "R3 = 10 ≤ 12",
+          "מסקנה: schedulable למרות U מעל הגבול"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q28",
@@ -827,7 +967,17 @@
         "isolcpus ו-nohz_full משתלבים ומשמשים יחד בדיוק לבידוד כזה.",
         "isolcpus לא מתבטל בעומס; ה-scheduler לא מעביר אליו tasks בלי affinity מפורש."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך מוצאים את ה-sibling של CPU 3 בפועל, ומה עושים לגבי ה-L3 ורוחב הפס לזיכרון שמשותפים לכל ה-cores?",
+        "modelAnswer": "את ה-siblings רואים ב-`/sys/devices/system/cpu/cpu3/topology/thread_siblings_list` או בטבלה של `lscpu -e` (עמודת CORE). מבודדים את שני ה-logical CPUs של אותו core פיזי ומשאירים את ה-sibling ריק, או מכבים SMT לגמרי דרך `/sys/devices/system/cpu/smt/control`. לגבי משאבים משותפים לכל ה-socket: Intel RDT נותן Cache Allocation Technology (CAT) כדי להקצות ל-thread ה-RT חלק קבוע של ה-L3 שאחרים לא יפנו, ו-Memory Bandwidth Allocation (MBA) כדי להגביל את רוחב הפס של ה-build. ב-Linux מגדירים אותם דרך ה-filesystem של resctrl. אפשרות פשוטה יותר: להריץ build על מכונה אחרת או ב-socket אחר.",
+        "rubric": [
+          "thread_siblings_list או lscpu -e לזיהוי siblings",
+          "בידוד שני ה-siblings או כיבוי SMT",
+          "CAT להקצאת L3 ו-MBA להגבלת רוחב פס (resctrl)",
+          "חלופה: build על socket או מכונה אחרת"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q29",
@@ -848,7 +998,17 @@
         "ה-child יורש את מדיניות ה-scheduling של ה-thread שקרא ל-fork, וכאן זה thread רגיל, לא SCHED_FIFO.",
         "נכון: fork מסמן את הדפים הפרטיים כ-copy-on-write, ולכן כתיבות של ה-thread ה-RT גורמות ל-page faults, ושינוי ה-page tables דורש TLB shootdown לכל ה-cores של התהליך. posix_spawn או vfork נמנעים מזה."
       ],
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "למה `posix_spawn` לא גורם לאותה בעיה, ומה עוד fork עושה לתהליך עם 10 GB זיכרון נעול?",
+        "modelAnswer": "ב-glibc, `posix_spawn` משתמש ב-clone עם CLONE_VM ו-CLONE_VFORK: ה-child חולק את מרחב הכתובות של ההורה עד ה-exec, ולכן לא מעתיקים page tables ולא מסמנים דפים כ-COW, וה-thread הקורא מושהה רק עד שה-child עושה exec. fork רגיל צריך להעתיק את כל ה-page tables: 10 GB בדפים של 4 KB הם כ-2.6 מיליון PTEs, כ-20 MB של page tables, וזה לוקח זמן ניכר ומסמן את כל הזיכרון ל-COW. לכן fork של תהליך גדול איטי בפני עצמו, וגם עלול להיכשל בגלל overcommit. הפתרון הנקי ביותר: תהליך עזר קטן שנוצר בתחילת הריצה, לפני האתחול של ה-RT, ומפעיל תוכניות לפי בקשה דרך pipe או socket.",
+        "rubric": [
+          "posix_spawn: clone עם CLONE_VM|CLONE_VFORK, בלי העתקת page tables ו-COW",
+          "fork מעתיק page tables: כ-20 MB ל-10 GB, איטי",
+          "fork של תהליך גדול יכול להיכשל (overcommit)",
+          "תהליך עזר שנוצר לפני אתחול ה-RT"
+        ]
+      }
     },
     {
       "id": "design.rt-design.q30",
@@ -864,7 +1024,17 @@
         "מדדים ובדיקות עם network emulator ועומס"
       ],
       "explanation": "אותם עקרונות של SDR (callback כ-hard deadline, נתיב חם בלי הקצאות, degradation מתוכנן) בהקשר של מוצר צרכני. תשובה חזקה מפרקת את ה-latency ומסבירה מה קורה כשמשהו נכשל.",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך ה-jitter buffer בצד המקבל בוחר את העומק שלו, ומה קורה כש-packet לא מגיע בזמן?",
+        "modelAnswer": "ה-jitter buffer מודד את התפלגות העיכוב של ה-packets ביחס לזמן הצפוי שלהם, ובוחר עומק שמכסה אחוזון גבוה, למשל 95-98%, כי כיסוי של 100% דורש buffer ארוך מדי. הוא מתאים את העומק בהדרגה: מגדיל מהר כשהרשת מחמירה, ומקטין לאט. את השינוי עצמו עושים בשקט או עם time-stretching (כמו WSOLA), שמאריך או מקצר את האודיו בכמה ms בלי שינוי ב-pitch. packet שלא הגיע בזמן מוחלף ב-packet loss concealment שמסנתז המשך מה-frames הקודמים, ואם יש FEC, כמו ה-in-band FEC של Opus שנושא עותק באיכות נמוכה של ה-frame הקודם, משחזרים ממנו. כל זה בתוך יעד של בערך 150 ms mouth-to-ear, שמעליו השיחה מרגישה לא טבעית.",
+        "rubric": [
+          "עומק לפי אחוזון גבוה של התפלגות העיכוב, לא 100%",
+          "התאמה הדרגתית עם time-stretching או בשקט",
+          "PLC ל-packet חסר ו-FEC (Opus in-band) לשחזור",
+          "יעד של כ-150 ms mouth-to-ear"
+        ]
+      }
     },
     {
       "level": 4,
@@ -914,7 +1084,17 @@
         "שגוי: מספר הפעולות זהה, אבל דפוס הגישה לזיכרון שונה מאוד, וזה מה שקובע את הביצועים בפועל."
       ],
       "id": "design.rt-design.q33",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "גם בסדר i, k, j, כש-N = 4,096 עם double הביצועים עדיין רחוקים מהשיא. למה, ואיך blocking עוזר? תן הערכה של גודל ה-block.",
+        "modelAnswer": "ב-N = 4,096 כל מטריצה היא 4,096² × 8 bytes = 128 MB, הרבה מעבר ל-cache. בסדר i, k, j, לכל i עוברים על כל B, כך ש-B נקרא כולו מ-DRAM N פעמים, כלומר תעבורה של O(N³) מילים, והמעבד מחכה לזיכרון. ב-blocking מחלקים את המטריצות לבלוקים של b × b ומבצעים את הכפל בלוק אחרי בלוק, כך שכל בלוק שנטען ל-cache משמש b פעמים לפני שהוא נזרק. התעבורה יורדת ל-O(N³ / b). בוחרים b כך ששלושה בלוקים נכנסים ב-cache היעד: עבור L2 של 1 MB, 3b² × 8 ≤ 1 MB נותן b ≈ 200. בפועל ספריות BLAS עושות כמה רמות של blocking (registers, L1, L2, L3).",
+        "rubric": [
+          "128 MB למטריצה, B נקרא מ-DRAM N פעמים: O(N³) תעבורה",
+          "blocking: כל בלוק משמש b פעמים, תעבורה O(N³/b)",
+          "3b² × 8 bytes ≤ גודל ה-cache, b ≈ 200 ל-L2 של 1 MB",
+          "BLAS משתמש בכמה רמות blocking"
+        ]
+      }
     },
     {
       "level": 5,
@@ -942,7 +1122,17 @@
       ],
       "problem": "Apple software developer interview: dictionary design (hashing, conflicts, extending an overcrowded dictionary)",
       "id": "design.rt-design.q34",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "הקצאה מראש לגודל המקסימלי: כמה זיכרון זה עולה למיליון איברים, מה עוד צריך לעשות באתחול כדי שהנתיב החם לא ייתקע, ומה אם הגודל המקסימלי לא ידוע?",
+        "modelAnswer": "ב-open addressing עם load factor של 0.5 ורשומה של 16 bytes, מיליון איברים צריכים 2 מיליון slots, כ-32 MB. בנוסף להקצאה צריך לגעת בכל הדפים באתחול (prefault, למשל memset) ולנעול עם mlockall, אחרת הגישה הראשונה לכל דף היא page fault בנתיב החם. אם הגודל המקסימלי לא ידוע, ה-thread ה-RT לא מגדיל בעצמו: כשהטבלה מגיעה לסף, thread לא-RT בונה טבלה גדולה יותר ברקע ומעתיק אליה, ואז מחליף מצביע אטומית. בזמן ההעתקה עדכונים חדשים צריכים להיכתב גם לחדשה, או להירשם ב-log קטן שמוחל לפני ההחלפה, כדי שלא יאבדו.",
+        "rubric": [
+          "חישוב: 2M slots × 16 bytes ≈ 32 MB ב-load factor 0.5",
+          "prefault של כל הדפים ו-mlockall באתחול",
+          "גדילה ע\"י thread לא-RT ברקע והחלפת מצביע אטומית",
+          "טיפול בעדכונים שמגיעים בזמן ההעתקה"
+        ]
+      }
     },
     {
       "level": 5,
@@ -963,7 +1153,17 @@
         "נכון: שתי טבלאות לחיפוש, הכנסה לחדשה, וזיכרון זמני של ישנה ועוד חדשה."
       ],
       "id": "design.rt-design.q35",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "כמה buckets צריך להעביר בכל פעולה כדי שהמעבר יסתיים לפני שהטבלה החדשה עצמה מתמלאת, ומה זה עושה ל-worst case של פעולה בודדת?",
+        "modelAnswer": "נניח שלטבלה הישנה n buckets, והחדשה 2n. החדשה תגיע לסף ההגדלה הבא שלה אחרי בערך n × α_max הכנסות נוספות, כלומר בערך כמספר האיברים שכבר יש. אם מעבירים k buckets בכל פעולה, המעבר מסתיים אחרי n / k פעולות. עם k = 1 המעבר מסתיים אחרי n פעולות, כך שגם אם כל הפעולות הן הכנסות זה בגבול, ולכן נוח לבחור k = 2 ומעלה. ה-worst case של פעולה הוא עלות הפעולה עצמה ועוד העברת k buckets, כלומר k כפול אורך השרשרת המקסימלי, ולכן חסום אם אורך השרשרת חסום. Redis מעביר bucket אחד בכל פעולה ומוסיף העברה ברקע במגבלת זמן קצרה, כדי שהמעבר יתקדם גם כשאין פעולות.",
+        "rubric": [
+          "החדשה מגיעה לסף אחרי כ-n×α_max הכנסות",
+          "המעבר נמשך n/k פעולות, ולכן k ≥ 2 נותן מרווח",
+          "worst case לפעולה ≈ k × אורך שרשרת מקסימלי",
+          "העברה ברקע כשאין פעולות (כמו ב-Redis)"
+        ]
+      }
     },
     {
       "level": 5,
@@ -984,7 +1184,17 @@
         "שגוי: reserve כן מבטיח שלא יהיה rehash עד מספר האיברים שהוזמן. הבעיה היא ההקצאה לכל node, לא ה-rehash."
       ],
       "id": "design.rt-design.q36",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "בחרת open addressing עם linear probing. איך מטפלים במחיקות, ומה קובע את ה-worst case של חיפוש?",
+        "modelAnswer": "אי אפשר פשוט לרוקן slot, כי זה ישבור את שרשרת ה-probing של מפתחות שאחריו. אפשרות אחת היא tombstones: מסמנים slot כמחוק. אבל tombstones מצטברים, מאריכים את החיפושים, ובסוף מחייבים rebuild, שלא מתאים ל-RT. ב-linear probing יש backward-shift deletion: אחרי מחיקה מזיזים אחורה איברים מה-cluster שאחריה, כך שהטבלה נשארת נקייה בלי tombstones, בעלות של אורך ה-cluster. ה-worst case של חיפוש תלוי באורך ה-cluster הארוך ביותר, שגדל מהר כש-load factor מתקרב ל-1, ולכן מחזיקים load factor נמוך, 0.5 עד 0.7. Robin Hood hashing מקטין את השונות של אורכי ה-probes, וכך גם את ה-worst case המעשי.",
+        "rubric": [
+          "ריקון slot שובר שרשראות probing",
+          "tombstones מצטברים ודורשים rebuild",
+          "backward-shift deletion בלי tombstones",
+          "worst case לפי cluster ארוך; load factor נמוך ו-Robin Hood"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1007,7 +1217,17 @@
       ],
       "problem": "Meta E5 product architecture: audio channel system from 2.1 to 5.1, across OSes, for WhatsApp calls, Facebook Live and Reels",
       "id": "design.rt-design.q37",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "רוב המשתמשים מאזינים בטלפון עם סטריאו. איך עושים downmix מ-5.1 לסטריאו, איפה עדיף לעשות אותו, ומה הסכנה?",
+        "modelAnswer": "המקדמים המקובלים (ITU-R BS.775) הם בערך Lo = L + 0.707 C + 0.707 Ls ו-Ro = R + 0.707 C + 0.707 Rs, כלומר center ו-surround נכנסים ב-−3 dB. ה-LFE בדרך כלל לא נכלל, או נכלל בעוצמה נמוכה. הסכנה היא clipping: סכום של כמה ערוצים חזקים עובר את ה-full scale, ולכן מנרמלים את המקדמים או מוסיפים limiter. לגבי המיקום: downmix בשרת חוסך רוחב פס, כי ל-client סטריאו נשלחים 2 ערוצים במקום 6, וזה חשוב ברשת סלולרית. downmix במכשיר מאפשר ל-client להחליט לפי החומרה (למשל מעבר לרמקול חיצוני), אבל הוא מוריד את כל ששת הערוצים ומבזבז רוחב פס.",
+        "rubric": [
+          "Lo = L + 0.707C + 0.707Ls, Ro בהתאם (−3 dB)",
+          "LFE בדרך כלל לא נכלל",
+          "סכנת clipping: נרמול או limiter",
+          "downmix בשרת חוסך רוחב פס; במכשיר גמיש יותר"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1040,7 +1260,17 @@
       ],
       "explanation": "באודיו רב-ערוצי הסדר הוא חלק מהפורמט. מעבירים layout מפורש ובודקים אותו ב-integration tests עם tone לכל ערוץ.",
       "id": "design.rt-design.q39",
-      "lesson": "design.rt-design"
+      "lesson": "design.rt-design",
+      "followUp": {
+        "prompt": "איך בונים את ה-integration test שתופס באג כזה, ואיזה מידע צריך לעבור עם הזרם כדי שזה לא יקרה? רמז: שני סדרי הערוצים שבשאלה שניהם סטנדרטיים.",
+        "modelAnswer": "הסדר L, R, C, LFE, Ls, Rs הוא הסדר של WAV ו-SMPTE, והסדר L, C, R, Ls, Rs, LFE הוא הסדר של Vorbis ו-Opus, ולכן באג כזה קורה בדיוק בגבול בין רכיבים שמשתמשים בסטנדרטים שונים. בבדיקה שולחים לכל ערוץ tone בתדר אחר, למשל 200, 300 עד 700 Hz, מריצים FFT על כל ערוץ ביציאה, ובודקים שבכל ערוץ נמצא התדר הצפוי, ברמה הצפויה ובפאזה הנכונה. ה-layout עצמו חייב לעבור במפורש עם הזרם: channel mask (כמו ב-WAVEFORMATEXTENSIBLE) או channel mapping family של ה-codec. כל רכיב ממיר במפורש בין הסדר שהוא מקבל לסדר הפנימי שלו, ולא מניח.",
+        "rubric": [
+          "WAV/SMPTE: L R C LFE Ls Rs; Vorbis/Opus: L C R Ls Rs LFE",
+          "tone בתדר שונה לכל ערוץ ו-FFT ביציאה",
+          "בדיקת תדר, רמה ופאזה לכל ערוץ",
+          "layout מפורש עם הזרם (channel mask / mapping family)"
+        ]
+      }
     },
     {
       "level": 2,

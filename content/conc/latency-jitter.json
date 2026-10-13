@@ -365,7 +365,17 @@
         "מקור: עם THP, khugepaged מבצע compaction ואיחוד דפים ברקע, ו-fault על huge page מאפס 2MB בבת אחת. אלה עבודות כבדות בזמנים לא צפויים.",
         "מקור: SMI מכניס את המעבד ל-System Management Mode, והקושחה רצה בלי שהקרנל יודע. כל ה-cores נעצרים, והבידוד ב-OS לא עוזר.",
         "מקור: core שמחכה נכנס ל-C-state עמוק, והיציאה ממנו לוקחת עשרות עד מאות µs. זה מוסיף לזמן ההתעוררות בדיוק כשה-thread צריך לרוץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בתרחיש הזה יש לך שני חשודים עיקריים: page faults ויציאה מ-C-state עמוק. איך תבחין ביניהם ב-production, בלי לנחש, ואיזה דפוס זמן מאפיין כל אחד?",
+        "modelAnswer": "page faults סופרים ישירות: `perf stat -e minor-faults,major-faults` על ה-thread, או `getrusage` ושדה ru_minflt לפני ואחרי כל איטרציה, ובודקים אם ה-spike מתואם עם עלייה במונה. הדפוס שלהם: גישה ראשונה לבאפר חדש, כלומר בתחילת ריצה או אחרי הקצאה חדשה. ל-C-states מסתכלים ב-turbostat על residency ב-C6 של ה-core, ובודקים ניסוי מבודד: פותחים את `/dev/cpu_dma_latency`, כותבים 0 ומשאירים את ה-fd פתוח (סגירה מבטלת את הבקשה). אם ה-spikes נעלמים, זה C-state. הדפוס שלהם: האיטרציה הראשונה אחרי המתנה ארוכה, כי ה-core נכנס ל-idle עמוק בזמן ההמתנה. משנים דבר אחד בכל פעם ומודדים לאורך זמן.",
+        "rubric": [
+          "מונה page faults פר-thread (perf stat או ru_minflt) ובדיקת מתאם עם ה-spike",
+          "ניסוי עם כתיבת 0 ל-/dev/cpu_dma_latency תוך השארת ה-fd פתוח, או turbostat",
+          "דפוס: faults בגישה ראשונה לזיכרון חדש, C-state אחרי תקופת idle",
+          "שינוי משתנה אחד בכל פעם"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q08",
@@ -386,7 +396,17 @@
         "נכון: cyclictest מריץ threads ב-SCHED_FIFO שישנים עם clock_nanosleep ו-TIMER_ABSTIME, ומודד בכל מחזור כמה זמן עבר מה-deadline המוחלט עד שה-thread רץ בפועל. הוא מדווח min, avg, max או היסטוגרמה.",
         "שגוי: cyclictest לא נוגע ברשת. latency של NIC מודדים עם כלים כמו sockperf או חותמות זמן של החומרה.",
         "שגוי: הוא לא מודד כמות עבודה. הוא כמעט לא עושה עבודה, רק ישן ומודד כמה מאוחר התעורר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "cyclictest על מכונה שקטה מראה max של 15µs, אבל האפליקציה שלך על אותו core רואה spikes של 200µs. למה cyclictest יכול להטעות, ואיך מריצים אותו כך שהמספר יהיה רלוונטי?",
+        "modelAnswer": "cyclictest מודד רק את wakeup latency של thread שכמעט לא עושה כלום: הוא לא נוגע בזיכרון גדול, לא עושה syscalls ולא לוקח locks, ולכן הוא לא רואה page faults, cache ו-TLB misses, או רעש שהאפליקציה עצמה יוצרת. בנוסף, מכונה שקטה מסתירה רעש של עומס: interrupts של רשת ודיסק, memory bandwidth, TLB shootdowns. מריצים אותו על אותו core ובאותה עדיפות כמו ה-RT thread (`-a`, `-p`), עם `-m` ל-mlockall, `-h` להיסטוגרמה, ולאורך שעות (`-D`) תחת עומס מלאכותי כמו stress-ng וגם תחת העומס האמיתי. אם cyclictest נקי והאפליקציה לא, הבעיה בקוד שלך ולא במערכת.",
+        "rubric": [
+          "cyclictest מודד רק התעוררות, לא faults, cache או locks של האפליקציה",
+          "הרצה תחת עומס (stress-ng) ולאורך שעות",
+          "אותו core ואותה עדיפות כמו ה-RT thread, עם היסטוגרמה ו-max",
+          "מסקנה: cyclictest נקי ואפליקציה לא נקייה מצביע על הקוד"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q09",
@@ -407,7 +427,17 @@
         "שגוי: CLOCK_REALTIME אפילו גרוע יותר למדידת intervals כי הוא יכול לקפוץ (NTP). בחירת השעון לא קשורה לבעיה של מה נמדד.",
         "שגוי: ה-p99 נראה טוב רק כי המדידה פגומה. שתי שניות של תקיעה בבדיקה closed-loop הופכות לשתי מדידות איטיות בודדות במקום מאות אלפים.",
         "נכון: coordinated omission. בדיקה closed-loop מאטה יחד עם המערכת, ולכן לא שולחת את הבקשות שהיו אמורות לצאת בזמן התקיעה. מודדים open-loop, וכל latency נספר מהזמן שבו הבקשה הייתה אמורה להישלח."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שקצב הבקשות המתוכנן הוא 10,000 בשנייה והבדיקה נמשכה 100 שניות, עם שתי התקיעות של שנייה. הערך בערך את ה-p99 האמיתי, והסבר איך מתקנים את המדידה.",
+        "modelAnswer": "בבדיקה היו אמורות להישלח כמיליון בקשות. בכל תקיעה של שנייה היו אמורות להישלח כ-10,000 בקשות, וה-latency שלהן, כשמודדים מהזמן המתוכנן, מתפזר בין שנייה (הראשונה) לכמעט 0 (האחרונה). שתי תקיעות הן כ-20,000 בקשות, כ-2% מהבדיקה. ה-1% העליון הוא כ-10,000 הבקשות הגרועות, כלומר החצי המוקדם של כל תקיעה, ולכן p99 האמיתי הוא כ-500ms ולא 50µs, פי 10,000. התיקון: מחולל עומס open-loop ששולח לפי לוח זמנים קבוע ומחשב latency מהזמן שבו הבקשה הייתה אמורה לצאת. אם אי אפשר לשנות את הבודק, HdrHistogram מציע recordValueWithExpectedInterval שמשלים את הדגימות החסרות.",
+        "rubric": [
+          "כ-20,000 בקשות מתוך כמיליון נפגעות, כ-2%",
+          "p99 אמיתי בסדר גודל של מאות ms (כ-500ms)",
+          "open-loop: latency נמדד מהזמן המתוכנן לשליחה",
+          "השלמה בדיעבד (recordValueWithExpectedInterval) כשאי אפשר לשנות את הבודק"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q10",
@@ -446,7 +476,17 @@
         "שגוי: mlockall עובד גם על זיכרון של malloc, וזה בדיוק מה ש-MCL_FUTURE עושה. הבעיה היא לא שהנעילה נכשלת, אלא ש-malloc ממפה ומשחרר זיכרון חדש בכל איטרציה.",
         "נכון: מעל M_MMAP_THRESHOLD (ברירת מחדל 128KB) glibc משרת את ההקצאה ב-mmap נפרד ומשחרר ב-munmap. כל איטרציה היא שני syscalls, ועם MCL_FUTURE הקרנל גם ממלא ומאפס את כל ה-1MB מיד.",
         "שגוי: mlockall חל על כל ה-address space של ה-process, ולכן על כל ה-threads שלו, כולל threads שנוצרו אחר כך."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שאי אפשר להעלים את ההקצאה מהלולאה, כי ספרייה חיצונית מקצה בכל קריאה. מה אתה עושה כדי שזה יהיה סביר ל-RT, ומה עדיין נשאר לא חסום?",
+        "modelAnswer": "קודם `mallopt(M_MMAP_MAX, 0)` כדי שכל הקצאה תגיע מה-heap הרגיל ולא מ-mmap, ו-`mallopt(M_TRIM_THRESHOLD, -1)` כדי ש-glibc לא יחזיר זיכרון לקרנל. באתחול מגדלים את ה-heap מראש: malloc גדול, נוגעים בכל דף ומשחררים, וכך הזיכרון כבר ממופה ונעול (MCL_FUTURE). זה מעלים syscalls ו-page faults, אבל malloc עדיין לא חסום בזמן: הוא לוקח lock של arena שאולי מוחזק ע״י thread אחר, וחיפוש בלוק פנוי תלוי במצב ה-heap. לכן הפתרון המלא הוא להחליף את ה-allocator של הספרייה (operator new מותאם, pool, או allocator עם זמן O(1) מובטח כמו TLSF). מאמתים עם `strace -f -e trace=mmap,munmap,brk` ומונה page faults בזמן ריצה.",
+        "rubric": [
+          "M_MMAP_MAX = 0 ו-M_TRIM_THRESHOLD = -1",
+          "הגדלת ה-heap מראש באתחול עם נגיעה בכל דף",
+          "malloc עדיין לא חסום: lock של arena וחיפוש, ולכן pool או TLSF",
+          "אימות עם strace על mmap/brk ומונה page faults"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q12",
@@ -467,7 +507,17 @@
         "שגוי: rdtsc מחזיר מונה (ticks בקצב הנומינלי של ה-TSC), לא ננו-שניות. ההמרה לזמן דורשת לדעת את תדר ה-TSC.",
         "שגוי: rdtsc עובד בכל core. בידוד הוא עניין של ה-scheduler ולא משפיע על ההוראה.",
         "נכון: rdtsc אינו serializing, כך שה-out-of-order execution יכול להריץ אותו לפני שההוראות הקודמות הסתיימו או אחרי שהבאות התחילו. lfence לפני, או rdtscp ואחריו lfence, תוחמים את הקטע."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך ערכי TSC. איך הופכים אותם לננו-שניות בצורה אמינה, ומה יכול לשבש את המדידה כשה-thread רץ על כמה cores או בתוך VM?",
+        "modelAnswer": "ה-TSC סופר בתדר נומינלי קבוע, אז צריך לדעת את התדר: מכיילים מול CLOCK_MONOTONIC לאורך שנייה או יותר, או לוקחים את הכיול של הקרנל (tsc_khz, שמופיע ב-dmesg). בודקים ב-`/proc/cpuinfo` את הדגלים constant_tsc ו-nonstop_tsc, אחרת הקצב משתנה או נעצר ב-C-states. בין cores ובין sockets ה-TSC בדרך כלל מסונכרן, אבל לא מובטח, ולכן מצמידים את ה-thread ל-core כדי שקריאת ההתחלה והסוף יבואו מאותו מונה. ב-VM ה-TSC יכול להיות מוסט, מוכפל בתדר אחר, או אפילו מיורט ע״י ה-hypervisor (trap) ואז כל קריאה איטית. לקטע של 200 מחזורים מודדים גם מדידה ריקה (rdtscp ו-lfence עולים עשרות מחזורים), מחסירים אותה, ולוקחים min או חציון על הרבה חזרות.",
+        "rubric": [
+          "כיול התדר מול CLOCK_MONOTONIC או tsc_khz של הקרנל",
+          "בדיקת constant_tsc ו-nonstop_tsc",
+          "הצמדה ל-core, והסתייגות על VM (offset, scaling, trap)",
+          "הפחתת overhead של מדידה ריקה והרבה חזרות"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q13",
@@ -488,7 +538,17 @@
         "שגוי: 65.5 µs הוא 65536 / 1e9, טעות של פי 10 בהמרה של 100 MS/s.",
         "נכון: זמן מילוי בלוק = N / fs = 65536 / 100e6 ≈ 655 µs. זה הרצפה לפני כל חישוב, העברה מה-USRP או buffering.",
         "שגוי: 6.55 ms הוא 65536 / 10e6, כאילו קצב הדגימה הוא 10 MS/s. טעות של פי 10."
-      ]
+      ],
+      "followUp": {
+        "prompt": "המראיין מבקש detection latency מתחת ל-50µs אבל רוצה לשמור על רזולוציית תדר של כ-1.5kHz כמו ב-FFT הזה. זה אפשרי? מה עוזר ומה לא?",
+        "modelAnswer": "רזולוציית התדר נקבעת לפי זמן התצפית: Δf ≈ 1/T. כאן 100e6 / 65536 ≈ 1526Hz, כלומר T ≈ 655µs, ואין דרך לקבל 1.5kHz מתצפית של 50µs, בלי קשר לקצב הדגימה. decimation לא עוזר: הוא מקטין את N לאותה רזולוציה, אבל זמן המילוי N / fs נשאר 655µs. FFT עם חפיפה מקטין את המרווח בין עדכונים (hop), לא את אורך החלון, כך שאות חדש מזוהה רק כשמספיק אנרגיה שלו נכנסה לחלון, וזה תלוי ב-SNR. הפתרון המעשי הוא שני שלבים: detection גס ומהיר עם N קטן, למשל 1024 דגימות (כ-10µs, רזולוציה של כ-98kHz), שמפעיל תגובה, ואחריו ניתוח עדין לזיהוי מדויק. ובשביל מיקרו-שניות בודדות, את ה-detection מעבירים ל-FPGA.",
+        "rubric": [
+          "Δf ≈ 1/T, ולכן 1.5kHz דורש כ-655µs תצפית",
+          "decimation לא מקצר את זמן התצפית",
+          "חפיפה מקטינה hop ולא את אורך החלון",
+          "שני שלבים: detection גס עם N קטן (מספר מחושב) ואז עדין, או FPGA"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q14",
@@ -504,7 +564,17 @@
         "שינוי אחד בכל פעם ואימות לאורך זמן"
       ],
       "explanation": "מראיינים מחפשים גישה שיטתית ממדידה לבידוד ואז לסיבה, ולא ניחושים או שינוי של עשרה פרמטרים בבת אחת.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "ה-trace מראה שבכל spike רץ kworker על ה-core המבודד שלך, בערך פעם בדקה. מה הצעד הבא כדי לזהות אותו ולהוציא אותו משם?",
+        "modelAnswer": "kworker הוא רק מעטפת, צריך לדעת איזו עבודה הוא מריץ: מפעילים את tracepoints של workqueue (workqueue_queue_work ו-workqueue_execute_start), שמראים את שם הפונקציה ואת מי שתזמן אותה. אם זו עבודה של workqueue מסוג unbound, אפשר להגביל את כל ה-unbound workqueues ל-cores של housekeeping דרך `/sys/devices/virtual/workqueue/cpumask`. אם זו עבודה per-CPU (bound), אי אפשר להזיז אותה, וצריך להעלים את הגורם: לכבות את הפיצ'ר, לשנות פרמטר (למשל vm.stat_interval לעדכוני vmstat), או לוודא שה-core באמת ב-nohz_full ו-isolcpus כך שהקרנל לא מתזמן לשם עבודה. אחרי השינוי מריצים שוב שעות ומוודאים שה-spike נעלם, לא רק התמעט.",
+        "rubric": [
+          "workqueue tracepoints כדי לקבל את שם הפונקציה",
+          "unbound workqueues: הגבלה דרך /sys/devices/virtual/workqueue/cpumask",
+          "עבודה per-CPU לא ניתנת להזזה, מעלימים את הגורם",
+          "אימות ארוך אחרי השינוי"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q15",
@@ -525,7 +595,17 @@
         "שגוי: valgrind מריץ את הקוד באמולציה איטית פי עשרות, ולא מתאים למדידת spikes בזמן אמת. cache miss עולה עשרות ns, לא 100µs.",
         "נכון: hwlat tracer (או osnoise) מסתובב עם interrupts כבויים וקורא את השעון ברצף, ופער בזמן שם יכול לבוא רק מתחת למערכת ההפעלה. החשוד הוא SMI, ומאמתים עם מונה ה-SMI ב-MSR 0x34 (turbostat).",
         "שגוי: perf top מראה איפה הזמן מבוזבז בממוצע, לא spikes נדירים. ו-ftrace כבר הראה שה-scheduler לא פעל באותו זמן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אימתת שיש SMI של כ-100µs כל כמה דקות, ואין לך גישה ל-BIOS (שרת OEM או ענן). איך מתכננים את מערכת ה-SDR כך שתשרוד את זה?",
+        "modelAnswer": "SMI עוצר את כל ה-cores בבת אחת, ולכן שום בידוד או עדיפות לא עוזרים: הפתרון היחיד הוא buffering שסופג את ה-gap. בזמן ה-SMI התקנים בדרך כלל ממשיכים לבצע DMA, כך שבצד RX ה-ring של ה-NIC חייב להכיל את כל מה שמגיע: ב-10GbE זה כ-1.25MB לכל 1ms, כלומר כ-125KB ל-100µs, ועוד מרווח. מגדילים עם `ethtool -G` ובודקים את גודל ה-socket buffer. בצד TX, ה-buffer של ה-USRP צריך להכיל לפחות SMI אחד ועוד ה-max הרגיל, אחרת יש underrun, וזה מוסיף latency קבוע לכל התגובות. מנטרים את מונה ה-SMI (MSR 0x34, דרך turbostat) ומצליבים עם מוני overflow ו-underrun כדי לוודא שהם לא קורים יחד.",
+        "rubric": [
+          "SMI עוצר את כל ה-cores ולכן רק buffering עוזר",
+          "חישוב: כ-125KB ל-100µs ב-10GbE",
+          "הגדלת NIC ring (ethtool -G) ו-TX prefill, במחיר latency",
+          "הצלבת מונה SMI (MSR 0x34) עם מוני overflow/underrun"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q16",
@@ -546,7 +626,16 @@
         "נכון: כל ה-threads של process חולקים mm ו-page tables. munmap משנה אותן, והקרנל שולח IPI לכל ה-CPUs שעשויים להחזיק את ה-mm ב-TLB, כולל ה-core המבודד, כדי לבטל תרגומים ישנים (TLB shootdown).",
         "שגוי: munmap לא משנה scheduling policy או עדיפות של אף thread.",
         "שגוי: השאלה אומרת שה-RT thread לא עושה syscalls ולא מחכה ל-lock. ה-spike מגיע כ-interrupt שנכפה עליו, לא כהמתנה שהוא יזם."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תאמת שזה באמת TLB shootdown, למה העברת ה-GUI ל-process נפרד פותרת את זה ו-thread נפרד לא, ואילו פעולות נוספות מלבד munmap מייצרות את אותה בעיה?",
+        "modelAnswer": "ב-`/proc/interrupts` יש שורת TLB shootdowns עם מונה לכל CPU: אם המונה של ה-core המבודד עולה בדיוק בזמני ה-spikes, זה מאומת. אפשר גם להפעיל את tracepoint tlb:tlb_flush. ה-IPI נשלח רק ל-CPUs שעשויים להחזיק תרגומים של ה-mm (address space) שהשתנה, כלומר CPUs שהריצו threads של אותו process. process נפרד הוא mm נפרד, ולכן ה-core המבודד לא ברשימה. thread נפרד חולק את אותו mm, ולכן כן. פעולות נוספות: madvise עם MADV_DONTNEED, mprotect, ו-migration של דפים ע״י הקרנל, למשל NUMA auto-balancing (כדאי לכבות עם kernel.numa_balancing=0), compaction ו-KSM.",
+        "rubric": [
+          "מונה TLB shootdowns ב-/proc/interrupts על ה-core המבודד",
+          "IPI רק ל-CPUs שהריצו את אותו mm, process נפרד = mm נפרד",
+          "טריגרים נוספים: MADV_DONTNEED, mprotect, NUMA balancing או compaction"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q17",
@@ -567,7 +656,17 @@
         "שגוי: עדיפות ה-scheduler משפיעה רק על מי ירוץ באותו logical CPU. ה-job של AVX-512 רץ על logical CPU אחר, כך שאין כאן החלטת scheduling לשנות.",
         "שגוי: logical CPUs נפרדים רק מבחינת ה-OS. ברמת החומרה הם אותו core פיזי עם משאבים משותפים, וזו בדיוק הטעות של מי שחושב ש-isolcpus על logical CPU מספיק.",
         "שגוי: AVX-512 לא גורם ל-page faults, ו-page faults ב-process אחר לא היו משפיעים על ה-RT thread. ההשפעה היא דרך משאבי ה-core והתדר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך מוצאים בוודאות מי ה-sibling של CPU 3 במכונה נתונה, ומה המחיר של לכבות SMT לעומת להשאיר את ה-sibling ריק?",
+        "modelAnswer": "המספור לא קבוע: 3 + 16 הוא רק מספור נפוץ. קוראים את `/sys/devices/system/cpu/cpu3/topology/thread_siblings_list` (או core_cpus_list), או `lscpu -e` ומסתכלים על עמודת CORE. אפשרות אחת: לבודד את שני ה-logical CPUs (isolcpus על שניהם) ולהשאיר את ה-sibling ריק. המחיר הוא רק logical CPU אחד לכל RT core, ושאר המכונה ממשיכה ליהנות מ-SMT. אפשרות שנייה: לכבות SMT לכל המכונה עם `nosmt` או `/sys/devices/system/cpu/smt/control`, שמוריד את ה-throughput של עומסים מקביליים, בדרך כלל ב-10–30% לפי סוג העומס, אבל גם סוגר חולשות כמו MDS ו-L1TF. ל-RT מספיק לרוב לבודד ברמת core פיזי.",
+        "rubric": [
+          "thread_siblings_list או lscpu -e, המספור תלוי פלטפורמה",
+          "בידוד שני ה-siblings: מחיר של logical CPU אחד לכל RT core",
+          "כיבוי SMT מלא: אובדן throughput טיפוסי של 10–30%",
+          "יתרון אבטחה (MDS/L1TF) לכיבוי SMT"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q18",
@@ -705,7 +804,16 @@
         "שגוי: 16ms נשמע כמו זמן ריקון של 16 בלוקים, אבל ריקון דורש שהצרכן יוציא יותר ממה שנכנס. עם קצבים שווים התור לא מתרוקן אף פעם.",
         "נכון: בזמן התקיעה נכנסו 20 בלוקים לתור של 16, כך ש-4 אבדו והתור נשאר מלא. אחרי זה בלוק יוצא בדיוק כשבלוק נכנס, ולכן כל בלוק חדש מחכה כ-16ms לצמיתות (standing queue).",
         "שגוי: ה-RX דוגם בקצב קבוע שנקבע ע״י החומרה, והוא לא מאט כשה-DSP מפגר. אין back-pressure על אנטנה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "רוצים שאחרי תקיעה של 20ms ה-latency יחזור לנורמלי תוך 200ms. כמה מהר צריך להיות ה-DSP, ומה ה-trade-off מול drop oldest?",
+        "modelAnswer": "בתור יש backlog של 16 בלוקים. קצב הריקון הוא קצב השירות פחות קצב ההגעה: אם בלוק לוקח t_p מילי-שניות, ה-DSP מסיים 1/t_p בלוקים למילי-שנייה ונכנס בלוק אחד, ולכן הריקון הוא 1/t_p − 1 בלוקים למילי-שנייה. כדי לרוקן 16 בלוקים ב-200ms צריך 1/t_p − 1 ≥ 0.08, כלומר t_p ≤ כ-0.926ms, ניצולת של כ-92.6%. זה המינימום: עם ניצולת גבוהה כל הפרעה קטנה משאירה backlog ארוך, ולכן במערכות latency-critical מכוונים לניצולת נמוכה בהרבה. drop oldest מחזיר את ה-latency לנורמלי מיד, במחיר זריקת נתונים. ב-jammer ריאקטיבי בלוק בן 16ms כבר חסר ערך, ולכן זריקה עדיפה על עיבוד מאוחר.",
+        "rubric": [
+          "קצב ריקון = קצב שירות פחות קצב הגעה",
+          "חישוב: t_p ≤ כ-0.926ms, ניצולת של כ-92.6% לכל היותר",
+          "drop oldest מחזיר latency מיד במחיר אובדן נתונים, מתאים כשנתון ישן חסר ערך"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q25",
@@ -734,7 +842,17 @@
         "לא מתאים: push_back שחורג מה-capacity מקצה באפר חדש, מעתיק את כל האיברים, ואולי מבצע mmap. גם זמן לא חסום וגם הקצאה בלולאה.",
         "מתאים: fetch_add עם relaxed על מונה פרטי של ה-thread הוא הוראה אטומית אחת בלי contention, בזמן קבוע.",
         "לא מתאים: פתיחת ofstream היא open syscall שעובר על filesystem, מקצה buffer, ויכול להיחסם על דיסק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה עדיין צריך לוגים של דיבוג עם מחרוזות מפורמטות מתוך ה-RT loop. תכנן את זה, ומה קורה כשהתור של הלוג מתמלא?",
+        "modelAnswer": "ה-RT thread לא מפרמט ולא כותב: הוא דוחף רשומה בינארית קטנה לתור SPSC שהוקצה מראש, עם חותמת זמן, מזהה של format string סטטי וכמה ארגומנטים מספריים. זה עולה עשרות ns. thread בעדיפות נמוכה על core שאינו מבודד שולף, מפרמט וכותב לדיסק. כשהתור מלא, ה-RT thread לא מחכה לעולם: הוא זורק את הרשומה ומגדיל מונה dropped, וה-thread של הלוג מדווח על הפער. צריך להיזהר מארגומנטים שהם pointers: מותר רק למחרוזות עם lifetime סטטי, וכל מידע אחר מעתיקים לתוך הרשומה, אחרת בזמן הפירמוט הזיכרון כבר השתנה.",
+        "rubric": [
+          "רשומה בינארית (timestamp, מזהה format, ארגומנטים) לתור SPSC מוקצה מראש",
+          "פירמוט ו-I/O ב-thread בעדיפות נמוכה על core אחר",
+          "תור מלא: drop ומונה, אף פעם לא חסימה",
+          "pointers רק למחרוזות סטטיות, השאר מועתק"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q26",
@@ -755,7 +873,17 @@
         "נכון: עם THP=always, khugepaged מבצע compaction ומאחד דפים ל-2MB ברקע, ו-fault על huge page מאפס 2MB בבת אחת. ההמלצה: THP ב-madvise או never, ו-huge pages מוקצים מראש (hugetlbfs) לבאפרים שצריכים אותם.",
         "שגוי: huge pages מורידים TLB misses, וזה יתרון אמיתי לבאפרים גדולים. הבעיה היא המנגנון האוטומטי של THP, לא huge pages עצמם.",
         "שגוי: SMI מגיע מהקושחה ולא קשור לניהול זיכרון של הקרנל. וגם, SMI לא היה מופיע כ-page faults ב-perf."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תוכיח ש-THP הוא באמת הגורם, ואיך מגדירים huge pages מפורשים כדי לשמור על היתרון? תן מספר שממחיש את היתרון לבאפר של 64MB.",
+        "modelAnswer": "ב-`/proc/vmstat` יש מונים כמו thp_fault_alloc, thp_collapse_alloc ו-compact_stall: אם הם עולים בזמני ה-spikes, יש מתאם. ב-`/proc/<pid>/smaps` השדה AnonHugePages מראה כמה זיכרון של ה-process ב-huge pages. ההגדרה היא ב-`/sys/kernel/mm/transparent_hugepage/enabled` ו-`defrag`: madvise או never. ל-huge pages מפורשים שומרים מאגר ב-vm.nr_hugepages (עדיף באתחול, לפני שהזיכרון מתפצל) וממפים עם mmap ו-MAP_HUGETLB, או דרך hugetlbfs. הדפים נעולים מטבעם ולא עוברים compaction. היתרון: באפר של 64MB הוא 16,384 דפים של 4KB, אבל רק 32 דפים של 2MB, ולכן כמעט אין TLB misses במעבר עליו.",
+        "rubric": [
+          "מונים ב-/proc/vmstat (thp_fault_alloc, compact_stall) ו-AnonHugePages ב-smaps",
+          "enabled/defrag ל-madvise או never",
+          "vm.nr_hugepages באתחול ו-MAP_HUGETLB",
+          "חישוב: 16,384 דפים של 4KB מול 32 דפים של 2MB"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q27",
@@ -776,7 +904,17 @@
         "שגוי: invariant TSC קשור למדידת זמן, לא להחלטה אם לעצור את ה-tick. הוא לא מסביר interrupts נוספים.",
         "שגוי: nohz_full עובד גם עם threads ב-SCHED_FIFO, וזה בדיוק מקרה השימוש הנפוץ שלו. ה-policy של ה-thread לא מה שמחזיר את ה-tick.",
         "נכון: nohz_full עוצר את ה-tick רק כשיש על ה-core task אחד שמוכן לרוץ. thread נוסף שהוצמד לשם, או kworker, מחזיר את ה-tick כי צריך אותו לחלוקת זמן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שתיקנת והשארת על core 5 רק את ה-RT thread. מה עוד נשאר מה-tick, מה צריך מלבד nohz_full, ולמה nohz_full מועיל בעיקר ל-thread שעושה busy-poll ולא ל-thread שישן?",
+        "modelAnswer": "גם עם task יחיד נשאר tick שארי של כ-1Hz לניהול ה-scheduler. callbacks של RCU מועברים מה-core עם rcu_nocbs ל-kthreads על cores של housekeeping, אחרת הם רצים שם. nohz_full מועיל כשה-thread רץ ב-user space ברציפות: אז אין אף interrupt של timer. thread שישן ב-clock_nanosleep משאיר את ה-core idle, ואז ה-tick נעצר גם ב-NO_HZ_IDLE הרגיל, וה-hrtimer שלו עצמו יורה בכל מחזור. מחיר: על core עם nohz_full הקרנל עושה context tracking בכל מעבר בין user ל-kernel, ולכן syscalls יקרים יותר. מאמתים עם שורת LOC ב-/proc/interrupts, ומצפים לכ-1 בשנייה.",
+        "rubric": [
+          "tick שארי של כ-1Hz",
+          "rcu_nocbs להעברת RCU callbacks",
+          "יתרון בעיקר ל-busy-loop ב-user space, thread ישן ממילא idle",
+          "syscalls יקרים יותר בגלל context tracking, אימות בשורת LOC"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q28",
@@ -797,7 +935,17 @@
         "שגוי: החציון של ה-p99 מתעלם לגמרי מהדקה הגרועה. זו טעות של מי שחושב שאפשר לגזור percentile של המכלול מ-percentiles של החלקים.",
         "נכון: לדקה הגרועה יש 1/60 ≈ 1.67% מכל המדידות, כולן 5ms. זה יותר מ-1%, ולכן כל ה-1% העליון של השעה נופל בתוכה ו-p99 השעתי הוא 5ms.",
         "שגוי: כאן כן אפשר לדעת בדיוק, כי כל המדידות בדקה הגרועה היו 5ms והן מעל 1% מהשעה. הטווח 50 עד 132 מבוסס על ההנחה השגויה שהממוצע הוא חסם עליון."
-      ]
+      ],
+      "followUp": {
+        "prompt": "צריך p99.9 של שבוע שלם מ-50 שרתים, עם זיכרון מוגבל ובלי לשמור כל מדידה. איך עושים את זה, ואיך רושמים מתוך RT thread בלי לפגוע בו?",
+        "modelAnswer": "משתמשים בהיסטוגרמה בגודל קבוע עם buckets לוגריתמיים-לינאריים, כמו HdrHistogram, עם דיוק יחסי מוגדר (למשל 2–3 ספרות משמעותיות). הזיכרון קבוע, עשרות KB, בלי קשר למספר המדידות, וה-percentile שמחושב ממנה מדויק עד הדיוק היחסי. מיזוג הוא חיבור של מוני ה-buckets, ולכן ממזגים דקות לשבוע ושרתים לאשכול, ומחשבים p99.9 רק בסוף. ה-RT thread רושם ב-O(1): חישוב אינדקס עם כמה פעולות ביטים והגדלת מונה פרטי. פעם בתקופה מחליפים בין שתי היסטוגרמות (double buffer), ו-thread רגיל אוסף את הישנה. חלופות כמו DDSketch או t-digest הן sketches ממוזגים עם הבטחת שגיאה שונה. תשובה מדויקת לחלוטין דורשת לשמור את כל הדגימות.",
+        "rubric": [
+          "היסטוגרמה בגודל קבוע עם דיוק יחסי חסום (HdrHistogram)",
+          "מיזוג = חיבור מוני buckets, percentile מחושב בסוף",
+          "רישום O(1) ב-RT thread והחלפת היסטוגרמות לאיסוף",
+          "דיוק מלא דורש את כל הדגימות"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q29",
@@ -818,7 +966,17 @@
         "שגוי: השהיית התפשטות בכבל היא כ-5 ns למטר, כלומר זניחה. ו-ethtool מראה פרמטר שאפשר לשנות.",
         "שגוי: rx-usecs הוא פרמטר של הכרטיס (coalescing), לא של ה-socket. timeout של socket מוגדר ב-SO_RCVTIMEO ולא מוסיף latency לחבילה שהגיעה.",
         "שגוי: DMA על PCIe לוקח בסדר גודל של מיקרו-שנייה אחת, לא 50. וההתאמה המדויקת ל-rx-usecs: 50 מראה שזה פרמטר מוגדר ולא קבוע פיזיקלי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השווה rx-usecs = 0, busy polling ו-DPDK: מה כל אחד עולה, ומה קורה עם rx-usecs = 0 בקצב חבילות מלא של 10GbE?",
+        "modelAnswer": "בקצב מלא עם חבילות של 64 בתים, 10GbE הוא כ-14.88 מיליון חבילות בשנייה. interrupt לכל חבילה בקצב הזה יחנוק את ה-CPU, אבל NAPI מונע את זה: אחרי interrupt הדרייבר מכבה interrupts ועובר ל-polling עד שה-ring מתרוקן, כך שבעומס גבוה זה ממילא polling, וה-latency הנמוך של rx-usecs = 0 מורגש בעיקר בעומס נמוך. busy polling (SO_BUSY_POLL) גורם ל-thread לבדוק את ה-ring בעצמו, וחוסך interrupt ו-wakeup, אבל שורף core ב-100% גם כשאין תנועה. DPDK עוקף את הקרנל לגמרי: דרייבר ב-user space שעושה poll, בלי syscalls ובלי העתקות, עם latency של מיקרו-שניות בודדות. המחיר: cores ייעודיים, hugepages, ו-NIC שלא זמין יותר ל-stack של הקרנל.",
+        "rubric": [
+          "כ-14.88 Mpps לחבילות של 64 בתים ב-10GbE",
+          "NAPI מכבה interrupts בזמן polling, ולכן בעומס זה polling ממילא",
+          "busy poll ו-DPDK שורפים core מלא גם ב-idle",
+          "DPDK: bypass של הקרנל, hugepages, ה-NIC יוצא מה-stack"
+        ]
+      }
     },
     {
       "id": "conc.latency-jitter.q30",
@@ -833,7 +991,17 @@
         "מרווח jitter לפי max, מדידה עם timestamps, וההכרה מתי צריך FPGA"
       ],
       "explanation": "שאלת system design שבודקת חשיבה כמותית. מועמד חזק מחשב, לא מנחש, ומבין שה-buffers הם latency.",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "הדרישה היא 100µs מקצה לקצה, לפי max ולא ממוצע. מה חייב לעבור ל-FPGA, ולמה ה-host לא יגיע לזה באופן אמין גם אחרי כל הכיוונונים?",
+        "modelAnswer": "סוכמים את המסלול דרך ה-host: packetization של עשרות מיקרו-שניות לחבילות גדולות, NIC, PCIe ודרייבר של כמה מיקרו-שניות לכל כיוון גם עם busy-poll, מילוי בלוק לניתוח (גם עם N = 4096 זה כ-41µs ב-100 MS/s), חישוב, ובצד TX buffer שחייב להכיל את ה-max jitter של ה-host. גם מערכת מכוונת עם PREEMPT_RT מגיעה ל-max של עשרות µs, ו-SMI יכול להוסיף מאות. לפי max, הסכום כבר קרוב ל-100µs או מעליו. לכן מפרידים: data plane ב-FPGA, כלומר detection (energy detector או FFT קטן), trigger ו-waveform שמאוחסן מראש ב-RAM של ה-FPGA ומשודר מיד, עם latency של מיקרו-שניות בודדות. ה-host נשאר control plane: מגדיר ספים, תדרים ו-waveforms. המחיר: זמן פיתוח FPGA גבוה וגמישות נמוכה יותר.",
+        "rubric": [
+          "סכום מספרי של רכיבי ה-host כולל TX margin לפי max מגיע לכ-100µs",
+          "jitter של host (עשרות µs, SMI מאות) קובע את ה-TX buffer",
+          "data plane ב-FPGA: detection, trigger ו-waveform מאוחסן; host כ-control plane",
+          "trade-off: עלות פיתוח וגמישות"
+        ]
+      }
     },
     {
       "level": 2,
@@ -879,7 +1047,17 @@
         "נכון: ISR ארוך מוסיף jitter לכל המערכת, ואסור בו לחסום."
       ],
       "id": "conc.latency-jitter.q32",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "ב-PREEMPT_RT רוב ה-handlers רצים כ-threaded IRQs. מה זה משנה לתכנון העדיפויות של ה-RT thread שלך, ומה המחיר?",
+        "modelAnswer": "ב-PREEMPT_RT ה-top half רק מאשר את ה-interrupt ומעיר kernel thread בשם irq/<מספר>-<שם>, שרץ כברירת מחדל ב-SCHED_FIFO בעדיפות 50. לכן RT thread בעדיפות מעל 50 יכול לדחות טיפול בהתקנים, וזה טוב, אבל מסוכן אם ה-thread שלך תלוי ב-interrupt הזה: אם הוא מחכה לנתונים מה-NIC וה-IRQ thread של ה-NIC על אותו core בעדיפות נמוכה ממנו, הוא עלול לחכות לנצח (במיוחד אם הוא עושה busy-wait). הכלל: ה-IRQ thread שמזין אותך בעדיפות גבוהה ממך או על core אחר. משנים עם `chrt -f -p <prio> <pid>` ומזיזים עם `/proc/irq/N/smp_affinity`. המחיר: context switch נוסף לכל interrupt, כמה מיקרו-שניות, וירידה ב-throughput בקצב interrupts גבוה.",
+        "rubric": [
+          "IRQ threads ב-SCHED_FIFO עדיפות 50 כברירת מחדל",
+          "IRQ thread שמזין אותך: עדיפות גבוהה יותר או core אחר",
+          "chrt ו-smp_affinity לשינוי",
+          "מחיר: context switch נוסף לכל interrupt"
+        ]
+      }
     },
     {
       "level": 3,
@@ -906,7 +1084,17 @@
         "נכון: malloc לוקחת locks ואינה reentrant. ה-ISR עלול לקטוע malloc אחר באמצע."
       ],
       "id": "conc.latency-jitter.q33",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "ה-ISR קורא ל-xSemaphoreGiveFromISR ומשחרר משימה בעדיפות גבוהה. מה התפקיד של pxHigherPriorityTaskWoken ושל portYIELD_FROM_ISR, ומה קורה אם שוכחים אותם? ומה המגבלה על עדיפות ה-interrupt עצמו?",
+        "modelAnswer": "ה-API של FromISR לא מבצע context switch בעצמו, אלא מסמן בדגל אם המשימה שהשתחררה בעדיפות גבוהה מהמשימה שנקטעה. בסוף ה-ISR קוראים ל-portYIELD_FROM_ISR עם הדגל, שמבקש context switch (ב-Cortex-M דרך PendSV), כך שביציאה מה-interrupt רצה ישר המשימה החשובה. אם שוכחים, המשימה מוכנה אבל רצה רק בנקודת התזמון הבאה, למשל ה-tick הבא: עד 1ms עם configTICK_RATE_HZ של 1000. בנוסף, רק interrupts בעדיפות לוגית שאינה גבוהה מ-configMAX_SYSCALL_INTERRUPT_PRIORITY רשאים לקרוא ל-API של FreeRTOS. ב-Cortex-M ערך מספרי נמוך הוא עדיפות גבוהה, וזו טעות נפוצה ששוברת את מבני הנתונים של ה-kernel.",
+        "rubric": [
+          "הדגל מסומן כשהמשימה שהתעוררה בעדיפות גבוהה מזו שנקטעה",
+          "portYIELD_FROM_ISR מבקש switch ביציאה (PendSV)",
+          "בלעדיו: עיכוב עד ה-tick הבא, למשל 1ms",
+          "configMAX_SYSCALL_INTERRUPT_PRIORITY, ובחשבון ש-Cortex-M הפוך מספרית"
+        ]
+      }
     },
     {
       "level": 4,
@@ -934,7 +1122,17 @@
         "https://leetcode.com/discuss/post/1690850/google-online-timer-callback-by-anonymou-yhcx/"
       ],
       "id": "conc.latency-jitter.q34",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "המראיין מוסיף: callbacks לא ירוצו בהקשר של interrupt, וצריך גם `cancel(id)`. איך מריצים את ה-callbacks, איך ממשים cancel, ומה קורה ב-race בין cancel לבין callback שכבר התחיל?",
+        "modelAnswer": "ה-ISR רק מעיר dispatcher thread בעדיפות גבוהה (או מעביר את הרשומות שפקעו לתור lock-free). ה-dispatcher לוקח את ה-lock, מוציא את כל מה שפקע, מתכנת את הטיימר לראש החדש, משחרר את ה-lock ורק אז מריץ את ה-callbacks. כך callback יכול לקרוא ל-register בלי deadlock. cancel: מפה מ-id לרשומה. או lazy deletion, שמסמן את הרשומה כמבוטלת ומדלג עליה כשהיא מגיעה לראש, או heap עם אינדקסים שמאפשר הסרה ב-O(log n). race: אם ה-callback כבר הוצא ורץ, cancel מחזיר סטטוס של already fired, ומי שצריך לשחרר את arg מחכה לסיום ה-callback. מקרה קצה: אם בזמן תכנות הטיימר ה-deadline כבר עבר, מטפלים בו מיד ולא מחכים לפקיעה שלעולם לא תגיע.",
+        "rubric": [
+          "ISR מעיר dispatcher, callbacks רצים בלי lock",
+          "cancel עם מפת id ו-lazy deletion או indexed heap",
+          "race: cancel מחזיר already fired, ולא משחררים arg באמצע ריצה",
+          "deadline שכבר עבר בזמן התכנות מטופל מיד"
+        ]
+      }
     },
     {
       "level": 4,
@@ -955,7 +1153,17 @@
         "שגוי: ה-ISR יכול לקטוע את המשימה באמצע שינוי של ה-heap ולראות מבנה שבור."
       ],
       "id": "conc.latency-jitter.q35",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "עכשיו זה SoC עם שני cores, וה-interrupt של הטיימר יכול לנחות על כל אחד מהם. למה ביטול interrupts כבר לא מספיק, ואיזה deadlock מקבלים אם המשימה לוקחת spinlock בלי לבטל interrupts?",
+        "modelAnswer": "ביטול interrupts הוא מקומי ל-core: הוא מונע מה-ISR לקטוע את המשימה על אותו core, אבל ה-ISR יכול לרוץ במקביל על ה-core השני ולגעת ב-heap, ולכן צריך spinlock. אם המשימה על core 0 לוקחת את ה-spinlock עם interrupts פעילים, וה-interrupt של הטיימר נוחת על core 0 ומנסה לקחת את אותו spinlock, ה-ISR מסתובב לנצח: המחזיק הוא בדיוק הקוד שה-ISR קטע, והוא לא ירוץ עד שה-ISR יסיים. לכן spin_lock_irqsave: מבטלים interrupts מקומיים ואז לוקחים את ה-spinlock. ה-critical section חייב להיות קצר וחסום, כי הוא מוסיף ישירות ל-interrupt latency: הכנסה ל-heap של 1000 איברים היא כ-10 רמות, וזה בסדר, אבל הרצת callbacks בפנים לא.",
+        "rubric": [
+          "ביטול interrupts הוא per-core בלבד",
+          "deadlock: ISR על אותו core מסתובב על lock שהמשימה שנקטעה מחזיקה",
+          "spin_lock_irqsave: ביטול interrupts מקומיים ואז spinlock",
+          "critical section קצר וחסום כי הוא נכנס ל-interrupt latency"
+        ]
+      }
     },
     {
       "level": 5,
@@ -976,7 +1184,17 @@
         "שגוי: wheel מעגל ל-tick, ולכן דווקא פחות מדויק. heap מדויק לזמן המדויק."
       ],
       "id": "conc.latency-jitter.q36",
-      "lesson": "conc.latency-jitter"
+      "lesson": "conc.latency-jitter",
+      "followUp": {
+        "prompt": "תכנן timing wheel ל-timeouts מ-1ms ועד שעה ברזולוציה של 1ms. למה wheel יחיד לא מתאים, ואיך Linux פותר את בעיית ה-cascading?",
+        "modelAnswer": "wheel יחיד ברזולוציה של 1ms לשעה דורש 3.6 מיליון slots, רובם ריקים. אפשרות אחת היא wheel היררכי: למשל רמות של 256, 64, 64 ו-64 slots, שמכסות 256 × 64^3 ≈ 67 מיליון ms, יותר משעה. כשהרמה הנמוכה משלימה סיבוב, מפזרים מחדש (cascade) את ה-slot הבא ברמה שמעליה. זה עולה עבודה, אבל רוב ה-timeouts מבוטלים לפני שהם מגיעים ל-cascade. Linux מאז 4.8 ויתר על cascading: טיימר ברמה גבוהה פשוט פוקע לפי הרזולוציה הגסה של הרמה שלו, עם שגיאה של עד כ-12.5%, כי ל-timeout של רשת זה לא משנה. חלופה: hashed wheel עם מספר סבבים, למשל 4096 slots ולכל רשומה מונה סבבים שנותרו, וכל tick סורק רק את ה-slot הנוכחי.",
+        "rubric": [
+          "wheel יחיד: 3.6 מיליון slots",
+          "wheel היררכי עם מכפלת גדלים שמכסה שעה, ו-cascade בין רמות",
+          "Linux בלי cascading: פקיעה ברזולוציה גסה, שגיאה של עד כ-12.5%",
+          "hashed wheel עם מונה סבבים כחלופה"
+        ]
+      }
     }
   ]
 }

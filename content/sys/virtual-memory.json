@@ -454,7 +454,17 @@
         "לא נכון: זה מתקבל מהכפלה ב-1KB במקום 4KB (וב-512KB במקום 2MB), כלומר טעות פי 4 בגודל הדף.",
         "לא נכון: מספר הרשומות זהה, אבל כל רשומה מכסה דף גדול פי 512, ולכן ה-reach גדל פי 512. זה כל הטעם ב-huge pages.",
         "לא נכון: טעות של פי 10 בחישוב. 1536 × 4KB הוא 6MB, לא 60MB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עם 4KB, כל TLB miss ב-STLB גורם ל-page walk. כמה זה עולה בפועל, ולמה בדרך כלל זה פחות מ-4 גישות ל-DRAM?",
+        "modelAnswer": "page walk ב-x86-64 עובר על 4 רמות (PML4, PDPT, PD, PT), וכל רמה היא קריאה של 8 בתים מזיכרון. אבל הרשומות של הטבלאות עצמן נשמרות ב-data caches (L1, L2, L3) כמו כל נתון, והמעבד מחזיק גם paging-structure caches שזוכרים את הרמות העליונות, כך שלרוב רק הרמה האחרונה (PT) באמת חסרה. בגישה אקראית לטבלה גדולה, גם ה-PTEs לא נכנסים ל-cache, ואז walk יכול לעלות כמו 1-2 גישות DRAM, כלומר 100-200ns. ב-walk שה-PTE שלו ב-L2 המחיר הוא עשרות cycles. ב-perf רואים את זה במונים כמו `dtlb_load_misses.walk_active` (cycles שה-walker עסוק) ו-`dtlb_load_misses.walk_completed`, שמראים כמה זמן הולך על walks.",
+        "rubric": [
+          "4 רמות, קריאה לכל רמה",
+          "PTEs נשמרים ב-data caches",
+          "paging-structure caches מקצרים את ה-walk",
+          "מונים: walk_active / walk_completed"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q09",
@@ -481,7 +491,17 @@
         "לא נכון: רוב ה-page faults תקינים: demand paging, COW, טעינת דפי קובץ. רק fault בלי VMA או בלי הרשאה הוא באג.",
         "נכון: דף של 2MB מכסה כמו 512 דפים של 4KB ברשומת TLB אחת, כך שה-TLB reach גדל וה-misses על מערך גדול יורדים מאוד.",
         "נכון: walk עובר PML4, PDPT, PD ו-PT, כלומר עד 4 גישות לטבלאות. בפועל paging-structure caches ו-cache רגיל מקצרים את זה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השתמשת ב-mprotect כדי להפוך אזור ל-read-only ולתפוס כתיבות. איך היית בונה מזה מנגנון שמזהה אילו דפים השתנו מאז checkpoint, ומה המחיר שלו?",
+        "modelAnswer": "ב-checkpoint מבצעים `mprotect(PROT_READ)` על כל האזור. כתיבה ראשונה לכל דף גורמת ל-SIGSEGV; ה-handler (שהותקן עם `SA_SIGINFO`) קורא את `si_addr`, מוסיף את הדף לרשימת \"dirty\", מחזיר לו הרשאת כתיבה עם mprotect על הדף הזה בלבד, וחוזר, והפקודה מתבצעת שוב בהצלחה. המחיר: לכל דף ששונה יש fault, כניסה ל-handler ו-syscall, כלומר כמה מיקרו-שניות לדף, וכל mprotect מפצל VMAs ועלול לגרום ל-TLB shootdowns. בנוסף mprotect מתוך signal handler אינו ברשימת async-signal-safe הרשמית, אף שבפועל הוא syscall ישיר. חלופות יעילות יותר ב-Linux: `userfaultfd` עם write-protect, או soft-dirty bits ב-`/proc/<pid>/pagemap` (אחרי ניקוי דרך `clear_refs`), שמאפשרים לקרוא אילו דפים נכתבו בלי faults.",
+        "rubric": [
+          "mprotect RO ו-handler עם si_addr שמסמן ומחזיר הרשאה",
+          "הפקודה מתבצעת שוב אחרי החזרה",
+          "מחיר: fault + syscall לכל דף, פיצול VMAs",
+          "חלופות: userfaultfd WP או soft-dirty"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q10",
@@ -502,7 +522,17 @@
         "נכון: מדיניות first-touch מקצה כל דף ב-node של ה-CPU שגרם ל-fault הראשון, כאן node 0 בזמן האיפוס. כל קריאה מ-node 1 עוברת דרך ה-interconnect, עם latency גבוה ורוחב פס מוגבל.",
         "לא נכון: האיפוס הוא אירוע חד-פעמי באתחול ולא נכלל ברוחב הפס שנמדד בעיבוד. ההשפעה שלו היא דרך מיקום הדפים.",
         "לא נכון: באפר של 8GB לא נכנס ל-cache בשום מקרה, גם כשהזיכרון מקומי. זה לא מסביר הבדל של פי 2 בין מה שצפוי למה שנמדד."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-workers על שני ה-nodes צריכים לקרוא את כל הבאפר, לא רק חצי ממנו. מה עדיף אז: להקצות הכל ב-node אחד, interleave, או להעתיק? תן שיקול כמותי.",
+        "modelAnswer": "אם כל thread קורא את כל הבאפר, אין הקצאה שבה כל הגישות מקומיות. הקצאה ב-node אחד גורמת לכל ה-workers של ה-node השני לגשת מרחוק, וגם מעמיסה את ה-memory controller של ה-node הראשון לבד. interleave (`numactl --interleave=all` או `MPOL_INTERLEAVE`) מפזר דפים לסירוגין, כך שחצי מהגישות מקומיות וחצי רחוקות, ושני ה-controllers עובדים, וזה בדרך כלל נותן רוחב פס כולל טוב יותר. שכפול (עותק בכל node) נותן גישות מקומיות בלבד, אבל מכפיל את הזיכרון ואת עלות העדכון, ולכן מתאים רק לנתונים שנקראים הרבה ומשתנים מעט. ההחלטה: גישה מרוחקת עולה בערך פי 1.5-2 ב-latency ורוחב הפס של ה-interconnect מוגבל, ולכן אם הבאפר נקרא פעמים רבות, שכפול משתלם; אם פעם אחת, interleave.",
+        "rubric": [
+          "node אחד: גישות רחוקות + controller יחיד עמוס",
+          "interleave: חצי מקומי, שני controllers",
+          "שכפול: הכל מקומי, כפול זיכרון",
+          "גישה רחוקה ~פי 1.5-2 latency; בחירה לפי מספר הקריאות"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q11",
@@ -540,7 +570,17 @@
         "לא נכון: huge pages מקטינות TLB misses ומשפרות ביצועים. הבעיה היא הלוגיקה האוטומטית של THP, לא huge pages עצמן.",
         "לא נכון: הפוך. רשומת TLB אחת מכסה 2MB במקום 4KB, ולכן יש פחות misses.",
         "לא נכון: ה-spikes מגיעים מ-compaction, איפוס ו-khugepaged בנתיב ה-fault. גם בלי swap בכלל הם קורים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עברת ל-hugetlbfs עם דפים שמוקצים ב-boot. מה החסרונות של זה בניהול המכונה, ומה קורה אם האפליקציה מבקשת יותר huge pages ממה שהוקצו?",
+        "modelAnswer": "דפי hugetlbfs שמוקצים ב-boot (`hugepages=N` ב-command line) נלקחים מהזיכרון הכללי ולא זמינים לשום שימוש אחר, גם אם האפליקציה לא רצה, כלומר זיכרון \"נעול\" ש-page cache ותהליכים אחרים לא יכולים להשתמש בו. הם לא עוברים swap, ולא ניתנים לפיצול. אם האפליקציה מבקשת יותר ממה שהוקצה, `mmap` עם `MAP_HUGETLB` נכשל עם ENOMEM (או, אם המיפוי הצליח בלי reservation, fault מאוחר מסתיים ב-SIGBUS). אפשר להגדיל בזמן ריצה עם `nr_hugepages` או `nr_overcommit_hugepages`, אבל אז הקרנל צריך למצוא 2MB רציפים, ועלול להיכשל אחרי שהזיכרון מפוצל. לכן מחשבים מראש את הצורך, מקצים ב-boot, ובודקים `HugePages_Free` ו-`HugePages_Rsvd` ב-`/proc/meminfo`. על NUMA צריך לוודא שהדפים מוקצים ב-node הנכון (`/sys/devices/system/node/nodeX/hugepages`).",
+        "rubric": [
+          "זיכרון שמוקצה ב-boot לא זמין לאחרים",
+          "בקשה מעבר להקצאה: ENOMEM או SIGBUS",
+          "הגדלה בזמן ריצה עלולה להיכשל בגלל פיצול",
+          "HugePages_Free/Rsvd והקצאה לפי NUMA node"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q13",
@@ -561,7 +601,17 @@
         "נכון: stride של 4096 בתים פירושו דף חדש בכל גישה (TLB miss), ה-prefetcher לא חוצה גבול של 4KB, וכל הכתובות חולקות את 12 הביטים הנמוכים ולכן נופלות לאותו set ב-L1 וב-L2.",
         "לא נכון: וקטוריזציה היא חלק קטן מהסיפור והייתה נותנת לכל היותר פי 8. ההבדל של פי עשרות נובע ממערכת הזיכרון.",
         "לא נכון: הלולאה זהה בשני המקרים עם branch צפוי לגמרי. ההבדל הוא רק בדפוס הגישה לזיכרון."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הצעת padding של 16 floats לכל שורה. אם המטריצה מוקצית עם huge pages של 2MB, אילו מהבעיות נפתרות ואילו נשארות?",
+        "modelAnswer": "עם דפים של 2MB, עמודה של 1024 שורות × 4KB = 4MB מכסה רק 2-3 huge pages, ולכן ה-TLB misses כמעט נעלמים. ה-prefetcher עדיין מוגבל לגבולות של 4KB ברוב המעבדים (הוא עוקב אחרי stride בתוך דף פיזי של 4KB), אבל stride של 4KB הוא מעבר בין דפים קטנים בכל מקרה, כך שהוא נשאר לא יעיל. conflict misses לא קשורים לגודל הדף בכלל: הם תלויים בביטים הנמוכים של הכתובת, ו-stride של 4096 עדיין ממפה הכל לאותו set ב-L1 וב-L2. לכן padding (stride של 4160) עדיין נחוץ כדי לפזר על sets, ו-blocking עדיף כדי לנצל cache lines שלמים. כלומר huge pages פותרים רק את ה-TLB.",
+        "rubric": [
+          "huge pages פותרים TLB misses",
+          "prefetcher נשאר לא יעיל עם stride של 4KB",
+          "conflict misses לא תלויים בגודל הדף",
+          "padding/blocking עדיין נחוצים"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q14",
@@ -576,7 +626,17 @@
         "מזכיר THP, OOM, או memcg כפרטים מתקדמים"
       ],
       "explanation": "שאלה קלאסית בראיונות מערכות. מועמד חזק מחבר בין ה-allocator, הקרנל והחומרה.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "עכשיו הכתיבה היא ל-`p[32 << 20]` מ-thread אחר, בזמן ש-thread ראשון כותב ל-`p[0]`, ושניהם בפעם הראשונה. מה קורה בקרנל כששני page faults על אותו VMA מתרחשים במקביל?",
+        "modelAnswer": "שני ה-threads נכנסים ל-page fault handler באותו זמן, כל אחד על דף אחר באותו VMA. ב-Linux, ה-fault handler לוקח את ה-mmap lock במצב קריאה (או, בקרנלים חדשים מ-6.4, per-VMA lock), כך ששני faults יכולים להתקדם במקביל. כל אחד מקצה דף פיזי מאופס, ונועל רק את טבלת הדפים (PTE lock) הרלוונטית כדי להתקין את ה-PTE. אם שניהם היו נוגעים באותו דף, אחד מהם היה מוצא שה-PTE כבר הותקן אחרי שלקח את ה-lock, ומשחרר את הדף שהקצה ופשוט חוזר. הבעיה מתחילה כש-thread שלישי מבצע `mmap` או `munmap` באותו זמן: הוא צריך את ה-mmap lock במצב כתיבה, וחוסם את כל ה-faults. זו הסיבה ל-contention ב-processes עם הרבה threads, ולמעבר ל-per-VMA locks.",
+        "rubric": [
+          "faults במקביל עם mmap lock לקריאה (או per-VMA lock)",
+          "PTE lock להתקנת הרשומה",
+          "אותו דף: השני מזהה שכבר הותקן ומשחרר",
+          "mmap/munmap לוקח lock לכתיבה וחוסם faults"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q15",
@@ -597,7 +657,17 @@
         "לא נכון: זו הטעות הנפוצה. msync נדרש ל-durability מול קריסת מערכת, לא כדי שהכתיבות יגיעו לקובץ. ב-MAP_SHARED הזיכרון הוא דפי הקובץ עצמם.",
         "לא נכון: הקרנל לא נפגע ממות ה-process, ולכן אין השחתה. הקובץ מכיל בדיוק את מה שנכתב עד הרגע שבו ה-process נהרג.",
         "נכון: ב-MAP_SHARED ה-PTEs מצביעים לדפי ה-page cache של הקובץ. SIGKILL משחרר את המיפוי, אבל הדפים נשארים dirty, נראים לכל קורא, ונכתבים ב-writeback רגיל. רק קריסת קרנל או נפילת חשמל לפני ה-writeback מאבדות אותם."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה בונה לוג אפליקטיבי מבוסס mmap שאמור לשרוד גם נפילת חשמל. מה צריך להוסיף, ומה הבעיה של \"torn writes\" כשהדיסק כותב דף של 4KB?",
+        "modelAnswer": "כדי לשרוד נפילת חשמל צריך `msync(MS_SYNC)` על הטווח שנכתב (או fdatasync על ה-fd), שמחכה עד שהדפים נכתבו להתקן וה-cache של ההתקן בוצע flush. msync עובד ברזולוציה של דפים, ולכן מאגדים רשומות ומבצעים msync כל N רשומות או כל T זמן. torn write: אם החשמל נופל באמצע כתיבת דף, ההתקן עשוי לכתוב רק חלק מהסקטורים (למשל 512 בתים מתוך 4KB), כך שבדף יש ערבוב של ישן וחדש. לכן כל רשומה בלוג צריכה checksum (למשל CRC32) ואורך, ובהתאוששות קוראים מההתחלה עד הרשומה הראשונה שה-checksum שלה לא תקין, ומתייחסים אליה כסוף הלוג. בנוסף, לא כותבים מחדש רשומות קיימות, רק append, כך שפגיעה חלקית משפיעה רק על הסוף.",
+        "rubric": [
+          "msync(MS_SYNC) / fdatasync לעמידות",
+          "batching של msync",
+          "torn write: דף חלקי",
+          "checksum + אורך לכל רשומה, append-only"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q16",
@@ -618,7 +688,17 @@
         "לא נכון: גודל שורה של 64 בתים קובע כמה ביטי offset יש בשורה, לא את הגודל הכולל. גם 64KB עם 8 ways אפשרי עם שורות של 64 בתים.",
         "לא נכון: שטח הוא שיקול, אבל הוא לא מסביר למה מגדילים דווקא את מספר ה-ways ושומרים way של 4KB בדיוק. ההסבר הוא מגבלת VIPT.",
         "לא נכון: אין כלל כזה. היחס בין L2 ל-L1 משתנה בין מעבדים, והוא לא קשור לגודל ה-way."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-Apple Silicon הדף הבסיסי הוא 16KB. איזה יתרונות נוספים יש לדף גדול יותר מעבר ל-L1, ומה המחירים שגרמו ל-x86 להישאר עם 4KB?",
+        "modelAnswer": "עם 16KB, אפשר L1 VIPT של 128KB עם 8 ways בלי aliasing. בנוסף, TLB reach גדל פי 4 לאותו מספר רשומות, טבלאות הדפים קטנות יותר (פחות PTEs ל-GB) ו-page walks קצרים יותר, ו-page faults פחות תכופים לאותה כמות זיכרון. המחירים: internal fragmentation, כלומר כל הקצאה קטנה, stack של thread או קובץ קטן ממופה תופסים לפחות 16KB, וזה מגדיל את צריכת הזיכרון; COW מעתיק 16KB גם כשמשנים בית אחד; ותאימות: תוכנה שמניחה 4KB (alignment של mmap, guard pages, allocators, JITs) נשברת. x86 נשאר עם 4KB בגלל עשרות שנים של תוכנה ו-ABI שמניחים את הגודל הזה, ונותן במקום זה huge pages אופציונליים (2MB ו-1GB). Linux על ARM64 תומך ב-4KB, 16KB ו-64KB בזמן קומפילציה של הקרנל.",
+        "rubric": [
+          "L1 גדול יותר בלי aliasing",
+          "TLB reach פי 4, טבלאות קטנות",
+          "מחיר: internal fragmentation ו-COW גדול",
+          "תאימות תוכנה שמניחה 4KB"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q17",
@@ -639,7 +719,17 @@
         "לא נכון: ב-Linux, MADV_DONTNEED על מיפוי אנונימי פרטי אינו רמז. הוא זורק את הדפים מיד. מי שחושב שזה רק רמז מתבלבל עם MADV_FREE, שבו אפשר לפעמים לקרוא את הערך הישן.",
         "נכון: הדפים משתחררים מיד, ה-VMA נשאר, והקריאה הבאה היא page fault שממפה דף אפס, ולכן p[0] == 0.",
         "לא נכון: MADV_DONTNEED לא מבטל את ה-VMA, רק את הדפים. SIGSEGV היה מתקבל אחרי munmap."
-      ]
+      ],
+      "followUp": {
+        "prompt": "allocator משתמש ב-MADV_FREE כדי להחזיר זיכרון. ניטור מראה שה-RSS של התהליך לא יורד אחרי free גדול, ומישהו מדווח על \"memory leak\". מה קורה, ואיך תבדיל בין זה לבין דליפה אמיתית?",
+        "modelAnswer": "עם MADV_FREE הדפים מסומנים כ-lazy-free, אבל נשארים ממופים ונספרים ב-RSS עד שהקרנל באמת צריך אותם תחת לחץ זיכרון. לכן ה-RSS לא יורד מיד, וזה נראה כמו דליפה אף שהזיכרון זמין לקרנל. כדי להבדיל: ב-`/proc/<pid>/smaps_rollup` יש שדה `LazyFree` שמראה כמה מה-RSS הוא בעצם זיכרון שסומן כפנוי. אם RSS פחות LazyFree יציב, אין דליפה. בדליפה אמיתית ה-RSS ממשיך לגדול לאורך זמן גם תחת לחץ זיכרון, וכלים כמו heaptrack, `malloc_info` או jemalloc stats יראו הקצאות שלא שוחררו. אם הניטור חייב RSS מדויק, אפשר לכוון את ה-allocator להשתמש ב-MADV_DONTNEED (ב-jemalloc דרך `muzzy_decay_ms` ו-`dirty_decay_ms`).",
+        "rubric": [
+          "MADV_FREE: דפים נשארים ב-RSS עד לחץ זיכרון",
+          "שדה LazyFree ב-smaps_rollup",
+          "דליפה אמיתית: גדילה מתמשכת גם תחת לחץ",
+          "כיוון allocator ל-DONTNEED אם צריך RSS מדויק"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q18",
@@ -755,7 +845,17 @@
         "לא נכון: אין כאן פינוי. המספר 512MB לא נובע מאף מנגנון, וה-RSS כמעט לא גדל בכלל.",
         "לא נכון: writeback רלוונטי לדפי קובץ dirty. בזיכרון אנונימי שרק קראו ממנו אין שום דבר לכתוב.",
         "נכון: כל fault של קריאה מצביע את ה-PTE ל-zero page יחיד ו-read-only, שלא נספר ב-RSS. מוקצות רק טבלאות הדפים (כ-2MB של PT ל-1GB), והכתיבה הראשונה לכל דף תגרום ל-fault נוסף."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אמרת שה-zero page משותף. מה קורה כשה-THP מופעל באותו תרחיש של קריאה בלבד, והאם יש huge zero page?",
+        "modelAnswer": "עם THP פעיל, fault של קריאה על אזור אנונימי מיושר ל-2MB יכול למפות huge zero page: דף אפסים יחיד בגודל 2MB, read-only ומשותף, שה-PMD מצביע אליו (מנוהל דרך `/sys/kernel/mm/transparent_hugepage/use_zero_page`, ברירת מחדל מופעל). כך גם כאן ה-RSS כמעט לא גדל, וחוסכים אפילו את טבלאות ה-PTE. כשכותבים לראשונה, הקרנל מנסה להקצות huge page פרטי של 2MB ולאפס אותו, כלומר כתיבה של בית אחד יכולה לגרום להקצאה ולאיפוס של 2MB, ואם אין 2MB פנויים נופלים לדפים של 4KB. זה מגדיל את ה-latency של אותו fault, ובאזורים דלילים (נוגעים בבית אחד מכל 2MB) מגדיל את ה-RSS פי 512 לעומת 4KB. לכן אפליקציות עם גישה דלילה מכבות THP לאזורים האלה עם `MADV_NOHUGEPAGE`.",
+        "rubric": [
+          "huge zero page של 2MB, use_zero_page",
+          "כתיבה ראשונה = הקצאה ואיפוס של 2MB",
+          "fallback ל-4KB כשאין 2MB פנויים",
+          "גישה דלילה: RSS פי 512, MADV_NOHUGEPAGE"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q24",
@@ -792,7 +892,17 @@
         "לא נכון: ה-TLB הוא פר-core ולא תלוי במספר ה-threads. גם הסימנים ב-perf הם IPIs ו-flush, לא page walks.",
         "לא נכון: lock של malloc היה מופיע כ-contention ב-user space (futex), לא כ-flush_tlb_mm_range ו-smp_call_function_many.",
         "לא נכון: NUMA balancing יכול לגרום ל-shootdowns, אבל הדפוס כאן (הקצאה ושחרור של בלוקים גדולים בתדירות גבוהה) מצביע על munmap של ה-allocator."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלטת להשתמש ב-pool. אבל ה-pool גדל בשיא העומס ל-20GB ואף פעם לא קטן. איך היית מחזיר זיכרון ל-OS בלי לחזור לבעיית ה-shootdowns?",
+        "modelAnswer": "הבעיה היא לא עצם ההחזרה אלא התדירות והפיזור שלה: כל munmap או MADV_DONTNEED קטן הוא shootdown נפרד ל-64 cores. הפתרון: להחזיר זיכרון בתדירות נמוכה ובאצוות, למשל thread רקע שפעם בכמה שניות בודק כמה בלוקים לא היו בשימוש זמן רב (decay), ומחזיר טווח גדול ורציף בקריאה אחת. כך עלות ה-IPI מתחלקת על הרבה זיכרון. בנוסף, להעדיף `MADV_FREE` על פני DONTNEED: הוא לא מבטל את המיפוי מיד, והקרנל משחרר רק תחת לחץ. זה בדיוק מה ש-jemalloc עושה עם `dirty_decay_ms` ו-`muzzy_decay_ms`. אפשר גם להגביל את ה-pool בגודל מקסימלי ולהחזיר רק את מה שמעליו.",
+        "rubric": [
+          "החזרה באצוות ובתדירות נמוכה (decay)",
+          "טווח גדול ורציף בקריאה אחת",
+          "MADV_FREE במקום DONTNEED",
+          "jemalloc decay / גבול עליון ל-pool"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q26",
@@ -813,7 +923,17 @@
         "לא נכון: swap מלא לבדו לא גורם ל-OOM כשיש עשרות GB של RAM פנוי. הקרנל היה פשוט מקצה מה-RAM.",
         "נכון: memory.max של ה-cgroup מגביל את ה-group בלבד. כשהוא מגיע לגבול, הקרנל מנסה reclaim בתוך ה-group (כולל page cache), ואם אין מה לפנות מפעיל OOM בתוכו, בלי קשר לזיכרון הפנוי במכונה. רואים ב-memory.events.",
         "לא נכון: overcommit = 1 רק מאשר כל הקצאה וירטואלית. הוא לא מסביר OOM כשבמכונה יש זיכרון פיזי פנוי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הקונטיינר עם memory.max של 4GB, והאפליקציה עצמה צורכת רק 2.5GB של heap. מה עוד נספר בגבול, ואיך תראה את הפירוק?",
+        "modelAnswer": "memcg סופר, מלבד זיכרון אנונימי: page cache של קבצים שהקונטיינר קרא או כתב (כולל dirty pages שעוד לא נכתבו), tmpfs ו-shared memory (כולל `/dev/shm`, שנספר כזיכרון של מי שנגע בו לראשונה), וזיכרון קרנל כמו socket buffers, dentries ו-inodes, ו-page tables. לרוב ה-page cache ניתן לפינוי, אבל dirty pages, tmpfs ו-shmem לא ניתנים לפינוי בלי swap. הפירוק נמצא ב-`memory.stat` של ה-cgroup: שדות `anon`, `file`, `shmem`, `kernel_stack`, `pagetables`, `sock`, `slab`. אם `shmem` גדול, אולי shared memory ring גדול שהוקצה ב-/dev/shm; אם `file_dirty` גדול, כתיבה מהירה לדיסק. `memory.events` מראה את מספר ה-oom ואירועי `high`. כדי לתת זמן לפינוי לפני kill, אפשר להגדיר `memory.high` מתחת ל-max.",
+        "rubric": [
+          "נספר: page cache, shmem/tmpfs, זיכרון קרנל, page tables",
+          "dirty pages ו-shmem לא ניתנים לפינוי בלי swap",
+          "memory.stat לפירוק (anon, file, shmem, sock, slab)",
+          "memory.high כרמת לחץ לפני max"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q27",
@@ -840,7 +960,17 @@
         "נכון: כתיבה לכל דף של 4KB גורמת ל-fault אחד באתחול שמקצה דף פרטי. אחרי זה אין faults נוספים (כל עוד אין swap או שחרור).",
         "לא נכון: קריאה מזיכרון אנונימי ממפה את ה-zero page בלבד. הכתיבה הראשונה בנתיב החם תגרום ל-fault של COW שמקצה דף.",
         "לא נכון: malloc גדול רק יוצר VMA, בלי דפים ובלי PTEs. כל דף יקבל fault בגישה הראשונה בנתיב החם."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אכלסת את הבאפר מראש עם mlockall. מה עוד יכול לגרום ל-page fault ב-thread RT גם כשהבאפר שלו נעול לגמרי?",
+        "modelAnswer": "mlockall נועל את מה שממופה, אבל faults יכולים להגיע ממקורות אחרים: ה-stack של ה-thread, אם הוא גדל לעומק שלא נגעו בו (צריך prefault של ה-stack, למשל פונקציה שכותבת למערך מקומי גדול באתחול); הקצאות חדשות בנתיב החם (malloc, `std::vector` שגדל, `std::string`), שיוצרות מיפויים או נוגעות בדפים חדשים; קוד שעוד לא רץ בתוכנית או בספריות שנטענו אחרי ה-mlockall (dlopen) — עם MCL_FUTURE הם יינעלו אבל עדיין יש faults בזמן הטעינה; ו-COW אחרי fork של thread אחר, שהופך את כל הדפים ל-read-only. בנוסף, NUMA balancing (`numa_balancing`) מסמן דפים כ-PROT_NONE באופן תקופתי כדי לאסוף סטטיסטיקה, וזה עלול ליצור minor faults (ההתנהגות מול זיכרון נעול תלויה בגרסת הקרנל). לכן במערכות RT מכבים אותו, ובודקים עם `perf stat -e page-faults` על ה-thread.",
+        "rubric": [
+          "stack שלא אוכלס מראש",
+          "הקצאות בנתיב החם / dlopen",
+          "COW אחרי fork",
+          "NUMA balancing יוצר faults; מדידה עם perf page-faults"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q28",
@@ -875,7 +1005,17 @@
         "נכון: ה-TLB לא coherent עם הטבלאות. בצמצום (RW ל-RO) core אחר עם תרגום ישן עדיין יכול לכתוב לדף המוגן, ולכן חייבים IPI ו-flush לפני ש-mprotect חוזר. בהרחבה תרגום ישן הוא רק מגביל מדי.",
         "לא נכון: הכיוונים לא שקולים. תרגום ישן עם פחות הרשאות בטוח (fault מיותר), ורק תרגום ישן עם יותר הרשאות הוא חור.",
         "לא נכון: ב-x86 ה-TLB לא עוקב אחרי שינויים ב-PTE בזיכרון. צריך INVLPG מקומי ו-IPIs (או INVLPGB) כדי לבטל עותקים ב-cores אחרים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה munmap חייב shootdown גם כשאף thread אחר לא אמור לגשת לאזור הזה יותר? ומה מנגנון ה-lazy TLB שהקרנל משתמש בו כדי לחסוך IPIs לחלק מה-cores?",
+        "modelAnswer": "גם אם התוכנה לא אמורה לגשת, core אחר עם תרגום ישן ב-TLB יכול לגשת בטעות (באג) או ספקולטיבית, ואחרי munmap הדף הפיזי חוזר לקרנל ועלול להינתן ל-process אחר. גישה דרך התרגום הישן הייתה קוראת או כותבת לזיכרון של מישהו אחר, כלומר פרצת אבטחה. לכן הקרנל חייב לוודא שאין תרגום ישן לפני שהדף ממוחזר. החיסכון: הקרנל שומר לכל mm את מסכת ה-CPUs שהריצו אותו (`mm_cpumask`) ושולח IPI רק אליהם. core שעבר לרוץ kernel thread או idle נמצא במצב lazy TLB: הוא עדיין מחזיק את ה-page tables הישנים ב-CR3, אבל לא ניגש לכתובות user. במקום להעיר אותו, הקרנל מסמן שהוא צריך flush כשיחזור להריץ את ה-mm הזה. כך cores ב-idle לא מתעוררים לכל shootdown.",
+        "rubric": [
+          "דף משוחרר ממוחזר; תרגום ישן = גישה לזיכרון של אחר",
+          "גם גישה ספקולטיבית/באג",
+          "mm_cpumask: IPI רק ל-cores שהריצו את ה-mm",
+          "lazy TLB: core ב-idle מסומן ל-flush בחזרה"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q30",
@@ -891,7 +1031,17 @@
         "כלי ניטור: meminfo, numastat, perf dTLB"
       ],
       "explanation": "השאלה מחברת TLB, NUMA, page faults ו-OOM לתכנון אחד. התשובה החזקה מבוססת על מספרים ולא על רשימת דגלים.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "בתכנון שלך, ה-ring של 16GB נעול ב-mlock. מה קורה אם יש באג ותהליך אחר על המכונה דורש הרבה זיכרון? איך ה-OOM killer מתייחס לתהליך שלך, ואיך מגנים עליו?",
+        "modelAnswer": "זיכרון נעול לא ניתן לפינוי, ולכן כשתהליך אחר צורך הרבה זיכרון, הקרנל יפנה page cache, swap של תהליכים אחרים, ובסוף יפעיל OOM killer. ה-OOM killer בוחר לפי `oom_score`, שתלוי בעיקר בכמות הזיכרון של התהליך, ולכן תהליך עם 16GB נעולים הוא דווקא המועמד הראשון להיהרג. הגנה: `oom_score_adj = -1000` לתהליך ה-SDR (דרך `/proc/<pid>/oom_score_adj` או `OOMScoreAdjust` ב-systemd), שמוציא אותו מהבחירה. חשוב יותר: להגביל את שאר התהליכים ב-cgroups עם `memory.max`, כך שהם נהרגים בתוך ה-cgroup שלהם לפני שהמערכת כולה בלחץ, ולשמור את התהליך הקריטי ב-cgroup עם `memory.min` שמבטיח לו זיכרון. בנוסף, לוודא ש-`RLIMIT_MEMLOCK` מאפשר לנעול 16GB.",
+        "rubric": [
+          "OOM בוחר לפי גודל → התהליך הגדול נהרג ראשון",
+          "oom_score_adj = -1000",
+          "cgroups: memory.max לאחרים, memory.min לקריטי",
+          "RLIMIT_MEMLOCK מספיק"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q31",
@@ -997,7 +1147,17 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-software-interview-experience-internship/"
       ],
       "problem": "NVIDIA: find whether the stack grows up or down",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "למה השוואה של שני משתנים מקומיים באותה פונקציה לא אמינה? ומה עוד הקומפיילר יכול לעשות שישבור גם את השיטה עם שתי פונקציות?",
+        "modelAnswer": "סדר המשתנים המקומיים בתוך frame אחד נקבע לגמרי על ידי הקומפיילר: הוא יכול לסדר אותם לפי גודל, alignment, או אפילו להחזיק אותם ברגיסטרים, ו-stack protectors מזיזים מערכים מעל משתנים אחרים בכוונה. לכן השוואה בתוך frame לא אומרת דבר על כיוון הגדילה. בשיטה עם שתי פונקציות, הקומפיילר יכול לבצע inline לפונקציה הנקראת, ואז שני המשתנים באותו frame ושוב אין משמעות; לכן מסמנים אותה `noinline`. ב-tail call optimization הפונקציה הנקראת יכולה לעשות שימוש חוזר ב-frame של הקוראת. בנוסף, השוואה של pointers לאובייקטים שונים עם `<` היא unspecified ב-C++, ולכן ממירים ל-`uintptr_t`. ועם AddressSanitizer ו-\"fake stack\" (detect_stack_use_after_return) משתנים מקומיים עשויים לגור בכלל ב-heap.",
+        "rubric": [
+          "סדר בתוך frame נקבע ע״י הקומפיילר / stack protector",
+          "inline מבטל את השיטה, צריך noinline",
+          "tail call עושה שימוש חוזר ב-frame",
+          "השוואת pointers לא קשורים unspecified, להמיר ל-uintptr_t"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q35",
@@ -1018,7 +1178,17 @@
         "נכון: 8MB חלקי 1KB הם כ-8000 frames. מעבר לזה, page fault על כתובת מחוץ לגבול הוא שגיאה, והקרנל שולח SIGSEGV. כדי לטפל בו צריך handler שרץ על sigaltstack, כי ה-stack הרגיל מלא."
       ],
       "explanation": "ה-stack ב-Linux גדל עם page faults עד RLIMIT_STACK. מעבר לגבול יש guard gap, ו-page fault שם מסתיים ב-SIGSEGV. ב-threads הגבול הוא גודל ה-stack שהוקצה ל-thread (ברירת מחדל 8MB ב-glibc) עם guard page בסופו.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "אותה רקורסיה רצה ב-thread שנוצר עם pthread. מה שונה בגבול וב-guard, ולמה stack overflow ב-thread עם frame גדול (למשל מערך מקומי של 64KB) יכול לדלג על ה-guard page ולהשחית זיכרון בשקט?",
+        "modelAnswer": "ב-thread, ה-stack מוקצה מראש ב-mmap בגודל קבוע (ברירת מחדל ב-glibc היא RLIMIT_STACK, כלומר 8MB, או מה שנקבע ב-`pthread_attr_setstacksize`), ואינו גדל. בקצה התחתון יש guard page אחד (4KB כברירת מחדל, `pthread_attr_setguardsize`). גישה ל-guard page גורמת ל-SIGSEGV. אבל אם frame גדול, למשל מערך של 64KB, הפונקציה מזיזה את ה-stack pointer ב-64KB בבת אחת, והגישה הראשונה עשויה לנחות מתחת ל-guard page, בזיכרון של מיפוי אחר (stack של thread אחר או heap), בלי fault. זו התקפת \"stack clash\". הקומפיילרים מתגוננים עם `-fstack-clash-protection` (ברירת מחדל בהרבה הפצות), שנוגע בכל דף בדרך כשה-frame גדול, כך שה-guard תמיד נפגע. ב-thread מומלץ גם להגדיל את ה-guard ולהימנע ממערכים גדולים על ה-stack.",
+        "rubric": [
+          "stack של thread בגודל קבוע, לא גדל",
+          "guard page של 4KB כברירת מחדל",
+          "frame גדול מדלג על ה-guard (stack clash)",
+          "-fstack-clash-protection נוגע בכל דף"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q36",
@@ -1127,7 +1297,17 @@
         "שגוי: מבנה רב-שלבי אכן מאפשר huge pages (רשומה ברמה גבוהה שממפה 2MB או 1GB), אבל זה לא הסיבה העיקרית, ואין גודל דף שונה לכל process."
       ],
       "explanation": "הטבלה הרב-שלבית היא עץ: כל רמה מאנדקסת בחלק אחר של הכתובת, וטבלאות-משנה קיימות רק לאזורים ממופים. זה חוסך זיכרון עצום במחיר page walk ארוך יותר, וה-TLB מסתיר את המחיר ברוב הגישות.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "מעבדים חדשים תומכים ב-5 רמות (57 ביט). מה זה עולה ב-page walk, ולמה Linux מפעיל את המרחב הגדול רק לתהליכים שמבקשים אותו במפורש?",
+        "modelAnswer": "רמה חמישית מוסיפה גישה נוספת לכל page walk מלא, כלומר עוד latency ב-TLB miss, אם כי ה-paging-structure caches מסתירים חלק גדול מזה כי הרמות העליונות חמות כמעט תמיד. ההרחבה מגדילה את מרחב הכתובות הווירטואלי מ-128TB ל-64PB ל-user, ונועדה למכונות עם זיכרון פיזי ענק או למיפויים עצומים (למשל persistent memory). Linux, גם כשהקרנל רץ עם 5 רמות, מחזיר כתובות מעל 47 ביט רק אם התהליך מבקש במפורש (מעביר hint ל-mmap מעל הגבול), כי הרבה תוכנה קיימת מניחה שהביטים העליונים של pointer פנויים, ומשתמשת בהם לתגיות (pointer tagging ב-JITs ו-runtimes כמו LuaJIT או JavaScript engines). כתובת מעל 47 ביט הייתה שוברת אותם. כלומר זה trade-off של תאימות מול מרחב.",
+        "rubric": [
+          "רמה נוספת = גישה נוספת ב-walk מלא",
+          "paging-structure caches מקטינים את המחיר",
+          "מ-128TB ל-64PB",
+          "opt-in בגלל pointer tagging בביטים העליונים"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q42",
@@ -1154,7 +1334,17 @@
         "נכון: החומרה מדליקה אותו בכתיבה לדף, והקרנל משתמש בו כדי לדעת אם צריך לכתוב את הדף חזרה לדיסק לפני שמפנים אותו."
       ],
       "explanation": "PTE מכיל frame number וביטים: present, R/W, U/S, accessed, dirty, NX ועוד. הכתובת הווירטואלית קובעת איפה הרשומה נמצאת, והטבלה עצמה שייכת ל-process אחד, ולכן שני אלה לא נשמרים ברשומה.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "החומרה מדליקה את ביטי accessed ו-dirty. איך הקרנל משתמש בכל אחד מהם, ומה המחיר של לנקות את ביט ה-accessed באופן תקופתי?",
+        "modelAnswer": "accessed משמש לקירוב LRU: הקרנל סורק דפים, בודק את הביט ומנקה אותו; דף שהביט שלו נדלק שוב מאז הסריקה הקודמת נחשב פעיל ונשאר ברשימת active, ואחר מתקדם לפינוי. dirty אומר שהדף נכתב מאז שנטען מהקובץ או מ-swap, ולכן לפני פינוי צריך לכתוב אותו חזרה; דף נקי פשוט נזרק. המחיר של ניקוי accessed: אחרי שינוי PTE, ה-TLB של cores אחרים עדיין מחזיק את התרגום, והחומרה לא תדליק שוב את הביט כל עוד התרגום ב-TLB. בשביל דיוק צריך TLB flush, כלומר IPIs. Linux בדרך כלל מוותר על ה-flush בניקוי accessed (מקבל אי-דיוק בקירוב ה-LRU) כדי לחסוך shootdowns. MGLRU בקרנלים חדשים משפר את הסריקה הזו.",
+        "rubric": [
+          "accessed לקירוב LRU (active/inactive)",
+          "dirty: חובה write-back לפני פינוי",
+          "ניקוי accessed דורש flush לדיוק",
+          "Linux מוותר על flush ומקבל אי-דיוק"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q43",
@@ -1210,7 +1400,17 @@
         "שגוי: אין שום הבחנה לפי סוג דף. כל הרשומות של user space נפסלות."
       ],
       "explanation": "בלי PCID/ASID כל מעבר בין processes מרוקן את ה-TLB. עם PCID כל רשומה מתויגת במזהה של מרחב הכתובות, ואפשר להשאיר רשומות של כמה processes. בין threads של אותו process אין שינוי של CR3, ולכן ה-TLB נשמר.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "עם PCID יש רק 4096 ערכים (12 ביט), אבל במערכת יש עשרות אלפי processes. איך Linux מתמודד עם זה, ואיך זה מתחבר ל-KPTI?",
+        "modelAnswer": "Linux לא מקצה PCID קבוע לכל process. הוא שומר לכל CPU מספר קטן של \"slots\" של ASID דינמיים (6 ב-x86), וכשמריצים mm על CPU, בודקים אם הוא עדיין בעל אחד מה-slots ושה-TLB שלו לא בוטל מאז; אם כן, מחליפים CR3 בלי flush. אם לא, לוקחים slot חדש (מפנים את הישן), ומבצעים flush של ה-ASID הזה. כך מרוויחים במקרה הנפוץ של מעבר בין מעט processes פעילים על אותו CPU, בלי צורך במזהה גלובלי לכל process. עם KPTI, לכל process יש שני סטים של page tables (user ו-kernel), ולכן כל ASID משתמש בשני ערכי PCID: אחד לטבלאות של הקרנל ואחד לטבלאות של user, כך שמעבר בין user ל-kernel בכל syscall לא מרוקן את ה-TLB.",
+        "rubric": [
+          "אין PCID קבוע ל-process",
+          "slots דינמיים פר-CPU (6 ב-x86)",
+          "slot פג או נלקח → flush של ה-ASID",
+          "KPTI: שני PCIDs לכל ASID (user/kernel)"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q46",
@@ -1238,7 +1438,17 @@
         "https://www.geeksforgeeks.org/?p=338497"
       ],
       "problem": "Microsoft: 4GB RAM and four 2GB processes",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "אתה רואה שהמכונה ב-thrashing. מה ההבדל בין להוסיף swap לבין להשתמש ב-zram, ובאיזה מקרה אף אחד מהם לא יעזור?",
+        "modelAnswer": "הוספת swap על דיסק מגדילה את מה שאפשר להוציא, אבל אם ה-working set הפעיל גדול מה-RAM, כל דף שיוצא יידרש מחדש, וכל major fault לדיסק עולה מאות מיקרו-שניות (SSD) עד מילישניות (HDD); המערכת עדיין תזחל. zram יוצר swap דחוס בתוך ה-RAM: דף נדחס בערך פי 2-3, ו-swap-in הוא פריסה בזיכרון שעולה כמה מיקרו-שניות, כלומר מהר בסדרי גודל. הוא מגדיל בפועל את הקיבולת האפקטיבית של ה-RAM במחיר CPU. אבל אם ה-working set גדול מ-RAM גם אחרי דחיסה, או שהנתונים לא נדחסים (כבר דחוסים או מוצפנים, כמו דגימות רדיו אקראיות), אף אחד לא יעזור. אז הפתרון האמיתי הוא להקטין עומס: פחות processes במקביל, cgroups שמגבילים, או עוד RAM.",
+        "rubric": [
+          "swap על דיסק: major fault איטי, לא מציל working set גדול",
+          "zram: דחיסה בזיכרון, swap-in מהיר במחיר CPU",
+          "נתונים לא דחיסים / working set גדול מדי = לא עוזר",
+          "הפתרון: להקטין עומס או להוסיף RAM"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q47",
@@ -1259,7 +1469,17 @@
         "שגוי: RSS סופר רק דפים שנמצאים ב-RAM. דף שלא נגעו בו לא קיבל frame."
       ],
       "explanation": "malloc מקצה מרחב וירטואלי, לא RAM. overcommit מאפשר להבטיח יותר זיכרון ממה שיש, בהנחה שלא כולם ישתמשו בכולו. כשהם כן משתמשים, ה-OOM killer מכריע. במערכות real-time מאכלסים מראש (memset או MAP_POPULATE ו-mlockall) כדי לא להיתקל בזה באמצע.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "עכשיו שלושה מהם מתחילים לגעת בכל ה-2GB שלהם. מה יקרה ומתי, ואיזה process ה-OOM killer יבחר? איך היית מתכנן את המערכת כך שהכשל יקרה ב-malloc ולא באמצע ריצה?",
+        "modelAnswer": "כל עוד הם נוגעים, ה-RSS גדל; אחרי כ-4GB כולל (פחות הקרנל ו-page cache), הקרנל מפנה page cache, אין swap, ובסוף ה-OOM killer מופעל באמצע page fault של אחד מהם. הוא בוחר לפי `oom_score` (בעיקר RSS + swap + page tables, מתוקן ב-`oom_score_adj`), כלומר את ה-process עם הכי הרבה זיכרון בפועל, לא בהכרח זה שגרם לבעיה ברגע זה. כדי שהכשל יקרה ב-malloc: `vm.overcommit_memory = 2` עם `overcommit_ratio` מתאים, ואז ה-malloc הרביעי (או אפילו השלישי) נכשל עם NULL כי סכום ה-commit עובר את CommitLimit; או להגביל כל process ב-cgroup עם memory.max, ולאכלס זיכרון מראש באתחול (MAP_POPULATE או memset), כך שכשל קורה בהפעלה ולא בזמן עבודה. ב-RT מוסיפים mlockall.",
+        "rubric": [
+          "OOM מופעל ב-page fault כשה-RSS הכולל עובר RAM",
+          "בחירה לפי oom_score (גודל), לא לפי האשם",
+          "overcommit_memory=2 → malloc נכשל מוקדם",
+          "אכלוס מראש באתחול / cgroups"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q48",
@@ -1286,7 +1506,17 @@
         "נכון: thrashing מוגדר בדיוק כך: דפים מפונים ונטענים שוב ושוב. major fault דורש I/O, ו-si/so מראים את התעבורה ל-swap."
       ],
       "explanation": "thrashing: הסכום של ה-working sets גדול מה-RAM, ולכן המערכת מבלה את רוב הזמן בהעברת דפים. מטפלים בהורדת העומס (פחות processes או cgroups עם memory.max), בהוספת RAM, או בהקטנת ה-working set.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "בהתאם למדדים זיהית thrashing, אבל אתה לא יודע איזה process אחראי. איך תמצא את מי שגורם, ואיזה מדד מודרני מראה כמה זמן ה-processes מאבדים בגלל זה?",
+        "modelAnswer": "כדי למצוא את האחראי: `pidstat -r 1` מראה major faults לשנייה (majflt/s) לכל process, כך שרואים מי סובל; `smem` או `/proc/<pid>/status` (VmRSS, VmSwap) מראים מי מחזיק הכי הרבה זיכרון ו-swap. ב-cgroups v2, `memory.stat` לכל cgroup מראה את `workingset_refault` (דפים שנזרקו וחזרו מהר, סימן ישיר ל-thrashing) ואת `pgmajfault`. המדד המודרני הוא PSI: `/proc/pressure/memory` (וגם לכל cgroup ב-`memory.pressure`) נותן אחוז זמן שבו לפחות task אחד (`some`) או כל ה-tasks (`full`) נתקעו בגלל זיכרון, על חלונות של 10, 60 ו-300 שניות. full גבוה פירושו שהמערכת לא מתקדמת. כלים כמו systemd-oomd משתמשים ב-PSI כדי להרוג cgroup לפני שהמכונה נתקעת.",
+        "rubric": [
+          "pidstat -r (majflt/s) ו-VmRSS/VmSwap",
+          "workingset_refault ב-memory.stat",
+          "PSI: /proc/pressure/memory some/full",
+          "systemd-oomd מבוסס PSI"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q49",
@@ -1338,7 +1568,17 @@
         "שגוי: זו בדיוק האינטואיציה שהאנומליה סותרת, ורק עבור אלגוריתמים שאינם stack algorithms."
       ],
       "explanation": "האנומליה של Belady: באלגוריתמים שאינם stack algorithms, כמו FIFO, הוספת frames יכולה להגדיל את מספר ה-faults. LRU ו-OPT מקיימים את תכונת ההכלה ולכן חסינים. בפועל הקרנלים מקרבים LRU עם clock / רשימות active ו-inactive.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "LRU אמיתי לא ממומש בקרנלים. למה זה יקר מדי, ואיך אלגוריתם clock (second chance) מקרב אותו בעזרת ביט ה-accessed?",
+        "modelAnswer": "LRU מדויק דורש לעדכן מבנה נתונים (רשימה או timestamp) בכל גישה לזיכרון, כלומר מיליארדי עדכונים בשנייה, וזה בלתי אפשרי בתוכנה; החומרה נותנת רק ביט accessed שנדלק בגישה. clock מסדר את הדפים במעגל עם \"מחוג\". כשצריך לפנות, בודקים את הדף שהמחוג מצביע עליו: אם ה-accessed דלוק, מכבים אותו (\"הזדמנות שנייה\") ומתקדמים; אם כבוי, הדף לא נגעו בו מאז הסיבוב הקודם, ומפנים אותו. כך דפים שבשימוש תכוף נשמרים, ודפים שלא נגעו בהם סיבוב שלם מפונים, בלי עבודה בכל גישה. Linux מרחיב את זה עם רשימות active ו-inactive (ו-MGLRU עם כמה דורות), כך שדף צריך שתי גישות כדי להיחשב פעיל, וזה גם עוזר מול סריקות חד-פעמיות.",
+        "rubric": [
+          "LRU מדויק = עדכון בכל גישה, בלתי אפשרי",
+          "החומרה נותנת רק ביט accessed",
+          "clock: accessed דלוק → מכבים ומתקדמים, כבוי → מפנים",
+          "active/inactive או MGLRU כהרחבה"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q52",
@@ -1407,7 +1647,17 @@
         "נכון: page fault הוא fault: הוא מדווח לפני שהפקודה משנה את המצב, וכתובת החזרה השמורה היא של הפקודה עצמה. לכן אפשר להריץ אותה שוב בלי תופעות לוואי."
       ],
       "explanation": "exceptions מתחלקים ל-faults (חוזרים לאותה פקודה, למשל page fault), traps (חוזרים לפקודה הבאה, למשל breakpoint או syscall) ו-aborts. התכנון של page fault כ-fault הוא שמאפשר את כל ה-demand paging באופן שקוף לתוכנית.",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "פקודה אחת ב-x86 כמו `rep movsb` או `movs` שחוצה גבול דף יכולה לגרום ל-fault באמצע. איך המעבד מבטיח שהרצה מחדש לא תעתיק פעמיים או תשבור את הסמנטיקה?",
+        "modelAnswer": "כדי ש-fault יהיה restartable, המעבד חייב להשאיר את מצב הרגיסטרים עקבי עם \"מה כבר בוצע\". ב-`rep movs`, הרגיסטרים RSI, RDI ו-RCX מתעדכנים תוך כדי, ולכן כשמגיע fault באמצע, הם מצביעים בדיוק על האיבר הבא שעוד לא הועתק, ו-RIP נשאר על הפקודה. אחרי הטיפול, הפקודה מתחילה מחדש עם הרגיסטרים המעודכנים וממשיכה מאיפה שעצרה, בלי להעתיק שוב. בפקודה רגילה (לא rep) שחוצה גבול דף, למשל store לא מיושר של 8 בתים, המעבד בודק את התרגום של שני הדפים לפני שהוא מבצע את הכתיבה, כך שה-fault מגיע לפני כל שינוי גלוי. זו תכונת precise exceptions: כל ההוראות הקודמות הושלמו, ושום דבר מההוראה הכושלת לא נראה.",
+        "rubric": [
+          "precise exceptions: אין תוצאה חלקית גלויה",
+          "rep movs: RSI/RDI/RCX מעודכנים, ממשיך מאותה נקודה",
+          "store חוצה דף: בדיקת תרגום לשני הדפים לפני כתיבה",
+          "RIP נשאר על הפקודה"
+        ]
+      }
     },
     {
       "id": "sys.virtual-memory.q55",
@@ -1526,7 +1776,17 @@
       ],
       "explanation": "thrashing הוא כשה-working set גדול מה-RAM: דפים יוצאים וחוזרים כל הזמן (si/so גבוהים), ו-CPU מבוזבז על page faults. swap תפוס אבל שקט הוא בדרך כלל בריא.",
       "id": "sys.virtual-memory.q59",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "מה `vm.swappiness` באמת קובע, ומה הייתה ההגדרה שלך לשרת SDR עם תהליך RT נעול ו-page cache גדול של הקלטות?",
+        "modelAnswer": "swappiness (0-200, ברירת מחדל 60) קובע את היחס בין פינוי זיכרון אנונימי (swap) לבין פינוי page cache כשהקרנל צריך זיכרון: ערך נמוך מעדיף לזרוק page cache, ערך גבוה מוכן יותר להוציא דפים אנונימיים ל-swap. הוא לא קובע \"מתי מתחילים swap\" ולא מבטל אותו גם ב-0 (רק ממזער מאוד). לשרת SDR: התהליך הקריטי נעול ב-mlockall ולכן לא יוצא ל-swap בכל מקרה. ה-page cache של קבצי ההקלטות הוא בדרך כלל נתונים שנכתבו ולא ייקראו בקרוב, ולכן עדיף לפנות אותו ולא להוציא תהליכים אחרים (כמו GUI או shell) ל-swap, כדי שהם יגיבו מהר: swappiness נמוך (למשל 10). עוד יותר יעיל: לכתוב את ההקלטות עם O_DIRECT או `posix_fadvise(DONTNEED)`, כך שהן לא ממלאות את ה-page cache מלכתחילה.",
+        "rubric": [
+          "swappiness = יחס בין פינוי anon לפינוי page cache",
+          "0 לא מבטל swap לגמרי",
+          "תהליך נעול לא מושפע",
+          "swappiness נמוך + O_DIRECT/fadvise להקלטות"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1547,7 +1807,17 @@
       ],
       "explanation": "ה-LRU של Linux מחולק לרשימות active ו-inactive כדי להתגונן מסריקות, אבל סריקה גדולה מספיק עדיין מזיקה. מסדי נתונים רציניים מנהלים buffer pool משלהם עם O_DIRECT, בין השאר בגלל זה.",
       "id": "sys.virtual-memory.q60",
-      "lesson": "sys.virtual-memory"
+      "lesson": "sys.virtual-memory",
+      "followUp": {
+        "prompt": "posix_fadvise(DONTNEED) על קובץ שהגיבוי קרא. מתי זה לא ישחרר את הדפים בפועל, ולמה הגיבוי צריך לקרוא לו בחלקים ולא פעם אחת בסוף?",
+        "modelAnswer": "DONTNEED משחרר רק דפים נקיים שאינם בשימוש: דפים מלוכלכים (שעוד לא נכתבו) לא נזרקים, אלא אם קודם עושים writeback (למשל `sync_file_range` או fdatasync); דפים שממופים ב-mmap של process אחר או נעולים לא ישוחררו; ודפים שנמצאים בשימוש באותו רגע ידולגו. אם קוראים לו רק בסוף הגיבוי, כל ה-200GB כבר עברו דרך ה-page cache ודחקו את הדפים החמים של מסד הנתונים, והנזק כבר נעשה; DONTNEED רק ינקה אחריו. לכן קוראים לו בחלקים, למשל אחרי כל 64MB שנקראו, על הטווח שכבר עובד, כך שה-page cache שהגיבוי צורך חסום בכמה עשרות MB בכל רגע. עם `POSIX_FADV_SEQUENTIAL` בתחילת הקריאה מקבלים גם readahead גדול יותר.",
+        "rubric": [
+          "dirty/ממופים/בשימוש לא משתחררים",
+          "בסוף = הנזק כבר נעשה",
+          "בחלקים על הטווח שכבר נקרא",
+          "POSIX_FADV_SEQUENTIAL ל-readahead"
+        ]
+      }
     }
   ]
 }

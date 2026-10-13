@@ -390,7 +390,17 @@
         "נכון: A בבאפר (אין newline, stdout לטרמינל line-buffered). fork מעתיק את הבאפר, כל process מוסיף B\\n, וה-newline מרוקן את \"AB\\n\" בכל אחד: AB פעמיים.",
         "זה היה הפלט אם printf(\"A\") היה נכתב מיד לטרמינל (למשל unbuffered או fflush לפני fork). כאן ה-A עדיין בבאפר ומשוכפל.",
         "זה מניח ש-A הודפס רק פעם אחת ושהבאפר לא מועתק. אבל הבאפר של stdio הוא חלק מהזיכרון של ה-process ומועתק ב-fork כמו כל השאר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה יודפס אם מריצים את התוכנית עם `./a.out > out.txt`, ומה אם מוסיפים `\\n` אחרי ה-A? ולמה stderr לא סובל מהבעיה הזו?",
+        "modelAnswer": "כשה-stdout מופנה לקובץ הוא fully buffered (בדרך כלל 4KB או 8KB), ולכן גם עם `A\\n` ה-A עדיין בבאפר בזמן ה-fork. הקובץ יכיל פעמיים A ופעמיים B: עם newline אחרי A זה \"A, B, A, B\" בשורות נפרדות, ובלי newline זה \"AB\" פעמיים. בטרמינל, stdout הוא line-buffered, ולכן `A\\n` היה מרוקן לפני ה-fork ומודפס פעם אחת, ו-B פעמיים. stderr הוא unbuffered לפי התקן, כך שכל כתיבה יוצאת מיד ב-write ואין מה לשכפל. הכלל: `fflush(NULL)` לפני fork, או בילד לצאת עם `_exit` ולא עם `exit`, כדי לא לרוקן בילד באפרים שהועתקו מהאב.",
+        "rubric": [
+          "קובץ = fully buffered, newline לא מרוקן",
+          "טרמינל = line-buffered, newline מרוקן",
+          "stderr unbuffered",
+          "fflush לפני fork או _exit בילד"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q08",
@@ -418,7 +428,17 @@
         "נכון: ב-Linux גם fork (ב-glibc) וגם pthread_create ממומשים מעל clone, והדגלים (CLONE_VM, CLONE_FILES, CLONE_THREAD) קובעים מה משותף.",
         "נכון: gettid מחזיר את ה-TID, שהוא מזהה ה-task בקרנל, ייחודי לכל thread.",
         "נכון: getpid מחזיר את ה-TGID, ה-PID של ה-thread הראשון, שזהה לכל ה-threads באותו process."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם כל thread ב-Linux הוא task עם PID משלו, מה בדיוק משתף thread עם ה-threads האחרים ומה פרטי לו? תן דוגמה לדבר אחד שמפתיע אנשים.",
+        "modelAnswer": "משותף (דרך דגלי clone כמו CLONE_VM, CLONE_FILES, CLONE_FS, CLONE_SIGHAND): מרחב הכתובות, טבלת ה-fds, cwd ו-umask, ו-signal handlers. פרטי: רגיסטרים ו-stack, signal mask ו-signals pending פר-thread, `errno` (שהוא thread-local), TLS, עדיפות ומדיניות scheduling, ו-CPU affinity. דוגמאות מפתיעות: ב-Linux ה-credentials (uid ו-gid) הם בקרנל פר-thread, ו-glibc צריך לעבור על כל ה-threads כדי ש-`setuid` יחול על כולם (POSIX דורש זאת). גם nice ו-`sched_setaffinity` עם TID משפיעים רק על thread אחד, אף שהתיעוד מתאר אותם כפר-process. ו-`chdir` משפיע על כל ה-threads, ולכן שימוש בנתיבים יחסיים ב-multi-threaded מסוכן, ועדיף `openat`.",
+        "rubric": [
+          "משותף: מרחב כתובות, fds, cwd, signal handlers",
+          "פרטי: stack, רגיסטרים, signal mask, errno/TLS",
+          "עדיפות/affinity פר-thread",
+          "דוגמה מפתיעה (credentials פר-thread או chdir משותף)"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q09",
@@ -439,7 +459,17 @@
         "עדיפות תזמון משפיעה רק על חלוקת CPU, לא על בידוד. segfault ב-thread בעדיפות נמוכה עדיין מפיל את כל ה-process.",
         "הפרדת RX מ-DSP ל-processes שונים מוסיפה IPC ו-latency על זרם נתונים עצום בלי תועלת, כי שניהם קריטיים ותלויים זה בזה: קריסה של אחד משביתה את המערכת בכל מקרה.",
         "נכון: process נפרד ל-GUI הוא crash domain נפרד, כך שקריסה שלו לא מפילה את ה-RX. RX ו-DSP נשארים יחד ל-zero-copy, ו-shared memory ring buffer נותן תקשורת זולה ל-GUI."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-GUI ב-process נפרד קורס ועולה מחדש. איך הוא מתחבר מחדש ל-ring buffer, ואיך תוודא שה-RX לא מושפע מכך שה-GUI מת באמצע קריאה?",
+        "modelAnswer": "ה-ring צריך להיות מתוכנן כך שהקורא לא כותב שום דבר שהכותב תלוי בו: ה-RX מתקדם בלי לחכות ל-GUI, וה-GUI רק קורא את האינדקס של הכותב ושומר אצלו את המיקום שלו. כך מוות של ה-GUI באמצע קריאה לא משאיר lock תפוס ולא אינדקס תקוע. החיבור מחדש: ה-GUI החדש פותח את ה-shm בשם (או מקבל fd מה-RX דרך Unix socket), בודק header עם magic וגרסה, וקורא את מונה הכותב הנוכחי כנקודת התחלה, כלומר מתחיל מהבלוק העדכני ולא מההיסטוריה. אם ה-RX מודיע ל-GUI דרך eventfd או socket, צריך לוודא ש-write לצרכן מת לא חוסם ולא הורג את ה-RX: `O_NONBLOCK` ו-`MSG_NOSIGNAL` או התעלמות מ-SIGPIPE.",
+        "rubric": [
+          "הקורא לא כותב שום דבר שהכותב תלוי בו (אין lock משותף)",
+          "חיבור מחדש: header check והתחלה מהבלוק העדכני",
+          "התראות לצרכן non-blocking",
+          "הגנה מ-SIGPIPE/EPIPE ב-RX"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q10",
@@ -460,7 +490,17 @@
         "zombie נוצר רק כשהילד עצמו מסיים ולא נאסף. כאן הילד ממשיך לרוץ, ומי שבוחר בזה מבלבל בין orphan ל-zombie.",
         "נכון: הילד הופך ל-orphan, ה-parent שלו מתעדכן ל-init (PID 1) או ל-subreaper הקרוב, והוא ממשיך לרוץ כרגיל. כשיסיים, המאמץ יבצע wait ויאסוף אותו.",
         "PID של process לא משתנה לאורך חייו, ובוודאי לא מועבר מהאב. רק ה-PPID שלו משתנה למאמץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה כותב supervisor שמריץ סקריפטים, והסקריפטים עצמם מריצים תהליכים ברקע ויוצאים. איך תבטיח שה-supervisor יאסוף את כל הנכדים ויידע מתי כולם סיימו?",
+        "modelAnswer": "כשהסקריפט יוצא, הנכדים שלו הופכים ל-orphans ומאומצים על ידי PID 1, כך שה-supervisor מאבד אותם. הפתרון: `prctl(PR_SET_CHILD_SUBREAPER, 1)` ב-supervisor, ואז כל orphan מתחת לעץ שלו מאומץ אליו ולא ל-init. ה-supervisor צריך לולאת `waitpid(-1, &st, WNOHANG)` (למשל ב-handler של SIGCHLD או עם signalfd) כדי לאסוף את כולם. כדי לדעת מתי כל העץ סיים, ממשיכים עד ש-waitpid מחזיר ECHILD. חלופה חזקה יותר: להריץ כל job ב-cgroup משלו, ואז אפשר לראות את כל ה-processes שלו ב-`cgroup.procs`, לקבל אירוע כשהוא מתרוקן (`cgroup.events`, populated=0), ולהרוג את כולם בבת אחת עם `cgroup.kill`. זה מה ש-systemd עושה.",
+        "rubric": [
+          "נכדים מאומצים ע״י init ואובדים",
+          "PR_SET_CHILD_SUBREAPER",
+          "לולאת waitpid(-1, WNOHANG) עד ECHILD",
+          "cgroup לכל job כחלופה (populated, cgroup.kill)"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q11",
@@ -481,7 +521,17 @@
         "threads לא קשורים ל-core מסוים: ה-scheduler מריץ אותם על כל core פנוי, כמו processes. affinity הוא הגדרה מפורשת, לא תכונה של threads.",
         "כל thread הוא task עם רגיסטרים משלו, ו-context switch שומר וטוען אותם בדיוק כמו ב-process. החלק הישיר כמעט זהה.",
         "ב-Linux כל thread הוא task שה-scheduler מתזמן בנפרד (1:1). זה היה נכון רק ל-green threads בתוך runtime של M:N."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מודד את העלות הישירה והעקיפה של context switch על המכונה שלך, ומה הסדר גודל הצפוי של כל אחת?",
+        "modelAnswer": "עלות ישירה: benchmark של ping-pong בין שני threads (או processes) על אותו core, למשל דרך pipe או futex, שמבצע מיליוני העברות ומחלק את הזמן. כך מקבלים את עלות ה-syscall, ה-scheduler ושמירת ההקשר, בדרך כלל 1-3 מיקרו-שניות לסבב, עם הבדל קטן בין threads ל-processes כשיש PCID. עלות עקיפה: מריצים workload עם working set בגודל ה-L2 או ה-TLB, ומודדים כמה זמן לוקח לו אחרי switch לעומת ריצה רציפה; ההבדל הוא \"cache refill\" שיכול להיות עשרות מיקרו-שניות ויותר, תלוי בגודל ה-working set. כלים: `perf stat -e context-switches,cs,dTLB-load-misses,cache-misses` ו-`perf bench sched pipe`. בנוסף, להצמיד את שני הצדדים לאותו core עם `taskset`, אחרת מודדים גם wakeup בין cores.",
+        "rubric": [
+          "ping-pong על אותו core למדידה ישירה (~1-3µs)",
+          "עלות עקיפה: מדידת workload לפני ואחרי switch",
+          "perf bench sched pipe / perf stat",
+          "taskset לאותו core"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q12",
@@ -502,7 +552,17 @@
         "system() אכן מתעלם מ-SIGINT ו-SIGQUIT וחוסם SIGCHLD בזמן ההמתנה, אבל זה לא מקפיא את ה-service, ולא מסביר עלות שגדלה עם גודל ה-RSS.",
         "הפקודה החיצונית קטנה; העלות היא ב-fork של process של 40GB לפני שהיא בכלל מתחילה. זו טעות נפוצה להאשים את הילד כשהמחיר משולם באב.",
         "ulimit לא קשור: אין כאן כישלון או מגבלת משאבים, אלא איטיות שנובעת מהעתקת page tables. העלאת מגבלות לא מקצרת את ה-fork."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלפת ל-posix_spawn. אבל עכשיו צריך בילד לשנות cwd, לסגור fds מסוימים ולהעביר stdout לקובץ לפני ה-exec. איך עושים את זה בלי fork, ומה עושים אם צריך משהו ש-posix_spawn לא תומך בו?",
+        "modelAnswer": "posix_spawn מקבל `posix_spawn_file_actions_t` שמגדיר פעולות על fds שמבוצעות בילד לפני ה-exec: `addopen` (לפתוח קובץ למספר fd מסוים, למשל 1 ל-stdout), `adddup2`, `addclose`, ובגרסאות חדשות של glibc גם `addchdir_np` ו-`addclosefrom_np`. יש גם `posix_spawnattr_t` ל-signal mask, ל-process group, ל-session (setsid) ול-scheduling. אם צריך משהו שלא נתמך, למשל setrlimit או כניסה ל-namespace, אפשרויות: להריץ wrapper קטן (למשל `/bin/sh -c` או בינארי ייעודי) שמבצע את ההגדרות ואז exec לפקודה; להשתמש ב-`clone3` עם `CLONE_VFORK` ישירות, בזהירות של vfork; או spawn server קטן שנוצר מוקדם כשה-process עוד קטן, ושם fork זול.",
+        "rubric": [
+          "posix_spawn_file_actions: addopen/adddup2/addclose",
+          "addchdir_np ו-posix_spawnattr (setsid, sigmask)",
+          "wrapper קטן לפעולות לא נתמכות",
+          "spawn server שנוצר מוקדם"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q13",
@@ -535,7 +595,17 @@
         "מזכיר השפעות עקיפות בין threads: TLB shootdown, page faults, קריסה משותפת"
       ],
       "explanation": "אין תשובה אחת נכונה, אבל צריך נימוק מבוסס trade-offs ולא העדפה כללית.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "בחרת להפריד את ה-recorder ל-process נפרד. מה קורה כשהדיסק נתקע ל-3 שניות, ומי אחראי להחליט מה לזרוק: ה-RX או ה-recorder?",
+        "modelAnswer": "ה-RX אסור שיחכה, ולכן ההחלטה חייבת להיות בצד ה-recorder, או לפחות בלי שה-RX ייחסם. ה-ring המשותף צריך להכיל מספיק בלוקים כדי לבלוע את ה-jitter הצפוי של הדיסק (למשל 200 MB/s × 3 שניות = 600MB), בזיכרון שנעול (`mlock`) כדי שלא ייצא ל-swap. אם ה-recorder בכל זאת מפגר יותר מגודל ה-ring, ה-RX ממשיך לכתוב, וה-recorder מזהה שהוא פיגר (לפי מונה בלוקים מונוטוני) ורושם gap עם מספר הבלוקים שאבדו וחותמת זמן, כך שההקלטה מסומנת כלא רציפה. כדי להקטין את הסיכון: ה-recorder כותב עם `O_DIRECT` או io_uring כדי שלא יחסם על page cache writeback, ומודדים את ה-latency של הדיסק בפועל כדי לבחור את גודל ה-ring.",
+        "rubric": [
+          "RX לא מחכה, ההחלטה בצד ה-recorder",
+          "חישוב ring לפי קצב × jitter של דיסק",
+          "gap מתועד עם מונה בלוקים וחותמת זמן",
+          "O_DIRECT/io_uring ו-mlock"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q15",
@@ -556,7 +626,17 @@
         "PID space מלא נותן EAGAIN ב-fork, לא ENOMEM, ואין קשר לגודל הזיכרון של ה-process.",
         "נכון: ב-overcommit_memory = 2 כל דף פרטי כתיב נספר ב-commit, וב-fork כל הדפים עלולים להיות מועתקים ב-COW, ולכן הקרנל מחייב עוד 30GB לילד. זה עובר את CommitLimit גם כשבפועל הזיכרון פנוי.",
         "fork לא מעתיק זיכרון מראש: COW דוחה את ההעתקה. הבעיה היא חשבונאית: במצב strict הקרנל מחייב את המקסימום התיאורטי, למרות שבפועל כמעט כלום לא יועתק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה מצב ה-heuristic (ברירת המחדל) לא נכשל כאן, ומה הסיכון שהוא לוקח במקום? מתי היית בוחר דווקא strict?",
+        "modelAnswer": "במצב 0 (heuristic) הקרנל מסרב רק להקצאות שבבירור לא יכולות להתקיים, ומניח שרוב דפי ה-COW לא יועתקו לעולם, כי הילד בדרך כלל עושה exec. הסיכון: אם בפועל הרבה תהליכים נוגעים בזיכרון שהם הקצו, הזיכרון הפיזי נגמר בזמן page fault, ואז אין דרך להחזיר שגיאה ל-malloc, והקרנל מפעיל את ה-OOM killer שהורג process, אולי לא את זה שגרם לבעיה. ב-strict, כישלון מגיע מוקדם כ-ENOMEM מ-mmap או fork, והתוכנה יכולה לטפל בו בצורה מסודרת. בוחרים strict במערכות שבהן OOM kill הוא קטסטרופה (מערכות embedded או בקרה, מסדי נתונים מסוימים), ואז חייבים לתכנן spawn בלי fork ו-swap או CommitLimit מתאימים (`vm.overcommit_ratio`).",
+        "rubric": [
+          "heuristic מניח שרוב ה-COW לא יועתק",
+          "סיכון: OOM killer בזמן page fault במקום ENOMEM",
+          "strict = כישלון מוקדם וצפוי",
+          "strict למערכות שבהן OOM kill לא מקובל, עם overcommit_ratio"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q16",
@@ -577,7 +657,17 @@
         "נכון: return מ-main קורא ל-exit, שמריץ destructors של static storage (כולל g_log) ו-atexit בזמן שה-workers עוד רצים. הם ניגשים ל-g_log ההרוס: use-after-destruction, ורק אחר כך exit_group הורג אותם.",
         "הקרנל לא שולח SIGSEGV כחלק מיציאה; exit_group פשוט מסיים את ה-threads. ה-SIGSEGV שנראה הוא תוצאה של גישה לאובייקט הרוס, לא signal שהקרנל יזם.",
         "exit לא מחכה ל-threads, ובטח לא ל-detached. מי שבוחר בזה מבלבל עם התנהגות של שפות כמו Java (non-daemon threads) או עם std::thread שהיה צריך join."
-      ]
+      ],
+      "followUp": {
+        "prompt": "join לכל ה-threads ביציאה נשמע פשוט, אבל אחד ה-workers חסום ב-`recv` על socket שאין בו תעבורה. איך תעצור אותו בצורה נקייה?",
+        "modelAnswer": "דגל `std::atomic<bool> stop` לבדו לא יעזור, כי ה-thread ישן בתוך ה-syscall ולא בודק אותו. אפשרויות: לבצע `shutdown(fd, SHUT_RDWR)` על ה-socket מ-thread אחר, שגורם ל-recv לחזור עם 0 או שגיאה מיד, ואז ה-worker רואה את הדגל ויוצא. אפשרות כללית יותר: ה-worker מחכה ב-`poll` על ה-socket ועל eventfd (או pipe) של \"עצירה\", וה-main כותב ל-eventfd כדי להעיר אותו. אפשר גם timeout על recv (`SO_RCVTIMEO`) ובדיקת הדגל בכל חזרה, במחיר של latency ביציאה. לא מומלץ: `pthread_cancel`, שעלול להשאיר locks תפוסים וזיכרון דולף, או signal שנועד רק לגרום ל-EINTR, שקשה להבטיח שהוא לא מגיע לפני ה-recv.",
+        "rubric": [
+          "דגל לבד לא מעיר thread חסום ב-syscall",
+          "shutdown על ה-socket",
+          "poll על socket + eventfd של עצירה",
+          "להימנע מ-pthread_cancel"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q17",
@@ -598,7 +688,17 @@
         "cgroups מגבילים ומודדים משאבים ולא יוצרים zombies. zombies נוצרים כשאף אחד לא מבצע wait לילד שסיים.",
         "הקונטיינר מקבל signals: docker stop שולח SIGTERM ל-PID 1. הוא פשוט לא נהרג ממנו, כי לקרנל יש הגנה מיוחדת על PID 1 של namespace בלי handler.",
         "נכון: PID 1 של ה-namespace מאמץ את כל ה-orphans, וכשהאפליקציה לא מבצעת wait הם נשארים <defunct>. בנוסף הקרנל לא מפעיל default action של signal על PID 1 בלי handler, ולכן SIGTERM לא הורג אותו ו-Docker שולח SIGKILL אחרי ה-timeout."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הוספת handler ל-SIGTERM באפליקציה. מה ה-handler צריך לעשות בפועל כדי שהכיבוי יהיה graceful תוך פחות מ-10 שניות, ומה אסור לעשות בתוכו?",
+        "modelAnswer": "ה-handler עצמו צריך לעשות מינימום: לכתוב לדגל `volatile sig_atomic_t` או ל-eventfd/self-pipe כדי להעיר את ה-event loop, וזהו. בתוך handler מותר רק פונקציות async-signal-safe, ולכן אסור malloc, printf, locks, או קוד C++ כללי. ה-event loop הראשי רואה את הבקשה ומבצע: להפסיק לקבל עבודה חדשה, לחכות לסיום עבודה קיימת עם deadline (למשל 8 שניות), לשלוח SIGTERM לילדים ולחכות להם עם waitpid, לבצע flush לקבצים, ולצאת. עדיף לקבל signals עם `signalfd` ב-thread הראשי, וכך אין handler בכלל. כ-PID 1 צריך גם להמשיך לאסוף zombies, ולכן לולאת SIGCHLD עם waitpid(-1, WNOHANG).",
+        "rubric": [
+          "handler רק מסמן (sig_atomic_t/eventfd)",
+          "רק async-signal-safe בתוך handler",
+          "event loop: לעצור קבלת עבודה, deadline, להעביר SIGTERM לילדים ו-waitpid",
+          "signalfd כחלופה ל-handler"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q18",
@@ -747,7 +847,17 @@
         "נכון: SIG_IGN לא מצביע לקוד, ולכן הוא נשמר ב-exec. זו מלכודת ידועה: תוכנית שמורצת ממשיכה להתעלם מ-SIGPIPE.",
         "שגוי: exec הורג את כל ה-threads חוץ מזה שקרא לו, והתוכנית החדשה מתחילה עם thread יחיד.",
         "שגוי: exec מחליף את כל מרחב הכתובות, כולל heap, stacks ומיפויים. רק משאבי ה-process (PID, fds, cwd) נשמרים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הסברת ש-SIG_IGN על SIGPIPE עובר דרך exec. תן דוגמה לבאג אמיתי שזה גורם בתוכנית המורצת, ואיך process אב אחראי מכין סביבה נקייה לילד?",
+        "modelAnswer": "דוגמה קלאסית: שרת שמתעלם מ-SIGPIPE מריץ `sh -c \"producer | head -1\"`. ה-producer יורש SIG_IGN, ולכן כש-head יוצא, ה-producer לא נהרג מ-SIGPIPE אלא מקבל EPIPE, ואם הוא לא בודק את ערך ההחזרה של write, הוא ממשיך לרוץ ולייצר לחינם, או מדפיס שגיאות. בדומה, signal mask חסום עובר גם הוא דרך exec, ותוכנית שלא מצפה לזה לא תגיב ל-SIGTERM. אב אחראי, בילד לפני ה-exec (או דרך `posix_spawnattr_setsigdefault` ו-`setsigmask`): מחזיר את כל ה-signals ל-SIG_DFL, מנקה את ה-signal mask, וסוגר fds שאינם נדרשים (או משתמש ב-O_CLOEXEC בכל מקום ו-`close_range` בילד).",
+        "rubric": [
+          "SIG_IGN על SIGPIPE עובר ל-producer, שמקבל EPIPE במקום למות",
+          "signal mask חסום גם עובר דרך exec",
+          "posix_spawnattr_setsigdefault/setsigmask להחזרה ל-default",
+          "O_CLOEXEC/close_range לסגירת fds"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q25",
@@ -768,7 +878,17 @@
         "ה-runtime יכול להחליף משימה רק כשהוא מקבל שליטה. read חוסם מעביר את השליטה לקרנל, וה-runtime עצמו מושהה יחד עם ה-thread היחיד. זה היה נכון רק אם ה-runtime היה עוטף את ה-syscall.",
         "הקרנל לא יודע על המשימות של ה-runtime ולא יוצר threads ביוזמתו. thread נוסף נוצר רק אם ה-runtime עצמו מבקש (למשל Go שמוסיף M כשאחד נחסם).",
         "EAGAIN מתקבל רק ב-fd שמוגדר O_NONBLOCK. כאן ה-read חוסם, וגם ל-NFS, קבצים רגילים לא מחזירים EAGAIN אלא פשוט מחכים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "Go מזיז משימות כשמישהו נחסם ב-syscall. מה הוא עושה כשמשימה מבצעת page fault על קובץ ממופה ב-NFS, ולמה זה מקרה שאף runtime לא יכול לפתור לגמרי?",
+        "modelAnswer": "page fault הוא לא syscall: הוא קורה בתוך הוראת זיכרון רגילה, וה-runtime לא רואה אותו מראש ולא יכול לעטוף אותו. ה-thread של מערכת ההפעלה פשוט נחסם בקרנל עד שהדף מגיע מה-NFS. ב-Go יש מנגנון sysmon שמזהה thread (M) שתקוע זמן רב ומעביר את ה-P שלו ל-thread אחר, כך שמשימות אחרות ממשיכות, אבל זה קורה רק אחרי עיכוב (עשרות מיקרו-שניות או יותר), והוא מכסה את המקרה בשלב מאוחר. ב-runtime עם thread אחד בלבד (כמו event loop של asyncio או Node), page fault איטי עוצר את הכל. לכן לא ממפים קבצים מאחסון איטי בקוד שאסור שייחסם, או קוראים אותם עם I/O אסינכרוני מפורש (io_uring) או ב-thread pool.",
+        "rubric": [
+          "page fault אינו syscall ולא ניתן לעטוף",
+          "ה-thread נחסם בקרנל",
+          "Go sysmon מעביר P אחרי עיכוב",
+          "להימנע מ-mmap של אחסון איטי, I/O מפורש או thread pool"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q26",
@@ -789,7 +909,17 @@
         "נכון: הילד של vfork רץ על הזיכרון וה-stack של האב בזמן שהאב מושהה. return מהפונקציה ושינוי משתנים דורסים את ה-stack frame שהאב יחזור אליו, ולכן מותר רק exec או _exit.",
         "vfork עדיין נתמך ועובד ב-Linux, ו-glibc אף משתמש במנגנון דומה (CLONE_VFORK) ב-posix_spawn.",
         "return לא קורא ל-exit של האב. הבעיה היא שהילד ממשיך לרוץ על ה-stack המשותף ומשחית אותו (ואם יגיע ל-exit, גם ינקה באפרים ו-atexit של האב)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם vfork כל כך מסוכן, למה glibc בכל זאת משתמש במנגנון דומה (CLONE_VM | CLONE_VFORK) בתוך posix_spawn? מה הוא עושה אחרת כדי שזה יהיה בטוח?",
+        "modelAnswer": "posix_spawn ב-glibc יוצר את הילד עם `clone(CLONE_VM | CLONE_VFORK)` אבל עם stack נפרד שהוקצה במיוחד לילד, כך שהילד לא רץ על ה-stack frames של האב ולא יכול לדרוס אותם. הקוד שרץ בילד הוא קוד מבוקר של glibc בלבד, שמבצע רק פעולות async-signal-safe: file actions, איפוס signals, ואז exec, ובמקרה כישלון `_exit` עם קוד שגיאה שנכתב לזיכרון המשותף כדי שהאב ידע למה נכשל. האב מושהה עד exec או _exit, כמו ב-vfork. בנוסף, glibc חוסם את כל ה-signals בזמן היצירה, כדי ש-handler של האב לא ירוץ בילד על הזיכרון המשותף. כלומר, אותה מהירות של vfork, אבל בלי לתת לקוד המשתמש לרוץ במצב המסוכן.",
+        "rubric": [
+          "stack נפרד לילד",
+          "רק קוד מבוקר של glibc רץ בילד",
+          "כישלון exec מדווח לאב דרך הזיכרון המשותף",
+          "חסימת signals בזמן היצירה"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q27",
@@ -810,7 +940,17 @@
         "ב-64 ביט יש כ-128TB של מרחב כתובות למשתמש, ו-240GB הם חלק קטן ממנו.",
         "נכון: EAGAIN מ-pthread_create מצביע על מגבלת משאבים על מספר tasks: RLIMIT_NPROC (סופר threads), pids.max של ה-cgroup, או threads-max ו-pid_max. ה-stacks וירטואליים ותופסים מעט RAM.",
         "אין ל-scheduler מגבלה כזו. 32,768 הוא ערך ברירת מחדל ישן של pid_max, וזו מגבלה על מספרי tasks, לא על ה-scheduler, וניתנת להגדלה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "העלית את המגבלות ועכשיו יש 100,000 threads. איזה מחיר תראה בזיכרון ובזמן מעבד גם אם רובם ישנים, ואיך תוכיח את זה במדידה?",
+        "modelAnswer": "כל thread צורך זיכרון שאינו וירטואלי בלבד: kernel stack (16KB ב-x86-64), task_struct ומבנים נלווים (כמה KB), לפחות דף או שניים של user stack שנגעו בהם, ו-guard page. 100,000 threads זה מאות MB עד GB של זיכרון אמיתי. בנוסף, כל thread שמתעורר עולה context switch, וכשאלפים מתעוררים יחד (למשל עם timeout או אירוע משותף) ה-scheduler וה-caches נשחקים. ה-mmap של ה-stacks מגדיל את מספר ה-VMAs (מגבלת `vm.max_map_count`, ברירת מחדל 65530, ובפועל זה בדרך כלל הקיר הבא), ו-fork או mprotect נעשים איטיים. מדידה: `/proc/meminfo` (KernelStack, PageTables), RSS ב-`/proc/<pid>/status`, `perf stat -e context-switches`, ו-`wc -l /proc/<pid>/maps` למספר המיפויים.",
+        "rubric": [
+          "kernel stack 16KB + task_struct + user stack שנגעו בו",
+          "context switches ו-thundering herd",
+          "vm.max_map_count כמגבלה נוספת",
+          "מדידה: KernelStack ב-meminfo, maps, perf context-switches"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q28",
@@ -831,7 +971,17 @@
         "Ctrl+C גורם רק ל-tty לשלוח SIGINT ל-foreground process group, ואין לו השפעה על מהירות ה-CPUs.",
         "ההנחה שה-handler רץ תמיד ב-main thread שגויה ב-POSIX: signal שמכוון ל-process יכול להימסר לכל thread שלא חוסם אותו.",
         "SA_RESTART קובע רק אם syscalls שהופרעו ע״י signal יופעלו מחדש במקום להחזיר EINTR. הוא לא משנה לאיזה thread ה-signal נמסר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עברת ל-thread ייעודי עם sigwait. עכשיו כש-SIGINT מגיע, איך ה-thread הזה מודיע ל-RT thread לעצור בלי לפגוע ב-deadline שלו, ומה ה-RT thread עושה עם הבקשה?",
+        "modelAnswer": "ה-signal thread לא נוגע ב-RT thread ישירות: הוא כותב לדגל `std::atomic<bool> stop` (store עם release). ה-RT thread בודק את הדגל פעם בכל מחזור, ב-load עם acquire או relaxed, שזו קריאה זולה מה-L1 כמעט תמיד, ולכן לא משפיעה על ה-deadline. כשהדגל דולק, ה-RT thread מסיים את המחזור הנוכחי באופן מסודר (למשל משלים בלוק, מכבה TX בחומרה במצב בטוח), ויוצא מהלולאה. ה-main מבצע join ואחר כך ניקוי שאינו RT, כמו כתיבה לדיסק ושחרור משאבים. חשוב לא להשתמש ב-mutex או condition variable שה-RT thread חייב לנעול בכל מחזור, כי זה מוסיף סיכון ל-priority inversion. אם ה-RT thread עלול להיות חסום ב-I/O, צריך גם דרך להעיר אותו, למשל eventfd ב-poll.",
+        "rubric": [
+          "atomic flag, לא שליחת signal ל-RT thread",
+          "בדיקה זולה פעם במחזור",
+          "סיום מסודר של המחזור (מצב בטוח לחומרה) ו-join",
+          "להימנע מ-mutex בנתיב RT"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q29",
@@ -852,7 +1002,17 @@
         "fork הוא אטומי: הוא מצליח (ילד מלא עם thread אחד) או נכשל. אין \"fork חלקי\".",
         "ה-mutex לא עובר reset ב-fork: הוא מועתק בדיוק כמו שהוא, כולל המצב הנעול. אילו היה מאופס, לא הייתה כאן בעיה.",
         "נכון: fork משכפל רק את ה-thread הקורא. אם thread אחר החזיק את ה-mutex ברגע ה-fork, בילד הוא נעול ואין בעלים שישחרר אותו, ולכן הילד נתקע. בין fork ל-exec מותר רק async-signal-safe, או משתמשים ב-posix_spawn."
-      ]
+      ],
+      "followUp": {
+        "prompt": "pthread_atfork נשמע כמו פתרון. למה בפועל הוא כמעט לא שמיש בקוד גדול, ומה הסטנדרט המקובל היום בשרתים multi-threaded שצריכים להריץ תהליכים?",
+        "modelAnswer": "pthread_atfork רושם handlers: prepare (לנעול את כל ה-locks לפני fork), ו-parent ו-child (לשחרר אחרי). כדי שזה יעבוד, כל ספרייה שמחזיקה lock צריכה לרשום handlers, בסדר נכון, אחרת יש deadlock בין locks שננעלים ב-prepare. ספריות צד שלישי (TLS, logging, allocators) לא עושות זאת באופן עקבי, ו-POSIX עצמו מגדיר שבילד של process multi-threaded מותר לקרוא רק לפונקציות async-signal-safe עד exec. גם נעילה של הכל לפני fork יוצרת השהיה לכל ה-threads. הסטנדרט היום: לא לבצע שום עבודה בין fork ל-exec, ולהשתמש ב-posix_spawn (או ב-spawn server שנוצר לפני שה-threads נוצרו). שפות כמו Python מזהירות במפורש על fork בתהליך עם threads, ו-multiprocessing עבר ל-spawn כברירת מחדל ב-macOS.",
+        "rubric": [
+          "atfork דורש שכל ספרייה תרשום handlers בסדר נכון",
+          "ספריות צד שלישי לא עושות זאת",
+          "POSIX: רק async-signal-safe בילד עד exec",
+          "posix_spawn או spawn server מוקדם"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q30",
@@ -873,7 +1033,17 @@
         "נכון: worker נאסף ע״י waitpid(-1) ב-thread אחר, ה-PID שלו שוחרר וניתן ל-process חדש, וה-supervisor שלח SIGTERM למספר שכבר שייך למישהו אחר. pidfd (CLONE_PIDFD או pidfd_open ואז pidfd_send_signal) מתייחס ל-process עצמו, או שמתאמים את האיסוף וההסרה מהרשימה באותו thread.",
         "orphans לא מקבלים PID חדש: רק ה-PPID שלהם משתנה. ובכל מקרה ה-workers הם ילדים של ה-supervisor החי, ולא orphans.",
         "גם אם ה-SIGTERM נמסר ל-thread כלשהו בתוך ה-worker, הוא עדיין מגיע ל-worker הנכון. זה לא מסביר הריגה של process לא קשור."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה עובר ל-pidfd. תאר איך ה-supervisor משתמש בו גם לזיהוי מוות של worker וגם לאיסוף שלו, באותה event loop עם epoll.",
+        "modelAnswer": "יוצרים את ה-worker עם `clone3` ו-`CLONE_PIDFD`, או עם fork ואז `pidfd_open(pid)` מיד (בטוח כי ה-PID לא ממוחזר כל עוד הילד לא נאסף). מוסיפים את ה-pidfd ל-epoll: הוא נעשה readable (EPOLLIN) כשה-process מסתיים. כשמגיע האירוע, אוספים את הילד עם `waitid(P_PIDFD, pidfd, &info, WEXITED)`, שמתייחס בדיוק ל-process הזה ולא לכל ילד (בניגוד ל-waitpid(-1)), ואז סוגרים את ה-pidfd. לעצירה שולחים `pidfd_send_signal(pidfd, SIGTERM, NULL, 0)`, שנכשל עם ESRCH אם ה-process כבר מת, במקום לפגוע במישהו אחר. כך כל המידע על worker מגיע דרך אובייקט אחד, ואין race בין thread שאוסף לבין thread ששולח signals.",
+        "rubric": [
+          "CLONE_PIDFD או pidfd_open מיד אחרי fork",
+          "pidfd readable ב-epoll כשה-process מת",
+          "waitid(P_PIDFD) לאיסוף ספציפי",
+          "pidfd_send_signal נכשל עם ESRCH במקום לפגוע באחר"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q31",
@@ -901,7 +1071,17 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-set-2-on-campus-for-r-d-team-pune/"
       ],
       "problem": "NVIDIA: process vs thread, how the kernel schedules each",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "יש שני משתמשים על שרת: אחד מריץ process עם 64 threads עמוסים, השני process עם thread אחד. מה כל אחד מקבל מה-CPU כברירת מחדל, ואיך מגיעים לחלוקה הוגנת לפי משתמש?",
+        "modelAnswer": "ה-scheduler (CFS או EEVDF) מחלק זמן בין tasks runnable לפי משקל, ולכן במכונה עם מעט cores ה-process עם 64 threads יקבל כמעט את כל הזמן, והאחר כ-1/65 מ-core מתחרה. על מכונה עם הרבה cores הבעיה פחותה, כי ה-thread הבודד מקבל core שלם, אבל עדיין מתחרה על cores עם ה-threads האחרים. לחלוקה הוגנת משתמשים ב-cgroups v2 עם controller של CPU: כל משתמש (systemd עושה זאת עם user slices) מקבל cgroup, וה-scheduler מחלק קודם בין cgroups לפי `cpu.weight` ורק אחר כך בין ה-tasks בתוכם. אפשר גם להגביל באופן קשיח עם `cpu.max`. autogroup עושה דבר דומה אוטומטית לפי session של טרמינל במחשבים שולחניים.",
+        "rubric": [
+          "ה-scheduler הוגן לפי task, לא לפי process",
+          "64 threads מקבלים חלק לא פרופורציונלי",
+          "cgroups v2 עם cpu.weight (ו-cpu.max)",
+          "systemd user slices / autogroup"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q32",
@@ -922,7 +1102,17 @@
         "נכון: מה ש-user space מכנה PID הוא ה-TGID, המזהה של קבוצת ה-threads. כל task מקבל TID משלו, וה-TID של ה-main thread שווה ל-TGID."
       ],
       "explanation": "ב-Linux, PID במובן POSIX הוא ה-TGID, ו-TID הוא המזהה של ה-task. כלים כמו top -H ו-/proc/<pid>/task/ מציגים את ה-TIDs, ו-signals ל-process נשלחים ל-TGID.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "אתה רואה ב-top thread אחד שתופס 100% CPU בתוך process של השירות. איך תגיע ממנו לשם ה-thread ולקוד שהוא מריץ, בלי לעצור את השירות?",
+        "modelAnswer": "`top -H -p <pid>` או `ps -L -o tid,comm,pcpu -p <pid>` מראים את ה-TID של ה-thread העמוס. אם הקוד נותן שמות ל-threads עם `pthread_setname_np`, השם מופיע ב-`/proc/<pid>/task/<tid>/comm` ובכלים, וזה חוסך זמן רב, ולכן כדאי לתת שמות תמיד. כדי לראות מה הוא מריץ: `perf top -t <tid>` או `perf record -t <tid> -g` לדגימה בלי לעצור, ואז `perf report` עם call graphs. אפשרות נוספת: `gdb -p <pid>` ו-`thread apply all bt`, אבל זה עוצר את התהליך לרגע. ל-stack של הקרנל: `/proc/<pid>/task/<tid>/stack` (דורש root). ההבדל בין TID ל-PID כאן חיוני, כי perf ו-/proc מקבלים TID ישירות.",
+        "rubric": [
+          "top -H / ps -L לזיהוי TID",
+          "pthread_setname_np ו-/proc/<pid>/task/<tid>/comm",
+          "perf top/record -t <tid> בלי לעצור",
+          "gdb עוצר לרגע; /proc/.../stack לקרנל"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q33",
@@ -962,7 +1152,17 @@
         "https://www.geeksforgeeks.org/interview-experiences/microsoft-interview-experience-set-126-campus-internship/"
       ],
       "problem": "Microsoft: is a new Chrome tab a process or a thread?",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "Chrome מגביל את מספר ה-renderer processes כשהזיכרון לחוץ. מה הוא מקריב כשהוא מאחד כמה אתרים ל-process אחד, ואיזה איום אבטחה בדיוק Site Isolation בא לחסום?",
+        "modelAnswer": "איחוד אתרים ל-process אחד מקריב בידוד: קריסה או תקיעה של אתר אחד מפילה גם את האחרים באותו process, ודף זדוני יכול באופן תיאורטי לקרוא זיכרון של אתר אחר באותו מרחב כתובות. Site Isolation נוצר בעיקר בעקבות Spectre: התקפות speculative execution מאפשרות לקוד JavaScript לקרוא זיכרון שרירותי בתוך ה-process שלו, ולכן ההגנות של ה-sandbox בתוך process כבר לא מספיקות. הפתרון הוא שכל site (סכמה ו-eTLD+1) רץ ב-process משלו, והגבול נאכף על ידי ה-MMU ומערכת ההפעלה. Chrome מאחד רק לשוניות של אותו site, או במכשירים חלשים מאפשר יותר שיתוף, כך שהאיזון הוא בין זיכרון לבין גבול אבטחה חומרתי.",
+        "rubric": [
+          "איחוד מקריב בידוד קריסות ואבטחה",
+          "Spectre: קוד יכול לקרוא זיכרון בתוך ה-process שלו",
+          "גבול ה-process נאכף ע״י MMU",
+          "איחוד רק של אותו site"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q35",
@@ -983,7 +1183,17 @@
         "שגוי: אין דרך בטוחה לסיים thread אחד אחרי גישה לא חוקית, כי הזיכרון המשותף אולי כבר משובש. POSIX מגדיר שהפעולה חלה על כל ה-process."
       ],
       "explanation": "threads חולקים גורל: קריסה של אחד מפילה את כולם. זו הסיבה לתכנן רכיבים לא אמינים (plugins, ספריות חיצוניות, renderers) כ-processes נפרדים.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "רוצים שקריסה ב-plugin לא תפיל את השרת, אבל להעביר אותו ל-process נפרד יקר מדי. מה היה קורה אם היית מתקין handler ל-SIGSEGV וממשיך לרוץ, ולמה זה כמעט תמיד רעיון רע?",
+        "modelAnswer": "handler ל-SIGSEGV יכול לתפוס את ה-signal, אבל חזרה ממנו מבצעת שוב את אותה הוראה ומקבלת שוב SIGSEGV, ולכן הדרך היחידה \"להמשיך\" היא `siglongjmp` לנקודה בטוחה. הבעיה: הקריסה קרתה באמצע קוד שאולי החזיק locks (למשל ה-lock של malloc), שינה מבנים משותפים חלקית, או השחית את ה-heap. אחרי ה-longjmp ה-process ממשיך עם זיכרון שמצבו לא ידוע, וקריסה מאוחרת יותר או השחתת נתונים שקטה הם התוצאה הסבירה. השימושים הלגיטימיים מצומצמים: לרשום stack trace ו-core ואז לצאת, או מקרים מבוקרים מאוד כמו JVM שמשתמש ב-SEGV לבדיקות null או guard pages ידועות. אם התקציב לא מאפשר process נפרד לכל קריאה, אפשר process עזר אחד ארוך-חיים ל-plugins, שמופעל מחדש כשהוא קורס.",
+        "rubric": [
+          "חזרה מה-handler חוזרת על ההוראה הכושלת",
+          "siglongjmp משאיר locks והשחתת heap",
+          "שימוש לגיטימי: לוג ויציאה, או SEGV מבוקר (JVM)",
+          "חלופה: process עזר ארוך-חיים ל-plugins"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q36",
@@ -1011,7 +1221,17 @@
         "שגוי: זה בדיוק מה שהמעבר מונע. קריסה של process פוגעת רק בו."
       ],
       "explanation": "המעבר ל-processes קונה בידוד ואבטחה ומשלם בזיכרון, בזמן יצירה, ב-IPC ובמעברי הקשר. מערכות אמיתיות מאזנות: Chrome מאחד כמה לשוניות של אותו אתר ל-process אחד כשהזיכרון לחוץ.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "IPC בין לשונית ל-UI הוסיף latency. איך היית מודד אותו ומקטין אותו בלי לוותר על הבידוד, למשל להעברת frame של 8MB?",
+        "modelAnswer": "מודדים latency מקצה לקצה עם חותמות זמן משני הצדדים על אותו `CLOCK_MONOTONIC`, ומפרקים: serialization, syscalls, wakeup, והעתקה. להודעות קטנות ה-wakeup וה-syscall שולטים; לנתונים גדולים ההעתקה שולטת: 8MB בכמה GB/s זה מילישנייה או יותר, ועוד כפול כשמעתיקים דרך הקרנל ב-socket. הפתרון לנתונים גדולים: shared memory, כלומר ה-renderer כותב ל-buffer משותף (memfd שהועבר פעם אחת ב-SCM_RIGHTS), ושולח ב-IPC רק הודעה קטנה עם מזהה הבאפר. לגרפיקה Chrome משתמש ב-GPU process וב-shared textures, כך שהפיקסלים לא עוברים דרך ה-CPU בכלל. הבידוד נשמר כי הבאפר המשותף הוא רק נתונים, עם הרשאות מתאימות (למשל read-only בצד הקורא) ובדיקת גבולות.",
+        "rubric": [
+          "פירוק ה-latency: serialization, syscall, wakeup, העתקה",
+          "חישוב עלות העתקה של 8MB",
+          "shared memory עם הודעת שליטה קטנה",
+          "שמירת בידוד: read-only ובדיקת גבולות"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q37",
@@ -1039,7 +1259,17 @@
         "https://www.geeksforgeeks.org/interview-experiences/nvidia-interview-experience-set-4-on-campus/"
       ],
       "problem": "NVIDIA: what happens to the children when you kill the parent",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "אתה כותב shell מינימלי. מה ה-shell עושה עם process groups כשהוא מריץ pipeline כמו `a | b | c` ב-foreground, ולמה ה-shell עצמו לא מת מ-Ctrl+C?",
+        "modelAnswer": "ה-shell יוצר process group חדש ל-pipeline: הילד הראשון קורא ל-`setpgid(0, 0)` וכל השאר מצטרפים ל-PGID שלו (ה-shell קורא ל-setpgid גם מצדו, כדי למנוע race). אז ה-shell מעביר את הטרמינל לקבוצה הזו עם `tcsetpgrp(fd, pgid)`, כך שהיא ה-foreground process group. Ctrl+C גורם לדרייבר הטרמינל לשלוח SIGINT לכל ה-foreground group, כלומר ל-a, b ו-c, אבל לא ל-shell שנמצא בקבוצה אחרת. בנוסף, shells אינטראקטיביים מתעלמים מ-SIGINT, SIGTSTP ו-SIGTTOU בעצמם. כשה-pipeline מסתיים, ה-shell מחזיר את הטרמינל לעצמו עם tcsetpgrp. jobs ברקע נמצאים בקבוצות שאינן foreground, ולכן אם הם קוראים מהטרמינל הם מקבלים SIGTTIN.",
+        "rubric": [
+          "process group חדש ל-pipeline עם setpgid",
+          "tcsetpgrp מעביר את הטרמינל לקבוצה",
+          "Ctrl+C נשלח רק ל-foreground group, ה-shell בקבוצה אחרת",
+          "ה-shell מתעלם מ-SIGINT/SIGTSTP; רקע מקבל SIGTTIN"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q38",
@@ -1060,7 +1290,17 @@
         "שגוי: ילדים לא מתים עם האב. הם הופכים ליתומים ומאומצים."
       ],
       "explanation": "הקרנל לא קושר את חיי הילד לאב, אלא אם מבקשים במפורש עם PR_SET_PDEATHSIG. חלופה מודרנית: pidfd או pipe שהילד מאזין לו, שנסגר אוטומטית כשהאב מת.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "PR_SET_PDEATHSIG נקשר ל-thread ולא ל-process. איזה באג זה יוצר כשה-daemon יוצר את ה-worker מתוך thread שאחר כך מסתיים, ומה החלופה העמידה?",
+        "modelAnswer": "\"מות האב\" לגבי PDEATHSIG נמדד לפי ה-thread שביצע את ה-fork, לא לפי ה-process כולו. לכן אם ה-daemon יוצר workers מתוך thread זמני (למשל thread pool שמצמצם את עצמו), ברגע שה-thread הזה יוצא, הילד מקבל את ה-signal ומת, למרות שה-daemon חי לגמרי. זה באג מבלבל שמופיע רק בתזמונים מסוימים. החלופות: ליצור את כל הילדים מ-thread ארוך-חיים אחד (למשל ה-main או spawn thread ייעודי); או לא להסתמך על PDEATHSIG בכלל, אלא לתת לילד את צד הקריאה של pipe שהאב מחזיק את צד הכתיבה שלו, והילד מזהה EOF או POLLHUP כשכל ה-process של האב מת. אפשרות נוספת: הילד מחזיק pidfd של האב ומקבל אירוע כשהוא מת.",
+        "rubric": [
+          "PDEATHSIG נקשר ל-thread שביצע fork",
+          "thread זמני שיוצא הורג את הילד בטעות",
+          "יצירת ילדים מ-thread ארוך-חיים",
+          "pipe עם EOF/POLLHUP או pidfd של האב"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q39",
@@ -1081,7 +1321,17 @@
         "נכון: הטרמינל הווירטואלי שולח SIGHUP למוביל ה-session, וה-shell מעביר אותו ל-jobs. nohup מתעלם מ-SIGHUP, setsid יוצר session חדש בלי טרמינל, ו-disown מוציא את ה-job מהרשימה של ה-shell."
       ],
       "explanation": "sessions, process groups ו-SIGHUP הם המנגנון שקושר processes לטרמינל. הם, ולא הקשר אב-ילד, קובעים מה מת כשהטרמינל נסגר או כשלוחצים Ctrl+C.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "השתמשת ב-`nohup ./long_job &` והתנתקת. ה-job חי, אבל אחרי שעה הוא נכשל כשניסה לכתוב ל-stdout. למה, ואיך היית מריץ job כזה כראוי?",
+        "modelAnswer": "nohup רק גורם ל-job להתעלם מ-SIGHUP, ואם ה-stdout הוא טרמינל הוא מפנה אותו ל-`nohup.out`. אבל אם הפנית את הפלט בעצמך לטרמינל, או אם stdin או stderr עדיין מחוברים לטרמינל שנסגר, כתיבה אליהם אחרי הניתוק תיכשל עם EIO, ו-read מ-stdin יחזיר שגיאה או EOF. תוכנית שלא מטפלת בשגיאות כתיבה עלולה לצאת או להיכשל. הדרך הנכונה: לנתק את כל שלושת ה-fds מהטרמינל (`< /dev/null > log 2>&1`), ולהריץ ב-session חדש עם `setsid` כך שאין לו טרמינל שולט בכלל. עדיף עוד יותר להריץ ב-tmux או screen, שמחזיקים pseudo-terminal חי, או כ-unit של systemd (`systemd-run --user`), שמנהל לוגים והפעלה מחדש.",
+        "rubric": [
+          "nohup מתעלם מ-SIGHUP בלבד",
+          "fds שמחוברים לטרמינל שנסגר → EIO",
+          "הפניית stdin/stdout/stderr ו-setsid",
+          "tmux/screen או systemd-run"
+        ]
+      }
     },
     {
       "id": "sys.processes-threads.q40",
@@ -1153,7 +1403,17 @@
         "שגוי: לא ידוע כמה זמן thread מחזיק באפר (כל העברת DMA). spin על זה ישרוף CPU."
       ],
       "explanation": "counting semaphore: הערך הוא כמות המשאבים הפנויים. wait מקטין (וחוסם ב-0), post מגדיל ומעיר ממתין. זה ההבדל המעשי מ-mutex, שמגן על משאב יחיד.",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "עם semaphore, thread יודע שיש באפר פנוי, אבל לא איזה. איך הוא מוצא את הבאפר, ומה ה-race שצריך להיזהר ממנו?",
+        "modelAnswer": "ה-semaphore סופר משאבים, אבל לא מזהה אותם, ולכן צריך מבנה נוסף: רשימה או ביטמאפ של באפרים פנויים, מוגן ב-mutex (או stack lock-free). אחרי `sem_wait` מצליח, ה-thread נועל את ה-mutex, מוציא באפר מהרשימה ומשחרר. בהחזרה: נועל, מחזיר לרשימה, משחרר, ורק אז `sem_post`. ה-race לא קיים אם הסדר הזה נשמר: ה-semaphore מבטיח שכשה-thread נכנס, יש לפחות באפר אחד ברשימה. אם הופכים את הסדר בהחזרה (post לפני ההחזרה לרשימה), thread אחר עלול לעבור את ה-wait ולמצוא רשימה ריקה. חלופה פשוטה יותר: mutex ו-condition variable שמחכים על \"הרשימה לא ריקה\", ואז אין צורך ב-semaphore כלל.",
+        "rubric": [
+          "semaphore סופר, צריך רשימה/ביטמאפ לזיהוי",
+          "רשימה מוגנת ב-mutex",
+          "החזרה לרשימה לפני sem_post",
+          "חלופה: mutex + condition variable"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1204,7 +1464,17 @@
       ],
       "explanation": "zombie הוא רשומה בטבלת התהליכים שמחכה שהאב יאסוף את סטטוס היציאה. הדרכים לטפל: לולאת waitpid עם WNOHANG ב-handler, או להגדיר SIGCHLD ל-SIG_IGN (ב-Linux זה אומר \"אל תיצור zombies\").",
       "id": "sys.processes-threads.q44",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "הגדרת SIGCHLD ל-SIG_IGN כדי שלא ייווצרו zombies. אבל עכשיו קוד אחר באותו process, שמריץ `system()` ובודק את קוד היציאה, מתחיל לקבל שגיאות. למה?",
+        "modelAnswer": "ב-Linux, SIGCHLD עם SIG_IGN (או `SA_NOCLDWAIT`) אומר לקרנל לאסוף ילדים מיד כשהם מתים, בלי zombie. התוצאה: `waitpid` על ילד מסוים לא מוצא אותו ונכשל עם ECHILD, או נחסם עד שכל הילדים מתו ואז מחזיר ECHILD. `system()` מבצע fork ו-waitpid על הילד שלו כדי להחזיר את קוד היציאה, ולכן הוא מחזיר -1 עם ECHILD במקום הסטטוס. זה מצב גלובלי ל-process, ולכן הוא שובר כל ספרייה שמסתמכת על wait. הפתרון: לא להשתמש ב-SIG_IGN, אלא handler עם לולאת `waitpid(pid, WNOHANG)` לילדים שה-process מנהל במפורש בלבד, או עדיף pidfd לכל ילד. ספריות מודרניות לא אמורות להשתמש ב-`waitpid(-1)`, כי זה אוסף ילדים של אחרים.",
+        "rubric": [
+          "SIG_IGN = הקרנל אוסף מיד, אין zombie",
+          "waitpid נכשל עם ECHILD",
+          "system() מחזיר -1 במקום הסטטוס",
+          "מצב גלובלי; פתרון: waitpid על ילדים ספציפיים או pidfd"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1233,7 +1503,17 @@
       ],
       "explanation": "exec מחליף את התוכנית אבל שומר את \"הזהות\" של ה-process: PID, fds, cwd, הרשאות ו-signal mask. בגלל זה FD_CLOEXEC (או O_CLOEXEC) חשוב: בלעדיו כל fd פתוח, כמו socket או קובץ סודי, דולף לתוכנית שמורצת.",
       "id": "sys.processes-threads.q45",
-      "lesson": "sys.processes-threads"
+      "lesson": "sys.processes-threads",
+      "followUp": {
+        "prompt": "שרת פותח קובץ עם מפתחות פרטיים בלי O_CLOEXEC, ובמקביל thread אחר מריץ פקודה חיצונית. גם אם תוסיף `fcntl(fd, F_SETFD, FD_CLOEXEC)` מיד אחרי ה-open, למה זה עדיין לא בטוח?",
+        "modelAnswer": "בין ה-open לבין ה-fcntl יש חלון קטן. אם באותו רגע thread אחר מבצע fork ו-exec, הילד יורש את ה-fd בלי הדגל, והתוכנית שמורצת מקבלת גישה לקובץ המפתחות. זה race שמופיע רק בעומס ולכן קשה לגלות. הפתרון היחיד הנכון הוא לקבוע את הדגל אטומית ביצירה: `O_CLOEXEC` ב-open, `SOCK_CLOEXEC` ב-socket ו-accept4, `pipe2(..., O_CLOEXEC)`, `F_DUPFD_CLOEXEC`, `EPOLL_CLOEXEC` וכן הלאה. כהגנה נוספת, הקוד שמריץ את הפקודה יכול לסגור בילד כל fd מעבר ל-2 עם `close_range(3, ~0U, 0)` לפני ה-exec, או להשתמש ב-file actions של posix_spawn.",
+        "rubric": [
+          "חלון בין open ל-fcntl",
+          "fork+exec ב-thread אחר יורש את ה-fd",
+          "O_CLOEXEC/SOCK_CLOEXEC/pipe2 אטומיים ביצירה",
+          "close_range בילד כהגנה נוספת"
+        ]
+      }
     }
   ]
 }

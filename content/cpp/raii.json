@@ -370,7 +370,16 @@
         "שגוי. נכון ש-~Widget לא נקרא, אבל a הוא member שכבר נבנה, וה-destructor שלו רץ. ה-A היה דולף רק אם a היה A* גולמי.",
         "שגוי. מותר לזרוק מ-constructor, וזו הדרך הסטנדרטית לדווח על כישלון בנייה. terminate קשור ל-destructors או ל-noexcept, לא ל-constructors.",
         "שגוי. destructor נקרא רק על אובייקט שה-constructor שלו הסתיים. Widget לא נבנה, ולכן ~Widget לא רץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלף את ה-initializer ל-`a(std::make_unique<A>()), b(std::make_unique<B>())`. האם משהו משתנה בהתנהגות כש-B זורק? ובאיזה מקרה, עם raw new, היה כן דולף זיכרון גם כשה-members הם unique_ptr?",
+        "modelAnswer": "כאן לא משתנה דבר: כל member initializer הוא full-expression נפרד, ולכן new A נעטף ב-unique_ptr לפני ש-new B מתחיל, ו-a ישוחרר אם B זורק. make_unique עדיף מטעמי סגנון וכדי שלא יופיע new גולמי בקוד. המקרה שבו raw new כן דולף: כששתי הקצאות באותו full-expression, למשל קריאה `f(std::unique_ptr<A>(new A), std::unique_ptr<B>(new B))` ב-C++14, שבה הקומפיילר רשאי להריץ new A ו-new B לפני ששני ה-unique_ptr נבנו; אם new B (או ה-constructor של B) זורק, A דולף. גם `std::pair<std::unique_ptr<A>, std::unique_ptr<B>> p(new A, new B);` דומה. ב-C++17 הבעיה בפרמטרים של פונקציה נפתרה, אבל make_unique נשאר הכלל הבטוח.",
+        "rubric": [
+          "member initializers הם full-expressions נפרדים, ולכן אין הבדל כאן",
+          "דליפה אפשרית כששתי הקצאות באותו full-expression (ארגומנטים ב-C++14)",
+          "make_unique כברירת מחדל"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q09",
@@ -406,7 +415,16 @@
         "שגוי. exception מ-destructor לא נבלע; הוא קורא ל-std::terminate. השגיאה לא \"הולכת לאיבוד\", התוכנית מסתיימת.",
         "שגוי. מותר לכתוב throw בתוך destructor, ואפילו לתפוס אותו בתוכו. מה שאסור (בפועל) הוא ש-exception יצא מה-destructor.",
         "נכון. destructors הם noexcept(true) באופן מרומז ([except.spec]), ו-exception שיוצא מפונקציה noexcept קורא ל-terminate. גם עם noexcept(false), exception בזמן unwinding קורא ל-terminate."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש RAII wrapper לחיבור רשת, ו-close() בו יכול להיכשל. ה-destructor לא יכול לזרוק. מה ה-destructor צריך לעשות עם השגיאה, ואיך אתה נותן לקורא דרך לדעת עליה?",
+        "modelAnswer": "ה-destructor מנסה לסגור, ואם יש שגיאה הוא בולע אותה: רושם ל-log או מעדכן מונה, אבל לא זורק ולא קורא ל-abort. לקורא שאכפת לו מספקים מתודה מפורשת `close()` שמחזירה שגיאה או זורקת, ומסמנת שהחיבור נסגר, כך שה-destructor לא מנסה שוב. זה הדפוס של std::fstream, שה-close() שלו מציב failbit. בנוסף, בבנייה עם debug אפשר להוסיף assert ב-destructor שבודק ש-close() נקרא במפורש במקרים שבהם חשוב לדעת (למשל כתיבה לקובץ, כשכשל ב-close אומר שהנתונים לא נכתבו). כך ה-destructor הוא רשת ביטחון לשחרור, ולא ערוץ לדיווח שגיאות.",
+        "rubric": [
+          "ה-destructor בולע את השגיאה (log/מונה) ולא זורק",
+          "close() מפורשת שמדווחת שגיאה ומונעת סגירה כפולה",
+          "assert ב-debug ש-close נקרא כשחשוב"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q11",
@@ -429,7 +447,16 @@
         "שגוי. ה-U הראשון מופיע מאוחר מדי: ה-temporary נהרס לפני ה-W הראשון. וה-l עם שם חי עד אחרי ה-W השני.",
         "נכון. `L{}` הוא temporary שנבנה ונהרס באותו statement (LU), ואחר כך W. l הוא משתנה עם שם וחי עד סוף main, ולכן ה-U שלו אחרי ה-W השני.",
         "שגוי. החלק הראשון נכון, אבל l לא נהרס לפני ה-W השני: משתנה עם שם חי עד סוף ה-scope."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הבאג של lock_guard זמני בלי שם קל לפספס ב-code review. אילו כלים או טכניקות גורמים לקומפיילר לתפוס אותו?",
+        "modelAnswer": "C++17 `[[nodiscard]]` על constructor (מותר מ-C++20 על constructors, ומ-C++17 על הטיפוס כולו: `struct [[nodiscard]] Guard`) גורם לאזהרה כשאובייקט זמני מהטיפוס נוצר ונזרק מיד. ספריות כמו Abseil מסמנות את MutexLock כך. clang-tidy עם `bugprone-unused-raii` מזהה בדיוק את הדפוס של יצירת RAII object זמני שנהרס מיד. Clang Thread Safety Analysis (-Wthread-safety) עם annotations על ה-mutex וה-members (GUARDED_BY) מזהיר שה-member נקרא בלי שה-mutex מוחזק, וזה תופס גם את הגרסה הזו וגם את גרסת ההצהרה עם סוגריים. בזמן ריצה, ThreadSanitizer מדווח על data race על ה-member.",
+        "rubric": [
+          "[[nodiscard]] על הטיפוס או ה-constructor",
+          "clang-tidy bugprone-unused-raii",
+          "Clang -Wthread-safety עם GUARDED_BY או TSan"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q12",
@@ -453,7 +480,17 @@
         "נכון. `T(x);` מפוענח כהצהרה `T x;` ([stmt.ambig]): נוצר unique_lock ריק בשם mtx_ שמסתיר את ה-member, וה-mutex האמיתי לא ננעל בכלל.",
         "שגוי. unique_lock בטוח לשימוש בין threads בדיוק כמו lock_guard (כל thread מחזיק lock משלו). הבעיה היא בפענוח השורה.",
         "שגוי. ה-constructor של unique_lock שמקבל mutex כן נועל אותו (אלא אם מעבירים defer_lock). הבעיה היא שאין כאן mutex בכלל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין lock_guard, unique_lock ו-scoped_lock מבחינת עלות ויכולות, ובאיזה מקרה היית חייב דווקא unique_lock?",
+        "modelAnswer": "lock_guard הוא הפשוט ביותר: נועל ב-constructor ומשחרר ב-destructor, בלי state נוסף, sizeof של pointer. scoped_lock (C++17) הוא אותו דבר אבל מקבל כמה mutexes ונועל אותם בלי deadlock (אלגוריתם של std::lock), ועם mutex אחד הוא שקול ל-lock_guard. unique_lock מחזיק גם דגל owns_lock, ולכן מאפשר unlock ו-lock באמצע ה-scope, נעילה דחויה (defer_lock), try_lock, try_lock_for עם timeout, ו-move של הבעלות על הנעילה. המחיר: bool נוסף ובדיקה ב-destructor, כמעט זניח. חייבים unique_lock עם std::condition_variable, כי wait() צריך לשחרר את ה-mutex בזמן ההמתנה ולנעול מחדש כשהוא מתעורר, ולכן מקבל unique_lock&.",
+        "rubric": [
+          "lock_guard: הכי פשוט, בלי state",
+          "scoped_lock: כמה mutexes בלי deadlock",
+          "unique_lock: unlock/defer/try/move, עם דגל owns",
+          "חובה עם condition_variable::wait"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q13",
@@ -476,7 +513,16 @@
         "שגוי. זה מניח שה-members נבנים לפי הסדר ב-mem-initializer list (a לפני b). התקן קובע את הסדר לפי ההצהרה במחלקה ([class.base.init]).",
         "שגוי. הבנייה נכונה, אבל ההריסה חייבת להיות הפוכה בדיוק לבנייה: A נבנה אחרון מבין ה-members ולכן נהרס ראשון (a ואז b).",
         "שגוי. גוף ה-constructor רץ אחרון, אחרי base ו-members, ולא ראשון. כך מובטח שבגוף כל ה-members כבר מוכנים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-constructor של A (שנבנה שני) זורק. מה יודפס, ומה ההבדל אם ה-exception נזרק דווקא מגוף ה-constructor של S?",
+        "modelAnswer": "כש-A זורק: X נבנה (base), b נבנה, A זורק. ה-unwinding הורס רק את מה שנבנה במלואו, בסדר הפוך: b ואז x. הפלט: XB ואז bx, ו-~S לא רץ, גם A לא נהרס כי לא סיים להיבנות. כשהזריקה מגוף ה-constructor של S: כל ה-members וה-base כבר נבנו (XBA), ואז הגוף מדפיס S וזורק. גם כאן ~S לא רץ, כי האובייקט לא סיים להיבנות, אבל a, b ו-x נהרסים: XBAS ואז abx. המסקנה: אסור לשים בגוף ה-constructor שחרור משאבים שתלוי ב-~S; כל משאב צריך להיות member RAII משלו, ואז הוא משוחרר אוטומטית בכל נקודת כשל.",
+        "rubric": [
+          "A זורק: XB ואז bx; A ו-S לא נהרסים",
+          "זריקה מהגוף: XBAS ואז abx, ~S לא רץ",
+          "כל משאב צריך member RAII משלו"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q14",
@@ -510,7 +556,16 @@
         "בעיה של globals סטטיים מול teardown של ה-context"
       ],
       "explanation": "מראיין ב-NVIDIA ירצה לשמוע שאתה מבין ש-RAII פותר דליפות אבל לא את התזמון: בזמן-אמת חשוב גם מתי ובאיזה thread השחרור קורה.",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "ה-thread הקריטי משחרר buffer של GPU דרך ה-destructor, ו-cudaFree עושה סנכרון מרומז עם ה-device. איך היית מבנה את השחרור כך שהוא לא יחסום את ה-thread הקריטי, ועדיין לא ישוחרר buffer שה-GPU עוד משתמש בו?",
+        "modelAnswer": "שתי אפשרויות. ראשונה: stream-ordered allocator, `cudaMallocAsync` ו-`cudaFreeAsync(ptr, stream)` (CUDA 11.2 ואילך), שמכניסים את השחרור לתור של ה-stream: הוא קורה רק אחרי שכל העבודה הקודמת ב-stream הסתיימה, בלי לחסום את ה-host, והזיכרון חוזר ל-pool ולא ל-driver. ה-destructor של ה-wrapper שומר את ה-stream שבו ה-buffer השתמש לאחרונה. שנייה: pool משלך שמוקצה ב-init; ה-destructor לא קורא ל-cudaFree אלא מחזיר את ה-buffer ל-pool יחד עם cudaEvent שנרשם על ה-stream, וה-pool מוציא אותו לשימוש חוזר רק כש-cudaEventQuery מחזיר שהאירוע הושלם. בשני המקרים ה-thread הקריטי לא מבצע שום קריאה מסנכרנת, ואין free של buffer בשימוש.",
+        "rubric": [
+          "cudaFreeAsync על stream (stream-ordered) בלי חסימה",
+          "pool עם cudaEvent: buffer חוזר לשימוש רק כשהאירוע הושלם",
+          "אין קריאה מסנכרנת ב-thread הקריטי"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q16",
@@ -531,7 +586,16 @@
         "שגוי. ב-C++ exception חדש לא מחליף exception שבטיסה בזמן unwinding; זו בדיוק הסיטואציה שבה נקרא terminate.",
         "שגוי. ב-C++ אין שרשור של exceptions כמו ב-Java או Python; שני exceptions פעילים בו זמנית מובילים ל-terminate.",
         "נכון. ה-logic_error מתחיל unwinding, ~Bad רץ וזורק. exception שיוצא מ-destructor בזמן unwinding קורא ל-std::terminate ([except.terminate]), גם עם noexcept(false)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך כותבים destructor שעושה פעולה שעלולה להיכשל (למשל commit או flush) כך שהוא לעולם לא יגרום ל-terminate, ובכל זאת מדווח שגיאה כשאפשר? תאר את המימוש.",
+        "modelAnswer": "בתוך ה-destructor עוטפים את הפעולה ב-try/catch(...) כך שאף exception לא יוצא, וה-destructor נשאר noexcept (ברירת המחדל). בתוך ה-catch רושמים את השגיאה ל-log או למנגנון דיווח (callback, error sink). אם רוצים לזרוק כשאין unwinding פעיל, שומרים `std::uncaught_exceptions()` ב-constructor, ובשביל זה ה-destructor חייב להיות noexcept(false); ב-destructor, אם המונה לא גדל, זורקים, אחרת בולעים. זה מסוכן כי noexcept(false) מתפשט לכל מחלקה שמכילה את האובייקט, ו-containers לא תומכים בטיפוסים עם destructor זורק. לכן הגישה המומלצת: destructor שבולע, יחד עם מתודה מפורשת (commit) שזורקת, והקורא אמור לקרוא לה בנתיב הרגיל.",
+        "rubric": [
+          "try/catch(...) בתוך ה-destructor ורישום השגיאה",
+          "uncaught_exceptions כדי לזרוק רק בלי unwinding, עם noexcept(false)",
+          "noexcept(false) מתפשט ושובר containers; עדיף commit מפורש"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q17",
@@ -552,7 +616,16 @@
         "שגוי. שתי הפונקציות ניגשות למצב per-thread באותו אופן; ההבדל הוא סמנטי (מונה לעומת bool), לא ביצועים.",
         "נכון. אם ה-guard נוצר בתוך destructor שרץ בזמן unwinding, ה-bool הוא true גם כשה-scope יוצא כרגיל, וה-rollback ירוץ בטעות. השוואת המונה מזהה רק exception חדש שנזרק ב-scope.",
         "שגוי. בתוך catch block ה-exception כבר נתפס, ולכן uncaught_exception() מחזירה false שם. היא לא שגויה תמיד; היא שגויה דווקא בתרחיש של unwinding מקונן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "C++ לא כולל scope_exit בתקן עדיין. תאר מימוש מינימלי של ScopeExit (שמריץ lambda תמיד ביציאה), ומה צריך לטפל בו כדי שיהיה נכון: copy, move, ומה קורה אם ה-lambda זורקת.",
+        "modelAnswer": "template<class F> class ScopeExit שמחזיק F ו-bool active, ה-constructor מקבל את ה-lambda, ה-destructor קורא ל-f() אם active, ו-release() מאפס את active כדי לבטל. copy חייב להיות מחוק, אחרת ה-lambda תרוץ פעמיים. move constructor מעביר את F ומאפס active במקור (`other.release()`), ו-move assignment בדרך כלל מחוק כי אין לו סמנטיקה טובה. עם CTAD אפשר לכתוב `ScopeExit guard([&]{ fclose(f); });`. אם ה-lambda זורקת: ה-destructor הוא noexcept במרומז, ולכן זריקה תגרום ל-terminate; זה בדרך כלל מה שרוצים מ-cleanup, אבל צריך לתעד את זה, ולפעמים עוטפים את הקריאה ב-try/catch. ב-Library Fundamentals TS v3 יש std::experimental::scope_exit, scope_fail ו-scope_success עם הסמנטיקה הזו.",
+        "rubric": [
+          "מחזיק F ודגל active, destructor קורא אם active, release מבטל",
+          "copy מחוק; move מעביר ומבטל את המקור",
+          "lambda שזורקת מה-destructor גורמת ל-terminate"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q18",
@@ -573,7 +646,16 @@
         "נכון. `auto&& __range = make().get();` קושר ל-reference שמוחזר, ה-Holder הזמני נהרס בסוף ה-statement, ו-__range מצביע ל-vector מת: UB עד C++23.",
         "שגוי. מותר לקרוא ל-member function על prvalue; זה בדיוק מה שקורה בכל `make().get()`.",
         "שגוי. lifetime extension חלה רק כשה-reference נקשר ישירות ל-temporary. reference שמוחזר מפונקציה לא מאריך את חיי האובייקט שעליו היא נקראה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מתכנן את ה-API של Holder כך שהבאג הזה לא יתקמפל בכלל, גם ב-C++20? ומה המחיר של הפתרון?",
+        "modelAnswer": "מוסיפים ref-qualifiers ל-get: `const std::vector<int>& get() const& { return v; }` ו-`std::vector<int> get() && { return std::move(v); }`. כשקוראים get() על Holder זמני (rvalue), נבחרת הגרסה השנייה שמחזירה vector by value, וה-range-for קושר את __range ל-prvalue, שה-lifetime שלו מוארך. התוצאה: הקוד המקורי נעשה נכון בלי שינוי אצל הקורא. אם רוצים שהקוד ייכשל במקום לעבוד, כותבים `void get() && = delete;`, וזו שגיאת קומפילציה. המחיר: עם הגרסה by value, ה-vector מועבר ב-move (זול), אבל אם Holder לא היה movable, זו העתקה. זה בדיוק הדפוס של std::optional::value() ושל accessors בספריות מודרניות.",
+        "rubric": [
+          "ref-qualifiers: get() const& מחזיר reference ו-get() && מחזיר by value",
+          "או get() && = delete לשגיאת קומפילציה",
+          "מחיר: move (או העתקה) של ה-member"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q19",
@@ -594,7 +676,16 @@
         "שגוי. לפני C++17 שום כלל לא חייב לבנות את ה-shared_ptr מיד אחרי new A; הקומפיילר יכול היה להכניס את g() באמצע.",
         "שגוי. ב-C++17 הבנייה של shared_ptr(new A) מסתיימת לפני שמתחילה הערכה של ארגומנט אחר, ולכן אין דליפה. make_shared עדיין מומלץ מסיבות יעילות.",
         "שגוי. C++17 לא קבע סדר משמאל לימין לארגומנטים של פונקציה; הסדר עדיין unspecified. מה שנקבע הוא שאין interleaving בין ארגומנטים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם C++17 פתר את הדליפה, למה make_shared עדיין עדיף על `shared_ptr<A>(new A)`? ומתי דווקא לא תשתמש ב-make_shared?",
+        "modelAnswer": "make_shared מבצע הקצאה אחת לאובייקט ול-control block יחד, במקום שתיים: חוסך malloc (עשרות ננו-שניות), חוסך overhead של allocator, ומשפר locality כי ה-refcount ליד הנתונים. בנוסף, אין new גולמי בקוד. מתי לא: כשיש weak_ptrs שחיים הרבה יותר מה-shared_ptrs ואובייקט גדול, כי עם make_shared הזיכרון של האובייקט עצמו משוחרר רק כשגם ה-weak count מגיע לאפס (ה-destructor רץ קודם, אבל הבלוק נשאר). כשצריך custom deleter (make_shared לא מקבל deleter; יש allocate_shared עם allocator). כשה-constructor פרטי (make_shared לא יכול לגשת אליו בלי passkey). וכשהאובייקט כבר נוצר במקום אחר ומקבלים את ה-pointer מ-API חיצוני.",
+        "rubric": [
+          "הקצאה אחת לאובייקט ול-control block, locality",
+          "weak_ptrs ארוכים מחזיקים את כל הבלוק",
+          "custom deleter או constructor פרטי מונעים make_shared"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q20",
@@ -716,7 +807,16 @@
         "שגוי. אכן fclose(nullptr) הוא בעייתי, אבל הוא לא נקרא: unique_ptr בודק null לפני שהוא מפעיל את ה-deleter.",
         "שגוי. ה-constructor של unique_ptr לא בודק את ה-pointer ולא זורק; unique_ptr ריק הוא מצב תקין לגמרי. בודקים כישלון עם `if (!f)`.",
         "שגוי. fclose לא נקרא בכלל, ו-fclose(nullptr) גם לא מוגדר להחזיר EOF; זה לא \"בסדר\"."
-      ]
+      ],
+      "followUp": {
+        "prompt": "`decltype(&fclose)` כ-deleter הופך את ה-unique_ptr לגדול יותר. כמה גדול, למה, ואיך כותבים deleter שלא עולה כלום? ומה הבעיה ב-`&fclose` מבחינת התקן?",
+        "modelAnswer": "עם function pointer כ-deleter, ה-unique_ptr מחזיק גם את ה-FILE* וגם את ה-pointer לפונקציה, 16 bytes במקום 8, וכל קריאה ל-deleter היא indirect call. deleter בלי state, כמו `struct FileCloser { void operator()(FILE* f) const noexcept { std::fclose(f); } };`, הוא טיפוס ריק, ו-unique_ptr מממש אותו עם EBO או no_unique_address, כך שהגודל נשאר 8 והקריאה ישירה ויכולה לעבור inlining. ב-C++20 אפשר גם `decltype([](FILE* f){ std::fclose(f); })`. בנוסף, לקחת כתובת של פונקציה מהספרייה הסטנדרטית (כמו fclose) לא מובטח לעבוד לפי התקן: היא יכולה להיות מאקרו, overloaded, או מוגדרת אחרת, ולכן C++20 מסמן את רוב הפונקציות האלה כ-non-addressable. functor או lambda פותרים גם את זה.",
+        "rubric": [
+          "function pointer deleter מכפיל ל-16 bytes ויוצר indirect call",
+          "functor ריק או lambda: 8 bytes וקריאה ישירה",
+          "לקחת כתובת של פונקציה סטנדרטית לא מובטח"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q26",
@@ -754,7 +854,16 @@
         "שגוי. פרמטר by value מקבל rvalue דרך ה-move constructor, ולכן אותו operator משמש גם כ-move assignment.",
         "נכון. ההעתקה, שעלולה לזרוק, קורית בבניית other לפני שינוי *this, ו-swap הוא noexcept: strong guarantee. המחיר הוא הקצאה חדשה בכל השמה, גם כשה-buffer הקיים מספיק.",
         "שגוי. ב-self-assignment, other הוא עותק נפרד של *this, ולכן ה-swap בטוח ואין double free. זו דווקא אחת היתרונות של copy-and-swap."
-      ]
+      ],
+      "followUp": {
+        "prompt": "std::vector לא משתמש ב-copy-and-swap ב-operator=. מה הוא עושה במקום, איזו guarantee הוא נותן, ולמה זו בחירה סבירה?",
+        "modelAnswer": "vector::operator=(const vector&) בודק את ה-capacity: אם היא מספיקה, הוא מבצע copy assignment לאיברים הקיימים ומעתיק או הורס את השאר, בלי הקצאה. אם לא, הוא מקצה buffer חדש, מעתיק אליו, ורק אז משחרר את הישן. זה נותן basic guarantee בלבד: אם העתקת איבר זורקת באמצע ההעתקה לתוך ה-buffer הקיים, חלק מהאיברים כבר השתנו. הבחירה סבירה כי ההשמה היא פעולה נפוצה, ושימוש חוזר ב-capacity חוסך הקצאה (malloc ו-free) בכל השמה, למשל כשמעתיקים frame בגודל קבוע בלולאה. מי שצריך strong יכול לבנות אותו מבחוץ: `vector tmp(other); v.swap(tmp);`. העיקרון: הספרייה לא משלמת על strong כשהוא יקר, ונותנת לקורא לבחור.",
+        "rubric": [
+          "שימוש חוזר ב-capacity קיים בלי הקצאה",
+          "basic guarantee בלבד",
+          "strong אפשרי מבחוץ עם עותק ו-swap"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q28",
@@ -775,7 +884,16 @@
         "נכון. סדר נעילה הפוך בין threads הוא deadlock קלאסי. `std::scoped_lock lk(a.m, b.m);` נועל את שניהם באלגוריתם של std::lock שמונע deadlock, ומשחרר ב-destructor.",
         "שגוי. אין כאן data race: כל גישה מוגנת ב-mutex. ו-unique_lock לא משנה את סדר הנעילה ולא פותר deadlock.",
         "שגוי. recursive_mutex מאפשר לאותו thread לנעול את אותו mutex פעמיים; הוא לא עוזר כששני threads שונים נועלים בסדר הפוך."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלטת לנעול לפי סדר גלובלי לפי כתובת במקום scoped_lock. מה המקרה הבעייתי שחייבים לטפל בו, ואיזה כלי היית מריץ כדי לוודא שאין סדר נעילה הפוך בשום מקום במערכת?",
+        "modelAnswer": "המקרה הבעייתי: transfer(x, x), כלומר a ו-b הם אותו חשבון. נעילה של אותו std::mutex פעמיים מאותו thread היא UB (בפועל deadlock עם עצמו). צריך לבדוק `if (&a == &b)` ולטפל בנפרד. scoped_lock עם אותו mutex פעמיים גם הוא UB, כך שהבדיקה נדרשת בכל מקרה. השוואת כתובות של mutexes לא קשורים עם < היא unspecified, ולכן משתמשים ב-std::less<> שנותן סדר מלא. כלים: ThreadSanitizer מזהה lock-order inversion (מדווח potential deadlock) גם כשה-deadlock לא קרה בפועל בריצה, כי הוא בונה גרף של סדרי נעילה. Helgrind של Valgrind עושה דבר דומה. ב-Clang אפשר להצהיר על סדר עם ACQUIRED_BEFORE ו-ACQUIRED_AFTER ב-thread safety analysis.",
+        "rubric": [
+          "a == b: נעילה כפולה של אותו mutex היא UB, צריך בדיקה",
+          "std::less להשוואת כתובות",
+          "TSan מזהה lock-order inversion גם בלי deadlock בפועל"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q29",
@@ -798,7 +916,16 @@
         "שגוי. ה-function-try-block תופס גם exceptions מה-member initializer list, ולכן W מודפס לפני main.",
         "שגוי. ה-rethrow האוטומטי נתפס ב-catch (int) של main, ולכן אין terminate.",
         "נכון. ה-handler תופס את ה-exception של m ומדפיס W. אובייקט שלא נבנה לא יכול \"להתאושש\", ולכן ה-exception נזרק מחדש אוטומטית ([except.handle]) ו-main מדפיס main."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם function-try-block לא יכול לבלוע את ה-exception, איך מממשים class שבונה member שעלול להיכשל, ובמקרה כזה רוצה fallback (למשל להשתמש במכשיר ברירת מחדל) במקום להיכשל כולו?",
+        "modelAnswer": "מזיזים את הבנייה שעלולה להיכשל לתוך פונקציה עזר שמטפלת בכשל ומחזירה ערך תקין, ומשתמשים בה ב-member initializer: `dev_(open_or_default(path))`, כש-open_or_default עוטפת את ניסיון הפתיחה ב-try/catch ומחזירה מכשיר ברירת מחדל בכשל. כך ה-member תמיד נבנה בהצלחה, ואין צורך ב-function-try-block. חלופה: להחזיק את ה-member כ-`std::optional<Device>` או unique_ptr, לבנות אותו בגוף ה-constructor בתוך try, ולבחור fallback ב-catch; המחיר הוא שה-invariant של המחלקה עכשיו כולל מצב אפשרי ריק, או שצריך לוודא שהוא תמיד מאוכלס. אפשרות שלישית: factory function סטטית שמנסה כמה אפשרויות ומחזירה את האובייקט המוכן, ואז ה-constructor מקבל משאב מוכן.",
+        "rubric": [
+          "פונקציית עזר ב-member initializer שתופסת ומחזירה fallback",
+          "optional/unique_ptr שנבנה בגוף עם try",
+          "factory שמנסה כמה אפשרויות ומעביר משאב מוכן"
+        ]
+      }
     },
     {
       "id": "cpp.raii.q30",
@@ -814,7 +941,17 @@
         "מנסח את העיקרון: קודם עבודה שזורקת, אחר כך commit ב-noexcept"
       ],
       "explanation": "שאלה קלאסית של exception safety ברמת סניור: לא מספיק לדעת את ההגדרות, צריך לבנות את הסדר הנכון של פעולות ולדעת מה כל פתרון עולה.",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "נניח שה-Item גדול ו-add נקרא מיליון פעמים בשנייה. איזה מהפתרונות שלך לא מכניס עלות בנתיב שבו אין exception, ואיך היית מוודא שהוא באמת נותן strong guarantee?",
+        "modelAnswer": "הפתרון בלי עלות בנתיב התקין: לבצע קודם את הפעולה שעלולה לזרוק והפיכה זולה, ואז את השנייה. למשל: `items_.push_back(std::move(item));` (strong אם ה-move של Item noexcept), ואז `try { pos_.emplace(key, items_.size()-1); } catch (...) { items_.pop_back(); throw; }`. pop_back הוא noexcept, ולכן ה-rollback לא יכול להיכשל. בנתיב התקין אין העתקה ואין הקצאה נוספת, ובלוק try לא מוסיף הוראות (zero-cost exceptions). חלופה זולה עוד יותר: `pos_.reserve` ו-`items_.reserve` מראש מצמצמים את הנקודות שזורקות. אימות: בדיקות עם allocator או Item שזורקים בנקודה ה-N (fault injection), ובדיקה אחרי כל זריקה שגדלי שני המבנים זהים והמיפוי עקבי. גם emplace עם מפתח קיים צריך טיפול, כי הוא לא זורק אלא נכשל בשקט.",
+        "rubric": [
+          "push_back ואז insert עם rollback של pop_back שהוא noexcept",
+          "אין עלות בנתיב התקין (zero-cost try)",
+          "fault injection בבדיקות ובדיקת עקביות",
+          "טיפול במפתח קיים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -837,7 +974,16 @@
       ],
       "problem": "Microsoft onsite: implement cp, then robust C++ (RAII for descriptors)",
       "id": "cpp.raii.q31",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "עטפת את ה-fd ב-UniqueFd. מה קורה אם close() מחזיר EINTR או EIO, האם צריך לנסות שוב, ואיך זה משפיע על התכנון של ה-destructor מול מתודת close מפורשת?",
+        "modelAnswer": "ב-Linux, close() תמיד משחרר את ה-fd, גם כשהוא מחזיר EINTR, ולכן אסור לנסות שוב: ניסיון חוזר עלול לסגור fd שכבר הוקצה ל-thread אחר בינתיים. (ב-POSIX זה לא מוגדר אחיד, וב-HP-UX ההתנהגות הייתה שונה, אבל בלינוקס זה כך.) EIO מ-close אומר שכתיבה קודמת נכשלה, כלומר הנתונים אולי לא נכתבו, וזה מידע חשוב לכלי cp. לכן ה-destructor סוגר ובולע את השגיאה (log), ואילו בנתיב ההצלחה של cp קוראים במפורש ל-`fsync()` ואז ל-`close()` של DEST ובודקים את התוצאות, ורק אז עושים rename. אם close מפורש נכשל, מוחקים את הקובץ הזמני ומדווחים. ה-UniqueFd מסמן fd_ = -1 אחרי close מפורש כדי שה-destructor לא יסגור שוב.",
+        "rubric": [
+          "ב-Linux close משחרר את ה-fd גם עם EINTR, ואין לנסות שוב",
+          "EIO אומר שהכתיבה נכשלה ולכן חשוב לבדוק",
+          "fsync ו-close מפורשים בנתיב ההצלחה, destructor רק רשת ביטחון"
+        ]
+      }
     },
     {
       "level": 3,
@@ -861,7 +1007,17 @@
         "שגוי: explicit חל רק על ה-constructor מ-int. ה-move constructor פועל כרגיל."
       ],
       "id": "cpp.raii.q32",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "גם move assignment של UniqueFd צריך לעבוד נכון. מה הוא חייב לעשות שה-move constructor לא, ואיזה מקרה קצה צריך לבדוק? ולמה הבאג המקורי מסוכן במיוחד בשרת עם הרבה threads?",
+        "modelAnswer": "move assignment חייב קודם לסגור את ה-fd שהאובייקט היעד כבר מחזיק (אם הוא >= 0), אחרת הוא דולף, ואז לקחת את ה-fd מהמקור ולהציב -1 במקור. מקרה קצה: self-move (`a = std::move(a)`), שבו סגירה ואז לקיחה הייתה מחזירה fd סגור; פותרים עם בדיקת this != &other, או עם `UniqueFd tmp(std::move(other)); swap(tmp);`. הבאג המקורי מסוכן בשרת כי מספרי fd ממוחזרים מיד: הקרנל נותן את המספר הפנוי הנמוך ביותר. thread אחר פותח socket או קובץ בין שתי הסגירות ומקבל את אותו מספר, ואז ה-close הכפול סוגר לו את ה-socket. התסמין הוא קובץ או חיבור שנסגר מעצמו במקום אקראי, קשה מאוד לשחזור. strace -f עם close מראה close כפול על אותו מספר.",
+        "rubric": [
+          "move assignment סוגר קודם את ה-fd הקיים של היעד",
+          "self-move: בדיקה או swap",
+          "מספרי fd ממוחזרים מיד, ולכן close כפול סוגר משאב של thread אחר",
+          "strace לאבחון"
+        ]
+      }
     },
     {
       "level": 4,
@@ -882,7 +1038,16 @@
         "שגוי: בין מערכות קבצים rename נכשל עם EXDEV. mv עושה במקרה כזה copy ו-unlink, וזה לא אטומי."
       ],
       "id": "cpp.raii.q33",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "איך מבצעים fsync לתיקייה ב-POSIX, ולמה הוא נדרש אחרי rename? ומה עוד יכול להשתבש אם cfg.tmp נמצא במערכת קבצים אחרת (למשל /tmp ב-tmpfs)?",
+        "modelAnswer": "פותחים את התיקייה עם `open(dir, O_RDONLY | O_DIRECTORY)` וקוראים ל-`fsync(dirfd)`. rename משנה את ה-directory entry, שהוא חלק מהנתונים של התיקייה; בלי fsync לתיקייה, אחרי נפילת חשמל ה-rename עצמו עלול לא להיות על הדיסק, ונראה את הקובץ הישן (או במקרים מסוימים אף אחד מהם). הסדר המלא: write ל-cfg.tmp, fsync(tmpfd), close, rename, fsync(dirfd). אם cfg.tmp במערכת קבצים אחרת, rename נכשל עם EXDEV, כי rename לא יכול להזיז בין filesystems. כלים שמשתמשים ב-std::filesystem::rename או ב-mv יכולים לנפול להעתקה ומחיקה, שאינה אטומית. לכן הקובץ הזמני נוצר תמיד באותה תיקייה של היעד (למשל cfg.tmp.XXXXXX עם mkstemp).",
+        "rubric": [
+          "open של התיקייה עם O_DIRECTORY ו-fsync",
+          "ה-rename הוא שינוי בתיקייה ולכן דורש fsync שלה",
+          "בין filesystems rename נכשל עם EXDEV; קובץ זמני באותה תיקייה"
+        ]
+      }
     },
     {
       "level": 2,
@@ -942,7 +1107,17 @@
         "שגוי: בדיקת null רצויה, אבל גם כש-malloc מצליח הקוד שבור, כי אין אובייקט."
       ],
       "id": "cpp.raii.q35",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "אם אתה חייב להשתמש בזיכרון מ-malloc (למשל buffer שהגיע מ-C API או מ-shared memory), איך יוצרים שם אובייקט C++ בצורה נכונה ואיך משמידים אותו? ומה צריך לבדוק לגבי alignment?",
+        "modelAnswer": "יוצרים את האובייקט עם placement new: `Device* p = new (mem) Device(...);`, שמריץ את ה-constructor (כולל של std::string) על הזיכרון הקיים. משמידים בשני שלבים: `p->~Device();` (או std::destroy_at(p)) מריץ את ה-destructor, ורק אז free(mem). אם שוכחים את ה-destructor, ה-string דולף; אם קוראים ל-delete על זיכרון של malloc, זה UB. alignment: malloc מבטיח alignof(max_align_t), בדרך כלל 16, ולכן מתאים ל-Device רגיל; לטיפוס עם alignas(64) צריך aligned_alloc. ב-shared memory בין תהליכים יש בעיה נוספת: std::string מכיל pointers ל-heap של התהליך, שלא תקפים בתהליך אחר, ולכן שם משתמשים רק בטיפוסים בלי pointers או ב-offset pointers (כמו Boost.Interprocess). ב-C++20 std::construct_at הוא חלופה ל-placement new.",
+        "rubric": [
+          "placement new על הזיכרון",
+          "השמדה: קריאה מפורשת ל-destructor ואז free",
+          "alignment: malloc נותן 16, אחרת aligned_alloc",
+          "shared memory: pointers פנימיים לא תקפים בתהליך אחר"
+        ]
+      }
     },
     {
       "level": 2,
@@ -987,7 +1162,16 @@
       ],
       "problem": "NVIDIA interview: output question on constructor and destructor order",
       "id": "cpp.raii.q37",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "שנה את take כך שיקבל `const T&`, ובנוסף ל-T יש move constructor שמדפיס +v. מה ישתנה בפלט, ומה היה קורה אם make הייתה מחזירה משתנה מקומי עם שם (`T t('m'); return t;`)?",
+        "modelAnswer": "עם `const T&`, הקריאה take(a) לא יוצרת עותק: אין +c ואין -a באמצע, והפלט מצטמצם ל-+a+m ואחר כך -m-a בסוף main. אם make מחזירה משתנה מקומי עם שם, זה NRVO, שמותר אבל לא מובטח. ב-GCC ו-Clang עם אופטימיזציה (וגם ב-O0 בדרך כלל) הוא מתבצע, ולכן הפלט לא משתנה: +m אחד. אם NRVO לא מתבצע (למשל עם -fno-elide-constructors ב-C++14, או כשיש כמה return עם משתנים שונים), implicit move בוחר את ה-move constructor, ונראה +m+v-m: בנייה של t, move לתוך b, והריסה של t. ה-copy constructor לא נבחר כל עוד יש move constructor נגיש.",
+        "rubric": [
+          "const T& מבטל את +c ו-(-a) של העותק",
+          "משתנה עם שם: NRVO לא מובטח אבל בדרך כלל מתבצע",
+          "בלי NRVO: implicit move (+v) והריסת המקומי"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1010,7 +1194,16 @@
         "שגוי: ה-temporary המוארך נבנה אחרי a, ולכן נהרס לפניו."
       ],
       "id": "cpp.raii.q38",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "lifetime extension עבד כאן. תן שתי דוגמאות שבהן נראה ש-const reference אמור להאריך חיים של temporary אבל הוא לא, ותסביר מה הכלל המדויק.",
+        "modelAnswer": "דוגמה ראשונה: member reference שמאותחל ב-constructor מ-temporary: `struct H { const std::string& s; H(const std::string& x) : s(x) {} }; H h(std::string(3, 'a'));`. ה-temporary נקשר לפרמטר x, וחי רק עד סוף ה-full-expression, ו-h.s dangling. דוגמה שנייה: פונקציה שמחזירה את הפרמטר שלה כ-reference: `const T& r = std::min(T(1), T(2));`, ה-reference נקשר לתוצאה של פונקציה ולא ישירות ל-temporary. הכלל: lifetime extension חל רק כש-reference נקשר ישירות ל-temporary (prvalue או subobject שלו דרך member access, cast לא מוכלל או ?:), ורק ל-reference הראשון בשרשרת; כל מעבר דרך פרמטר של פונקציה או return של reference שובר את ההארכה.",
+        "rubric": [
+          "member reference שמאותחל מפרמטר שקושר temporary",
+          "פונקציה שמחזירה reference לפרמטר (std::min)",
+          "הכלל: רק קשירה ישירה ל-prvalue/subobject שלו"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1033,7 +1226,16 @@
         "שגוי: static local לא נהרס בסוף הקריאה. הוא חי עד סוף התוכנית."
       ],
       "id": "cpp.raii.q39",
-      "lesson": "cpp.raii"
+      "lesson": "cpp.raii",
+      "followUp": {
+        "prompt": "התוכנית מסתיימת עם std::exit(0) מתוך f, או עם std::quick_exit, או עם std::abort. אילו destructors ירוצו בכל מקרה, ומה ההשלכה ל-RAII שכותב לקובץ?",
+        "modelAnswer": "std::exit מריץ destructors של אובייקטים סטטיים (s ו-g) ופונקציות atexit, ומבצע flush ל-streams של C, אבל לא מבצע stack unwinding, ולכן destructors של משתנים מקומיים בכל ה-frames הפעילים (כולל main) לא רצים. std::quick_exit לא מריץ destructors של סטטיים בכלל, רק פונקציות at_quick_exit. std::abort לא מריץ כלום: אין destructors, אין atexit, ואין flush, והתוצאה היא SIGABRT. ההשלכה: RAII object מקומי שאמור לבצע flush או commit לקובץ ב-destructor לא יעשה זאת אם קוראים ל-exit מתוך פונקציה עמוקה, וה-buffer שלו הולך לאיבוד. לכן ב-C++ יוצאים מהתוכנית ב-return מ-main או בזריקת exception שנתפס ב-main, ולא ב-exit מהאמצע.",
+        "rubric": [
+          "exit: סטטיים ו-atexit רצים, מקומיים לא",
+          "quick_exit: רק at_quick_exit; abort: כלום",
+          "RAII מקומי לא יבצע flush; לצאת ב-return מ-main"
+        ]
+      }
     }
   ]
 }

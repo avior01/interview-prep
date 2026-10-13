@@ -388,7 +388,17 @@
         "נכון. notify לא דורש את ה-mutex. מה שחייב להיות תחת ה-mutex הוא שינוי ה-predicate, ו-notify אחרי unlock אפילו חוסך למתעורר להיחסם מיד.",
         "התקן לא מגדיר סדר FIFO: notify_one מעיר מחכה כלשהו. מי שמניח הוגנות מבלבל עם תור המתנה הוגן או עם מימוש מסוים.",
         "זו התנהגות של semaphore, לא של cv. ל-cv אין זיכרון: notify בלי מחכים נעלם, ולכן את המצב שומרים ב-predicate."
-      ]
+      ],
+      "followUp": {
+        "prompt": "צריך אירוע חד-פעמי 'האתחול הסתיים', שעשוי להיות מסומן לפני שמישהו בכלל התחיל לחכות, וייתכנו כמה ממתינים. למה cv לבד לא מספיק, ואילו שלוש דרכים נכונות יש לממש את זה?",
+        "modelAnswer": "ל-cv אין זיכרון, ולכן notify שקרה לפני ה-wait פשוט נעלם, והממתין ישן לנצח. דרך ראשונה: דגל bool מוגן ב-mutex, שהממתין בודק לפני שהוא נרדם (cv.wait(lk, [&]{ return ready; })), והמודיע מסמן אותו תחת ה-lock וקורא notify_all. דרך שנייה: std::latch done(1) או std::shared_future שכל הממתינים מחכים לו, כי המצב נשמר באובייקט עצמו. semaphore פחות מתאים כאן: כל release מעביר בדיוק acquire אחד, כך שעם N ממתינים צריך לשחרר N פעמים ולדעת את N מראש. דרך שלישית ב-C++20: std::atomic<bool> עם wait(false) ו-notify_all, כי wait משווה לערך הנוכחי ולא נרדם אם הוא כבר השתנה.",
+        "rubric": [
+          "המצב נשמר במשתנה (predicate) שנבדק לפני ההירדמות, לא ב-cv",
+          "latch או shared_future מתאימים לכמה ממתינים, semaphore משחרר רק ממתין אחד לכל release",
+          "atomic::wait משווה לערך הישן ולכן לא מפספס שינוי שכבר קרה",
+          "notify_all ולא notify_one כי השינוי רלוונטי לכל הממתינים"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q08",
@@ -409,7 +419,17 @@
         "אין קשר בין notify_one ל-notify_all לשאלה הזו. שתיהן חוקיות גם אחרי שחרור ה-lock.",
         "ה-predicate לא צריך להיות atomic כשהוא משתנה תחת ה-mutex; ה-mutex כבר מספק את הסנכרון. atomic לבד, בלי mutex, דווקא מאפשר lost wakeup.",
         "נכון. השינוי נעשה תחת ה-lock ולכן אין lost wakeup, ו-notify אחרי unlock חוסך את מצב ה-hurry up and wait שבו המתעורר נחסם מיד על mutex שעדיין מוחזק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "חוץ ממקרה הריסת האובייקט, יש סיבה נוספת לקרוא ל-notify דווקא כשה-mutex מוחזק? ואיך היית מכריע בין שתי הגרסאות במערכת אמיתית?",
+        "modelAnswer": "POSIX מציין שאם נדרשת התנהגות תזמון צפויה, המודיע צריך להחזיק את ה-mutex בזמן ה-signal. כשה-notify קורה אחרי ה-unlock, thread שלישי שלא ישן בכלל יכול לתפוס את ה-mutex בין ה-unlock ל-notify ולצרוך את המצב (stolen wakeup), כך שהממתין מתעורר לחינם. זה עדיין נכון מבחינה לוגית בזכות הלולאה, אבל פוגע בהוגנות ובצפיות. מנגד, notify תחת lock עלול לגרום ל-hurry up and wait, אלא אם המימוש עושה wait morphing (מעביר את הממתין ישירות לתור ה-mutex), וזה תלוי מימוש. ההכרעה במדידה: מספר ה-context switches (perf stat -e context-switches או voluntary_ctxt_switches ב-/proc), throughput והיסטוגרמת latency של ההעברה, בשתי הגרסאות תחת עומס אמיתי.",
+        "rubric": [
+          "notify אחרי unlock מאפשר ל-thread שלישי לגנוב את המצב לפני שהממתין מתעורר",
+          "POSIX: תזמון צפוי מחייב להחזיק את ה-mutex בזמן ה-signal",
+          "wait morphing מבטל את מחיר ה-notify תחת lock, ותלוי מימוש",
+          "מכריעים במדידת context switches ו-latency, לא באינטואיציה"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q09",
@@ -433,7 +453,17 @@
         "volatile לא נותן סנכרון בין threads ב-C++. stop כבר נכתב תחת ה-mutex ונקרא תחתיו, ולכן הנראות תקינה; הבעיה היא שאף אחד לא קורא אותו.",
         "notify מחוץ ל-lock תקין כאן, כי stop שונה תחת ה-mutex לפני כן. גם notify בתוך ה-lock לא היה עוזר, כי ה-predicate עדיין מתעלם מ-stop.",
         "הרצת job בלי lock היא דווקא הפרקטיקה הנכונה: לא מחזיקים mutex בזמן עבודה ארוכה, אחרת כל ה-pool מתבצע בטור."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אחרי שהוספת את stop ל-predicate: shutdown צריך לבחור בין drain (לסיים את כל המשימות שבתור) לבין abort (לצאת מיד). מה ההבדל בתנאי היציאה, מה קורה ל-futures של משימות שלא רצו, ומה עם submit שמגיע אחרי stop?",
+        "modelAnswer": "ב-drain ה-worker יוצא רק כש-stop && q.empty(), כלומר ממשיך לשלוף משימות גם אחרי הבקשה. ב-abort הוא יוצא ברגע ש-stop אמת, והמשימות שנשארו בתור נהרסות. אם המשימות הן std::packaged_task, ההרס שלהן מציב ב-future חריגה broken_promise, כך שמי שמחכה ל-get מקבל exception ולא נתקע. submit חייב לבדוק את stop תחת אותו mutex ולסרב (לזרוק או להחזיר שגיאה), אחרת משימה נכנסת לתור אחרי שה-workers כבר יצאו, וה-future שלה לא יתמלא לעולם. עוד מקרה קצה: shutdown שנקרא מתוך job רץ ינסה join על ה-thread הנוכחי, ו-std::thread::join זורק resource_deadlock_would_occur.",
+        "rubric": [
+          "drain: יציאה רק כש-stop וגם התור ריק. abort: יציאה מיד",
+          "packaged_task שנהרס בלי לרוץ נותן broken_promise ב-future",
+          "submit בודק stop תחת ה-mutex ומסרב אחרי עצירה",
+          "join על עצמך מ-job זורק resource_deadlock_would_occur"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q10",
@@ -475,7 +505,16 @@
         "זה שיפור ביצועים לגיטימי, אבל לא קשור לתקיעה. הצרכן בכלל לא מגיע ל-process() כשהוא נתקע.",
         "נכון. ה-mutex מבטיח שבין בדיקת ה-predicate להירדמות אף אחד לא משנה אותו. בלי נעילה ביצרן, store ו-notify יכולים ליפול בחלון הזה והצרכן ישן על תנאי שכבר true. atomic פותר רק את ה-data race.",
         "ברירת המחדל היא כבר seq_cst, שחזקה מ-release. הבעיה אינה סדר זיכרון אלא האטומיות של בדיקה ושינה מול השינוי, שרק ה-mutex נותן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מפתח אחר מציע תיקון מינימלי: להשאיר את ready.store(true) בלי lock, ולהוסיף בלוק ריק `{ std::lock_guard g(m); }` בין ה-store ל-notify. האם זה נכון? הוכח, ותגיד מה זה עולה.",
+        "modelAnswer": "כן, זה נכון. הצרכן מחזיק את m ברציפות מהבדיקה של ready ועד שה-wait משחרר אותו ונרדם אטומית. היצרן, כדי לעבור את הבלוק הריק, חייב לנעול את m, ולכן יש שלוש אפשרויות: הצרכן עוד לא נעל, ואז הוא יראה ready = true כי ה-store קרה לפני ה-unlock של היצרן והנעילה שלו מסונכרנת איתו; הצרכן כבר ישן, וה-notify מעיר אותו; או שהצרכן באמצע החלון, ואז היצרן נחסם עד שהצרכן נרדם, וה-notify מגיע אחרי שהוא רשום. החלון שבו ה-notify הולך לאיבוד נסגר. המחיר הוא lock ו-unlock בלי תחרות, בסדר גודל של עשרות ננו-שניות ובלי syscall, ובמקרה של תחרות היצרן מחכה לכל היותר עד שהצרכן נרדם.",
+        "rubric": [
+          "הבלוק הריק לא יכול לרוץ בזמן שהצרכן בין הבדיקה להירדמות",
+          "ה-store קורה לפני נעילת m, ולכן צרכן שנועל אחרי זה רואה true",
+          "עלות: lock/unlock לא מתחרה, עשרות ns, בלי syscall"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q12",
@@ -496,7 +535,17 @@
         "נכון. רק איטרציות שהסתיימו ב-timeout נספרות; התעוררות מ-notify או spurious פותחת חלון חדש של 100ms בלי לספור, ולכן אין חסם על הזמן הכולל. deadline יחיד עם wait_until פותר את זה.",
         "wait_for בלי predicate דווקא מחזיר std::cv_status (no_timeout או timeout). הגרסה עם predicate היא שמחזירה bool.",
         "החשבון נכון רק אם כל איטרציה מסתיימת ב-timeout. התעוררויות שאינן timeout לא נספרות, ולכן הזמן הכולל יכול להיות ארוך בהרבה משנייה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עברת ל-wait_until עם predicate. מה קורה במקרה הגבול שבו ready נהיה true בדיוק ברגע שפג ה-timeout, ואיך תבדוק את הפונקציה ב-unit test בלי לחכות שנייה אמיתית בכל ריצה?",
+        "modelAnswer": "הגרסה עם predicate מחזירה בסוף את pred() כשהוא מוערך תחת ה-lock, גם כשה-wait הסתיים ב-timeout. לכן אם ready נהיה true לפני שהממתין נעל מחדש, הוא מחזיר true ואין race. בגרסה שמחזירה cv_status, הערך timeout לא אומר שהתנאי שקר, וצריך לבדוק את ה-predicate שוב לפני שמחליטים. לבדיקה: מזריקים את ה-timeout כפרמטר (למשל 20ms בטסטים), ובודקים שני מסלולים: thread שמסמן ready לפני ה-deadline גורם להחזרת true, ובלי סימון מקבלים false, והזמן שעבר לפחות ה-timeout ולא הרבה מעליו. שעון מזויף לא עובד טוב עם cv, כי ההמתנה עצמה מתבצעת מול שעון אמיתי.",
+        "rubric": [
+          "wait_until עם predicate מחזיר את pred() שנבדק תחת ה-lock בסוף",
+          "cv_status::timeout לא מוכיח שהתנאי שקר",
+          "טסט עם timeout מוזרק קצר, ובדיקה של שני המסלולים",
+          "בדיקה שהזמן שעבר הוא לפחות ה-timeout"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q13",
@@ -517,7 +566,17 @@
         "כל הגישה לתור נעשית תחת ה-mutex, ולכן אין data race. הבעיה היא לוגית: איזה thread מתעורר.",
         "זה היה נכון עם notify_all: היו התעוררויות מיותרות אבל מישהו מהסוג הנכון היה מתעורר. עם notify_one ה-notify עלול להיבלע לגמרי.",
         "נכון. notify_one מעיר מחכה שרירותי; אם זה יצרן נוסף, הוא רואה שהתור מלא וחוזר לישון בלי להעביר את ה-notify הלאה, והצרכן שהיה צריך להתעורר ממשיך לישון. מכאן התקיעה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "פיצלת לשני cvs. עכשיו התור מעביר מיליוני פריטים בשנייה, ו-profiler מראה שהרבה זמן הולך ל-notify. איך מצמצמים notifications בלי ליצור lost wakeup?",
+        "modelAnswer": "דרך נכונה: מונה ממתינים לכל cv, שעולה לפני ה-wait ויורד אחריו, תחת אותו mutex. המודיע קורא notify רק אם המונה גדול מאפס, וזה בטוח כי הבדיקה והשינוי באותו mutex. ב-glibc notify בלי ממתינים כבר זול (בדיקה ב-userspace בלי syscall), כך שהמחיר האמיתי הוא futex_wake והתעוררות כשיש ממתינים. לכן החיסכון הגדול הוא batching: הצרכן מרוקן את כל התור בהתעוררות אחת (למשל swap של ה-deque תחת ה-lock), והיצרן דוחף אצווה וקורא notify פעם אחת. מה שאסור: notify רק במעבר מצב (ריק ללא-ריק) כשיש כמה ממתינים, כי אז ממתין שני נשאר ישן למרות שיש לו עבודה.",
+        "rubric": [
+          "מונה ממתינים תחת ה-mutex, notify רק כשהוא חיובי",
+          "notify בלי ממתינים זול ב-glibc, המחיר הוא ההתעוררות עצמה",
+          "batching: צרכן מרוקן את כל התור בהתעוררות אחת",
+          "notify רק במעבר מצב שובר את הנכונות כשיש כמה ממתינים"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q14",
@@ -532,7 +591,17 @@
         "מדידה: היסטוגרמה, tail latency, ftrace או perf sched"
       ],
       "explanation": "מראיין רוצה לשמוע שההבנה עוברת מ-API לרמת ה-scheduler והחומרה, ושיש trade-off ברור בין CPU שנשרף ב-polling לבין latency דטרמיניסטי.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "החלטת לעבור ל-busy-poll של ה-DSP thread על core מבודד. איך תוכיח במדידה שה-tail באמת ירד, ואיזה מחיר וסיכונים יש לפתרון?",
+        "modelAnswer": "מוסיפים לכל בלוק timestamp ב-RX (steady_clock או TSC) ומודדים בצד ה-DSP את ההפרש, לתוך היסטוגרמה (למשל HdrHistogram) עם p50, p99.9 ו-max, בריצה של שעות ותחת עומס אמיתי, לפני ואחרי. כדי שה-core יהיה באמת שקט צריך isolcpus או nohz_full, להעביר ממנו IRQs (irq affinity), ולוודא ש-RCU ו-kthreads לא רצים עליו. המחיר: core שלם ב-100%, חשמל וחום. סיכון: thread בעדיפות SCHED_FIFO שמסתובב בלי לישון יכול להרעיב kthreads על אותו core, ו-RT throttling של Linux (ברירת מחדל 950ms מתוך כל 1000ms) יעצור אותו לתקופה ויוצר בדיוק spike שרצינו להעלים. פשרה נפוצה: spin לזמן קצוב של כמה עשרות מיקרו-שניות ואז מעבר להמתנה חוסמת.",
+        "rubric": [
+          "timestamp לכל בלוק והיסטוגרמה עם p99.9 ו-max בריצה ארוכה",
+          "isolcpus או nohz_full יחד עם הזזת IRQs מה-core",
+          "RT throttling ברירת מחדל 950ms מתוך 1000ms יכול ליצור spike",
+          "פשרה: spin מוגבל בזמן ואז המתנה חוסמת"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q15",
@@ -553,7 +622,17 @@
         "שחרור ה-mutex לפני notify הוא תבנית חוקית ואינו יוצר deadlock. הבעיה כאן היא אורך החיים של האובייקט.",
         "נכון. מהרגע ש-A שחרר את ה-mutex, B יכול לראות done == true בלי notify ולמחוק את req, ואז A קורא ל-notify_one על אובייקט הרוס: use-after-free. notify תחת ה-lock או shared_ptr פותרים.",
         "הגרסה עם predicate לא מפספסת: done שונה תחת ה-mutex, ולכן B או רואה אותו לפני שהוא נרדם או מקבל את ה-notify. הסכנה היא ההפך, ש-B מתקדם מהר מדי."
-      ]
+      ],
+      "followUp": {
+        "prompt": "התיקון: A קורא ל-notify_one כשה-mutex עוד מוחזק. האם עכשיו בטוח לגמרי ש-B מוחק את req מיד אחרי שהוא חוזר מ-wait? הרי A עדיין נמצא בתוך unlock של אותו mutex. מה התקן מבטיח כאן, ומה מחיר החלופה עם shared_ptr?",
+        "modelAnswer": "B לא יכול לחזור מ-wait לפני שהוא נועל מחדש את ה-mutex, ו-A משחרר אותו רק אחרי שה-notify הסתיים, לכן ה-notify כבר לא נוגע באובייקט. נשאר ה-unlock של A: התקן מתיר להרוס mutex שאף thread לא מחזיק, ולכן מימוש חייב להבטיח ש-unlock לא ניגש לזיכרון של ה-mutex אחרי שחרורו (ב-glibc היה באג כזה, 13690, שתוקן). לגבי ה-cv, התקן מתיר במפורש להרוס אותו כשאין עליו threads חסומים, גם אם הממתינים שקיבלו notify עוד לא נעלו מחדש. החלופה עם shared_ptr: A מחזיק עותק, וכל העתקה ושחרור הם פעולות atomic על ה-refcount (עשרות ns, ותחרות על cache line כשיש הרבה threads), בנוסף להקצאת control block, אבל היא עמידה גם בשינויי קוד עתידיים.",
+        "rubric": [
+          "B חוזר מ-wait רק אחרי נעילה מחדש, כלומר אחרי שה-notify של A הסתיים",
+          "התקן מתיר להרוס mutex לא מוחזק, ו-unlock לא רשאי לגעת בו אחרי השחרור",
+          "התקן מתיר להרוס cv כשאין עליו threads חסומים",
+          "shared_ptr עולה פעולות atomic על refcount והקצאת control block"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q16",
@@ -574,7 +653,17 @@
         "ה-kernel לא שומר wakes: futex_wake מעיר רק מי שכבר בתור ההמתנה, ואם אין כזה ה-wake נעלם. ההגנה היא דווקא בהשוואת הערך.",
         "ה-mutex שוחרר לפני futex_wait, כפי שמתואר בשאלה. אילו היה מוחזק בזמן השינה, אף מודיע שנועל אותו לא היה יכול להתקדם.",
         "המודיע לא חייב להחזיק את ה-mutex בזמן notify, ובכל מקרה זה לא היה סוגר את החלון כי המחכה כבר שחרר אותו לפני futex_wait. מה שסוגר את החלון הוא ההשוואה ל-seq."
-      ]
+      ],
+      "followUp": {
+        "prompt": "במימוש הזה כל notify קורא ל-futex_wake, כלומר syscall, גם כשאף אחד לא מחכה. איך מימוש אמיתי חוסך את ה-syscall הזה בלי לשבור את ההגנה מ-lost wakeup, ואיזה memory ordering זה דורש?",
+        "modelAnswer": "מחזיקים ב-userspace מונה ממתינים. הממתין מגדיל אותו לפני שהוא קורא את seq ונכנס ל-futex_wait, והמודיע עושה seq++ ואז קורא את המונה, ומבצע futex_wake רק אם הוא גדול מאפס. זה דפוס Dekker: כל צד כותב משתנה אחד וקורא את השני, ולכן צריך סדר store-load, כלומר seq_cst או fence מלא בשני הצדדים. בלי זה, על x86 ה-store יכול לשבת ב-store buffer, והממתין יראה seq ישן בזמן שהמודיע רואה מונה 0, ושניהם מפספסים. המחיר של syscall הוא מאות ננו-שניות עד מיקרו-שנייה, לעומת כמה ננו-שניות לפעולת atomic, ולכן זה חיסכון משמעותי ב-notify בלי ממתינים.",
+        "rubric": [
+          "מונה ממתינים ב-userspace, futex_wake רק כשהוא חיובי",
+          "דפוס Dekker: כתיבה ואז קריאה של המשתנה השני בכל צד",
+          "נדרש seq_cst או fence מלא, store-load reordering שובר",
+          "syscall מאות ns עד µs לעומת ns בודדים ל-atomic"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q17",
@@ -601,7 +690,17 @@
         "נכון. ה-predicate מוערך כשה-lock מוחזק, גם בבדיקה הראשונה וגם אחרי כל התעוררות, ולכן מותר לגשת בו לנתונים המוגנים ישירות.",
         "נכון. notify לא דורש את ה-mutex; מה שצריך להיות תחת ה-mutex הוא שינוי ה-predicate.",
         "זו התנהגות של semaphore. ל-cv אין זיכרון ו-notify_all בלי מחכים פשוט נעלם."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מתי היית בוחר ב-std::condition_variable_any, ומה הוא עולה לעומת std::condition_variable?",
+        "modelAnswer": "condition_variable_any עובד עם כל lock שיש לו lock ו-unlock: shared_lock על shared_mutex, lock משלך, או scoped wrapper מיוחד, ומ-C++20 הוא גם תומך ב-wait עם stop_token. std::condition_variable מוגבל ל-unique_lock<std::mutex> ולכן ממופה ישירות על pthread_cond_t בלי שכבה נוספת. במימושים נפוצים condition_variable_any מחזיק mutex פנימי (ב-libstdc++ דרך shared_ptr) ו-condition_variable רגיל, וכל wait ו-notify נועלים גם אותו, כלומר נעילה נוספת לכל פעולה ואובייקט גדול יותר. לכן ברירת המחדל היא condition_variable, ו-_any רק כשבאמת צריך lock אחר או stop_token.",
+        "rubric": [
+          "_any עובד עם כל BasicLockable, למשל shared_lock",
+          "_any תומך ב-stop_token ב-C++20",
+          "מחיר: mutex פנימי ונעילה נוספת בכל wait ו-notify",
+          "condition_variable ממופה ישירות ל-pthread_cond עם unique_lock<mutex>"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q18",
@@ -740,7 +839,17 @@
         "נכון. ה-deadline הוא נקודה על שעון הקיר; אחרי שנייה נשארו 4 שניות, והקפיצה של שעה אחורה מרחיקה את הנקודה בעוד שעה, כך שה-wait יחכה כשעה וארבע שניות.",
         "timeout קורה רק כשהשעון מגיע ל-deadline. קפיצה אחורה מרחיקה אותו; חזרה מיד הייתה רלוונטית לקפיצה קדימה מעבר ל-deadline.",
         "שינוי של system_clock הוא התנהגות מוגדרת: wait_until פשוט מחכה עד שהשעון יגיע לנקודה. זה מפתיע, אבל לא UB."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עברת ל-steady_clock ואין יותר קפיצות. אבל מה קורה ל-timeout של 5 שניות על steady_clock אם המחשב נכנס ל-suspend לשעה באמצע? ומתי system_clock הוא דווקא הבחירה הנכונה?",
+        "modelAnswer": "ב-Linux steady_clock ממומש מעל CLOCK_MONOTONIC, שלא מתקדם בזמן suspend (CLOCK_BOOTTIME כן). לכן אחרי ההתעוררות ה-wait ימשיך לחכות את מה שנשאר מ-5 השניות, ולא יחזור מיד, כי מבחינת השעון כמעט לא עבר זמן. זה בדרך כלל מה שרוצים ל-timeout של פעולה, אבל לא לטיימר של 'עבר זמן אמיתי'. system_clock נכון כשה-deadline הוא זמן קיר אמיתי: 'עד 14:00', תוקף של certificate או token. NTP בדרך כלל עושה slew (מאט או מאיץ את השעון בהדרגה) ולא step, אבל step אפשרי בהפרש גדול או בשינוי ידני.",
+        "rubric": [
+          "CLOCK_MONOTONIC לא סופר זמן suspend, CLOCK_BOOTTIME כן",
+          "אחרי resume ה-wait ממשיך לחכות את הזמן שנשאר",
+          "system_clock מתאים ל-deadline של זמן קיר, כמו שעה ביום או תוקף",
+          "NTP בדרך כלל slew, step רק בהפרש גדול או שינוי ידני"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q25",
@@ -767,7 +876,16 @@
         "נכון. promise/future מעבירים ערך אחד או exception (set_exception) פעם אחת בין threads.",
         "latch חד-פעמי ולא ניתן לאיפוס, ולכן לא מתאים לתור מתמשך. שם מתאים cv עם predicate, או semaphore שסופר פריטים יחד עם mutex על התור.",
         "ל-semaphore אין בעלים, ולכן ה-kernel לא יודע את מי להעלות בעדיפות ואין priority inheritance. ל-RT צריך mutex עם PTHREAD_PRIO_INHERIT."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה ההבדל בין std::latch ל-std::barrier, ואיך היית מממש latch בעצמך עם mutex ו-cv?",
+        "modelAnswer": "latch הוא מונה חד-פעמי: כל thread יכול לקרוא count_down, ו-wait חוזר כשהמונה הגיע לאפס, ואחרי זה הוא נשאר פתוח לתמיד. barrier מחזורי: מספר משתתפים קבוע, כל אחד קורא arrive_and_wait, וכשכולם הגיעו השלב מתחלף, אפשר להריץ completion function, והמונה מתאפס לשלב הבא. מימוש latch: int count מוגן ב-mutex. count_down מקטין תחת ה-lock, ואם הגיע לאפס קורא notify_all. wait עושה cv.wait(lk, [&]{ return count == 0; }). צריך notify_all ולא notify_one, כי כל הממתינים צריכים להשתחרר, וירידה מתחת לאפס היא הפרה של precondition.",
+        "rubric": [
+          "latch חד-פעמי, barrier מחזורי עם completion function",
+          "מונה מוגן ב-mutex ו-wait עם predicate count == 0",
+          "notify_all כשהמונה מגיע לאפס"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q26",
@@ -791,7 +909,17 @@
         "lambda שתופסת this (דרך [&]) היא predicate חוקי לגמרי. הבעיה היא מה שה-lambda קוראת, לא איך היא תופסת.",
         "pop הוא הצרכן ואין לו את מי להעיר. וחוץ מזה, הוא נתקע כבר בבדיקה הראשונה של ה-predicate, לפני כל המתנה.",
         "סוג ההחזרה size_t תקין לגמרי ואין לו קשר לתקיעה; הוא לא משנה את ההשוואה ל-0."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מפתח מציע להחליף את m ב-std::recursive_mutex כדי ש-size() יעבוד מתוך ה-predicate. למה זה לא יתקמפל עם std::condition_variable, ולמה גם עם condition_variable_any זה רעיון מסוכן?",
+        "modelAnswer": "std::condition_variable מקבל רק unique_lock<std::mutex>, ולכן unique_lock<recursive_mutex> הוא שגיאת קומפילציה. עם condition_variable_any זה יתקמפל, ובקוד הזה אפילו יעבוד, כי size() נועל ומשחרר והעומק חוזר ל-1 לפני ה-wait. אבל wait משחרר רמה אחת בלבד: אם pop תיקרא אי פעם מקוד שכבר מחזיק את m, ה-thread יירדם כשה-mutex עדיין מוחזק, היצרן לא יוכל לנעול כדי לדחוף, וזה deadlock. התיקון הנכון: פונקציה פרטית size_locked() שמניחה שה-lock מוחזק, ואפשר לאכוף את זה עם Clang Thread Safety Analysis (REQUIRES(m)).",
+        "rubric": [
+          "std::condition_variable דורש unique_lock<std::mutex>, אחרת שגיאת קומפילציה",
+          "wait משחרר רק רמה אחת של recursive_mutex",
+          "בנעילה מקוננת ה-thread ישן כשה-mutex מוחזק ונוצר deadlock",
+          "תיקון: פונקציה פרטית שמניחה שה-lock מוחזק"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q27",
@@ -812,7 +940,17 @@
         "stop_token לא קשור לסוג ה-mutex; הוא מנגנון בקשת עצירה כללי של jthread.",
         "jthread לא קשור לשאלה מי קורא ל-notify. ה-stop_callback רץ ב-thread שביקש את העצירה, והוא שצריך להעיר את ההמתנה.",
         "נכון. בקשת העצירה מגיעה מ-thread אחר שלא נועל את ה-mutex של המשתמש, ולכן כדי למנוע lost wakeup ה-cv צריך נעילה משלו. ל-condition_variable_any כבר יש mutex פנימי, ול-condition_variable אין."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית משיג את אותה התנהגות (בקשת עצירה של jthread מעירה את ההמתנה) עם std::condition_variable רגיל, ומה מלכודות יש בפתרון?",
+        "modelAnswer": "רושמים std::stop_callback על ה-stop_token שנועל את ה-mutex של המשתמש ואז קורא notify_all, ומוסיפים st.stop_requested() ל-predicate. הנעילה בתוך ה-callback סוגרת את החלון של lost wakeup, מאותה סיבה שכתיבת predicate תחת ה-mutex סוגרת אותו. מלכודת ראשונה: אם העצירה כבר התבקשה, ה-callback רץ מיד בתוך ה-constructor שלו, באותו thread. אם יוצרים אותו כשה-mutex כבר מוחזק, הוא ינסה לנעול שוב ויהיה deadlock עצמי, ולכן יוצרים אותו לפני הנעילה. מלכודת שנייה: ה-destructor של stop_callback מחכה אם ה-callback רץ כרגע ב-thread אחר, ולכן אסור להרוס אותו כשמחזיקים את ה-mutex שה-callback צריך.",
+        "rubric": [
+          "stop_callback שנועל את ה-mutex ואז notify_all",
+          "stop_requested חלק מה-predicate",
+          "callback רץ מיד ב-constructor אם כבר התבקשה עצירה: ליצור אותו מחוץ ל-lock",
+          "destructor של stop_callback מחכה ל-callback שרץ ב-thread אחר"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q28",
@@ -833,7 +971,17 @@
         "נכון. הסנכרון היחיד הוא זוג unlock/lock על m, והכתיבה ל-data קורית אחרי ה-unlock, ולכן היא לא happens-before הקריאה. כתיבה וקריאה לא מסונכרנות של int הן data race, כלומר UB.",
         "notify תחת lock לא עוזר: הכתיבה ל-data עדיין מחוץ ל-critical section שבה ready שונה, והצרכן יכול לקרוא אותה בין ה-unlock לכתיבה.",
         "notify מחוץ ל-lock חוקי ואינו גורם ל-deadlock. הבעיה כאן היא סדר הכתיבה ל-data ביחס ל-unlock."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הבאג הזה כמעט אף פעם לא מתבטא בבדיקות על x86. למה, ואיך היית מוצא אותו בכל זאת?",
+        "modelAnswer": "החלון קטן: הצרכן צריך להגיע אחרי ה-unlock של היצרן ולפני שהכתיבה ל-data בוצעה, כלומר בתוך כמה ננו-שניות, והוא צריך להיות ער (לא ישן), כי צרכן ישן מתעורר רק אחרי ה-notify, שכבר אחרי הכתיבה. בנוסף, x86 הוא TSO ולא מסדר מחדש stores, כך שהבעיה היא interleaving לוגי, לא רק סידור זיכרון, ועל ARM יש עוד דרכים להיכשל. הכלי הנכון הוא ThreadSanitizer: הוא עוקב אחרי happens-before עם vector clocks, ולכן מדווח על data race על data עם שני ה-stacks (כתיבה ביצרן, קריאה בצרכן) גם בריצה שבה התזמון הרע לא קרה בפועל. התיקון: להעביר את data = 42 לתוך הבלוק הנעול.",
+        "rubric": [
+          "החלון הוא בין ה-unlock לכתיבה, וקורה רק לצרכן שלא ישן",
+          "TSan מדווח לפי happens-before גם כשהתזמון הרע לא קרה",
+          "x86 TSO מסתיר reordering, אבל לא את ה-interleaving",
+          "תיקון: כתיבת data לפני שחרור ה-mutex"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q29",
@@ -860,7 +1008,17 @@
         "נכון. ה-kernel לא מחיל timer slack על משימות זמן-אמת (SCHED_FIFO/SCHED_RR), ולכן threads קריטיים לזמן מריצים ב-RT.",
         "steady_clock ב-Linux ממומש מעל CLOCK_MONOTONIC עם רזולוציה של ננו-שניות (hrtimers). האיחור נובע ממנגנון היקיצה, לא מהשעון.",
         "החלפת שעון לא משנה את מנגנון היקיצה ב-kernel; ה-slack חל על כל timer. בנוסף system_clock חשוף לקפיצות שעון, ולכן הוא גרוע יותר ל-timeouts."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אסור לך להעביר את ה-thread ל-SCHED_FIFO. איך תגיע לדיוק של כמה מיקרו-שניות על deadline של 100 מיקרו-שניות, ומה המחיר של כל צעד?",
+        "modelAnswer": "קודם prctl(PR_SET_TIMERSLACK, 1) מקטין את ה-slack לננו-שנייה, וזה מוריד את האיחור הקבוע של 50 מיקרו-שניות במחיר של פחות איחוד timers ויותר יקיצות. עדיין נשארים מקורות אחרים: יציאה מ-C-state עמוק יכולה לקחת עשרות עד מאות מיקרו-שניות, ומגבילים אותה דרך /dev/cpu_dma_latency (PM QoS) במחיר צריכת חשמל; ותחת CFS ה-thread שהתעורר לא בהכרח דוחק מיד את מי שרץ על ה-core. הפתרון הנפוץ לדיוק גבוה: לישון עד deadline פחות מרווח ביטחון (למשל 50 מיקרו-שניות), ואת השאר לבלות ב-spin על steady_clock::now(), שעולה עשרות ננו-שניות דרך vDSO בלי syscall. המחיר הוא CPU שנשרף במרווח ה-spin.",
+        "rubric": [
+          "prctl(PR_SET_TIMERSLACK) לערך מינימלי",
+          "יציאה מ-C-state עמוק מוסיפה latency, ו-cpu_dma_latency מגביל אותה",
+          "שינה עד deadline פחות מרווח, ואז spin על now()",
+          "now() דרך vDSO עולה עשרות ns בלי syscall"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q30",
@@ -875,7 +1033,17 @@
         "המסקנה: cv הוא רמז, ה-predicate הוא האמת, ולכן לולאה תמיד"
       ],
       "explanation": "תשובה חלשה אומרת 'כי ה-OS לפעמים מעיר'. תשובה חזקה מסבירה את ה-trade-off בתכנון ה-API ומראה שהלולאה נחוצה מסיבות שאינן spurious בכלל.",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "ב-production אתה רואה שרוב ההתעוררויות של צרכנים מוצאות את ה-predicate false. איך תבין מה הסיבה (spurious אמיתי, stolen, או משהו אחר), ומה תעשה בכל מקרה?",
+        "modelAnswer": "מוסיפים מונים: כמה פעמים wait חזר עם predicate false, כמה notify נשלחו ומאיזה סוג, וכמה פריטים נצרכו על ידי threads שלא ישנו. spurious אמיתי ב-Linux מודרני יחסית נדיר, ולכן יחס גבוה מצביע כמעט תמיד על סיבה בקוד: notify_all שמעיר N צרכנים על פריט אחד (thundering herd), cv משותף לממתינים מסוגים שונים, notify שנשלח גם כשהמצב לא השתנה, או צרכנים ערים שגונבים פריטים לפני שהמתעורר נועל. אפשר לאמת ברמת המערכת עם eBPF או perf על futex syscalls, ולהשוות בין מספר ה-wakes ל-notifications. התיקונים בהתאמה: notify_one כשהממתינים שקולים, cv נפרד לכל תנאי, notify רק כשהמצב באמת השתנה.",
+        "rubric": [
+          "מונים: wakeups עם predicate false מול מספר ה-notify",
+          "spurious אמיתי נדיר יחסית, הסיבה הרגילה היא בקוד",
+          "thundering herd, cv משותף לתנאים שונים, או גניבה על ידי threads ערים",
+          "תיקון לפי הסיבה: notify_one, cvs נפרדים, notify רק בשינוי"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q31",
@@ -904,7 +1072,17 @@
       "sources": [
         "https://www.geeksforgeeks.org/dsa/nvidia-coding-interview-questions/",
         "https://interviewsolver.com/interview-questions/nvidia"
-      ]
+      ],
+      "followUp": {
+        "prompt": "עם notify_all התוכנית נכונה. כמה התעוררויות מיותרות יש לכל מספר, ואיך היית מגיע להתעוררות אחת לכל היותר לכל מספר?",
+        "modelAnswer": "כל עדכון של cur מעיר את שלושת הממתינים האחרים, ושניים מהם מוצאים predicate false וחוזרים לישון, כלומר בערך שתי התעוררויות מבוזבזות לכל מספר, וכל אחת עולה כמה עד עשרות מיקרו-שניות. כדי להגיע להתעוררות ממוקדת: cv (או binary semaphore) לכל thread, ואחרי ההגדלה מחשבים תחת ה-lock מי הבעלים של cur החדש ומעירים רק אותו. נקודה נוספת: אם הבעלים של המספר הבא הוא אותו thread, לא צריך להעיר אף אחד ולא לישון בכלל. thread ה-number מטפל ב-8 מכל 15 מספרים (שאינם מתחלקים ב-3 או ב-5), ולכן הרבה מעברים נחסכים.",
+        "rubric": [
+          "notify_all מעיר 3, מהם כ-2 מבוזבזים לכל מספר",
+          "cv או semaphore לכל thread והערה של הבעלים המחושב בלבד",
+          "כשהבעלים הבא הוא אותו thread אין צורך בהתעוררות",
+          "8 מכל 15 מספרים שייכים ל-thread ה-number"
+        ]
+      }
     },
     {
       "id": "conc.condvars.q32",
@@ -1020,7 +1198,17 @@
         "https://leetcode.com/discuss/post/1338962/microsoft-senior-software-engineer-hyder-702m/"
       ],
       "id": "conc.condvars.q35",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "נניח שתיקנת עם pill לכל צרכן. מה עדיין יכול להשתבש כשיש כמה יצרנים או כשמספר הצרכנים משתנה, ולמה דגל closed חסין לזה?",
+        "modelAnswer": "pill הוא סימון בתוך הנתונים עצמם, ולכן צריך לדעת בדיוק כמה צרכנים יש: צרכן שנוסף בזמן ריצה לא יקבל pill וייתקע, וצרכן שנכשל משאיר pill עודף. עם כמה יצרנים, יצרן אחר יכול לדחוף פריטים אחרי ה-pills, והם יישארו בתור בלי שאף צרכן יטפל בהם. דגל closed הוא מצב ולא פריט: close מסמנת אותו תחת ה-lock ועושה notify_all, push בודק אותו תחת אותו lock ומסרב אחרי סגירה, ו-pop מחזיר 'נגמר' רק כשהתור סגור וגם ריק, כך שהפריטים שכבר נכנסו מנוקזים. זה עובד לכל מספר של צרכנים ויצרנים.",
+        "rubric": [
+          "pills מחייבים לדעת בדיוק את מספר הצרכנים",
+          "פריטים שנדחפו אחרי ה-pills לא מטופלים",
+          "push בודק closed תחת ה-lock ומסרב",
+          "pop מחזיר סוף רק כשהתור סגור וגם ריק"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1044,7 +1232,16 @@
         "שגוי: optional ריק הוא דרך מקובלת לסמן \"נגמר\"."
       ],
       "id": "conc.condvars.q36",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "התור הוא גם חסום בקיבולת, כך שגם יצרנים יכולים לחכות כשהוא מלא. מה עוד close צריכה לעשות כדי שאף thread לא ייתקע?",
+        "modelAnswer": "יצרנים מחכים על not_full עם predicate כמו size < cap. אם close לא נוגעת בו, יצרן שמחכה על תור מלא ייתקע לנצח אחרי שהצרכנים יצאו. לכן ה-predicate של push צריך להיות closed_ || size < cap, ואחרי ההתעוררות push מחזיר כישלון אם closed_. close צריכה לקרוא notify_all גם על not_full וגם על not_empty, כי השינוי רלוונטי לכל הממתינים בשני ה-cvs. הכלל: כל cv שה-predicate של הממתינים עליו תלוי ב-closed_ צריך notify_all ב-close.",
+        "rubric": [
+          "predicate של push כולל closed_",
+          "push מחזיר כישלון כשהתור סגור",
+          "notify_all על שני ה-cvs ב-close"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1065,7 +1262,17 @@
         "שגוי: ה-pop השני פינה מקום נוסף, אבל אף אחד לא הודיע עליו. יצרן ממתין לא יודע שיש מקום."
       ],
       "id": "conc.condvars.q37",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "באג כזה דורש interleaving מסוים ונדיר. איך היית כותב בדיקה שתתפוס אותו באופן אמין, ואיך תזהה אותו ב-production?",
+        "modelAnswer": "stress test: קיבולת קטנה (1 או 2), הרבה יצרנים וצרכנים, ו-yield או השהיות אקראיות בנקודות רגישות כדי לגוון את ה-interleavings. הטסט חייב watchdog: אם אין התקדמות (מונה פריטים לא זז) תוך כמה שניות, הוא נכשל ומדפיס מצב, במקום לתקוע את ה-CI. בדיקת invariant שימושית במיוחד: אם יש יצרנים ממתינים וגם size < cap לאורך זמן, מישהו ישן כשה-predicate שלו אמת, וזה בדיוק lost wakeup. לכלים: rr עם chaos mode משנה את התזמון ומאפשר replay של הכישלון, ו-model checkers כמו Relacy, או מודל TLA+, עוברים על interleavings באופן שיטתי.",
+        "rubric": [
+          "stress עם קיבולת קטנה והרבה threads",
+          "watchdog שמכשיל את הטסט כשאין התקדמות",
+          "invariant: ממתין ישן בזמן שהתנאי שלו מתקיים",
+          "rr chaos mode או model checking"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1096,7 +1303,16 @@
         "https://leetcode.com/discuss/post/4842838/qualcomm-interview-experiance-by-anonymo-0hg4/"
       ],
       "id": "conc.condvars.q38",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "התיקון שינה את סדר ה-sem_wait. ומה עם סדר שני ה-sem_post בסוף put: האם הוא יכול לגרום ל-deadlock? מה כן משתנה אם מחליפים אותו?",
+        "modelAnswer": "sem_post אף פעם לא חוסם, ולכן סדר השחרורים לא יכול לגרום ל-deadlock. deadlock דורש hold and wait, כלומר לחכות בזמן שמחזיקים משאב, ושחרור הוא לא המתנה. החלפת הסדר (קודם full ואחר כך mutex) עדיין נכונה, אבל צרכן שמתעורר מ-full ינסה מיד לקחת את mutex שעוד מוחזק ויחכה עוד רגע, כלומר השפעה על ביצועים בלבד. לכן הכלל הוא: הסדר קריטי ברכישה, וגמיש בשחרור.",
+        "rubric": [
+          "sem_post לא חוסם",
+          "deadlock דורש המתנה בזמן החזקה, לכן רק סדר הרכישה קובע",
+          "החלפת סדר ה-posts משפיעה רק על ביצועים"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1138,7 +1354,16 @@
         "שגוי: POSIX מחייב ש-sem_post ו-sem_wait יסנכרנו זיכרון, כמו lock ו-unlock."
       ],
       "id": "conc.condvars.q40",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "עכשיו מוסיפים צרכן שני ונשארים בלי mutex. מה בדיוק נשבר, ומה המינימום שצריך להוסיף?",
+        "modelAnswer": "כשיש שני פריטים, שני הצרכנים עוברים sem_wait(&full), שניהם קוראים את אותו out, קוראים את אותו תא, ואחד הפריטים נצרך פעמיים בזמן שאחר הולך לאיבוד. בנוסף out++ משני threads הוא data race, ו-out עלול לעלות רק באחד. המינימום: lock רק בצד הצרכנים, שמגן על out, והיצרן היחיד ממשיך בלי lock כי in עדיין בעל כותב יחיד. אפשרות אחרת: fetch_add אטומי על out, שנותן לכל צרכן אינדקס ייחודי, כי full כבר מבטיח שהפריט בתא קיים ו-empty משוחרר רק אחרי הקריאה.",
+        "rubric": [
+          "שני צרכנים קוראים את אותו out: פריט כפול ופריט אבוד",
+          "out++ משני threads הוא data race",
+          "מספיק lock בצד הצרכנים בלבד או fetch_add על out"
+        ]
+      }
     },
     {
       "level": 1,
@@ -1198,7 +1423,16 @@
         "שגוי: זו ההתנהגות של POSIX sem_post על semaphore שמשמש כבינארי. ב-std::binary_semaphore זה מפר תנאי מקדים."
       ],
       "id": "conc.condvars.q43",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "למה התקן בחר ב-UB ולא בבדיקה שזורקת exception, ומה בפועל עלול לקרות במימוש נפוץ? איך היית תופס את הבאג הזה מוקדם?",
+        "modelAnswer": "בדיקה הייתה מייקרת את release, שהוא פעולה בנתיב חם: במקום fetch_add פשוט צריך לולאת compare-exchange שבודקת את התקרה. התקן מעדיף precondition ולא מחייב את כולם לשלם. בפועל, במימוש שעושה fetch_add, המונה פשוט עולה ל-2, ושני threads יעברו acquire, כך שההדדיות נשברת בשקט ובלי שום הודעה. כדי לתפוס מוקדם: wrapper שמבצע assert על הערך בגרסת debug, או, אם בעצם רוצים בעלות, להשתמש ב-mutex, ש-error checking mutex (PTHREAD_MUTEX_ERRORCHECK) מחזיר שגיאה כשמשחררים אותו בלי להחזיק.",
+        "rubric": [
+          "בדיקת תקרה מחייבת CAS במקום fetch_add בנתיב חם",
+          "בפועל המונה עלול לעלות ל-2 ושני threads נכנסים",
+          "assert ב-debug או mutex עם error checking כשצריך בעלות"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1226,7 +1460,16 @@
         "https://leetcode.com/discuss/post/4032849/nvidia-interview-off-campus-2023/"
       ],
       "id": "conc.condvars.q44",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "N = 1000 threads. מה עולה כל מעבר תור בכל אחד מהמימושים הנכונים, ומה היית ממליץ אם הדרישה היא throughput מקסימלי?",
+        "modelAnswer": "בטבעת semaphores כל מעבר מעיר thread אחד, כלומר handoff אחד של כמה עד עשרות מיקרו-שניות, ומכאן כמה עשרות אלפים עד מאות אלפי הדפסות בשנייה לכל היותר. עם cv אחד ו-notify_all כל מעבר מעיר 999 threads, 998 מהם לחינם, ולכן סיבוב שלם עולה O(N²) התעוררויות, וזה הרסני. 1000 threads גם תופסים זיכרון: stack וירטואלי של 8MB לכל אחד בברירת המחדל של Linux, וגם scheduler עמוס. אבל העבודה היא סדרתית במהותה, רק thread אחד מתקדם בכל רגע, ולכן ל-throughput מקסימלי thread יחיד שמדפיס הכול מנצח כל פתרון מרובה threads.",
+        "rubric": [
+          "טבעת: התעוררות אחת למעבר, מיקרו-שניות",
+          "notify_all: N-1 התעוררויות למעבר, O(N²) לסיבוב",
+          "העבודה סדרתית, ולכן thread יחיד מהיר יותר"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1249,7 +1492,16 @@
         "שגוי: אחרי ההדפסה thread 0 משחרר את s[1], לא את s[0]. הוא חוסם בסיבוב השני עד ש-thread 2 ישחרר את s[0]."
       ],
       "id": "conc.condvars.q45",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "מה יקרה אם כל שלושת ה-semaphores מאותחלים ל-0? ומה אם שניים מהם, s[0] ו-s[1], מאותחלים ל-1?",
+        "modelAnswer": "כולם 0: כל thread חוסם על acquire של ה-semaphore שלו, ואף אחד לא ישחרר אף פעם. התוכנית תקועה עם 0% CPU, ו-join לא חוזר. שניים ב-1: יש שני 'אסימונים' בטבעת, threads 0 ו-1 מדפיסים מיד ובמקביל, והסדר כבר לא דטרמיניסטי. גרוע מזה, thread יכול לעשות release ל-semaphore שהערך שלו כבר 1, למשל thread 1 שמשחרר את s[2] פעם שנייה לפני ש-thread 2 צרך את הקודם, וזו הפרה של ה-precondition של binary_semaphore, כלומר UB. מספר האסימונים בטבעת חייב להיות בדיוק 1.",
+        "rubric": [
+          "כולם 0: כולם חסומים, deadlock",
+          "שני אסימונים: שני threads רצים במקביל והסדר לא דטרמיניסטי",
+          "release על binary_semaphore שכבר 1 הוא UB"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1270,7 +1522,17 @@
         "שגוי: atomic<int> הוא lock-free בכל פלטפורמה רלוונטית, וגם אם לא, זה לא היה מסביר פי אלפים."
       ],
       "id": "conc.condvars.q46",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "הצעת לעבור ל-turn.wait(old) עם notify_all. איך std::atomic::wait ממומש ב-Linux, ולמה זה עדיין מעיר יותר threads ממה שצריך? מה המימוש הטוב יותר?",
+        "modelAnswer": "ב-libstdc++ wait מסתובב קצת, ואז נרדם על futex. ל-int של 4 בתים ה-futex הוא על הכתובת עצמה, ולגדלים אחרים על אובייקט proxy בטבלת hash, וזה פרט מימוש. notify_all מעיר את כל 15 הממתינים על אותה כתובת, 14 מהם רואים שזה לא התור שלהם וחוזרים לישון, כלומר O(N) התעוררויות לכל מעבר. בנוסף, wait חוזר כשהערך שונה מ-old, לא כשהוא שווה ל-id, ולכן צריך לולאה: כל עוד turn שונה מ-id, wait על הערך שנקרא. המימוש הטוב יותר: atomic נפרד לכל thread, כל אחד על cache line משלו (alignas(64)), וה-thread שסיים כותב לדגל של הבא ועושה notify_one רק עליו.",
+        "rubric": [
+          "spin קצר ואז futex על הכתובת (או proxy), תלוי מימוש",
+          "notify_all מעיר את כל הממתינים, רובם לחינם",
+          "wait חוזר כשהערך שונה מ-old, ולכן נדרשת לולאה",
+          "atomic לכל thread על cache line נפרד ו-notify_one ממוקד"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1319,7 +1581,17 @@
         "נכון: check-then-act. אחרי שהדפיס 9 ה-thread האי-זוגי חוזר ללולאה, בודק n = 10 (עובר), מחכה, ומתעורר עם 11. וגם זה data race על n."
       ],
       "id": "conc.condvars.q48",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "אחרי התיקון, MAX = 10^6. בערך כמה זמן זה ייקח, לאן הולך הזמן, ואיך תאמת?",
+        "modelAnswer": "כל מספר דורש handoff: thread אחד מעיר את השני דרך futex, והשני צריך להיות מתוזמן ולנעול את ה-mutex. לפי 5 עד 50 מיקרו-שניות ל-handoff, מיליון מספרים ייקחו בערך 5 עד 50 שניות, בעוד ש-thread יחיד היה מדפיס אותם לקובץ בעשרות מילי-שניות. הזמן הולך ל-syscalls של futex, ל-scheduler, למעבר של ה-cache lines של n וה-mutex בין cores, או ל-context switch אם שניהם על אותו core. לאמת: perf stat -e context-switches יראה בערך מיליון ומעלה, ו-perf sched latency יראה את זמני ההתעוררות.",
+        "rubric": [
+          "handoff אחד לכל מספר",
+          "5-50 µs לכל handoff נותן שניות לכל מיליון",
+          "perf stat מראה context switches בסדר גודל של MAX",
+          "thread יחיד מהיר בסדרי גודל כי העבודה סדרתית"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1368,7 +1640,16 @@
         "https://leetcode.com/discuss/post/1939505/qualcomm-senior-engineer-hyderabad-april-ffzb/"
       ],
       "id": "conc.condvars.q50",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "תיקנת עם cv נפרד לכל thread שמעיר רק את הבא בתור. מה עלול להשתבש בסוף, אחרי הסיבוב האחרון, ואיך מבטיחים שכל ה-threads יוצאים?",
+        "modelAnswer": "כל thread מחכה עד ש-turn שווה לשלו. אם כל thread רץ מספר קבוע של סיבובים ואחרון יוצא בלי שאחרים מחכים, הכול בסדר. אבל אם לאחד יש פחות פריטים מהאחרים (למשל ספרות נגמרות לפני אותיות), או שהעצירה חיצונית, thread יכול לחכות לתור שלא יגיע. לכן ה-predicate של כל thread צריך לכלול דגל done, ומי שמסיים מסמן done תחת ה-mutex וקורא notify על כל ה-cvs, כי זה שינוי שרלוונטי לכולם. בנוסף, turn חייב להתעדכן תחת ה-mutex לפני ה-notify על ה-cv של הבא, אחרת חוזר lost wakeup.",
+        "rubric": [
+          "predicate של כל thread כולל דגל סיום",
+          "בסיום: done תחת ה-mutex ו-notify על כל ה-cvs",
+          "turn מתעדכן תחת ה-mutex לפני notify"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1392,7 +1673,16 @@
         "נכון: עם cv פרטי אין ספק את מי מעירים. זה גם היעיל ביותר."
       ],
       "id": "conc.condvars.q51",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "מה ההבדל בין שני התיקונים הנכונים כשה-thread הבא לא נקבע במעגל קבוע אלא דינמית, לפי הנתונים? ומה המחיר של כל אחד?",
+        "modelAnswer": "cv לכל thread דורש שהמודיע ידע מי הבא: אם אפשר לחשב את זה מהמצב המשותף תחת ה-lock, זה עדיין עובד ונותן התעוררות אחת למעבר, O(1). אם כמה threads יכולים להתקדם, או שאי אפשר לדעת מראש מי, צריך notify_all, שמעיר את כל N ה-threads וכל אחד בודק את ה-predicate שלו, כלומר O(N) התעוררויות למעבר. notify_all הוא הבחירה הבטוחה והפשוטה, ו-cv ממוקד הוא אופטימיזציה שדורשת שההחלטה 'מי הבא' תהיה נכונה תמיד, אחרת חוזרת התקיעה.",
+        "rubric": [
+          "cv לכל thread דורש לחשב את הבא תחת ה-lock",
+          "כשהבא לא ידוע או שיש כמה: notify_all",
+          "O(1) מול O(N) התעוררויות לכל מעבר"
+        ]
+      }
     },
     {
       "level": 2,
@@ -1461,7 +1751,16 @@
         "שגוי: אחרי ההדפסה הראשונה sa כבר 0, ו-a חוסם עד ש-b ישחרר אותו."
       ],
       "id": "conc.condvars.q54",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "למה אי אפשר לממש את אותו ping-pong עם שני std::mutex, כש-a נועל אחד ו-b משחרר אותו? ומה המחיר של השימוש ב-semaphore במקום?",
+        "modelAnswer": "ל-mutex יש בעלים: unlock מותר רק ל-thread שנעל אותו, ושחרור מ-thread אחר הוא UB (ב-POSIX error checking mutex מחזיר EPERM). semaphore הוא מונה בלי בעלים, ולכן מתאים לאיתות בין threads: thread אחד עושה release ואחר acquire. המחיר של היעדר הבעלות: ה-kernel לא יודע מי 'מחזיק', ולכן אין priority inheritance, ו-thread בעדיפות גבוהה שמחכה ל-semaphore לא יכול להעלות את העדיפות של מי שאמור לשחרר אותו.",
+        "rubric": [
+          "unlock מ-thread שאינו הבעלים הוא UB",
+          "semaphore בלי בעלים, מתאים לאיתות",
+          "בלי בעלים אין priority inheritance"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1482,7 +1781,17 @@
         "שגוי: בסיבוב הראשון הכול עובד: A מוריד ל-0 ו-B משתחרר."
       ],
       "id": "conc.condvars.q55",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "איך היית משתמש כאן ב-std::barrier, ומה ההבדל בהתנהגות לעומת semaphore אחד ש-A משחרר ו-B מחכה לו?",
+        "modelAnswer": "std::barrier sync(2): A קורא arrive_and_wait בסוף שלב 1, ו-B קורא arrive_and_wait לפני שלב 2, בכל סיבוב. ה-barrier מחזורי ולכן מתאפס לבד. הוא מסנכרן בשני הכיוונים: גם A מחכה עד ש-B מגיע, כלומר עד ש-B סיים את שלב 2 של הסיבוב הקודם, ולכן השניים מתקדמים ב-lockstep. עם semaphore אחד הסנכרון חד-כיווני: A לא מחכה ל-B, ועם counting_semaphore הוא יכול לרוץ כמה סיבובים קדימה והמונה יצבור. אם רוצים שגם A יחכה, צריך semaphore שני בכיוון ההפוך.",
+        "rubric": [
+          "barrier מחזורי ומתאפס אוטומטית",
+          "barrier מסנכרן בשני הכיוונים, lockstep",
+          "semaphore חד-כיווני: A יכול לרוץ קדימה ולצבור",
+          "לסנכרון דו-כיווני עם semaphores צריך שניים"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1510,7 +1819,17 @@
         "https://leetcode.com/discuss/post/323046/amazon-sde12-reject-by-anonymous_user-m4bz/"
       ],
       "id": "conc.condvars.q56",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "עם 32 יצרנים ו-32 צרכנים ה-mutex היחיד הופך לצוואר בקבוק. מה האפשרויות, ומה כל אחת מקריבה מהדרישה 'תמיד הפריט הטוב ביותר'?",
+        "modelAnswer": "קודם מודדים: זמן החזקת ה-lock ותחרות (perf lock, או מונים של המתנה), כדי לוודא שזה באמת ה-mutex. אם מספר ה-ranks קטן (נניח 8), מחליפים את ה-heap במערך של תורי FIFO לפי rank ו-bitmap של תורים לא ריקים: מציאת הטוב ביותר היא ctz על ה-bitmap, O(1), וה-critical section מתקצר מאוד, בלי לוותר על הסמנטיקה. אם זה לא מספיק, relaxed priority queue כמו MultiQueue: כמה heaps עם lock לכל אחד, push ל-heap אקראי, ו-pop בוחר את הטוב מבין שניים אקראיים. זה מגדיל throughput מאוד, אבל מחזיר פריט 'כמעט הטוב ביותר'. sharding לפי צרכן שובר את הסדר הגלובלי לגמרי.",
+        "rubric": [
+          "למדוד זמן החזקה ותחרות לפני שמשנים",
+          "מעט ranks: מערך FIFOs ו-bitmap, O(1), סמנטיקה נשמרת",
+          "MultiQueue: throughput גבוה, רק קירוב של הטוב ביותר",
+          "sharding שובר את הסדר הגלובלי"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1531,7 +1850,17 @@
         "נכון: מפתח משני של sequence הוא הפתרון הסטנדרטי."
       ],
       "id": "conc.condvars.q57",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "seq הוא uint32_t, ומוקצים מיליון seq בשנייה. מה קורה ומתי, ואיך מונעים?",
+        "modelAnswer": "2^32 חלקי מיליון זה בערך 4295 שניות, כלומר כ-71 דקות. אחרי ה-wrap, משימה חדשה מקבלת seq קטן, ובתוך אותו rank היא תעקוף משימות ותיקות שעדיין בתור, כך שה-FIFO נשבר בשקט ורק אחרי יותר משעה של ריצה. התיקון הפשוט: uint64_t, שיספיק לכ-584 אלף שנים בקצב הזה. חלופה כשחייבים שדה קצר: השוואה מודעת ל-wrap (serial number arithmetic), שבודקת את הסימן של ההפרש, ונכונה כל עוד המרחק בין הפריט הוותיק לחדש קטן מ-2^31.",
+        "rubric": [
+          "wrap אחרי כ-71 דקות",
+          "אחרי wrap משימות חדשות עוקפות ותיקות באותו rank",
+          "uint64_t מספיק לכ-584 אלף שנים",
+          "או השוואה לפי סימן ההפרש כשהמרחק קטן מ-2^31"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1552,7 +1881,17 @@
         "שגוי: תור גדול יותר רק צובר יותר פריטים של rank 3 שמחכים."
       ],
       "id": "conc.condvars.q58",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "איך תממש aging בתוך heap בלי לעדכן את המפתח של כל האיברים כל הזמן?",
+        "modelAnswer": "נגדיר עדיפות אפקטיבית rank - k * (now - t_enqueue), כשקטן יותר טוב. בהשוואה בין שני פריטים ה-now מתבטל, ולכן הסדר ביניהם נקבע לפי rank + k * t_enqueue, ערך שאפשר לחשב פעם אחת בהכנסה. ה-heap ממוין לפי המפתח הסטטי הזה, ב-O(log n) להכנסה ושליפה, בלי re-heapify. זה בעצם deadline וירטואלי: כל פריט מקבל זמן יעד t_enqueue + rank / k, ותמיד משרתים את ה-deadline הקרוב ביותר. כך ההמתנה חסומה: פריט ב-rank 3 יכול לחכות לכל היותר בערך 2/k יחידות זמן לפני שפריטים חדשים ב-rank 1 כבר לא עוקפים אותו.",
+        "rubric": [
+          "now מתבטל בהשוואה, ולכן המפתח סטטי",
+          "מפתח rank + k * t_enqueue מחושב בהכנסה",
+          "O(log n) בלי עדכון של כל האיברים",
+          "חסם על ההמתנה, פרשנות של deadline וירטואלי"
+        ]
+      }
     },
     {
       "level": 4,
@@ -1598,7 +1937,17 @@
       ],
       "explanation": "reader-preference מקסם את המקביליות לקריאה אבל מאפשר הרעבה של כותבים. writer-preference (או סדר FIFO הוגן) מונע את זה, במחיר שקוראים מחכים יותר. ב-`std::shared_mutex` המדיניות תלויה במימוש.",
       "id": "conc.condvars.q60",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "עברת ל-writer preference. איזו בעיה חדשה נוצרת, ואיזה deadlock מפתיע יכול להופיע אם thread נועל shared פעמיים?",
+        "modelAnswer": "הבעיה ההפוכה: תחת זרם רציף של כתיבות הקוראים מורעבים, ו-latency הקריאה קופץ. פתרון הוגן הוא phase-fair: כשכותב מחכה, קוראים חדשים מחכים, אבל כשהכותב מסיים, כל הקוראים שחיכו נכנסים יחד לפני הכותב הבא, וכך שני הצדדים מתקדמים לסירוגין. ה-deadlock: thread מחזיק shared lock ומנסה לנעול shared שוב (למשל דרך פונקציה אחרת). בינתיים כותב התחיל לחכות. עם writer preference, הנעילה השנייה מחכה לכותב, והכותב מחכה שהקורא ישחרר את הנעילה הראשונה: מעגל. ב-std::shared_mutex נעילה חוזרת של shared מאותו thread היא UB, והמדיניות עצמה תלויה במימוש.",
+        "rubric": [
+          "writer preference מרעיב קוראים",
+          "phase-fair: כל הקוראים הממתינים נכנסים בין כותב לכותב",
+          "shared כפול עם כותב ממתין באמצע יוצר deadlock",
+          "נעילה חוזרת של shared ב-std::shared_mutex היא UB"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1622,7 +1971,16 @@
       ],
       "explanation": "הכלל: תמיד `while (!cond) cv.wait(lk);` או `cv.wait(lk, pred)`. condition variable הוא רק רמז ש\"משהו השתנה\", לא הבטחה שהתנאי שלך מתקיים.",
       "id": "conc.condvars.q61",
-      "lesson": "conc.condvars"
+      "lesson": "conc.condvars",
+      "followUp": {
+        "prompt": "מפרידים לשני cvs: אחד לקוראים ואחד לכותבים. איזה notify (one או all) קוראים בכל אירוע: כותב מסיים, קורא יוצא ועדיין יש קוראים, וקורא אחרון יוצא?",
+        "modelAnswer": "כותב שמסיים: notify_all על cv הקוראים, כי כל הקוראים הממתינים יכולים להיכנס יחד, ו/או notify_one על cv הכותבים, לפי המדיניות (מי מקבל עדיפות). קורא שיוצא כשעדיין יש קוראים: לא צריך notify בכלל, כי שום ממתין לא יכול להתקדם (קוראים לא חיכו, וכותב עדיין חסום). הקורא האחרון, כש-readers יורד ל-0: notify_one על cv הכותבים, כי רק כותב אחד יכול לכתוב. כך נמנע thundering herd של כותבים שמתעוררים לחינם.",
+        "rubric": [
+          "כותב מסיים: notify_all לקוראים",
+          "קורא יוצא כשיש עוד קוראים: אין notify",
+          "readers מגיע ל-0: notify_one לכותבים"
+        ]
+      }
     }
   ]
 }

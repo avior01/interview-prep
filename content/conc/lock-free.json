@@ -339,7 +339,17 @@
         "שגוי. ה-acquire על tail נחוץ: הוא מבטיח שהצרכן סיים לקרוא את ה-slot לפני שהיצרן דורס אותו. החלשה ל-relaxed רק תוסיף race, ולא תתקן את הבאג.",
         "שגוי. head נכתב רק ע״י היצרן עצמו, ולכן הקריאה שלו ב-relaxed נכונה: אין שום כתיבה של thread אחר שצריך לסנכרן איתה.",
         "שגוי. `& mask_` שקול ל-% כשהקיבולת חזקה של 2 (mask_ = N - 1), וזה המימוש הסטנדרטי. זה לא קשור לערכים ישנים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בניגוד להרבה באגים של memory order, הבאג הזה מופיע גם על x86. למה, ולמה הוא בכל זאת עובר את רוב הבדיקות? איך היית תופס אותו באופן אמין?",
+        "modelAnswer": "כאן הבעיה היא סדר התוכנית עצמו, לא ה-memory order: x86 (TSO) שומר על סדר ה-stores, ולכן הוא דווקא מבטיח שהצרכן יכול לראות את head החדש לפני שהאיבר נכתב. אין ארכיטקטורה שמצילה את הקוד הזה. הוא עובר בדיקות כי החלון הוא כמה ננו-שניות בין שתי השורות, והצרכן צריך לקרוא בדיוק בתוכו. כדי לתפוס אותו: ThreadSanitizer, שמנתח happens-before ולא תזמון, ולכן מדווח data race על buf_ גם בריצה שבה לא נקרא זבל. בנוסף, stress test עם payload שמכיל מספר רצף וצרכן שבודק שכל ערך הוא בדיוק הקודם ועוד 1, לאורך מיליארדי פעולות על cores שונים.",
+        "rubric": [
+          "סדר התוכנית שגוי, ו-TSO שומר על סדר stores ולכן לא מציל",
+          "החלון של ננו-שניות מסביר את הנדירות",
+          "TSan מזהה לפי happens-before גם בלי שהבאג התממש",
+          "stress test עם מספרי רצף ובדיקה בצרכן"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q08",
@@ -366,7 +376,17 @@
         "נכון. ה-acquire הוא החצי השני של הזוג: בלעדיו אין synchronizes-with, והצרכן יכול לקרוא את האיבר לפני שהכתיבה של היצרן נראית לו.",
         "שגוי. head_ נכתב רק ע״י היצרן, ו-thread תמיד רואה את הכתיבות של עצמו; relaxed מספיק. הטעות נובעת מהכלל השטחי 'כל load של אינדקס צריך acquire'.",
         "שגוי. seq_cst נדרש רק כשיש תבנית StoreLoad בין שני threads (כמו Dekker). ב-SPSC זוגות release/acquire מספיקים, ו-seq_cst רק מוסיף fence יקר ב-x86."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה מתקמפלים ה-orders האלה על x86 ועל ARMv8, וכמה עולה להפוך הכול ל-seq_cst בכל אחת מהן?",
+        "modelAnswer": "על x86 (TSO) acquire load ו-release store הם mov רגיל: ה-order מגביל רק את הקומפיילר. seq_cst load הוא גם mov, אבל seq_cst store הוא xchg (או mov ואחריו mfence), שמרוקן את ה-store buffer ועולה עשרות מחזורים. לכן ב-x86 המחיר של seq_cst מרוכז ב-stores. על ARMv8 acquire load הוא LDAR (או LDAPR החלש יותר מ-ARMv8.3), ו-release store הוא STLR. הזוג LDAR/STLR כבר נותן סדר seq_cst ביניהם, ולכן ב-ARMv8 seq_cst על loads ו-stores עולה בערך כמו acquire ו-release. כלומר, ב-SPSC על x86 seq_cst על head ו-tail מוסיף xchg בכל push ו-pop, וזה המחיר העיקרי.",
+        "rubric": [
+          "x86: acquire/release הם mov רגיל",
+          "x86: seq_cst store הוא xchg או mfence, יקר כי מרוקן store buffer",
+          "ARMv8: LDAR/STLR (או LDAPR) ל-acquire/release",
+          "ARMv8: seq_cst ממופה לאותן הוראות, מחיר נוסף קטן"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q09",
@@ -405,7 +425,17 @@
         "שגוי. mutex עובד מצוין בין threads בכל עדיפות. הבעיה היא priority inversion: ה-thread בעדיפות גבוהה נחסם על lock שמחזיק thread בעדיפות נמוכה.",
         "שגוי. זיכרון אינו השיקול; ring buffer מוקצה מראש וגודלו זהה עם או בלי mutex.",
         "נכון. עם mutex, אם ה-disk thread מוחלף או נתקע על page fault או I/O כשהוא מחזיק את ה-lock, ה-RX thread נחסם ומפספס samples. עם SPSC ה-push מסתיים בצעדים קבועים, ואין priority inversion."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה לא פשוט mutex עם priority inheritance (PTHREAD_PRIO_INHERIT)? מה PI פותר ומה הוא לא פותר בתרחיש הזה?",
+        "modelAnswer": "PI מעלה זמנית את עדיפות מחזיק ה-lock לעדיפות של מי שמחכה, וכך thread בעדיפות בינונית לא יכול לדחוק את המחזיק ולהאריך את ההמתנה ללא גבול. זה פותר את ה-inversion הקלאסי. אבל ה-RT thread עדיין מחכה לסיום ה-critical section של ה-thread השני, וזמן ההמתנה תלוי בקוד שלו: אם הוא נתקע בתוך ה-critical section על page fault או I/O, ההמתנה לא חסומה. בנוסף, במסלול עם תחרות PI mutex נכנס לקרנל (FUTEX_LOCK_PI), syscall עם context switches. mutex עם PI סביר כשה-critical section קטן, הזיכרון נעול, ואין בו I/O. SPSC מוריד לגמרי את התלות ב-thread השני.",
+        "rubric": [
+          "PI מעלה את עדיפות המחזיק ומונע דחיקה ע״י thread בעדיפות בינונית",
+          "ההמתנה עדיין תלויה ב-critical section, לא חסומה אם המחזיק נתקע",
+          "עם תחרות: syscall FUTEX_LOCK_PI",
+          "SPSC מבטל את התלות לחלוטין"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q11",
@@ -426,7 +456,17 @@
         "שגוי. גודל ה-cache line קבוע בחומרה ולא ניתן לשינוי מהתוכנה. ריפוד ל-128 בתים עוזר רק נגד adjacent-line prefetch, וההפרדה כבר קיימת.",
         "נכון. כל קריאה של האינדקס של הצד השני מושכת שורה שהוא כותב כל הזמן. עם עותק cached, היצרן קורא את tail האמיתי רק כשנראה מלא, וכך רוב הפעולות לא נוגעות בשורה המשותפת.",
         "שגוי. MPMC queue כבד יותר (CAS, sequence לכל slot) ומגדיל contention, ולא פותר את תעבורת השורות בין שני הצדדים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "כמה עולה העברת cache line בין cores, וממה ה-cached index חוסך במצב הנפוץ שבו התור כמעט ריק כי הצרכן עומד בקצב?",
+        "modelAnswer": "העברת line שעברה שינוי מ-core אחר באותו socket עולה בסדר גודל של 50–100ns, הרבה יותר מכל השאר ב-push. בלי cached index, כל פריט גורם לכמה העברות: היצרן קורא את tail, הצרכן קורא את head, וכל כתיבה מבטלת את העותק אצל הצד השני. כשהתור כמעט ריק, לפי העותק של הצרכן התור ריק אחרי כל פריט, ולכן הוא קורא את head האמיתי כמעט בכל pop, ואצלו החיסכון קטן. היצרן, לעומת זאת, רחוק ממצב מלא, ולכן כמעט אף פעם לא קורא את tail. גם ה-line של ה-slot עצמו חייבת לעבור, כי הנתונים צריכים להגיע לצרכן. batching מחלק את המחיר על כמה פריטים, במחיר latency.",
+        "rubric": [
+          "העברת line בין cores: כ-50–100ns",
+          "בתור כמעט ריק הצרכן עדיין קורא head כמעט כל פעם, היצרן חוסך",
+          "העברת ה-line של הנתונים בלתי נמנעת",
+          "batching מחלק את המחיר במחיר latency"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q12",
@@ -450,7 +490,17 @@
         "נכון. old->next נקרא בלי שום הגנה, אז אם thread אחר שלף ומחק את old זו קריאה מזיכרון משוחרר. ואם הכתובת מוחזרה ונדחפה מחדש, ה-CAS מצליח עם next ישן (ABA). התיקון: hazard pointers או epochs, ו-tagged pointer.",
         "שגוי. ABA ו-use-after-free הן בעיות של זהות ערכים וחיי אובייקט, ולא של סדר זיכרון. seq_cst לא מונע מאף thread לשחרר את old.",
         "שגוי. compare_exchange מקבל את old ב-reference, ובכישלון כותב לתוכו את הערך הנוכחי של head. לכן הלולאה כן מתקדמת, ו-old->next מחושב מחדש בכל איטרציה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שה-nodes מגיעים מ-pool ולעולם לא מוחזרים ל-OS. איזו מהבעיות נשארת, ומה עוד צריך לתקן בקוד כדי שהוא יהיה תקין לפי התקן?",
+        "modelAnswer": "עם pool הזיכרון תמיד ממופה, ולכן הקריאה של old->next לא תקרוס, אבל היא יכולה להחזיר ערך של node שכבר נשלף ומוחזר לשימוש. ABA נשאר במלואו: node שנשלף ונדחף מחדש עם next אחר מאפשר ל-CAS להצליח עם next ישן, והמחסנית נהרסת בשקט, וזה גרוע מקריסה. התיקון נגד ABA: tagged pointer עם מונה גרסה ו-CAS כפול רוחב (cmpxchg16b), או דחיסת המונה לביטים העליונים. בנוסף, next נקרא ע״י thread אחד בזמן שאחר עשוי לכתוב אותו ב-push, ולכן לפי התקן זה data race ו-UB. צריך להגדיר את next כ-atomic, וגישה relaxed מספיקה.",
+        "rubric": [
+          "pool מונע קריסה, אבל הקריאה יכולה להחזיר next מ-node ממוחזר",
+          "ABA נשאר: CAS מצליח עם next ישן ומשחית את המחסנית",
+          "tagged pointer עם DWCAS",
+          "next חייב להיות atomic (relaxed) כדי להימנע מ-data race"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q13",
@@ -471,7 +521,17 @@
         "פותר. EBR לא משחרר node כל עוד thread כלשהו עלול להחזיק אותו, ולכן הכתובת לא ממוחזרת ו-ABA לא יכול לקרות.",
         "זו התשובה: לא פותר. ה-CAS ב-ABA מצליח כי הערך באמת שווה, ו-memory order לא משנה השוואת ערכים. הבלבול נובע מהמחשבה שכל באג lock-free הוא בעיית ordering.",
         "פותר. node שמוגן ב-hazard pointer לא משוחרר ולא חוזר ל-allocator, ולכן אותה כתובת לא יכולה לחזור למבנה בזמן שה-thread מחזיק אותה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם בוחרים tagged pointer של 16 בתים, האם `std::atomic` עליו באמת lock-free? איך בודקים, ומה החלופה כשלא?",
+        "modelAnswer": "זה תלוי בקומפיילר ובפלטפורמה. ב-x86-64 הוראת cmpxchg16b קיימת בכל מעבד מודרני, אבל הקומפיילר משתמש בה inline רק עם `-mcx16`. ב-GCC מגרסה 7 אטומיים של 16 בתים עוברים דרך libatomic, שבוחרת cmpxchg16b בזמן ריצה, אבל is_lock_free עשוי להחזיר false. clang עם -mcx16 נוטה לייצר את ההוראה ישירות. בנוסף, load של 16 בתים ממומש לרוב כ-CAS, כלומר כתיבה, ולכן הוא יקר וגורם לתחרות על ה-line. בודקים עם `static_assert(std::atomic<T>::is_always_lock_free)` או is_lock_free בזמן ריצה, ובודקים ב-disassembly שיש lock cmpxchg16b ולא קריאה ל-__atomic_*. החלופה: לדחוס מונה של 16 ביט לביטים העליונים של pointer של 64 ביט (כתובות של 48 ביט) ולבצע CAS רגיל, שעובד רק עם paging של 4 רמות ועם מונה שגולש.",
+        "rubric": [
+          "דורש cmpxchg16b ו-mcx16, והתנהגות תלויה בקומפיילר (GCC דרך libatomic)",
+          "בדיקה: is_always_lock_free או is_lock_free ו-disassembly",
+          "load של 16 בתים ממומש כ-CAS ולכן יקר",
+          "חלופה: מונה 16 ביט בביטים העליונים, עם מגבלות גלישה ו-paging של 5 רמות"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q14",
@@ -487,7 +547,17 @@
         "אסטרטגיית המתנה בצרכן (poll מול block)"
       ],
       "explanation": "זה בדיוק הפתרון שמשתמשים בו ב-SDR ובמערכות audio: מחזור באפרים בין שני תורים. מועמד חזק מתייחס במפורש למקרה של צרכן איטי.",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "חשב: מה גודל בלוק, מה פרק הזמן שלו ב-100 MS/s, וכמה באפרים K צריך כדי לספוג תקיעה של עד 3ms ב-FFT thread? ומה המשמעות ל-latency?",
+        "modelAnswer": "complex<float> הוא 8 בתים, ולכן בלוק של 65,536 דגימות הוא 512KB. ב-100 MS/s בלוק מתמלא כל כ-655µs. תקיעה של 3ms מצטברת ל-3 / 0.655 ≈ 4.6, כלומר 5 בלוקים בתור, ועוד בלוק אחד שה-RX ממלא ובלוק אחד שה-FFT מעבד, ולכן K ≈ 7–8, כ-4MB: זניח. במצב רגיל התור כמעט ריק וה-latency הוא בערך בלוק אחד. רק אחרי תקיעה ה-backlog מוסיף עד 3ms, והוא מתרוקן רק אם ה-FFT מהיר מזמן אמת: עם מרווח קטן, ה-latency הגבוה נשאר זמן רב. אם בלוק ישן חסר ערך, כמו ב-jammer, עדיף K קטן יותר עם drop oldest, שמחזיר את ה-latency לנורמלי מיד.",
+        "rubric": [
+          "בלוק של 512KB ופרק זמן של כ-655µs",
+          "K ≈ 3ms / 655µs + 2 ≈ 7–8, כ-4MB",
+          "backlog מתרוקן רק אם ה-FFT מהיר מזמן אמת",
+          "drop oldest כשנתון ישן חסר ערך"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q15",
@@ -508,7 +578,16 @@
         "נכון. 2^32 mod 1000 = 296, ולכן המונה 2^32-1 ממופה ל-slot 295, ואחרי הגלישה המונה 0 ממופה ל-slot 0 במקום 296. היצרן והצרכן מגיעים לגלישה בזמנים שונים וממפים את אותו פריט ל-slots שונים.",
         "שגוי. חיסור unsigned הוא modulo 2^32, ולכן head - tail נותן את מספר האיברים הנכון גם כש-head גלש ו-tail עוד לא. זו בדיוק הסיבה שמונים רצים עובדים.",
         "שגוי. std::atomic<uint32_t> הוא atomic ו-lock-free בכל פלטפורמה מקובלת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "נניח שאתה חייב קיבולת של בדיוק 1000. תן שני תכנונים נכונים ואת המחיר של כל אחד. האם מעבר ל-uint64_t לבד פותר את הבעיה?",
+        "modelAnswer": "תכנון אחד: אינדקסים בטווח [0, N) עם עטיפה מפורשת, if (++i == N) i = 0, שזה branch זול וצפוי. כדי להבדיל בין מלא לריק מקריבים slot (מערך של 1001 לקיבולת 1000), או מחזיקים את האינדקסים בטווח [0, 2N) כך שמלא כש-(head − tail + 2N) mod 2N == N. תכנון שני: מונים רצים של uint64_t. כאן הבעיה לא נעלמת עקרונית, אבל גלישה של 2^64 בקצב של מיליארד פריטים בשנייה לוקחת כ-584 שנה, ולכן בפועל היא לא תקרה. לגבי מחיר: אם N קבוע בזמן קומפילציה, הקומפיילר הופך % 1000 לכפל והזזה, כמה מחזורים. אם N נקבע בזמן ריצה, זו פקודת חילוק של עשרות מחזורים.",
+        "rubric": [
+          "עטיפה מפורשת עם השוואה, ו-slot מוקרב או טווח [0, 2N)",
+          "uint64_t: גלישה אחרי כ-584 שנה במיליארד בשנייה",
+          "N קבוע: % הופך לכפל והזזה; N בזמן ריצה: חילוק של עשרות מחזורים"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q16",
@@ -529,7 +608,17 @@
         "שגוי. acquire עובד על כל טיפוס atomic, כולל std::atomic<T*>. הבעיה היא שאין בתבנית זוג release->acquire שמסנכרן את הכיוון הנדרש.",
         "שגוי. ABA נפתר ע״י כך שהכתובת לא ממוחזרת כל עוד היא מוגנת; ה-fence כאן נועד לוודא שה-reclaimer רואה את ה-hazard, לא להשוות ערכים.",
         "שגוי. ה-caches קוהרנטיים, ושום fence לא 'שוטף לזיכרון הראשי'. הבעיה היא ה-store buffer שמעכב את נראות ה-store אחרי ה-load הבא, וזו שאלה של ordering."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הסבר איך asymmetric fence עם membarrier מאפשר לקורא לוותר על ה-mfence, מה זה עולה ל-reclaimer, ולמה זה רלוונטי במיוחד למערכת עם cores מבודדים ל-RT.",
+        "modelAnswer": "הקורא שם רק compiler barrier (atomic_signal_fence) בין הכתיבה ל-slot לבין הקריאה החוזרת של head, כך שהקומפיילר לא מחליף את הסדר, אבל ה-CPU יכול. ה-reclaimer, לפני שהוא סורק את ה-slots, קורא ל-membarrier עם MEMBARRIER_CMD_PRIVATE_EXPEDITED (אחרי רישום מראש עם REGISTER_PRIVATE_EXPEDITED). הקרנל שולח IPI לכל CPU שמריץ thread של ה-process, וכל אחד מהם מבצע barrier מלא, כאילו הקורא עשה fence בדיוק באותו רגע. המחיר: syscall ו-IPIs, מיקרו-שניות, ולכן ה-reclaimer צובר nodes ברשימת retired וסורק רק כשהיא עוברת סף, למשל פעמיים מספר ה-hazard slots. הסכנה ל-RT: ה-IPI נוחת גם על ה-core המבודד שמריץ את ה-RT thread של ה-process, ומוסיף jitter.",
+        "rubric": [
+          "הקורא: compiler barrier בלבד",
+          "reclaimer: membarrier PRIVATE_EXPEDITED שולח IPI וכופה barrier על כל CPU שמריץ את ה-process",
+          "צבירת retired nodes וסריקה מעל סף כדי לחלק את המחיר",
+          "IPIs נוחתים על cores מבודדים ויוצרים jitter"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q17",
@@ -556,7 +645,17 @@
         "שגוי. זו ההבטחה של wait-free. lock-free מבטיח רק התקדמות של המערכת, ו-thread יכול להיות מורעב.",
         "שגוי. אורך ה-critical section לא רלוונטי להגדרה: אם המחזיק מוחלף או נעצר באמצע, כל ה-threads האחרים מסתובבים בלי להתקדם. זה blocking.",
         "נכון. ב-try_push וב-try_pop אין לולאת ניסיון חוזר: כמה load ו-store ותנאי, והפעולה מסתיימת בצעדים חסומים, עם הצלחה או false."
-      ]
+      ],
+      "followUp": {
+        "prompt": "Treiber stack הוא lock-free אבל לא wait-free. מה ה-worst case של מספר הניסיונות של RT thread שדוחף אליו, ואיך מקבלים זמן חסום כשיש כמה יצרנים?",
+        "modelAnswer": "אין חסם: כל כישלון של CAS אומר ש-thread אחר הצליח, וזו בדיוק הבטחת ה-lock-free ברמת המערכת, אבל thread מסוים יכול להפסיד שוב ושוב כל עוד אחרים ממשיכים לכתוב. RT priority לא עוזר, כי המתחרים רצים על cores אחרים. הפתרון הנפוץ: תור SPSC נפרד לכל יצרן, כך שכל push הוא wait-free, והצרכן סורק את כל התורים (round-robin). חלופה: לתפוס מקום עם fetch_add, שב-x86 הוא lock xadd שמצליח בצעד אחד ולא בלולאה. אבל אז, כמו בתור של Vyukov, יצרן שתפס slot ונעצר לפני הפרסום חוסם את הצרכן.",
+        "rubric": [
+          "אין חסם על ניסיונות: כישלון שלך = הצלחה של אחר, starvation אפשרי",
+          "עדיפות RT לא עוזרת מול cores אחרים",
+          "SPSC לכל יצרן: wait-free, צרכן סורק",
+          "fetch_add מצליח בצעד אחד אבל slot שנתפס ולא פורסם חוסם צרכן"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q18",
@@ -698,7 +797,17 @@
         "שגוי. tagged pointer פותר ABA אבל לא use-after-free: thread שקרא old לפני ה-pop עדיין יקרא old->next מזיכרון שאולי הוחזר ל-OS ויקבל segfault. לכן משתמשים בו עם pool שלא משחרר.",
         "נכון. מונה של 16 ביט חוזר לאותו ערך אחרי 65536 שינויים, ו-thread שמושהה מספיק זמן יכול לראות ABA על הזוג המלא. DWCAS (cmpxchg16b) מאפשר מונה של 64 ביט שבפועל לא גולש.",
         "שגוי. memory order לא משפיע על השוואת הערך ב-CAS: בלי מונה, אותה כתובת עדיין שווה וה-CAS מצליח. ABA היא בעיית זהות, לא סדר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עם מונה של 16 ביט ו-10 מיליון פעולות CAS מוצלחות בשנייה, תוך כמה זמן הוא גולש, וזה מספיק כדי לגרום ל-ABA בפועל? ולמה אסור לסמוך על 16 הביטים העליונים בכל פלטפורמה?",
+        "modelAnswer": "65,536 עדכונים ב-10 מיליון בשנייה הם כ-6.5ms. ABA דורש ש-thread יקרא את head, יוחלף, ובזמן הזה יתבצעו בדיוק כפולה של 65,536 עדכונים ואותו pointer יחזור לראש. preemption רגיל נמשך מילי-שניות, כך שזה נדיר אבל אפשרי, ובמערכת שרצה חודשים זה יקרה. עם מונה של 64 ביט (DWCAS) גלישה באותו קצב לוקחת כ-58,000 שנה. לגבי הביטים העליונים: עם paging של 5 רמות (LA57) הכתובות הן 57 ביט ונשארים רק 7, וב-ARM64 הביטים העליונים משמשים ל-Top Byte Ignore, Pointer Authentication ו-MTE. לכן זה תלוי פלטפורמה.",
+        "rubric": [
+          "גלישה כל כ-6.5ms",
+          "השוואה לזמן preemption של מילי-שניות: אפשרי בפועל",
+          "מונה של 64 ביט: כ-58,000 שנה",
+          "LA57 או PAC/MTE ב-ARM משתמשים בביטים העליונים"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q25",
@@ -719,7 +828,17 @@
         "שגוי. זה דווקא החיסרון של hazard pointers: פרסום ה-hazard דורש fence מלא בכל גישה. ב-EBR כניסה ויציאה הן כתיבה מקומית זולה.",
         "שגוי. EBR לא משחרר ולא ממחזר כתובת כל עוד thread כלשהו עלול להחזיק אותה, ולכן מונע גם ABA וגם use-after-free.",
         "שגוי. יש מימושים נפוצים של EBR ב-user space, כמו crossbeam-epoch ב-Rust. ייתכן שהבלבול הוא עם RCU, שנולד בקרנל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הסבר את המנגנון של EBR (מתי בדיוק node משתחרר), ואיך היית מגן על מערכת RT מפני thread תקוע שמונע reclamation?",
+        "modelAnswer": "יש epoch גלובלי E. thread שנכנס לפעולה מכריז על ה-epoch שראה, וכשהוא יוצא הוא מסמן שהוא לא פעיל. node שהוצא מהמבנה נכנס לרשימת retired של ה-epoch הנוכחי. ה-epoch מתקדם רק כשכל ה-threads הפעילים הכריזו על E, ו-node שהוצא ב-epoch e משתחרר כשה-epoch הגלובלי מגיע ל-e+2: אז אין thread פעיל שיכול להחזיק אותו. thread שלא בתוך פעולה לא מעכב. הגנות: read sections קצרים, ואף פעם לא חוסמים (I/O, wait) בתוכם. ניטור של גודל רשימת ה-retired, ואם עברה סף, להאט או לחסום את הכותב, לא את הקורא. כשצריך חסם קשיח, עוברים לשיטה עם חסם כמו hazard pointers, או לשיטות היברידיות כמו hazard eras או interval-based reclamation.",
+        "rubric": [
+          "node שהוצא ב-epoch e משתחרר כשהגלובלי מגיע ל-e+2",
+          "רק threads פעילים מעכבים את ההתקדמות",
+          "read sections קצרים בלי חסימה, וניטור גודל retired עם האטת הכותב",
+          "חלופה עם חסם: hazard pointers או hazard eras/IBR"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q26",
@@ -740,7 +859,17 @@
         "שגוי. ה-CAS על enqueue_pos כבר נתן את ה-slot ליצרן הזה; יצרנים אחרים מקבלים pos גבוה יותר ו-slots אחרים, ולא יכולים לדרוס אותו.",
         "נכון. הצרכן שמגיע ל-slot רואה sequence שעדיין לא pos + 1 ולא יכול להתקדם, וכל הצרכנים אחריו תקועים מאחוריו. thread מושהה חוסם אחרים, ולכן זה לא lock-free פורמלית למרות שאין mutex.",
         "שגוי. אין timeout או rollback ב-CAS; פעולה אטומית שהצליחה היא סופית. את התפיסה של ה-slot אי אפשר לבטל מבחוץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "התור הזה נמצא בשימוש בכל מקום. מתי התכונה הזו באמת פוגעת בך במערכת RT, ואיך הצרכן ה-RT יכול להתגונן?",
+        "modelAnswer": "החלון בין ה-CAS לפרסום הוא כמה הוראות, ננו-שניות, אבל preemption מותח אותו למילי-שניות. אם יצרן בעדיפות נמוכה הוחלף בתוך החלון, הצרכן ה-RT תקוע מאחוריו: זה בעצם priority inversion כמו עם lock, רק בלי lock גלוי. זה פוגע כשהצרכן RT והיצרנים לא, או כשהיצרנים רצים על cores עמוסים. התגוננות: תור SPSC נפרד לכל יצרן, כך שיצרן תקוע מעכב רק את התור שלו והצרכן ממשיך עם האחרים. אם נשארים עם MPMC, try_pop צריך להבחין בין ריק לבין נתפס-אבל-לא-פורסם, ולמדוד כמה זמן הצרכן תקוע. בנוסף, להריץ את היצרנים בעדיפות RT על cores מבודדים, כך שלא יוחלפו בתוך החלון.",
+        "rubric": [
+          "חלון של ננו-שניות נמתח למילי-שניות ב-preemption",
+          "יצרן בעדיפות נמוכה חוסם צרכן RT: inversion בלי lock גלוי",
+          "SPSC לכל יצרן מבודד את הנזק",
+          "הבחנה בין ריק לנתפס-לא-פורסם, או יצרנים בעדיפות RT"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q27",
@@ -764,7 +893,17 @@
         "שגוי. release מספיק כדי לפרסם את האיבר לצרכן; seq_cst לא נוגע בכך ש-cachedTail_ לא מתרענן.",
         "שגוי. cachedTail_ נקרא ונכתב רק ע״י היצרן, ולכן הוא משתנה פרטי ולא צריך atomic. הבעיה היא שהוא לא מתעדכן, לא שהוא לא אטומי.",
         "שגוי. חיסור unsigned הוא modulo 2^w ולכן נותן את מספר האיברים נכון גם אחרי גלישה. ובכל מקרה הבאג מופיע אחרי N פעולות בלבד, הרבה לפני כל גלישה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הוכח שהשימוש בעותק ישן של tail בטוח: למה היצרן לעולם לא דורס slot שהצרכן עוד לא קרא, גם כש-cachedTail_ קטן מה-tail האמיתי? ואיפה בזיכרון כדאי לשים את cachedTail_?",
+        "modelAnswer": "tail רק עולה, ולכן כל עותק שנקרא בעבר קטן או שווה לערך הנוכחי: cachedTail_ ≤ tail. היצרן כותב ל-slot של h רק אם h − cachedTail_ < N, ולכן גם h − tail < N. ה-slot של h שימש בפעם הקודמת את הפריט h − N, והוא נצרך אם ורק אם tail > h − N, כלומר h − tail < N, וזה מתקיים. ההערכה שמרנית: היצרן חושב שיש פחות מקום ממה שיש באמת, ולא יותר. ה-acquire בריענון יוצר happens-before מהקריאה של הצרכן מה-slot (לפני ה-release שלו על tail) לכתיבה של היצרן. cachedTail_ שייך ליצרן, ולכן שמים אותו ב-cache line של head, ולא ליד tail, אחרת חוזר false sharing.",
+        "rubric": [
+          "tail מונוטוני ולכן cachedTail_ ≤ tail, הערכה שמרנית",
+          "h − cachedTail_ < N גורר שהפריט h − N כבר נצרך",
+          "acquire בריענון מול release של הצרכן יוצר happens-before",
+          "cachedTail_ ב-cache line של היצרן (ליד head)"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q28",
@@ -785,7 +924,17 @@
         "שגוי. מונה פר-CPU הוא הרעיון של SRCU ושל מימושי RCU ב-user space. בקרנל לא-preemptible הקורא לא כותב כלום.",
         "נכון. כיוון ש-read section לא יכול לכלול context switch, הכותב ב-synchronize_rcu פשוט מחכה שכל CPU יעבור quiescent state. הקורא לא כותב כלום, ו-rcu_read_lock הוא בפועל preempt_disable שמתקמפל ל-compiler barrier.",
         "שגוי. אין 'hazard pointers בחומרה'. RCU מבוסס על grace periods ו-quiescent states, מנגנון שונה לגמרי מ-hazard pointers."
-      ]
+      ],
+      "followUp": {
+        "prompt": "תאר את צד הכותב בעדכון רשומה ברשימה מוגנת RCU בקרנל: מה הוא עושה, כמה עולה synchronize_rcu, מה האלטרנטיבה לכותב שאסור לו לחסום, ומה RCU לא עושה בשבילך?",
+        "modelAnswer": "הכותב מקצה עותק של הרשומה, משנה את העותק, ומפרסם אותו עם rcu_assign_pointer, שהוא store עם release, כך שקורא שרואה את ה-pointer החדש רואה גם את התוכן. קוראים ניגשים דרך rcu_dereference. אחרי ההחלפה הכותב צריך לשחרר את הישנה רק אחרי grace period. synchronize_rcu חוסם עד שכל CPU עבר quiescent state, בדרך כלל מילי-שניות, תלוי ב-HZ ובעומס. כותב שאסור לו לחסום משתמש ב-call_rcu, שרושם callback שירוץ אחרי ה-grace period, או ב-kfree_rcu לשחרור פשוט. RCU לא מסנכרן כותבים זה מול זה: כמה כותבים חייבים להחזיק spinlock או mutex ביניהם.",
+        "rubric": [
+          "copy, update, ופרסום עם rcu_assign_pointer (release)",
+          "synchronize_rcu חוסם בסדר גודל של מילי-שניות",
+          "call_rcu או kfree_rcu לשחרור אסינכרוני",
+          "כותבים מסונכרנים ביניהם עם lock נפרד"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q29",
@@ -806,7 +955,17 @@
         "שגוי. T1 כותב את ה-next שהוא שמר, B, ולא את A->next הנוכחי (C). לכן head לא מצביע על C.",
         "שגוי. ה-CAS כותב את הערך הרצוי (B), לא את הערך הצפוי. head = A היה נכון רק אם ה-CAS היה נכשל.",
         "נכון. אחרי T2 המצב head -> A -> C. ה-CAS של T1 משווה head == A ומצליח, וכותב B, שכבר שלף T2 ואולי שחרר. A אבד מהמחסנית, ו-head עלול להיות dangling."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הרץ את אותו תרחיש בדיוק עם tagged pointer (pointer וגרסה). מה הערכים בכל שלב, מה קורה ל-CAS של T1, ומה נשאר לא פתור?",
+        "modelAnswer": "בהתחלה head = (A, v0). T1 קורא (A, v0) ו-next = B. T2 שולף את A, ו-head = (B, v1). שולף את B, ו-head = (C, v2). דוחף את A עם next = C, ו-head = (A, v3). T1 מבצע CAS שמצפה ל-(A, v0), אבל מוצא (A, v3), ולכן נכשל, וה-CAS טוען את הערך העדכני. בניסיון הבא T1 קורא A->next = C ומבצע CAS ל-(C, v4), והמחסנית תקינה. מה שלא נפתר: הקריאה של A->next בניסיון הראשון (או של B->next במקרה אחר) יכולה להתבצע על node ש-T2 כבר שחרר. לכן tagged pointer משמש עם pool שלא מחזיר זיכרון ל-OS, או יחד עם hazard pointers.",
+        "rubric": [
+          "הגרסה עולה בכל CAS מוצלח: v0 עד v3",
+          "ה-CAS של T1 נכשל כי v0 ≠ v3",
+          "הניסיון החוזר קורא next = C ו-head = (C, v4), מחסנית תקינה",
+          "use-after-free בקריאת next נשאר: pool או hazard pointers"
+        ]
+      }
     },
     {
       "id": "conc.lock-free.q30",
@@ -821,7 +980,17 @@
         "בחירה מנומקת ל-read-mostly: RCU או EBR, עם הסבר על צד הכותב"
       ],
       "explanation": "השאלה בודקת אם המועמד מבין שאין פתרון reclamation אחד, ושהבחירה נובעת מיחס קריאה-כתיבה ומדרישות robustness.",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "בחרת RCU לטבלת ה-routing ב-user space. מה המחיר הנסתר של צד הקורא בגרסאות השונות של liburcu, ומה קורה אם קורא מחזיק pointer לטבלה לאורך קריאה חוסמת?",
+        "modelAnswer": "ב-liburcu יש כמה flavors. QSBR: קטע הקריאה עולה אפס, אבל כל thread קורא חייב להירשם ולקרוא מדי פעם ל-rcu_quiescent_state, אחרת ה-grace period לא נגמר. ל-RT loop זה טבעי: קריאה פעם באיטרציה. memb: הקורא מעדכן מונה פר-thread עם compiler barrier, והכותב משלם עם membarrier (IPIs לכל ה-cores, כולל מבודדים). mb: לקורא יש fence מלא, איטי יותר. קורא שמחזיק pointer לאורך קריאה חוסמת מעכב את ה-grace period: synchronize_rcu של הכותב נחסם, או שהטבלאות הישנות נצברות ב-call_rcu, וכל אחת עלולה להיות מגה-בתים. הכלל: לא חוסמים בתוך read section. מי שצריך הפניה ארוכה מוצא את האובייקט ב-RCU ומגדיל לו refcount, ואז יוצא מה-read section.",
+        "rubric": [
+          "QSBR: קריאה בעלות אפס אבל חובה לדווח quiescent state",
+          "memb: מונה פר-thread, והכותב משלם membarrier",
+          "קורא חוסם מעכב grace period: כותב נחסם או זיכרון נצבר",
+          "היברידי: RCU למציאה ו-refcount להחזקה ארוכה"
+        ]
+      }
     },
     {
       "level": 3,
@@ -855,7 +1024,17 @@
         "https://leetcode.com/discuss/post/1341747/qualcomm-by-monty4597-ys8n/"
       ],
       "id": "conc.lock-free.q31",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "למה בדיוק volatile לא עובד כאן? מה הוא כן מבטיח, ומתי הוא הכלי הנכון? ולמה מתכנתי Java ו-C# מתבלבלים בזה?",
+        "modelAnswer": "volatile ב-C++ מבטיח רק שכל גישה שכתובה בקוד באמת תתבצע, בלי שהקומפיילר ימחק, יאחד או ישנה את הסדר שלה ביחס לגישות volatile אחרות. הוא לא מבטיח אטומיות, לא מסדר ביחס לגישות רגילות, ולא מוסיף barriers של המעבד. גישה מקבילה עם כתיבה עדיין data race ו-UB. השימושים הנכונים: רגיסטרים של MMIO, משתנה שמשתנה ב-signal handler (volatile sig_atomic_t), ומשתנים מקומיים ששורדים longjmp. הבלבול: ב-Java וב-C# volatile הוא בערך acquire/release, כלומר כלי סנכרון אמיתי. גם ב-MSVC עם /volatile:ms יש סמנטיקה כזו כהרחבה, וזה לא נייד.",
+        "rubric": [
+          "volatile: אין השמטה או סידור מחדש בין גישות volatile, ברמת הקומפיילר בלבד",
+          "אין אטומיות ואין barriers, ו-race נשאר UB",
+          "שימושים נכונים: MMIO ו-sig_atomic_t",
+          "ב-Java/C# volatile הוא acquire/release, וב-MSVC /volatile:ms הרחבה"
+        ]
+      }
     },
     {
       "level": 3,
@@ -876,7 +1055,17 @@
         "שגוי: volatile לא קשור לסנכרון בין threads."
       ],
       "id": "conc.lock-free.q32",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "עכשיו main צריך להחליף את הטבלה פעם בדקה בזמן ש-8 ה-threads קוראים. איך עושים את זה בלי mutex במסלול הקריאה, ומה הבעיה הקשה באמת?",
+        "modelAnswer": "בונים טבלה חדשה במלואה בצד, ומפרסמים אותה דרך atomic pointer עם store ב-release. הקוראים טוענים את ה-pointer עם acquire פעם אחת בתחילת כל פעולה, ומשתמשים באותו snapshot עד סופה, כדי לא לערבב שתי גרסאות. החלק הקשה הוא מתי מותר למחוק את הישנה: קורא אולי עדיין משתמש בה. אפשרות אחת: std::atomic<std::shared_ptr<const Table>> (C++20), שבה כל קריאה היא RMW על מונה משותף, צוואר בקבוק ב-cores רבים. בנוסף, המימוש משתמש לרוב ב-lock פנימי, ו-is_lock_free שלו תלוי מימוש. אפשרות שנייה: RCU או EBR, שבהם הקריאה כמעט חינמית והמחיקה אחרי grace period. מחיקה אחרי זמן קבוע (נניח 10 שניות) עובדת בדרך כלל, אבל לא מובטחת: thread שהוחלף יכול להחזיק את הטבלה יותר זמן.",
+        "rubric": [
+          "בנייה מלאה ופרסום עם release, קריאה עם acquire ו-snapshot אחד לכל פעולה",
+          "הבעיה האמיתית: מתי מותר לשחרר את הגרסה הישנה",
+          "atomic<shared_ptr>: RMW על מונה משותף, ולרוב לא lock-free",
+          "RCU/EBR עם grace period, ומחיקה אחרי זמן קבוע לא מובטחת"
+        ]
+      }
     },
     {
       "level": 4,
@@ -897,7 +1086,17 @@
         "שגוי: העתקה לא נדרשת. ה-pointer שהועבר דרך תור מסונכרן מספיק."
       ],
       "id": "conc.lock-free.q33",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "ה-Frames ממוחזרים: B מחזיר אותם ל-A דרך תור שני. איזה באג קורה אם B שומר reference לחלק מה-Frame אחרי שהחזיר אותו, ואיך אפשר לאכוף את משמעת הבעלות בעזרת ה-types של C++?",
+        "modelAnswer": "אם B שומר reference או span לנתונים אחרי ההחזרה, A ממלא את ה-Frame מחדש בזמן ש-B עדיין קורא: data race שמייצר נתונים מעורבבים בשקט, בלי קריסה, כי הזיכרון תקף. אוכפים עם std::unique_ptr<Frame> שעובר לתור ב-std::move: אחרי ה-move המקור הוא nullptr, וגישה בטעות קורסת מיד באופן דטרמיניסטי במקום race שקט. ההחזרה ל-pool נעשית דרך custom deleter, כך שאי אפשר לשכוח להחזיר. זה לא תופס references גולמיים שנשמרו בצד, ולכן בבדיקות מריצים ThreadSanitizer: התור יוצר happens-before, ו-TSan יזהה גישה של B שאינה מסונכרנת מול הכתיבה של A.",
+        "rubric": [
+          "reference שנשמר: race מול מילוי מחדש, השחתה שקטה בלי קריסה",
+          "unique_ptr עם std::move: המקור nullptr אחרי ההעברה",
+          "custom deleter להחזרה ל-pool",
+          "TSan תופס references גולמיים שדלפו"
+        ]
+      }
     },
     {
       "level": 4,
@@ -925,7 +1124,17 @@
         "https://leetcode.com/discuss/post/5079058/qualcomm-senior-engineer-hyderabad-april-u7dw/"
       ],
       "id": "conc.lock-free.q34",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "כמת את ההבדל בין double ל-triple buffering ב-120 Hz כשה-SoC מרנדר frame ב-9ms. מתי triple buffering מזיק?",
+        "modelAnswer": "ב-120 Hz פרק הזמן הוא כ-8.33ms. עם double buffering ו-vsync, frame של 9ms מפספס vblank, וה-SoC מחכה ל-vblank הבא כדי לקבל buffer פנוי, ולכן הקצב יורד ל-60 frames בשנייה, כל frame כ-16.7ms. עם triple buffering ה-SoC ממשיך מיד לבאפר השלישי, והקצב קרוב ל-1/9ms, כ-111 frames בשנייה, כשחלק מה-frames מוצגים פעמיים. מתי מזיק: במצב mailbox, כשה-SoC מהיר מהמסך, הוא מרנדר frames שנזרקים בלי להיות מוצגים, וזה בזבוז חשמל. במצב של תור FIFO (render-ahead), ה-buffer הנוסף מוסיף frame שלם של latency מהקלט לתצוגה. בנוסף, יש עלות זיכרון: ב-2560×1440 עם 4 בתים לפיקסל, buffer נוסף הוא כ-14.7MB.",
+        "rubric": [
+          "8.33ms ל-frame, ו-double עם vsync יורד ל-60 Hz",
+          "triple: כ-111 frames בשנייה בלי המתנה",
+          "mailbox מבזבז חשמל, FIFO מוסיף frame של latency",
+          "עלות זיכרון: כ-14.7MB ב-1440p"
+        ]
+      }
     },
     {
       "level": 3,
@@ -957,7 +1166,16 @@
         "שגוי: release מכסה רק את הכיוון של ה-writer אל ה-reader. הכיוון ההפוך (ה-reader סיים לקרוא) לא מסונכרן."
       ],
       "id": "conc.lock-free.q36",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "לפני ה-exchange ה-reader בודק את ביט ה-dirty. איזה memory order צריך לבדיקה הזו, ומה קורה אם ה-reader מבצע exchange כשהביט לא דלוק?",
+        "modelAnswer": "הבדיקה המוקדמת היא רק רמז, ולכן relaxed מספיק: הסנכרון של תוכן ה-frame מגיע מה-acquire של ה-exchange עצמו. אם ה-writer פרסם בין הבדיקה ל-exchange, ה-exchange פשוט מקבל את ה-frame החדש. אם הבדיקה פספסה פרסום, ה-reader יתפוס אותו בבדיקה הבאה. אם ה-reader מבצע exchange בלי dirty, ב-middle נמצא ה-buffer שהוא עצמו הניח שם בפעם הקודמת, כלומר frame ישן יותר ממה שהוא מציג עכשיו, והתצוגה קופצת אחורה בזמן. לכן הבדיקה הכרחית לנכונות, לא רק לביצועים. ה-reader מחזיר ל-middle את ה-front שלו בלי ביט ה-dirty, כדי לסמן שאין חדש, ומנקה את הביט מהאינדקס שקיבל לפני שהוא משתמש בו.",
+        "rubric": [
+          "בדיקה מוקדמת ב-relaxed, הסנכרון מה-acquire של ה-exchange",
+          "exchange בלי dirty מחזיר frame ישן יותר: התצוגה חוזרת אחורה",
+          "ה-reader כותב front בלי DIRTY, ומנקה את הביט מהאינדקס שקיבל"
+        ]
+      }
     },
     {
       "level": 4,
@@ -985,7 +1203,16 @@
       ],
       "problem": "Meta Reality Labs in-domain design: shared memory FIFO between cores, how to sync access",
       "id": "conc.lock-free.q37",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "cache maintenance עובד על cache lines שלמות. מה משתבש אם ה-FIFO לא מיושר ל-cache line, או אם head ודגימות או נתונים שכותב core B חולקים line? ובאיזה סדר B חייב לבצע את הפעולות?",
+        "modelAnswer": "clean ו-invalidate פועלים על line שלמה. אם line אחת מכילה נתונים שכותבים שני ה-cores, למשל tail של B ליד דגימות של A, לכל core יש עותק dirty משלו, ומי שעושה clean אחרון דורס ב-SRAM את הבתים של השני: lost update. invalidate אצל B יכול גם למחוק כתיבות של B עצמו שעוד לא נכתבו לזיכרון. לכן: מיישרים את המאגר ומרפדים לגודל ה-line (32 או 64 בתים לפי המעבד), head ו-tail כל אחד ב-line נפרד, ועל כל line יש כותב יחיד. הסדר אצל B: קורא את head, ואז invalidate לטווח הדגימות החדשות, ורק אז קורא אותן. invalidate לפני קריאת head עלול להשאיר lines שנטענו ספקולטיבית עם תוכן ישן.",
+        "rubric": [
+          "פעולות על line שלמה: line עם שני כותבים גורמת ל-lost update",
+          "יישור וריפוד לגודל line, כותב יחיד לכל line, head ו-tail נפרדים",
+          "סדר אצל B: קריאת head, invalidate, ואז קריאת הדגימות"
+        ]
+      }
     },
     {
       "level": 3,
@@ -1006,7 +1233,17 @@
       ],
       "explanation": "False sharing הוא הבעיה הנפוצה ביותר ב-ring buffers מהירים. הפתרון הסטנדרטי: כל אינדקס על cache line משלו, ולעתים גם עותק מקומי (cached) של האינדקס של הצד השני, כדי לקרוא אותו רק כשצריך.",
       "id": "conc.lock-free.q38",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "איך מוכיחים false sharing עם כלי ולא בניחוש, ולמה יש מימושים שמיישרים ל-128 בתים ולא ל-64?",
+        "modelAnswer": "perf c2c (record ואז report) מראה cache lines עם HITM, כלומר loads שפגעו ב-line שנמצאת במצב modified ב-cache של core אחר, ומפרט את ה-offsets בתוך ה-line. אם שני offsets שונים, אחד שנכתב ע״י thread אחד והשני ע״י thread אחר, הם באותה line, זה false sharing. 128: ה-adjacent line prefetcher של Intel מביא זוגות של lines של 64 בתים, ולכן שני משתנים ב-lines סמוכות עדיין מפריעים זה לזה. בנוסף, ב-Apple M1 ובמעבדי ARM מסוימים ה-line היא 128 בתים. C++17 מציע std::hardware_destructive_interference_size, אבל הערך שלו קבוע בזמן קומפילציה, ו-GCC מזהיר שהוא עלול להשתנות בין גרסאות ולשבור ABI. לכן folly ואחרים מקבעים 128.",
+        "rubric": [
+          "perf c2c עם HITM ו-offsets בתוך ה-line",
+          "adjacent line prefetcher מביא זוגות של 64 בתים",
+          "line של 128 בתים ב-Apple M1 ובחלק מ-ARM",
+          "hardware_destructive_interference_size והבעיה של ABI"
+        ]
+      }
     },
     {
       "level": 5,
@@ -1027,7 +1264,17 @@
       ],
       "explanation": "מודל הזיכרון של C++ מגדיר את הסדר, לא החומרה. relaxed store מאפשר לקומפיילר ולמעבד להזיז כתיבות קודמות אחריו. הזוג release/acquire הוא המינימום הנכון לפרסום נתונים דרך אינדקס.",
       "id": "conc.lock-free.q39",
-      "lesson": "conc.lock-free"
+      "lesson": "conc.lock-free",
+      "followUp": {
+        "prompt": "תן דוגמה קונקרטית איך קומפיילר יכול לשבור את הקוד הזה על x86, כמה עולה התיקון שם, ואיך תמצא את הבאג אם כל הבדיקות שלך רצות על x86?",
+        "modelAnswer": "relaxed store לא אוסר על הקומפיילר להזיז אחריו כתיבות רגילות שקודמות לו. למשל, בלולאה שדוחפת כמה פריטים הוא רשאי להחזיק את ה-x ברגיסטר, לכתוב את head, ולבצע את הכתיבה ל-buf רק אחר כך, או לאחד כתיבות. בפועל קומפיילרים נזהרים סביב atomics, אבל זה מותר, ויכול להופיע בגרסה הבאה או ברמת אופטימיזציה אחרת. התיקון על x86 עולה אפס: release store מתקמפל ל-mov רגיל, אותה הוראה כמו relaxed, והוא רק מגביל את הקומפיילר. כדי למצוא את הבאג: ThreadSanitizer מודל את מודל הזיכרון של C++ ולא את החומרה, ולכן יסמן race על buf גם על x86. אפשר גם להשתמש ב-model checker כמו Relacy או CDSChecker, או להריץ stress tests על ARM.",
+        "rubric": [
+          "קומפיילר רשאי להזיז כתיבה רגילה אל אחרי relaxed store",
+          "release על x86 הוא mov רגיל, התיקון חינמי",
+          "TSan מזהה race לפי מודל C++ גם על x86",
+          "model checkers או בדיקות על ARM"
+        ]
+      }
     }
   ]
 }

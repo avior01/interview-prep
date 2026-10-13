@@ -366,7 +366,17 @@
         "נכון. החלק הוא weight / סכום המשקלים: 1024 / (1024 + 335) = 1024 / 1359 ≈ 0.75.",
         "לא נכון. כ-95% היה מתאים להפרש nice גדול בהרבה (למשל nice 0 מול nice 13 בערך). 5 צעדים של פי 1.25 נותנים רק יחס של כ-3:1.",
         "לא נכון. nice לא מונע ריצה ב-fair class; גם nice 19 (weight 15) מקבל כ-1.4%. זו טעות של מי שמבלבל nice עם עדיפות קשיחה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עכשיו thread שלישי עם nice ‎-5 (weight 3121) מצטרף לאותו core. כמה מקבל כל אחד? ולמה בחרו בקרנל שכל צעד של nice יהיה יחס קבוע (פי 1.25) ולא הפרש קבוע של אחוזים?",
+        "modelAnswer": "סכום המשקלים: 3121 + 1024 + 335 = 4480. nice ‎-5 מקבל 3121/4480 ≈ 70%, nice 0 מקבל 1024/4480 ≈ 23%, ו-nice 5 מקבל 335/4480 ≈ 7.5%. היחס הקבוע (בערך 1.25 לכל צעד) נבחר כדי שההשפעה של הפרש nice תהיה זהה בלי קשר לרמה המוחלטת: שני tasks עם nice 0 ו-1 מתחלקים כמו שני tasks עם nice 10 ו-11, כ-55% מול 45%. עם הפרש קבוע של אחוזים, ההשפעה הייתה תלויה במספר ה-tasks ובערכים שלהם, ולא הייתה עקבית. המשמעות: 5 צעדים ≈ פי 3, ו-10 צעדים ≈ פי 9.3, כך ש-nice הוא כלי יחסי, לא תקרה.",
+        "rubric": [
+          "חישוב: 70% / 23% / 7.5% בערך",
+          "יחס קבוע = השפעה זהה בכל רמת nice",
+          "צעד nice אחד ≈ 55% מול 45%",
+          "nice יחסי, לא תקרה קשיחה"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q08",
@@ -394,7 +404,17 @@
         "לא נכון. ה-scheduler מעדיף את אותו core בגלל cache חם, אבל זו העדפה בלבד: ב-wakeup הוא יכול לבחור core פנוי אחר, ו-load balancing מזיז tasks.",
         "נכון. affinity (sched_setaffinity, taskset) הוא אילוץ קשיח על קבוצת ה-cores המותרים, ו-load balancing לא עובר עליו.",
         "נכון. ב-SCHED_OTHER, sched_yield רק מסמן את ה-task; אם אין task אחר ראוי הוא חוזר מיד, ואין הבטחה שה-thread הרצוי ירוץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-scheduler העביר thread ל-core אחר ב-wakeup כדי שירוץ מיד. מתי זה מזיק לביצועים יותר משזה עוזר, ואיך תזהה את זה?",
+        "modelAnswer": "העברה ל-core אחר מאבדת cache חם (L1 ו-L2 פרטיים, ולפעמים L3 אם זה socket אחר) ו-TLB. כשה-thread מעבד working set גדול שנמצא ב-L2 של ה-core הקודם, העלות של מילוי מחדש יכולה להיות גבוהה מההמתנה הקצרה ל-core המקורי. זה מזיק במיוחד ב-NUMA: העברה ל-socket אחר הופכת כל גישה לזיכרון לגישה רחוקה. זיהוי: `perf stat -e cpu-migrations` על התהליך, `perf sched` שמראה מעברים, או עמודת PSR ב-`ps -L` לאורך זמן. אם המעברים מתואמים עם עלייה ב-cache misses וב-latency, מצמידים threads עם affinity ל-cores או ל-NUMA node, או מכוונים פרמטרי scheduler.",
+        "rubric": [
+          "אובדן cache חם ו-TLB",
+          "NUMA: מעבר socket הופך גישות לרחוקות",
+          "perf stat cpu-migrations / PSR",
+          "affinity ל-core או ל-NUMA node"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q09",
@@ -415,7 +435,17 @@
         "לא נכון. שניהם ב-SCHED_OTHER, ולכן CFS/EEVDF מחלק ביניהם את ה-core. starvation מלא קורה עם עדיפויות RT, לא עם הוגנות לפי משקל.",
         "לא נכון. load balancing מכבד את affinity ולא יכול להעביר task ל-core שאינו מותר לו. זו בדיוק המלכודת של הצמדה לא מתוכננת.",
         "נכון. שני tasks עם משקל שווה על runqueue אחד מתחלקים בערך 50:50, ו-affinity מונע מה-balancer להעביר אחד מהם. התוצאה: throughput חצוי ו-nonvoluntary switches גבוהים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה כן רוצה להצמיד threads ל-cores כדי לשמור על cache חם. איך תתכנן את ההצמדה במכונה עם 2 sockets ו-hyperthreading, כך שלא תיצור את הבעיה הזו בדרך אחרת?",
+        "modelAnswer": "קודם ממפים את הטופולוגיה: `lscpu -e` או `hwloc-ls` מראים אילו logical CPUs הם siblings של אותו core פיזי, ואילו שייכים לאיזה socket ו-NUMA node. כלל ראשון: thread אחד לכל core פיזי לעבודה כבדה, כי שני hyperthreads על אותו core חולקים יחידות ביצוע ו-L1/L2 ולכן כל אחד מקבל בערך 50-70% מהביצועים. כלל שני: threads שמשתפים נתונים (למשל producer ו-consumer) על אותו socket, כדי שה-L3 יהיה משותף, והזיכרון שלהם מוקצה באותו NUMA node (`numactl --membind` או first-touch). כלל שלישי: להשאיר core אחד לפחות ל-housekeeping (IRQs, kworkers, מערכת), ולהחריג אותו מה-threads הקריטיים. לבסוף, לאמת עם `ps -L -o tid,psr,pcpu` שכל thread רץ איפה שתוכנן.",
+        "rubric": [
+          "מיפוי טופולוגיה: lscpu -e / hwloc",
+          "thread כבד אחד לכל core פיזי, לא שני hyperthreads",
+          "threads משתפים על אותו socket, זיכרון באותו NUMA node",
+          "core ל-housekeeping ואימות עם ps -L"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q10",
@@ -453,7 +483,17 @@
         "לא נכון. אין כאן מעגל של משאבים נעולים, ולכן זה לא deadlock. הבעיה היא בזבוז CPU והיעדר הבטחה, לא חסימה הדדית.",
         "נכון. ב-SCHED_OTHER ההתנהגות של sched_yield לא מוגדרת היטב: בלי מתחרה הוא חוזר מיד והלולאה שורפת 100% CPU, ועם מתחרה אין הבטחה שזה ה-thread שמדליק את הדגל. בנוסף יש syscall בכל סיבוב; futex, condition variable או atomic::wait מרדימים באמת.",
         "לא נכון. sched_yield לא משנה עדיפות או nice בכלל, לא זמנית ולא לצמיתות. ב-SCHED_FIFO הוא רק מעביר את ה-thread לסוף התור של אותה עדיפות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-SCHED_FIFO, ל-sched_yield יש משמעות מוגדרת. באיזה מקרה זה שימושי בפועל, ובאיזה מקרה זה עדיין לא יעזור?",
+        "modelAnswer": "ב-SCHED_FIFO, sched_yield מעביר את ה-thread לסוף התור של אותה עדיפות, כך שכל thread אחר באותה עדיפות שמוכן לרוץ על אותו core ירוץ לפניו. זה שימושי כשיש כמה threads RT באותה עדיפות על core אחד, ורוצים לחלק זמן ביניהם באופן שיתופי (cooperative) בנקודות שבחרנו. זה לא יעזור אם ה-thread שצריך לרוץ הוא בעדיפות נמוכה יותר, כי yield לא נותן CPU לעדיפות נמוכה; אם הוא על core אחר, כי ה-yield משפיע רק על התור המקומי; או אם הוא SCHED_OTHER. במקרים האלה busy-wait עם yield ב-FIFO עדיין מרעיב אותו, ולכן גם ב-RT צריך מנגנון המתנה אמיתי (futex).",
+        "rubric": [
+          "FIFO yield: לסוף התור של אותה עדיפות",
+          "שימושי לחלוקה שיתופית בין threads באותה עדיפות",
+          "לא נותן CPU לעדיפות נמוכה או ל-SCHED_OTHER",
+          "משפיע רק על התור של אותו core"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q12",
@@ -474,7 +514,17 @@
         "נכון. cpu.weight הוא חלוקה יחסית שמופעלת רק כשיש תחרות (work-conserving). cpu.max הוא quota לכל period שעוצר את ה-group כשהקוטה נגמרת, גם כשיש cores פנויים.",
         "לא נכון, זה הפוך. weight הוא היחסי וה-max הוא התקרה הקשיחה. מי שבוחר כך מתבלבל כי weight נשמע כמו משהו מגביל.",
         "לא נכון. cpu.max לא נוגע ב-nice של ה-threads; הוא פועל ברמת ה-group דרך CFS bandwidth control. weight הוא האנלוג של nice ברמת group."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת cpu.weight לשירות רגיש ל-latency ו-cpu.max ל-job רקע. אבל ה-job הרקע עדיין גורם לשירות להאט כשהוא רץ, גם כשהוא בתוך הקוטה. מה עוד הוא צורך שלא נמדד ב-CPU, ואיך מגבילים את זה?",
+        "modelAnswer": "גם כשה-job מוגבל בזמן CPU, הוא מתחרה על משאבים משותפים שאינם CPU time: ה-L3 המשותף (זיהום cache), רוחב הפס ל-DRAM, ה-I/O לדיסק, ו-page cache. בזמן שהוא רץ, הוא יכול לפנות מה-L3 את ה-working set של השירות, כך שהשירות סובל מ-misses גם כשהוא מקבל CPU. מגבלות: Intel CAT ו-MBA (Memory Bandwidth Allocation) דרך `resctrl` מגבילים את ה-L3 ואת רוחב הפס; `io.max` ו-`io.weight` ב-cgroup v2 מגבילים I/O; `memory.high` מגביל את ה-page cache שהוא צורך. בנוסף אפשר להפריד ב-cpusets כך שה-job רץ על cores אחרים (ואם אפשר, על socket אחר). מדידה: PSI (`cpu.pressure`, `memory.pressure`, `io.pressure`) של ה-cgroup של השירות מראה כמה זמן הוא נתקע על כל משאב.",
+        "rubric": [
+          "משאבים משותפים: L3, רוחב פס זיכרון, I/O, page cache",
+          "CAT/MBA דרך resctrl",
+          "io.max/io.weight ו-memory.high",
+          "PSI למדידת pressure"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q13",
@@ -489,7 +539,17 @@
         "מזכיר משאבים משותפים שאינם CPU: cache, זיכרון, I/O"
       ],
       "explanation": "מועמד חזק לא קופץ ישר ל-SCHED_FIFO 99, ומבין שבידוד CPU לא פותר תחרות על cache ו-memory bandwidth.",
-      "lesson": "sys.scheduling"
+      "lesson": "sys.scheduling",
+      "followUp": {
+        "prompt": "החלטת על cores מבודדים לשירות. אחרי שבוע מגלים ש-p99 השתפר, אבל p99.99 עדיין רע. מה סביר שעדיין חודר ל-cores האלה, ואיך תמצא אותו?",
+        "modelAnswer": "isolcpus או cpusets מוציאים tasks רגילים, אבל לא את כל ההפרעות: interrupts של התקנים שלא הוזזו (smp_affinity), timer tick (אם אין nohz_full), IPIs כמו TLB shootdowns מ-threads אחרים של אותו process, kworkers שמוצמדים לכל ה-cores, RCU callbacks, ו-SMIs של ה-BIOS שעוצרים את כל המכונה. בנוסף, ה-L3 ורוחב הפס עדיין משותפים עם ה-build. כדי למצוא: `/proc/interrupts` לפני ואחרי כדי לראות אילו מונים עולים על ה-cores המבודדים, `perf record -C <cpu>` או ftrace על ה-core כדי לראות מה עוד רץ שם, ו-`osnoise` tracer (קרנל 5.14+) שמודד בדיוק כמה זמן נגנב מה-thread ועל ידי מה (IRQ, softirq, thread, NMI). ל-SMIs, `hwlatdetect`.",
+        "rubric": [
+          "מקורות שנשארים: IRQs, tick, IPIs, kworkers, RCU, SMI",
+          "משאבים משותפים (L3, זיכרון) לא מבודדים",
+          "/proc/interrupts ו-perf/ftrace על ה-core",
+          "osnoise tracer / hwlatdetect"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q14",
@@ -510,7 +570,17 @@
         "לא נכון. עם משקל 15 מול 1024, ה-job מקבל רק את מה שה-process הקצר לא צורך; ה-process צורך כ-5% (50µs כל 1ms), כך שאין כאן חלוקה של 50:50.",
         "לא נכון. nice שייך ל-fair class ואינו נותן עדיפות RT; nice 19 הוא דווקא המשקל הנמוך ביותר.",
         "נכון. ההחלטה על wakeup preemption תלויה ב-heuristics ובגרנולריות של ה-scheduler, ובנוסף יש יציאה מ-C-state ו-cache/TLB שה-job זיהם. nice משנה רק משקלים ולא פותר את אלה; ל-latency צפוי צריך SCHED_FIFO או core נפרד."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלטת להעביר את ה-thread ל-SCHED_FIFO. מה הסיכונים שאתה מקבל בתמורה, ואיזו רשת ביטחון תשים?",
+        "modelAnswer": "ב-SCHED_FIFO ה-thread דוחק כל SCHED_OTHER על ה-core מיד ב-wakeup, אבל: באג שגורם ללולאה אינסופית יתקע את ה-core לכל tasks הרגילים, כולל kworkers שהמערכת צריכה (עד RT throttling). thread RT שמבצע page fault, הקצאת זיכרון או I/O חוסם עדיין יחכה, ובזמן הזה עלול להחזיק locks שאחרים צריכים. ו-priority inversion עם threads רגילים שמחזיקים locks משותפים. רשת ביטחון: להשאיר את RT throttling (95%) מופעל במערכת שאינה מבודדת לגמרי; להשתמש ב-PI mutexes; `mlockall(MCL_CURRENT | MCL_FUTURE)` והקצאה מראש כדי שלא יהיו page faults; `RLIMIT_RTTIME` שהורג thread RT שרץ יותר מ-X מיקרו-שניות בלי לחסום; ועדיפות בינונית (למשל 50-80) ולא 99, כדי לא לדחוק threads של הקרנל כמו migration או watchdog.",
+        "rubric": [
+          "באג = core תקוע לכל SCHED_OTHER",
+          "page faults/I/O ו-priority inversion עדיין קיימים",
+          "RT throttling, mlockall, PI mutexes",
+          "RLIMIT_RTTIME ועדיפות בינונית ולא 99"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q15",
@@ -531,7 +601,17 @@
         "לא נכון. cpu.max מגביל זמן CPU מצטבר, לא מספר threads מקבילים. 8 threads יכולים לרוץ במקביל על 8 cores, וזה בדיוק מה שגורם לקוטה להיגמר מהר.",
         "נכון. 8 threads × 12.5ms = 100ms של קוטה שנשרפים ב-12.5ms של זמן שעון, ואז כל ה-group מושהה עד סוף ה-period, כ-87.5ms. הממוצע 40% לא מונע throttling בתוך period בודד; רואים את זה ב-cpu.stat (nr_throttled).",
         "לא נכון. תחרות על lock יכולה להוסיף latency, אבל לא מתאימה לחתימה של השהיה קבועה באורך ה-period. הגודל של 90ms מול period של 100ms מצביע על throttling."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הצעת לצמצם threads ל-ceil של הקוטה. אבל אז שירות שקיבל burst של בקשות ינצל רק core אחד. אילו פתרונות עדיפים, ומה ההבדל ביניהם ב-trade-off?",
+        "modelAnswer": "האפשרויות: להסיר את cpu.max ולהשתמש ב-`cpu.weight`, כך שהשירות יכול להשתמש בכל ה-cores הפנויים ונוגע בהם רק כשיש תחרות. המחיר: אין תקרה קשיחה, ושכנים רועשים יכולים לקבל יותר ממה שתכננו. אפשרות שנייה: `cpu.max.burst` (קרנל 5.14+), שמאפשר לצבור קוטה שלא נוצלה ב-periods שקטים ולשרוף אותה ב-burst, וכך הממוצע נשאר מוגבל אבל ה-throttling בזמן burst קטן. שלישית: period קצר יותר (למשל 10ms במקום 100ms), שמקטין את משך ההשהיה המקסימלי, במחיר overhead גבוה יותר של חשבונאות. רביעית: להגדיל את הקוטה כך שתתאים ל-peak, במחיר הקצאה גדולה. בכל מקרה, מודדים את `nr_throttled` ו-`throttled_usec` ב-cpu.stat לפני ואחרי.",
+        "rubric": [
+          "cpu.weight: work-conserving בלי תקרה",
+          "cpu.max.burst לצבירת קוטה",
+          "period קצר מקטין השהיה מקסימלית",
+          "מדידה עם nr_throttled/throttled_usec"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q16",
@@ -552,7 +632,17 @@
         "לא נכון. סדר התעוררות הוא FIFO ואינו שומר על הוגנות לפי משקל. EEVDF מתחשב ב-lag וב-deadline, לא בזמן ההגעה.",
         "לא נכון. nice קובע רק את ה-weight, שנכנס לחישוב ה-lag וה-deadline. בחירה לפי nice בלבד הייתה עדיפות קשיחה שמרעיבה tasks חלשים.",
         "לא נכון. זה הכלל של CFS. EEVDF החליף אותו כדי להפריד הוגנות (lag) מ-latency (deadline); task עם vruntime מינימלי לא בהכרח נבחר."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך task ב-EEVDF מבקש slice קצר יותר, ומה המחיר שהוא משלם על ה-latency הטוב יותר? האם זה פותח פתח לניצול לרעה?",
+        "modelAnswer": "בקרנלים מאוחרים יותר (6.12 ואילך) task יכול לבקש slice דרך `sched_setattr` עם השדה `sched_runtime`, כשה-policy הוא SCHED_OTHER; ברירת המחדל קשורה ל-`base_slice` (כ-3ms, תלוי בגרסה ובמספר ה-cores). slice קצר נותן virtual deadline מוקדם יותר, ולכן ה-task נבחר מהר יותר כשהוא מתעורר, אבל רץ בפרוסות קטנות, כלומר יותר context switches ו-overhead לאותה כמות עבודה. אין ניצול לרעה מבחינת הוגנות: הזכאות (lag) עדיין מבטיחה שה-task לא יקבל יותר מהחלק ההוגן שלו לפי ה-weight; slice קצר משנה רק את \"מתי\", לא את \"כמה\". לכן latency-sensitive tasks עם עבודה קצרה מרוויחים, ו-tasks שמנסים לקבל יותר CPU לא.",
+        "rubric": [
+          "בקשת slice דרך sched_setattr (sched_runtime)",
+          "slice קצר = deadline מוקדם, יותר context switches",
+          "lag/eligibility שומרים על החלק ההוגן",
+          "משנה את מתי, לא כמה"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q17",
@@ -573,7 +663,17 @@
         "נכון. D הוא TASK_UNINTERRUPTIBLE: ה-task בתוך syscall בקרנל ומחכה, בדרך כלל ל-I/O (דיסק תקול, NFS, driver). הקרנל לא מעיר אותו בגלל signals, ולכן SIGKILL יטופל רק כשההמתנה תסתיים.",
         "לא נכון. SIGKILL (וגם SIGSTOP) לא ניתן לחסימה עם sigprocmask. מי שבוחר כך מניח שכל signal ניתן למיסוך.",
         "לא נכון. zombie מופיע במצב Z, לא D. הוא כבר מת ומחכה ש-parent יאסוף אותו ב-wait."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך 50 processes במצב D על שרת NFS שנפל, וה-load average קפץ ל-50 בזמן שה-CPU פנוי. איך תמצא איפה בדיוק הם תקועים, ומה אפשר לעשות בלי reboot?",
+        "modelAnswer": "load average ב-Linux סופר גם tasks במצב D, ולכן הוא גבוה למרות שה-CPU פנוי. כדי לראות איפה הם תקועים: `cat /proc/<pid>/stack` (root) מראה את ה-kernel stack, למשל `nfs_wait_bit_killable` או `rpc_wait_bit_killable`; `ps -eo pid,stat,wchan:32,cmd` מראה את פונקציית ההמתנה; ו-`echo w > /proc/sysrq-trigger` מדפיס ל-dmesg את כל ה-tasks במצב D. ה-hung task detector מדפיס אזהרה אחרי 120 שניות. מה אפשר לעשות: אם ההמתנה היא TASK_KILLABLE (רוב ההמתנות של NFS בקרנלים מודרניים), SIGKILL כן יעבוד. אפשר `umount -f` או `umount -l` (lazy) על ה-mount. אם השרת חוזר, ה-I/O ימשיך. למניעה: mount עם `soft` ו-`timeo` מתאימים (במחיר שגיאות I/O במקום המתנה), ולא לגעת ב-NFS מתהליכים קריטיים.",
+        "rubric": [
+          "load average כולל מצב D",
+          "/proc/<pid>/stack, wchan, sysrq-w",
+          "TASK_KILLABLE: SIGKILL עובד ברוב NFS מודרני",
+          "umount -f/-l, ו-mount soft למניעה"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q18",
@@ -702,7 +802,17 @@
         "נכון. זה priority inversion: ה-thread הבינוני מונע מהנמוך לרוץ ולשחרר, והגבוה מחכה בעקיפין לבינוני. priority inheritance (PTHREAD_PRIO_INHERIT) מעלה את מחזיק ה-mutex לעדיפות 90 עד השחרור.",
         "לא נכון. ה-thread הבינוני דווקא רץ; מי שנפגע הוא הגבוה. מי שבוחר כך מזהה שמישהו מחכה, אבל מתבלבל לגבי מי.",
         "לא נכון. RT throttling מגביל את כל ה-tasks RT יחד ל-950ms בשנייה; הוא לא הגורם להמתנה של 50ms כאן, והגדלתו לא פותרת את ההיפוך."
-      ]
+      ],
+      "followUp": {
+        "prompt": "PI פותר את ה-inversion, אבל הוא לא חינמי. מה העלות של PI mutex לעומת mutex רגיל, ובאיזה מקרה PI לא יעזור בכלל?",
+        "modelAnswer": "PI mutex ב-Linux ממומש עם `FUTEX_LOCK_PI`: ה-fast path בלי contention עדיין ב-user space (cmpxchg על TID), אבל בכל contention הקרנל צריך לבנות שרשרת בעלות, להעלות עדיפות של הבעלים, ובשרשראות מקוננות לעבור על כולן (PI chain walk), ובשחרור להחזיר עדיפות. זה יקר יותר מ-futex רגיל, ו-unlock עם ממתינים תמיד נכנס לקרנל. PI לא עוזר כשההמתנה היא לא ל-lock עם בעלים מוגדר: condition variables (מי \"מחזיק\" את התנאי?), semaphores, תורים שבהם thread נמוך אמור לייצר נתון, או I/O. במקרים האלה ה-thread הגבוה מחכה לעבודה של thread נמוך שאין לקרנל דרך לדעת עליה, וצריך לתכנן עדיפויות נכונות במפורש.",
+        "rubric": [
+          "FUTEX_LOCK_PI: contention דורש קרנל ו-PI chain",
+          "unlock עם ממתינים נכנס לקרנל",
+          "לא עוזר ל-cv/semaphore/תורים (אין בעלים)",
+          "צריך לתכנן עדיפויות ל-producer נמוך"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q25",
@@ -729,7 +839,17 @@
         "נכון. runqlat מודד עם BPF את הזמן מההתעוררות (enqueue) עד הריצה, ומציג היסטוגרמה של זמן ההמתנה ב-runqueue.",
         "נכון. /proc/<pid>/schedstat מכיל שלושה שדות: זמן ריצה, זמן המתנה ב-runqueue ומספר ריצות. השדה השני הוא בדיוק המדד המבוקש.",
         "לא נכון. cachegrind מדמה את היררכיית ה-cache וסופר misses; הוא מריץ את הקוד בסימולציה ולא רואה scheduling כלל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "runqlat מראה התפלגות bimodal: רוב ההמתנות מתחת ל-10µs, וקבוצה קטנה סביב 4ms. מה היית חושד שמייצר את הקבוצה השנייה, ואיך תוודא?",
+        "modelAnswer": "4ms הוא בערך משך של slice טיפוסי או tick ב-HZ=250, ולכן זה רמז ש-thread מתעורר אבל לא מקבל preemption מיידי, ומחכה ש-task אחר CPU-bound יסיים את הפרוסה שלו, או שה-core היה ב-idle וה-wakeup מגיע רק ב-tick. חשודים נוספים: CFS bandwidth throttling (אם יש cpu.max, ההמתנה קשורה ל-period), או thread RT אחר על אותו core. כדי לוודא: `perf sched timehist -w` מראה לכל wakeup איזה task רץ על ה-core באותו זמן ומי דחק את מי; `runqlat -P` או `-L` מפריד לפי PID/TID; ובדיקה של `cpu.stat` ב-cgroup ל-throttling. אם מתברר שזה task CPU-bound, הפתרון הוא להפריד אותו ל-core אחר או לתת ל-thread הרגיש slice קצר או עדיפות.",
+        "rubric": [
+          "4ms ≈ slice/tick ב-HZ=250",
+          "חשודים: task CPU-bound, throttling, RT אחר",
+          "perf sched timehist להצגת מי רץ באותו זמן",
+          "runqlat לפי PID ובדיקת cpu.stat"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q26",
@@ -750,7 +870,17 @@
         "לא נכון. quantum ב-RR קובע רק החלפה בין threads באותה עדיפות, והוא גלובלי ולא per-task. אין בו deadline ואין בדיקת קיבולת.",
         "לא נכון. nice ‎-20 רק מגדיל משקל ב-fair class. אין הבטחה לזמן או ל-deadline, וה-thread עדיין יכול לחכות ל-tasks אחרים.",
         "נכון. SCHED_DEADLINE מקבל runtime = 2ms, deadline = 10ms, period = 10ms, מתזמן לפי EDF, מגביל את ה-task ל-runtime שלו (CBS), ו-sched_setattr נכשל אם סכום runtime/period עובר את הקיבולת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-admission control קיבל את ה-task. מה קורה אם בפועל הוא צריך 3ms במחזור מסוים במקום 2ms, ומה זה אומר על איך מגדירים runtime?",
+        "modelAnswer": "SCHED_DEADLINE אוכף את ה-runtime שהוצהר באמצעות Constant Bandwidth Server: כשה-task ניצל 2ms במחזור הנוכחי, הוא מושהה (throttled) עד תחילת ה-period הבא, גם אם ה-core פנוי. לכן המחזור הזה יחרוג מה-deadline. זה בכוונה: החריגה של task אחד לא פוגעת ב-tasks אחרים, וזה מה שמאפשר להבטיח את כולם. המשמעות: runtime צריך להיות ה-WCET (worst-case execution time) שנמדד, עם מרווח בטחון, ולא הממוצע. אם ה-WCET לא ידוע, אפשר להגדיר את הדגל `SCHED_FLAG_DL_OVERRUN` כדי לקבל SIGXCPU בחריגה ולתעד אותה. בנוסף, הסכום הכולל של runtime/period מוגבל כברירת מחדל ל-95% לכל core, בדומה ל-RT throttling.",
+        "rubric": [
+          "חריגה מ-runtime = throttling עד ה-period הבא",
+          "מבודד חריגה של task אחד מהאחרים",
+          "runtime = WCET עם מרווח, לא ממוצע",
+          "SCHED_FLAG_DL_OVERRUN / SIGXCPU לזיהוי"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q27",
@@ -771,7 +901,17 @@
         "לא נכון. thread שעושה busy-poll לא משאיר את ה-core idle, ולכן ה-core לא נכנס ל-C-state. וגם לא הייתה הודעת RT throttling.",
         "לא נכון. watchdog (למשל soft lockup) מדווח על בעיה אבל לא עוצר thread ל-50ms כל שנייה. ההודעה ב-dmesg מצביעה ישירות על RT throttling.",
         "לא נכון. isolcpus רק מוציא את ה-core מה-scheduler הרגיל ומה-load balancing; הוא לא מגביל אחוז שימוש. ה-95% הוא היחס של RT throttling."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת busy-poll ב-SCHED_OTHER על core מבודד עם nohz_full. למה זה עובד בלי RT throttling, ומה הסיכון אם במקרה task אחר נוחת על ה-core הזה?",
+        "modelAnswer": "RT throttling חל רק על tasks במדיניות RT. thread ב-SCHED_OTHER שרץ לבד על core מבודד לא מתחרה באף אחד, ולכן הוא מקבל 100% מה-core בלי מגבלה; עם nohz_full, כשהוא ה-task היחיד ה-tick כמעט מבוטל, כך שגם הפרעות ה-timer נעלמות. הסיכון: אם task אחר (kworker מוצמד, thread של התהליך שנשכח, או משהו שהוצמד בטעות) נוחת על ה-core, ה-scheduler יחלק את הזמן ביניהם לפי משקלים, וה-thread שלנו יכול להיעצר לפרק זמן של slice (מילישניות), ובנוסף nohz_full יחזיר את ה-tick. לכן מנטרים את ה-core: `/proc/<pid>/task/*/stat` לבדיקת ה-CPU של כל thread, `perf sched` על ה-core, ו-tracepoint `sched_switch` עם פילטר על ה-CPU, כדי לתפוס כל task זר.",
+        "rubric": [
+          "RT throttling חל רק על RT policies",
+          "SCHED_OTHER לבד על core מקבל 100%",
+          "task זר → חלוקת זמן והשהיות של מילישניות",
+          "ניטור sched_switch על ה-core"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q28",
@@ -792,7 +932,17 @@
         "נכון. כל טרמינל הוא autogroup עם משקל שווה, וה-scheduler מחלק קודם 50:50 בין הקבוצות. nice 19 משפיע רק ביחס ל-tasks באותה קבוצה, ובקבוצה שלו הוא לבד.",
         "לא נכון. nice 19 אינו SCHED_IDLE; הוא עדיין רץ גם כשה-core עמוס. ועם autogroup הוא מקבל כמחצית.",
         "לא נכון. 25% מתאים ליחס nice 0 מול nice 5 (1024 מול 335), לא לתרחיש הזה. אין כאן חישוב שמוביל ל-25%."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה מריץ שרת build על מכונה של מפתחים עם autogroup, והמפתחים מתלוננים ש-`nice` לא עוזר. מה תעשה כדי שה-build באמת יהיה בעדיפות נמוכה מול ה-GUI?",
+        "modelAnswer": "עם autogroup ה-nice של process משפיע רק בתוך ה-session שלו, ולכן build ב-nice 19 בטרמינל מקבל את אותו חלק כמו כל ה-GUI session. אפשרויות: לשנות את ה-nice של ה-autogroup עצמה: `echo 19 > /proc/<pid>/autogroup` (משפיע על כל ה-session של ה-build); או להריץ את ה-build ב-cgroup עם `cpu.weight` נמוך, למשל `systemd-run --user --scope -p CPUWeight=10 make -j`; או לכבות autogroup (`kernel.sched_autogroup_enabled=0`), ואז nice חוזר להיות גלובלי. בהפצות עם systemd, autogroup מתחלף בפועל בהיררכיית cgroups של user slices ו-scopes, ולכן הדרך הנקייה היא דרך systemd. גם `SCHED_IDLE` (`chrt -i 0`) נותן משקל מינימלי בתוך הקבוצה.",
+        "rubric": [
+          "nice פועל רק בתוך ה-autogroup",
+          "/proc/<pid>/autogroup לשינוי nice של הקבוצה",
+          "systemd-run עם CPUWeight נמוך",
+          "כיבוי autogroup או SCHED_IDLE"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q29",
@@ -813,7 +963,17 @@
         "לא נכון. cache miss לא חוסם את ה-thread מבחינת ה-scheduler; ה-CPU פשוט מחכה לזיכרון וה-thread נשאר רץ. רק חסימה בקרנל (syscall, page fault שדורש I/O) משחררת את ה-core.",
         "לא נכון. שני ה-threads מוצמדים לאותו core, ו-load balancing מכבד affinity. לכן B לא יכול לעבור.",
         "נכון. ב-SCHED_FIFO thread רץ עד שהוא נחסם, מוותר או נדחק ע״י עדיפות גבוהה יותר. busy-wait לא עושה אף אחד מהם, ולכן B באותה עדיפות לא ירוץ; לכל היותר RT throttling יעצור את A לרגע (ואז ירוצו רק tasks רגילים, לא B)."
-      ]
+      ],
+      "followUp": {
+        "prompt": "החלפת את ה-busy-wait ב-`ready.wait(false)` של C++20. מה קורה מאחורי הקלעים ב-Linux, ולמה זה נכון גם כש-A ו-B על cores שונים?",
+        "modelAnswer": "`std::atomic::wait` ב-libstdc++ על Linux מבצע קודם spin קצר (בדיקה של הערך כמה פעמים) ואחר כך `FUTEX_WAIT` על כתובת האטומי (או על מונה בטבלת waiters אם הטיפוס לא בגודל 32 ביט), עם הערך הצפוי. `notify_one` או `notify_all` מבצעים `FUTEX_WAKE`. אם A ו-B על אותו core, A נרדם ומשחרר את ה-core, ו-B יכול לרוץ, לכתוב ולהעיר. אם הם על cores שונים, ה-spin הקצר בדרך כלל תופס את השינוי מהר בלי syscall, ואם לא, ה-futex מבטיח שאין lost wakeup, כי הקרנל משווה את הערך לפני השינה. חשוב: B חייב לקרוא ל-`ready.notify_one()` אחרי ה-store, אחרת A ישן לנצח. מבחינת RT, wakeup מ-futex מוסיף כמה מיקרו-שניות, ולכן בפעולות קריטיות על cores נפרדים busy-wait עדיין עדיף.",
+        "rubric": [
+          "spin קצר ואז FUTEX_WAIT עם ערך צפוי",
+          "notify_one = FUTEX_WAKE, חובה אחרי ה-store",
+          "אין lost wakeup בזכות ההשוואה בקרנל",
+          "על cores נפרדים busy-wait עדיין מהיר יותר"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q30",
@@ -829,7 +989,17 @@
         "חומרה וקרנל: C-states, SMT, SMI, ושקילת PREEMPT_RT"
       ],
       "explanation": "השאלה בודקת שיטה ולא רשימת טריקים: למדוד, לזהות את סוג החריגה (תקופתית, תלוית עומס), ולסגור את מקורות ה-latency אחד אחד.",
-      "lesson": "sys.scheduling"
+      "lesson": "sys.scheduling",
+      "followUp": {
+        "prompt": "מצאת שהחריגות קורות בדיוק כל 5 דקות בערך. מה זה מצמצם, ואילו מקורות תקופתיים היית בודק קודם?",
+        "modelAnswer": "תקופתיות מצביעה על משהו מתוזמן, לא על עומס אקראי. החשודים: cron jobs או systemd timers (למשל logrotate, updatedb, sysstat שאוסף נתונים); daemons שעושים polling תקופתי (NTP או chrony שמתקנים שעון, monitoring agents); writeback של page cache (`dirty_writeback_centisecs`, ברירת מחדל 5 שניות, ו-`dirty_expire_centisecs` 30 שניות); khugepaged או compaction; ו-SMIs של ה-BIOS לניטור חום או ECC, שעוצרים את כל ה-cores. כדי לאמת: `systemctl list-timers` ו-crontab, ftrace עם trigger שנעצר בזמן החריגה (למשל `cyclictest --breaktrace`) ומראה מה רץ על ה-core, ו-`hwlatdetect` כדי לבדוק SMIs. המטרה היא לקשר את זמן החריגה לאירוע ספציפי, ואז לבטל אותו, להזיז אותו מה-cores הקריטיים, או לתזמן אותו לזמן שקט.",
+        "rubric": [
+          "תקופתיות = משהו מתוזמן",
+          "cron/systemd timers, monitoring, writeback, khugepaged",
+          "SMI ו-hwlatdetect",
+          "ftrace עם trigger בזמן החריגה (cyclictest --breaktrace)"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q31",
@@ -899,7 +1069,17 @@
         "שגוי: load average לא מחולק במספר ה-cores. מנרמלים אותו ידנית אם רוצים."
       ],
       "explanation": "load average ב-Linux הוא ממוצע נע של מספר ה-tasks במצב R ובמצב D. משווים אותו למספר ה-cores: מעליו יש תור, ואם הוא גבוה וה-CPU פנוי, כנראה יש הרבה tasks במצב D (I/O).",
-      "lesson": "sys.scheduling"
+      "lesson": "sys.scheduling",
+      "followUp": {
+        "prompt": "על שרת עם 32 cores ה-load average הוא 40, אבל `top` מראה שה-CPU 60% idle. מה ההסבר הסביר, ואילו שני כלים יבדילו בין האפשרויות?",
+        "modelAnswer": "load average כולל tasks במצב R וגם במצב D. אם ה-CPU פנוי ברובו, רוב ה-load מגיע כנראה מ-tasks במצב D, כלומר ממתינים ל-I/O (דיסק איטי, NFS, swap). אפשרות אחרת: הרבה tasks במצב R אבל מוצמדים (affinity או cpuset) לחלק קטן מה-cores, כך שחלק מה-cores עמוסים מאוד וחלק פנויים. להבדיל: `vmstat 1` מראה בעמודה `r` את מספר ה-runnable ובעמודה `b` את מספר ה-blocked (D), וגם `wa` לזמן iowait. `mpstat -P ALL 1` מראה עומס לכל core, וחוסר איזון קופץ מיד. בנוסף, PSI (`/proc/pressure/cpu` ו-`/proc/pressure/io`) מראה ישירות כמה זמן tasks נתקעו על CPU או על I/O, וזה מדד מדויק יותר מ-load average.",
+        "rubric": [
+          "load = R + D",
+          "D = המתנה ל-I/O, או affinity שמרכז tasks",
+          "vmstat (r, b, wa) / mpstat -P ALL",
+          "PSI כמדד מדויק יותר"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q34",
@@ -936,7 +1116,17 @@
         "https://www.geeksforgeeks.org/?p=334558"
       ],
       "problem": "NVIDIA / Qualcomm: priority inversion and how to fix it",
-      "lesson": "sys.scheduling"
+      "lesson": "sys.scheduling",
+      "followUp": {
+        "prompt": "בין priority inheritance ל-priority ceiling: באיזה מצב ceiling עדיף, ומה הוא דורש מהמתכנן שלא דרוש עם inheritance?",
+        "modelAnswer": "ב-ceiling, כל מי שנועל את ה-mutex מקבל מיד את עדיפות ה-ceiling, בלי לחכות שמישהו ייחסם. היתרונות: הוא מונע גם deadlocks בין mutexes (בפרוטוקול המלא, Priority Ceiling Protocol), חוסם את ה-inversion לכל היותר critical section אחד, ולא דורש מעבר בקרנל ב-contention כדי לחשב שרשראות ירושה, ולכן ה-worst case צפוי וקל לנתח. החיסרון: המתכנן חייב לדעת מראש מה העדיפות הגבוהה ביותר של כל thread שאי פעם ינעל את ה-mutex ולהגדיר אותה (`pthread_mutexattr_setprioceiling`); טעות בערך שוברת את ההבטחה. בנוסף, כל נעילה מעלה עדיפות גם כשאין contention, כך שה-thread הנמוך דוחק threads בינוניים גם בלי צורך. ceiling מתאים למערכות סגורות וניתנות לניתוח (RTOS, avionics); inheritance מתאים למערכות דינמיות.",
+        "rubric": [
+          "ceiling מעלה עדיפות מיד בנעילה",
+          "worst case צפוי, חסם של critical section אחד",
+          "דורש לדעת מראש את העדיפות המקסימלית של המשתמשים",
+          "מעלה עדיפות גם בלי contention"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q35",
@@ -970,7 +1160,17 @@
         "שגוי: ברירת המחדל היא PTHREAD_PRIO_NONE. std::mutex ב-C++ לא מאפשר לבחור פרוטוקול, ולכן ב-RT משתמשים ב-pthread ישירות או בעטיפה."
       ],
       "explanation": "priority inheritance צריך לבקש במפורש. בקוד real-time ב-C++ זה אומר עטיפה של pthread_mutex_t עם PTHREAD_PRIO_INHERIT, כי ל-std::mutex אין ממשק לזה.",
-      "lesson": "sys.scheduling"
+      "lesson": "sys.scheduling",
+      "followUp": {
+        "prompt": "אתה כותב class של C++ שעוטף pthread_mutex_t עם PTHREAD_PRIO_INHERIT כדי להשתמש בו עם `std::lock_guard` ו-`std::condition_variable_any`. מה צריך לממש, ואיזו בעיה נשארת עם ה-condition variable?",
+        "modelAnswer": "כדי לעבוד עם `std::lock_guard` ו-`std::unique_lock` מספיק לממש `lock()`, `unlock()` ו-`try_lock()` (דרישות BasicLockable ו-Lockable), כשהבנאי מאתחל attr עם `pthread_mutexattr_setprotocol(PTHREAD_PRIO_INHERIT)`, ומוחקים copy ו-move. `std::condition_variable_any` עובד עם כל Lockable, אבל הוא ממומש בעצמו עם mutex פנימי רגיל ו-condition variable רגיל, כך שבזמן ההמתנה וה-notify יש mutex פנימי בלי PI, ו-inversion אפשרי שם. גם `pthread_cond_t` של glibc לא מספק PI על ה-condvar עצמו. בפרויקטי RT משתמשים בספרייה כמו `librtpi`, שמספקת condition variables תואמי PI, או נמנעים מ-cv בנתיב הקריטי ומעבירים נתונים בתורים lock-free.",
+        "rubric": [
+          "לממש lock/unlock/try_lock ולאתחל attr עם PRIO_INHERIT",
+          "condition_variable_any משתמש ב-mutex פנימי בלי PI",
+          "pthread_cond של glibc לא PI-aware",
+          "librtpi או תורים lock-free"
+        ]
+      }
     },
     {
       "id": "sys.scheduling.q37",

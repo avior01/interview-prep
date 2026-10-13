@@ -405,7 +405,17 @@
         "לא נכון: הדפסה (printk) ב-ISR היא איטית ולא עושה את העבודה ההכרחית. בלי ack ההתקן ימשיך להעלות את ה-interrupt (ב-level זה storm), ובלי תזמון עיבוד אף אחד לא יטפל בנתונים.",
         "לא נכון: `recv` היא system call שהאפליקציה מבצעת מה-user space שלה. ה-ISR רץ בהקשר אחר לגמרי ולא יכול \"לבצע recv בשם האפליקציה\"; הנתונים עוברים דרך ה-socket buffers.",
         "לא נכון: עיבוד הכול ב-top half מאריך את הזמן שבו interrupts חסומים, פוגע ב-latency של כל המערכת, ואסור בו להקצות עם שינה. האינטואיציה \"מוקדם = מהיר\" מתעלמת מהמחיר לשאר המערכת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-NAPI ה-poll מעבד עד budget של חבילות (ברירת מחדל 64). מה קורה אם ה-budget גדול מדי, ומה קורה אם הוא קטן מדי? איך זה מתחבר ל-latency של אפליקציות אחרות על אותו core?",
+        "modelAnswer": "budget גדול מדי אומר שה-softirq רץ זמן רב ברצף בלי לאפשר ל-tasks אחרים לרוץ, ולכן אפליקציות על אותו core סובלות מ-latency, וחבילות של תורים או התקנים אחרים מחכות. budget קטן מדי אומר הרבה סבבים קצרים עם overhead קבוע לכל סבב, ופחות יעילות cache ו-batching, ולכן throughput נמוך יותר. בנוסף ל-budget פר-NAPI יש גבול כולל ל-softirq של רשת (`net.core.netdev_budget` ו-`netdev_budget_usecs`), ואחרי שנגמר, העבודה הנותרת עוברת ל-`ksoftirqd`, שמתוזמן כמו thread רגיל. מדידה: `/proc/net/softnet_stat` מראה את המונה time_squeeze, שעולה כשה-softirq נעצר לפני שסיים את העבודה.",
+        "rubric": [
+          "budget גדול = softirq ארוך, latency לאחרים",
+          "budget קטן = overhead לכל סבב, throughput נמוך",
+          "netdev_budget/netdev_budget_usecs ומעבר ל-ksoftirqd",
+          "time_squeeze ב-/proc/net/softnet_stat"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q08",
@@ -432,7 +442,17 @@
         "נכון: ההתקן כותב ערך (data) לכתובת (address) שהוגדרו לו, וה-interrupt controller מתרגם את הכתיבה הזו ל-interrupt. אין קו פיזי ייעודי.",
         "לא נכון: MSI משנה רק את אופן המסירה של ה-interrupt. עדיין צריך handler שיטפל באירוע, ינקה סטטוס ויתזמן עיבוד.",
         "נכון: MSI-X תומך בעד 2048 וקטורים עם טבלה נפרדת לכל אחד. NIC מודרני מקצה וקטור לכל תור RX/TX ומכוון כל אחד ל-core אחר עם affinity, וזה הבסיס ל-RSS יעיל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עם MSI-X יש וקטור לכל תור. איך הכרטיס מחליט לאיזה תור (ולכן לאיזה core) להכניס חבילה, ולמה זה חשוב לביצועים של אפליקציה עם כמה threads?",
+        "modelAnswer": "ה-NIC מחשב hash (בדרך כלל Toeplitz) על ה-5-tuple של החבילה (כתובות, פורטים, פרוטוקול) ומשתמש בטבלת indirection כדי לבחור תור. זה נקרא RSS. כל ה-flow נוחת תמיד באותו תור, ולכן באותו core שה-IRQ שלו מטפל, וזה שומר על סדר החבילות ועל locality של cache. אם ה-thread שצורך את ה-flow רץ על core אחר, כל חבילה עוברת בין cores, ויש cache misses ו-IPIs. לכן מכוונים: IRQ affinity לכל תור, ומצמידים את ה-thread הצרכן לאותו core או לפחות לאותו NUMA node, או משתמשים ב-aRFS (Accelerated RFS) שמכוון את ה-NIC לפי ה-core שבו האפליקציה רצה. עם flow בודד ענק (כמו זרם דגימות SDR) RSS לא עוזר, כי כל החבילות נוחתות באותו תור.",
+        "rubric": [
+          "RSS: hash על 5-tuple וטבלת indirection",
+          "flow קבוע לתור, שומר על סדר ו-locality",
+          "לתאם IRQ affinity עם ה-thread הצרכן או aRFS",
+          "flow יחיד לא מתפזר על כמה תורים"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q09",
@@ -453,7 +473,17 @@
         "לא נכון: חיסכון ב-CPU מגיע ממיזוג interrupts, והמיזוג פירושו המתנה. תמיד יש מחיר, וכאן הוא ב-latency.",
         "נכון: עם `rx-usecs 100` הכרטיס מחכה עד 100µs (או עד סף מספר חבילות) לפני שהוא מעלה interrupt. חבילה ראשונה בסבב יכולה לחכות כל הזמן הזה, וזה trade-off ישיר בין CPU ל-latency.",
         "לא נכון: קצב הקו (link speed) לא משתנה. הכרטיס מקבל חבילות באותו קצב, ורק ההודעה ל-CPU מתעכבת ומאוחדת."
-      ]
+      ],
+      "followUp": {
+        "prompt": "במערכת ריאקטיבית ב-SDR יש לך תקציב של 50µs מקבלה עד תגובה. איך היית מכוון את ה-NIC ואת ה-kernel כדי לקבל latency נמוך בלי לשרוף את ה-CPU לגמרי?",
+        "modelAnswer": "קודם כל `rx-usecs 0` (או ערך מזערי) ו-`adaptive-rx off`, כדי שה-NIC יודיע מיד, וכך נחסך עד 100µs. אבל interrupt לכל חבילה עדיין עולה כמה מיקרו-שניות של context ו-wakeup, ולכן לקצבים גבוהים עדיף busy polling: `SO_BUSY_POLL` על ה-socket או `net.core.busy_poll`, שבו ה-thread עצמו מבצע poll על התור במשך זמן מוגבל לפני שהוא נרדם. זה מוריד את זמן ה-wakeup אבל מכלה core. פשרה: core ייעודי מבודד שעושה polling כל הזמן (כמו ב-DPDK), ושאר ה-cores נשארים עם coalescing רגיל. מודדים עם timestamping בחומרה (`SO_TIMESTAMPING`) כדי לדעת כמה latency יש בכל שלב.",
+        "rubric": [
+          "rx-usecs 0 ו-adaptive off",
+          "busy polling (SO_BUSY_POLL/net.core.busy_poll)",
+          "core ייעודי ל-polling מול CPU usage",
+          "מדידה עם hardware timestamping"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q10",
@@ -492,7 +522,17 @@
         "לא נכון: thundering herd הוא כשהרבה threads מתעוררים לאירוע אחד שרק אחד יכול לטפל בו. כאן הבעיה היא עודף interrupts, לא עודף threads שמתעוררים.",
         "לא נכון: priority inversion הוא כש-task בעדיפות גבוהה מחכה ל-lock שמחזיק task בעדיפות נמוכה. Priority Inheritance לא עוזר כש-interrupts גונבים את ה-CPU מכל ה-tasks.",
         "נכון: receive livelock: interrupts מקבלים עדיפות על כל task, ולכן ה-CPU מבלה את כל זמנו בקבלת חבילות שאף אחד לא מעבד, ובסוף זורק אותן. NAPI מכבה interrupts ועובר ל-polling עם budget, ו-ksoftirqd מעביר עודף softirq ל-thread שה-scheduler מתזמן בהוגנות."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ksoftirqd רץ בעדיפות רגילה (SCHED_OTHER). מה הבעיה שזה יוצר ל-thread RT שמחכה לחבילות, ומה עושה PREEMPT_RT אחרת בנושא?",
+        "modelAnswer": "כשעומס softirq גבוה עובר ל-ksoftirqd, עיבוד החבילות מתוזמן כמו כל thread רגיל, ולכן thread בעדיפות RT על אותו core יכול לדחוק אותו. התוצאה הפרדוקסלית: ה-RT thread מחכה לחבילות, אבל עיבוד החבילות שיעיר אותו לא רץ, כי ה-RT thread או thread RT אחר תופס את ה-CPU (למשל ב-busy wait). ב-PREEMPT_RT, ה-softirqs רצים בהקשר של threads, וה-IRQ handlers עצמם הם threads עם עדיפות RT שאפשר לכוון עם `chrt`, כך שאפשר לתת ל-IRQ thread של ה-NIC עדיפות גבוהה מה-thread שצורך את הנתונים. בקרנל רגיל, הפתרון הוא לשים את ה-RT thread על core אחר מזה שמטפל ב-IRQ, או לא לבצע busy wait ב-RT thread.",
+        "rubric": [
+          "ksoftirqd ב-SCHED_OTHER נדחק על ידי RT",
+          "RT thread מחכה לעיבוד שלא רץ",
+          "PREEMPT_RT: IRQs ו-softirqs כ-threads עם עדיפות שמכוונים",
+          "הפרדת cores בין IRQ ל-RT thread"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q12",
@@ -513,7 +553,17 @@
         "לא נכון: מהירות השעון משפיעה על כמה מהר רץ כל קטע, אבל ה-worst case נשלט ע״י הקטע הארוך ביותר שבו interrupts חסומים. שעון מהיר לא מבטל קטע irqs-off של 500µs.",
         "לא נכון: cache misses מוסיפים קצת לזמן הכניסה ל-handler, אבל זה סדר גודל של מאות ns. ה-worst case נקבע ע״י חסימות interrupts בתוכנה, לא ע״י גודל ה-cache.",
         "נכון: interrupt שהגיע בזמן ש-interrupts חסומים על ה-CPU ממתין עד שהם נפתחים. לכן ה-worst case ≈ קטע ה-irqs-off הארוך ביותר (local_irq_disable, spin_lock_irqsave, handlers אחרים), ועוד יציאה מ-C-state עמוק. ftrace irqsoff tracer מוצא אותו."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השתמשת ב-irqsoff tracer ומצאת שה-irqs-off section הארוך ביותר הוא 400µs בתוך driver של כרטיס גרפי. מה האפשרויות שלך כמהנדס מערכת, כשאין לך שליטה על הקוד של ה-driver?",
+        "modelAnswer": "irqs-off הוא per-CPU, ולכן הפתרון הראשון הוא בידוד: להזיז את ה-IRQs של ה-driver הבעייתי (ואת ה-threads שקוראים לו) ל-cores אחרים עם `smp_affinity`, ולשים את ה-workload הרגיש על core מבודד שה-driver לא רץ עליו. אם ה-driver נקרא מ-syscalls של תהליך, מצמידים את התהליך לאותם cores. אפשרות שנייה: PREEMPT_RT, שמהפך רוב ה-spinlocks ל-rt_mutex שלא מבטלים interrupts, אם ה-driver תואם. שלישית: לבדוק אם יש פרמטר של ה-driver או גרסה חדשה יותר, או לבטל תכונה (למשל power management) שגורמת לקטע הארוך. ובכל מקרה, מאמתים עם `cyclictest` על ה-core המבודד שה-worst case ירד.",
+        "rubric": [
+          "irqs-off הוא per-CPU: להזיז את ה-driver ל-cores אחרים",
+          "smp_affinity + הצמדת התהליך שמשתמש ב-driver",
+          "PREEMPT_RT מקצר את רוב הקטעים",
+          "אימות עם cyclictest"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q13",
@@ -537,7 +587,17 @@
         "לא נכון: ++ ב-ISR אינו אטומי כפקודה, אבל על core יחיד הקוד הראשי לא קוטע את ה-ISR, ולכן ההגדלה לא נשברת. הבעיה בצד הקורא, שכן יכול להיקטע.",
         "נכון: על Cortex-M (32 ביט) `return ticks` מתורגם לשתי טעינות של 32 ביט. אם ה-SysTick קוטע ביניהן בדיוק כשהחצי הנמוך גולש מ-0xFFFFFFFF ל-0, הקורא מחבר חצי ישן וחצי חדש, וזה נותן קפיצה של 2^32 ≈ 4.3 מיליארד. תיקון: חסימת interrupts סביב הקריאה או לולאת high-low-high.",
         "לא נכון: ISR נקרא ע״י החומרה ואין מי שיקבל ערך מוחזר. ההחזרה לא קשורה ל-torn read שמתואר בשאלה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "בחרת בתיקון של קריאה כפולה של החצי העליון. למה הוא נכון בדיוק, ומה היה קורה אילו ה-ISR היה רץ על core אחר (מערכת multi-core) ולא על אותו core?",
+        "modelAnswer": "האלגוריתם: קוראים high1, אחר כך low, אחר כך high2; אם high1 != high2, ה-ISR גלש את החצי התחתון באמצע ולכן קוראים שוב. אם הם שווים, low שייך לאותו high, כי הגלישה היחידה שמשנה את high קורית רק כש-low חוזר ל-0. התיקון נכון ב-core יחיד כי ה-ISR רץ בשלמותו בין שתי הוראות של הקורא, כלומר הכתיבה של שני החצאים אטומית מנקודת מבט הקורא. ב-multi-core הכותב יכול להיות באמצע עדכון (כתב low ועוד לא כתב high) בזמן שהקורא קורא, ובלי memory barriers גם הסדר שבו הכתיבות נראות לא מובטח. אז צריך seqlock (מונה גרסה עם barriers), או הוראה אטומית של 64 ביט (`ldrexd/strexd` ב-ARMv7-A), או lock.",
+        "rubric": [
+          "high, low, high שוב, לחזור אם השתנה",
+          "low גולש רק כש-high משתנה",
+          "ב-core יחיד ה-ISR אטומי מנקודת מבט הקורא",
+          "multi-core: צריך seqlock/barriers או אטומי 64 ביט"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q14",
@@ -552,7 +612,17 @@
         "כלי שיפור: coalescing, affinity ו-locality, busy polling, kernel bypass"
       ],
       "explanation": "זו שאלה שמבחינה בין מי שמכיר API לבין מי שמכיר את המערכת. UHD משתמש בדיוק במסלול הזה (או ב-DPDK) עבור ה-X310.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "במסלול שתיארת, איפה בדיוק מתבזבז הכי הרבה זמן בחבילה בודדת על kernel רגיל, ואיך תמדוד את זה בלי לשנות קוד?",
+        "modelAnswer": "בחבילה בודדת על מערכת לא עמוסה, הרכיבים הגדולים הם בדרך כלל: interrupt coalescing של ה-NIC (עשרות µs אם מופעל), יציאה מ-C-state עמוק של ה-core (עד עשרות או מאות µs), ו-wakeup של ה-thread שישן ב-`recvfrom` (scheduling, כמה µs). עיבוד המחסנית עצמו (IP, UDP, socket) הוא בערך מיקרו-שנייה עד כמה. למדידה בלי שינוי קוד: `SO_TIMESTAMPING` נותן חותמת זמן בחומרה או בדרייבר ואפשר להשוות לזמן ש-recvfrom חזר; `perf trace` או ftrace עם tracepoints כמו `napi:napi_poll`, `net:netif_receive_skb` ו-`sched:sched_wakeup` נותנים זמנים בין השלבים. בנוסף, `ethtool -c` מראה coalescing ו-`cpupower idle-info` מראה C-states.",
+        "rubric": [
+          "coalescing, C-state exit ו-wakeup הם הרכיבים הגדולים",
+          "עיבוד המחסנית עצמו קטן יחסית",
+          "SO_TIMESTAMPING להשוואת זמנים",
+          "ftrace/perf tracepoints בין השלבים"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q15",
@@ -573,7 +643,17 @@
         "נכון: הקרנל סופר interrupts שאף handler לא טיפל בהם (IRQ_NONE). אם 99,900 מתוך 100,000 לא טופלו, הוא מניח שקו level-triggered תקוע ומכבה אותו כדי לא לתקוע את המכונה. מכאן שההתקן מפסיק לעבוד. הסיבה: driver שלא מזהה או לא מנקה את הסיבה, או התקן בלי driver על קו משותף.",
         "לא נכון: interrupt מסוים מנותב ל-CPU אחד בכל פעם. מספר ה-CPUs לא מוביל ל-interrupts שלא טופלו.",
         "לא נכון: התקן שהתנתק בדרך כלל מפסיק להעלות interrupts, או שקריאות ממנו מחזירות 0xFFFFFFFF. ההודעה מצביעה על קו שממשיך לירות בלי שאיש מטפל בו."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה הבעיה הזו כמעט לא מופיעה עם MSI, ומה כן יכול להשתבש עם MSI שלא קיים עם INTx?",
+        "modelAnswer": "MSI הוא הודעה (כתיבה לזיכרון) ולא קו שנשאר פעיל, ולכן הוא edge-like: כל אירוע הוא הודעה אחת, ואין מצב שבו קו תקוע גורם ל-interrupts אינסופיים. גם אין קווים משותפים בין התקנים, ולכן handler של התקן אחד לא נקרא בגלל אחר. מה שיכול להשתבש: אירועים יכולים להתמזג או ללכת לאיבוד אם ה-driver לא מטפל נכון בכל העבודה שהצטברה, כמו ב-edge-triggered; אם ה-driver מבטל MSI בהתקן בזמן שאירוע אמור להישלח, ייתכן שאירוע יאבד ויגרום ל-hang; ולעיתים חומרה עם MSI באגי (או IOMMU interrupt remapping שמוגדר לא נכון) מובילה ל-interrupts שלא מגיעים בכלל. לכן drivers של MSI בודקים את מצב התור אחרי הפעלה מחדש של ה-interrupt.",
+        "rubric": [
+          "MSI = הודעה, אין קו שנשאר פעיל",
+          "אין שיתוף קווים",
+          "סיכון: אירועים מתמזגים/הולכים לאיבוד כמו ב-edge",
+          "לבדוק עבודה שהצטברה אחרי הפעלה מחדש של ה-interrupt"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q16",
@@ -594,7 +674,17 @@
         "לא נכון: כל ISR ב-Cortex-M רץ ב-handler mode, ללא קשר לעדיפות. thread mode הוא המצב של קוד רגיל ו-tasks.",
         "לא נכון: שניהם רגיסטרים מיוחדים של המעבד שתוכנה כותבת אליהם (MSR), ושניהם נאכפים בחומרה. ההבדל הוא באיזה interrupts כל אחד חוסם, לא \"מי\" משתמש בו.",
         "לא נכון: BASEPRI חוסם רק interrupts בעדיפות נמוכה או שווה לסף, וזה כל הטעם בו. BASEPRI=0 בכלל לא חוסם כלום."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך לולאת בקרה של מנוע ב-ISR בעדיפות גבוהה מעל הסף, והיא צריכה להודיע ל-task של FreeRTOS שיש נתון חדש. איך תעשה את זה בלי לשבור את הכלל?",
+        "modelAnswer": "שתי דרכים מקובלות. ראשונה: ה-ISR הדחוף כותב את הנתון למבנה lock-free, למשל ring buffer SPSC או משתנה עם דגל, ואז מפעיל בתוכנה interrupt בעדיפות נמוכה מהסף (למשל `NVIC_SetPendingIRQ` על וקטור לא בשימוש). ה-ISR הנמוך הזה מותר לו לקרוא ל-`xTaskNotifyFromISR` או `xQueueSendFromISR`, ולבסוף `portYIELD_FROM_ISR`. שנייה: ה-task מבצע polling על המבנה בכל tick או בתדירות שלו, בלי שה-ISR יקרא לקרנל בכלל. במבנה הלא נעול צריך להקפיד על volatile או atomics ו-barrier (`__DMB()` על Cortex-M עם cache או buses מורכבים), ועל כך שרק כותב אחד ייגש לכל אינדקס.",
+        "rubric": [
+          "מבנה lock-free (ring SPSC/דגל) מה-ISR הדחוף",
+          "הפעלת interrupt בעדיפות נמוכה בתוכנה (pend)",
+          "FromISR API רק מה-ISR הנמוך",
+          "חלופה: polling מה-task"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q17",
@@ -615,7 +705,17 @@
         "נכון: כתיבת MMIO ב-PCI היא posted, ה-CPU ממשיך מיד והכתיבה עדיין בדרך דרך bridges. ה-ISR חוזר, הקו עדיין פעיל וה-interrupt נכנס שוב בלי סיבה. קריאה חוזרת (read-back) מההתקן לא יכולה לעקוף את הכתיבה, ולכן היא מאלצת אותה להגיע.",
         "לא נכון: `mfence` מסדר גישות בתוך המעבד בלבד. הכתיבה כבר עזבה את ה-CPU ומתעכבת בבאס, ורק read מאותו התקן מבטיח שהיא הגיעה.",
         "לא נכון: סוג ההדק נקבע ע״י החומרה וה-interrupt controller, ו-INTx של PCI מוגדר level. אי אפשר \"להחליף ל-edge בתוכנה\" בלי לאבד אירועים על קו משותף."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-read-back הוסיף בערך 1µs ל-ISR. למה קריאת MMIO כל כך יקרה לעומת כתיבה, ואיך היית מתכנן את ההתקן (או ה-driver) כדי להימנע ממנה בנתיב החם?",
+        "modelAnswer": "קריאת MMIO היא non-posted: ה-CPU שולח Memory Read TLP דרך ה-root complex וה-bridges, ההתקן מחזיר completion, וה-core נתקע עד שהתשובה מגיעה, כלומר round-trip מלא על PCIe, בסדר גודל של מיקרו-שנייה. כתיבה היא posted ולכן ה-CPU ממשיך מיד. כדי להימנע מקריאות בנתיב החם: ההתקן כותב את הסטטוס (או אינדקס head) ב-DMA לזיכרון host, וה-driver קורא אותו מהזיכרון, שזה cache hit זול. במקום INTx משתמשים ב-MSI-X, שלא צריך ack דרך קריאה. ואם צריך flush לכתיבות, מאגדים כמה כתיבות לפני read-back אחד. מכאן הכלל בתכנון התקנים: \"CPU writes, device writes back\", כלומר קריאות MMIO רק בנתיב האיטי.",
+        "rubric": [
+          "MMIO read = non-posted, round-trip עד completion",
+          "כתיבה posted, ה-CPU לא מחכה",
+          "התקן כותב סטטוס ב-DMA לזיכרון host",
+          "MSI-X ואיגוד כתיבות לפני read-back אחד"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q18",
@@ -752,7 +852,17 @@
         "לא נכון: isolcpus מוציא את ה-core מה-load balancing של ה-scheduler בלבד. הוא לא מזיז IRQs של התקנים, לא מבטל את ה-tick ולא מונע IPIs, וכל אלה מוסיפים jitter.",
         "לא נכון: ל-LOC (timer מקומי) ול-TLB (IPIs) אין smp_affinity, כי הם per-CPU מטבעם. רק IRQs של התקנים ניתנים להזזה בדרך הזו.",
         "נכון: כל סוג מטופל אחרת: IRQ של התקן מזיזים עם smp_affinity ומחריגים מ-irqbalance, את ה-tick מצמצמים עם nohz_full, ואת TLB shootdowns מונעים ע״י הימנעות מ-munmap ו-mprotect ב-threads אחרים של אותו process."
-      ]
+      ],
+      "followUp": {
+        "prompt": "השתמשת ב-nohz_full על CPU 3. ה-tick עדיין קופץ פעם בשנייה, ולפעמים יותר. למה nohz_full לא מבטל אותו לגמרי, ומה עוד מפעיל tick על core כזה?",
+        "modelAnswer": "nohz_full מבטל את ה-tick התקופתי רק כשיש בדיוק task אחד runnable על ה-core. גם אז נשאר tick שיורי של בערך פעם בשנייה, כי ה-kernel צריך לעדכן סטטיסטיקות scheduler ו-timekeeping (ניתן להסיר אותו רק עם patches או פרמטר דיבאג). tick נוסף מופעל כשיותר מ-task אחד runnable (למשל kworker או thread של logging שהועבר בטעות ל-core), כשיש timers פעילים על ה-core (למשל timer של התהליך עצמו), כשמשתמשים ב-POSIX CPU timers, או כש-RCU צריך callbacks על ה-core (פותרים עם `rcu_nocbs`). לבדיקה: `perf stat -e irq_vectors:local_timer_entry -C 3` או tracepoint `timer:tick_stop` שמראה למה ה-tick לא נעצר.",
+        "rubric": [
+          "nohz_full רק עם task runnable יחיד",
+          "tick שיורי ~1Hz",
+          "מקורות נוספים: task שני, timers, RCU (rcu_nocbs)",
+          "אבחון עם tracepoint tick_stop או local_timer_entry"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q25",
@@ -773,7 +883,17 @@
         "לא נכון: threaded IRQ רץ כברירת מחדל ב-SCHED_FIFO בלי קשר ל-ONESHOT. הדגל עוסק ב-masking של הקו, לא בעדיפות.",
         "לא נכון: ה-handler הראשי רץ תמיד בהקשר hard IRQ ואסור לו לישון. רק ה-thread רשאי לישון, וזה נכון עם ONESHOT או בלעדיו.",
         "לא נכון: לכל threaded IRQ יש thread אחד. ONESHOT לא קשור לריבוי CPUs."
-      ]
+      ],
+      "followUp": {
+        "prompt": "עם ONESHOT הקו מושתק עד שה-thread מסיים. מה המחיר של זה ל-latency של התקנים אחרים, ומה קורה כשהקו משותף בין שני התקנים?",
+        "modelAnswer": "כשהקו מושתק, כל interrupt נוסף על אותו קו ממתין עד שה-thread יסיים, כלומר ה-latency של אירועים עוקבים כולל עכשיו זמן scheduling של ה-thread ואת זמן העיבוד שלו, לא רק זמן ה-hard IRQ. אם ה-thread בעדיפות נמוכה או נדחק, הקו יכול להיות מושתק מילישניות. כשהקו משותף, ההשתקה חלה על כל ההתקנים שעליו, ולכן התקן שני יחכה לטיפול של הראשון. Linux דורש שכל ה-handlers על קו משותף יסכימו על ONESHOT, אחרת הרישום נכשל. לכן drivers שזקוקים ל-latency נמוך מעדיפים MSI (וקטור לא משותף, ולא צריך להשתיק קו), או מנקים את הסיבה כבר ב-hard handler אם הגישה לרגיסטר מהירה.",
+        "rubric": [
+          "ה-latency כולל scheduling ועיבוד של ה-thread",
+          "ההשתקה חלה על כל ההתקנים בקו המשותף",
+          "כל ה-handlers בקו משותף חייבים להסכים על ONESHOT",
+          "MSI או ניקוי ב-hard handler כחלופה"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q26",
@@ -800,7 +920,17 @@
         "לא נכון: nesting קורה רק כשהעדיפות גבוהה ממש מזו שרצה. interrupt בעדיפות שווה ממתין (pending) עד שה-ISR הנוכחי מסתיים.",
         "נכון: ב-NVIC מספר נמוך יותר הוא עדיפות גבוהה יותר (0 הגבוהה ביותר מבין הניתנים להגדרה). זו מלכודת נפוצה למי שרגיל ש\"יותר גבוה = יותר דחוף\".",
         "לא נכון: BASEPRI=0 פירושו שאין מסכה בכלל. כדי לחסום את כל ה-interrupts הניתנים להסתרה משתמשים ב-PRIMASK."
-      ]
+      ],
+      "followUp": {
+        "prompt": "מה זה late-arrival ו-lazy FP stacking ב-Cortex-M4F, ואיך הם משפיעים על ה-latency של ISR כשהקוד הראשי משתמש ב-FPU?",
+        "modelAnswer": "late-arrival: אם interrupt בעדיפות גבוהה יותר מגיע בזמן שהחומרה עוד דוחפת רגיסטרים בשביל interrupt נמוך יותר, ה-core מנצל את אותו stacking ומתחיל ישר את ה-ISR הגבוה, בלי לשמור פעמיים. lazy FP stacking: כשהקוד שנקטע השתמש ב-FPU, ה-frame צריך לכלול גם S0-S15 ו-FPSCR (עוד 18 מילים). כדי לא לשלם על זה תמיד, החומרה רק שומרת מקום ב-stack, ומבצעת את השמירה בפועל רק אם ה-ISR עצמו משתמש ב-FPU. זה מוריד את ה-latency הטיפוסי ל-12 cycles כמו בלי FPU, אבל ISR שנוגע ב-float משלם על השמירה בהוראת ה-FP הראשונה שלו. לכן לגבי worst case, צריך לחשב את המקרה שבו ה-stacking המלא קורה, או להימנע מ-float ב-ISRs קריטיים.",
+        "rubric": [
+          "late-arrival: ISR גבוה מנצל stacking קיים",
+          "lazy FP: שומרים מקום, שומרים בפועל רק אם ה-ISR משתמש ב-FPU",
+          "frame מורחב: S0-S15 ו-FPSCR",
+          "worst case כולל FP stacking; להימנע מ-float ב-ISR קריטי"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q27",
@@ -824,7 +954,17 @@
         "לא נכון: napi_schedule הוא בדיוק מה שעושים מתוך hard IRQ handler, זו התבנית הסטנדרטית של NAPI.",
         "לא נכון: ה-handler הזה לא מתחרה עם קוד אחר על המבנה בשורות האלה, ו-lock לא היה משנה את הבעיה. הבעיה היא שה-handler מחזיר HANDLED גם כשההתקן שלו לא ביקש interrupt.",
         "נכון: על קו משותף כל ה-handlers נקראים על כל interrupt. בלי בדיקת `st & MY_IRQ_BITS` ה-handler תמיד מחזיר IRQ_HANDLED, מתזמן NAPI לחינם, ומסתיר מה-note_interrupt קו תקוע של ההתקן השני, כך שה-storm שלו לא מזוהה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הוספת בדיקה של ביטי הסטטוס. מה עוד צריך לבדוק ב-handler הזה כשההתקן הוא hot-pluggable או נכנס ל-runtime suspend, ולמה זה מסוכן במיוחד בקו משותף?",
+        "modelAnswer": "כשההתקן הוסר, נמצא ב-D3 או שה-link שלו נפל, קריאת MMIO מחזירה 0xFFFFFFFF (Master Abort). אם ה-handler רק בודק שיש ביטים דולקים, הוא יחשוב שכל הסיבות פעילות, יחזיר IRQ_HANDLED ואולי ינסה לגשת להתקן שלא קיים. בקו משותף ה-handler הזה נקרא בכל interrupt של ההתקן השני, ולכן הוא יפעל לחינם בכל פעם וישבור את גלאי ה-storm. התיקון: לבדוק `st == ~0u` ולהחזיר IRQ_NONE, ובנוסף, אם ה-driver יודע שההתקן ב-suspend (דגל או `pm_runtime_suspended`), לא לגשת לרגיסטרים בכלל ולהחזיר IRQ_NONE. גם בזמן `remove` צריך לסנכרן עם `free_irq` או `synchronize_irq` כדי שה-handler לא ירוץ אחרי שהזיכרון של ה-device שוחרר.",
+        "rubric": [
+          "התקן שהוסר/כבוי מחזיר 0xFFFFFFFF",
+          "לבדוק ~0 ולהחזיר IRQ_NONE",
+          "לא לגשת לרגיסטרים כשההתקן ב-suspend",
+          "synchronize_irq/free_irq לפני שחרור ב-remove"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q28",
@@ -845,7 +985,17 @@
         "לא נכון: level-triggered עם אותו קוד יקרא מילה אחת לכל כניסה ויבזבז interrupt על כל מילה, ותלוי בכך שההתקן מחזיק את הקו כל עוד ה-FIFO לא ריק. זה לא תיקון אלא העברת הבעיה.",
         "לא נכון: עדיפות קובעת מי קוטע את מי, אבל לא מונעת מיזוג של edges שמגיעים כשהדגל כבר דלוק, ולא את מחיקת האירוע ע״י ניקוי בסוף.",
         "נכון: ניקוי בתחילת ה-ISR מבטיח ש-edge חדש שמגיע בזמן הטיפול ידליק שוב את הדגל ולא יימחק. ריקון ה-FIFO בלולאה מטפל במקרה שכמה edges התמזגו לאחד. המחיר הוא לכל היותר ISR נוסף שימצא FIFO ריק."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-FIFO מתמלא מהר מכפי שה-ISR מרוקן אותו, וה-ISR נשאר בלולאה כמעט לנצח. מה הסכנה, ואיך היית מגביל את זה בלי לאבד נתונים?",
+        "modelAnswer": "ISR שלא יוצא מרעיב את הקוד הראשי ואת ה-interrupts בעדיפות נמוכה יותר, וזו גרסה של receive livelock. הפתרון: להגביל את מספר המילים שה-ISR קורא בכל כניסה (budget), ואז, אם ה-FIFO לא ריק, לסמן שיש עוד עבודה ולצאת. ההמשך יכול להיות ב-bottom half או ב-task שמרוקן ב-polling, כשה-interrupt של ה-GPIO מושבת עד שה-FIFO מתרוקן (בדומה ל-NAPI). אם הנתונים ממשיכים להגיע מהר מהעיבוד לאורך זמן, אין דרך לא לאבד נתונים: צריך flow control להתקן, DMA במקום PIO, או לבדוק שהעיבוד עצמו לא נעשה בתוך ה-ISR (להעתיק ל-ring buffer ולעבד בחוץ).",
+        "rubric": [
+          "ISR אינסופי מרעיב קוד ראשי (livelock)",
+          "budget לכל כניסה ל-ISR",
+          "המשך ב-bottom half/polling עם interrupt מושבת",
+          "עומס מתמשך: flow control או DMA, עיבוד מחוץ ל-ISR"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q29",
@@ -866,7 +1016,17 @@
         "לא נכון: גודל ה-TLB משפיע על TLB misses (page walks), לא על IPIs. העלייה בשורת TLB ב-/proc/interrupts מצביעה על shootdowns, לא על misses.",
         "לא נכון: isolcpus לא נוגע ב-TLB, ה-TLB הוא רכיב חומרה שתמיד פעיל. isolcpus רק מוציא את ה-core מה-load balancing.",
         "לא נכון: השאלה מציינת שה-thread לא נוגע בזיכרון חדש, ו-page faults לא מופיעים בשורת TLB ב-/proc/interrupts. העלייה בשורה הזו היא IPIs שמגיעים מבחוץ."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך תוכיח שה-spikes באמת נגרמים מ-TLB shootdowns ולא ממשהו אחר, ואיך תאתר את הקוד שמבצע את ה-munmap?",
+        "modelAnswer": "שלב ראשון, קורלציה: להריץ את ה-RT loop עם מדידת זמן בכל סבב, ובמקביל לדגום את שורת TLB ב-`/proc/interrupts` עבור ה-core הזה, ולראות שה-spikes מתואמים עם עליית המונה. מדויק יותר: ftrace עם tracepoint `tlb:tlb_flush` או `irq_vectors:call_function_entry` על ה-core המבודד, יחד עם marker מהאפליקציה בזמן spike. כדי למצוא את המקור: `perf record -e syscalls:sys_enter_munmap,syscalls:sys_enter_madvise,syscalls:sys_enter_mprotect -g` על כל התהליך, שמראה stack traces של הקוראים, או `strace -f -e trace=munmap,madvise,mprotect`. בדרך כלל מגלים free של בלוק גדול מ-`M_MMAP_THRESHOLD` (ברירת מחדל 128KB, דינמי) או malloc_trim של arena.",
+        "rubric": [
+          "קורלציה בין spikes למונה TLB של ה-core",
+          "ftrace tracepoint (tlb_flush/call_function)",
+          "perf record/strace על munmap/madvise/mprotect עם stack",
+          "המקור הטיפוסי: free של בלוק מעל סף ה-mmap"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q30",
@@ -882,7 +1042,17 @@
         "סדר נתונים מול מונה, affinity, ומדידת max latency"
       ],
       "explanation": "השאלה בודקת אם המועמד יודע לחשב, להבחין בין סוגי latency, ולבחור לפי הקצב. התשובה החזקה מגיעה למסקנה ש-polling מתאים כאן, ויודעת מתי לחזור ל-interrupts.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "בחרת polling על core ייעודי. ההנהלה רוצה להוריד צריכת חשמל כשאין שידור. איך תתכנן מעבר בין polling ל-interrupts בלי לאבד את הבלוק הראשון אחרי תקופה שקטה?",
+        "modelAnswer": "גישה היברידית כמו NAPI: ה-thread מבצע polling כל עוד יש בלוקים, ואחרי N סבבים ריקים (למשל 100µs בלי עבודה) הוא מאפשר interrupt בהתקן ונרדם. החלק העדין הוא race: בלוק יכול להגיע בין הבדיקה האחרונה לבין הפעלת ה-interrupt. לכן הסדר הנכון: להפעיל interrupt, ואז לבדוק שוב את ה-ring; אם יש בלוק, לבטל את ה-interrupt ולחזור ל-polling, אחרת לישון. כשה-interrupt מתעורר, ה-thread מבטל אותו וחוזר ל-polling. המחיר: הבלוק הראשון אחרי שקט סופג wakeup latency (ויציאה מ-C-state), ולכן אם תקציב 50µs חייב להתקיים גם לבלוק הראשון, מגבילים את עומק ה-C-state עם `cpu_dma_latency` או `idle=poll` על ה-core הזה בלבד, ומקבלים חסכון חלקי.",
+        "rubric": [
+          "polling עד N סבבים ריקים ואז מעבר ל-interrupt",
+          "race: להפעיל interrupt ואז לבדוק שוב",
+          "הבלוק הראשון סופג wakeup/C-state latency",
+          "הגבלת C-state (cpu_dma_latency) אם צריך"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q31",
@@ -1011,7 +1181,17 @@
         "שגוי: ל-ISR אין ערך החזרה."
       ],
       "explanation": "בתוך ISR קוראים רק לפונקציות reentrant וקצרות. לדיבאג: כותבים את האירוע ל-ring buffer, ומדפיסים מהלולאה הראשית, או משתמשים ב-GPIO toggle ולוגיק אנלייזר.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "הצעת ring buffer מה-ISR ללולאה הראשית. מה צריך כדי שהוא יהיה נכון בלי לבטל interrupts, ומה עושים כשהוא מתמלא?",
+        "modelAnswer": "ring של יצרן יחיד (ה-ISR) וצרכן יחיד (הלולאה): ה-ISR כותב רק את `head`, הלולאה כותבת רק את `tail`, ולכן אין צורך בנעילה. צריך שהאינדקסים ייקראו וייכתבו בגישה אטומית (בגודל מילה, למשל `uint32_t` מיושר) עם volatile או atomics, ושהכתיבה לנתון בבאפר תיראה לפני עדכון `head`: ב-core יחיד מספיק compiler barrier, ובמערכת עם cache או multi-core צריך memory barrier. גודל חזקה של 2 מאפשר mask במקום modulo. כשהבאפר מלא, ה-ISR לא יכול לחכות, ולכן הוא זורק את הבית החדש ומגדיל מונה overflow שהלולאה מדפיסה, כדי שאובדן נתונים יהיה גלוי. מגדירים את הגודל לפי הקצב המקסימלי כפול ה-latency הגרוע של הלולאה.",
+        "rubric": [
+          "SPSC: כל צד כותב רק אינדקס אחד",
+          "גישה אטומית לאינדקס + barrier בין נתון לאינדקס",
+          "מלא: לזרוק ולספור overflow, לא לחכות",
+          "גודל = קצב × latency גרוע"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q36",
@@ -1032,7 +1212,17 @@
         "נכון: התכנון הזה מתאים את ה-stacking לחוזה הקריאה של C: הפונקציה שומרת בעצמה r4-r11 אם היא משתמשת בהם, והחומרה דואגת לכל השאר."
       ],
       "explanation": "ב-Cortex-M, ISR הוא פונקציית C רגילה, כי ה-stacking בחומרה מתאים ל-AAPCS. EXC_RETURN ב-LR מסמן לחומרה שהחזרה היא מ-exception, וגם לאיזה stack לחזור. בארכיטקטורות אחרות (למשל AVR) צריך attribute כמו ISR() שמוסיף שמירת רגיסטרים ו-reti.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "ה-ISR שלך קורא לפונקציה שמשתמשת ב-R4-R11. מי שומר אותם, ומה המשמעות של זה לגבי ה-latency הכולל ושימוש ב-stack של המערכת?",
+        "modelAnswer": "R4-R11 הם callee-saved לפי AAPCS, ולכן הקומפיילר מוסיף push ו-pop שלהם בפרולוג ובאפילוג של ה-ISR (או של הפונקציה שהוא קורא) רק אם הם בשימוש. זה מבטיח שהקוד שנקטע ימצא אותם כפי שהשאיר. מבחינת latency: ה-hardware stacking של 8 מילים לוקח כ-12 cycles עד ההוראה הראשונה של ה-ISR, ופרולוג גדול מוסיף עוד cycles לפני העבודה האמיתית. מבחינת stack: ב-Cortex-M, ISRs רצים תמיד על MSP (ה-main stack), ולכן גודל ה-MSP צריך לכסות את סכום ה-frames של כל רמות ה-nesting האפשריות, כלומר frame לכל עדיפות שיכולה לקטוע אחרת, ועוד frames של FPU אם יש.",
+        "rubric": [
+          "R4-R11 callee-saved, הקומפיילר שומר לפי צורך",
+          "hardware stacking ~12 cycles + פרולוג",
+          "ISRs רצים על MSP",
+          "גודל MSP לפי nesting מקסימלי של עדיפויות"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q37",
@@ -1066,7 +1256,17 @@
         "https://www.jointaro.com/interviews/companies/nvidia/experiences/systems-software-engineer-santa-clara-ca-march-1-2016-no-offer-negative-588e423c/"
       ],
       "problem": "NVIDIA: ISR top half and bottom half",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "driver צריך לעבד נתונים אחרי interrupt, ולשם כך לקחת mutex שגם נגיעה ב-sysfs לוקחת. בין softirq, workqueue ו-threaded IRQ, מה תבחר ומה המחיר ב-latency לעומת האלטרנטיבות?",
+        "modelAnswer": "mutex יכול לישון, ולכן softirq ו-tasklet לא באים בחשבון, כי הם atomic context. נשארים workqueue ו-threaded IRQ, שניהם process context. threaded IRQ נותן thread ייעודי להתקן (עם `SCHED_FIFO` בעדיפות 50 כברירת מחדל), כך שה-latency נשלט וניתן לכוונון עם `chrt` ו-affinity, וה-thread לא חולק תור עם עבודות אחרות. workqueue משתמש ב-kworker משותף, שיכול להתעכב מאחורי עבודות של drivers אחרים, ורץ ב-SCHED_OTHER, כך שה-latency פחות צפוי. המחיר של שניהם לעומת softirq: context switch ו-wakeup, כלומר בערך כמה מיקרו-שניות במקום פחות ממיקרו-שנייה. לכן ל-driver עם mutex ודרישת latency, threaded IRQ היא הבחירה הטבעית.",
+        "rubric": [
+          "mutex פוסל softirq/tasklet (atomic context)",
+          "threaded IRQ: thread ייעודי, SCHED_FIFO 50, ניתן לכוונון",
+          "workqueue: kworker משותף, פחות צפוי",
+          "מחיר: context switch, מיקרו-שניות"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q38",
@@ -1087,7 +1287,17 @@
         "שגוי: אין כישלון. התזמון פשוט מתמזג או נדחה."
       ],
       "explanation": "tasklets הם serialized ביחס לעצמם, בניגוד ל-softirqs, וזה מקל על הכתיבה שלהם במחיר של סקלביליות. בקרנלים חדשים מעדיפים threaded IRQs או workqueues, ו-tasklets נחשבים מיושנים.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "tasklets נחשבים מיושנים. מה הבעיות שלהם שגרמו לקהילת ה-kernel לרצות להיפטר מהם, ולמה threaded IRQs פותרים אותן?",
+        "modelAnswer": "tasklet רץ בהקשר של softirq, ולכן אי אפשר לקבוע לו עדיפות: הוא תמיד קודם לכל thread, כולל threads של RT, ומוסיף latency שאין עליו שליטה. הוא גם רץ על ה-CPU שתזמן אותו, כך שאין שליטה טובה על affinity. ההבטחה שלא ירוץ במקביל לעצמו מגבילה סקלביליות, ואסור לישון בו, מה שמכריח drivers להשתמש ב-spinlocks וב-GFP_ATOMIC. ב-PREEMPT_RT הם מסבכים את המודל. threaded IRQ נותן thread עם עדיפות ו-affinity שאפשר לכוון, מותר לישון בו, והוא serialized ביחס לעצמו באופן טבעי (thread אחד). בקרנלים חדשים יש גם BH workqueues כתחליף ישיר ל-tasklets.",
+        "rubric": [
+          "tasklet בהקשר softirq, בלי שליטה בעדיפות",
+          "אסור לישון, מאלץ spinlocks/GFP_ATOMIC",
+          "threaded IRQ: עדיפות ו-affinity שניתנים לכוונון, מותר לישון",
+          "BH workqueues כתחליף בקרנלים חדשים"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q39",
@@ -1108,7 +1318,17 @@
         "שגוי: ה-tasklet לא יכול לנעול mutex, כי אסור לו לישון, ולכן הנעילה המשותפת חייבת להיות spinlock."
       ],
       "explanation": "בחירת הנעילה נקבעת לפי ההקשר החזק ביותר שנוגע בנתונים: process מול process → mutex. מול softirq או tasklet → spin_lock_bh. מול hard IRQ → spin_lock_irqsave.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "עכשיו גם ה-hard IRQ handler ניגש לאותם נתונים, בנוסף ל-tasklet ול-process context. איזו נעילה כל אחד מהשלושה צריך, ולמה ה-tasklet לא יכול להסתפק ב-spin_lock רגיל?",
+        "modelAnswer": "ההקשר החזק ביותר שנוגע בנתונים הוא עכשיו hard IRQ, ולכן כל מי שאינו ה-ISR חייב לבטל interrupts מקומיים בזמן ההחזקה. process context: `spin_lock_irqsave`, שמבטל interrupts (ובכך גם מונע הרצת softirqs, כי הם רצים ביציאה מ-interrupt). tasklet: גם הוא `spin_lock_irqsave` (או `spin_lock_irq`), כי אם יחזיק את הנעילה עם interrupts פעילים, ה-ISR על אותו CPU יסתובב לנצח. ה-ISR עצמו: `spin_lock` רגיל מספיק, כי interrupts כבר מבוטלים או לפחות הקו הזה מושתק (ב-Linux מודרני handlers רצים עם interrupts מקומיים כבויים). כלל: הנעילה נקבעת לפי ההקשר החזק ביותר שמשתמש בנתונים, ולא לפי ההקשר שבו נמצאים.",
+        "rubric": [
+          "process context: spin_lock_irqsave",
+          "tasklet: spin_lock_irqsave/irq, אחרת deadlock מול ISR",
+          "ISR: spin_lock רגיל",
+          "כלל: לפי ההקשר החזק ביותר שנוגע בנתונים"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q40",
@@ -1141,7 +1361,17 @@
         "https://www.glassdoor.com.au/Interview/NVIDIA-Interview-E7633-RVW5298526.htm"
       ],
       "problem": "Google / NVIDIA: spinlocks and interrupts, disable interrupts before taking a lock shared with an ISR",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "החלפת ל-spin_lock_irqsave. מה הכלי בקרנל שהיה מגלה את הבאג הזה עוד לפני שהמכונה נתקעה, ואיך הוא מצליח בלי שה-deadlock יקרה בפועל?",
+        "modelAnswer": "lockdep (CONFIG_PROVE_LOCKING) עוקב אחרי כל lock class ורושם באילו הקשרים הוא נלקח: ב-hardirq, עם interrupts פעילים, ב-softirq וכן הלאה. ברגע שהוא רואה שאותו lock נלקח גם בתוך hard IRQ וגם במקום אחר עם interrupts פעילים, הוא מדווח \"inconsistent {IN-HARDIRQ-W} -> {HARDIRQ-ON-W} usage\" עם stack traces של שני המקומות. הוא לא צריך את התזמון הרע עצמו: מספיק שכל אחד משני הנתיבים ירוץ פעם אחת, כי הוא בודק את הגרף של הקשרים וסדרי נעילה, לא אירועים מקריים. לכן מריצים בדיקות על kernel עם lockdep כבר בפיתוח. המחיר הוא overhead משמעותי, ולכן לא מפעילים אותו ב-production.",
+        "rubric": [
+          "lockdep / CONFIG_PROVE_LOCKING",
+          "מתעד הקשרים שבהם כל lock class נלקח",
+          "מספיק שכל נתיב ירוץ פעם אחת, לא צריך את ה-race",
+          "overhead, לשימוש בפיתוח"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q41",
@@ -1170,7 +1400,17 @@
         "שגוי: copy_to_user עלול לגרום ל-page fault שדורש שינה, וממילא אין ב-ISR 'process נוכחי' שהכתובת שלו רלוונטית."
       ],
       "explanation": "hard IRQ הוא atomic context: אסור כל דבר שעלול לישון. מותר: spinlocks, הקצאה עם GFP_ATOMIC, להעיר tasks ולתזמן bottom halves. עבודה שצריכה לישון עוברת ל-workqueue או ל-threaded IRQ.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "ב-hard IRQ אתה צריך להקצות buffer. `GFP_ATOMIC` מותר, אבל מה ההבדל בהתנהגות שלו לעומת GFP_KERNEL כשהזיכרון לחוץ, ואיך drivers טובים מתמודדים עם זה?",
+        "modelAnswer": "GFP_KERNEL יכול לישון: להפעיל reclaim, לכתוב דפים מלוכלכים, לחכות ל-I/O, ולכן הוא כמעט תמיד מצליח. GFP_ATOMIC לא ישן, ולכן אם אין דפים פנויים מיד הוא נכשל ומחזיר NULL; כדי לשפר סיכויים הוא רשאי לגשת לחלק מהעתודות (watermark reserves). לכן ה-driver חייב לטפל בכישלון בלי לקרוס: לזרוק את החבילה, להגדיל מונה, ולנסות שוב אחר כך. drivers טובים נמנעים מהקצאה ב-hard IRQ: הם מקצים buffers מראש (pool או ring שממולא מחדש מ-process context או מ-NAPI), כך שבנתיב החם רק לוקחים מה-pool. שימוש כבד ב-GFP_ATOMIC גם מרוקן את העתודות שהמערכת צריכה במצבי חירום.",
+        "rubric": [
+          "GFP_KERNEL ישן ומבצע reclaim, GFP_ATOMIC לא",
+          "GFP_ATOMIC יכול להחזיר NULL, צריך טיפול",
+          "GFP_ATOMIC משתמש בעתודות",
+          "pool מוקצה מראש במקום הקצאה ב-IRQ"
+        ]
+      }
     },
     {
       "id": "sys.interrupts.q42",
@@ -1191,7 +1431,17 @@
         "שגוי: גם עם core יחיד יש מקביליות מדומה: interrupts ו-preemption קוטעים קוד בכל רגע."
       ],
       "explanation": "API הנעילה של Linux מתאר את ההקשרים שצריך להגן מפניהם (preemption, bottom halves, interrupts), והמימוש מותאם לתצורה. לכן כותבים spin_lock_irqsave לפי הצורך הלוגי, גם על מערכת עם core אחד.",
-      "lesson": "sys.interrupts"
+      "lesson": "sys.interrupts",
+      "followUp": {
+        "prompt": "ב-PREEMPT_RT, `spin_lock` הופך ל-rt_mutex שיכול לישון. מה זה אומר על `spin_lock_irqsave` שם, ועל קוד שבאמת חייב לבטל interrupts?",
+        "modelAnswer": "ב-PREEMPT_RT רוב ה-IRQ handlers רצים כ-threads, ולכן נתונים שמשותפים בין handler לקוד אחר הם משותפים בין שני threads. לכן `spin_lock_irqsave` על `spinlock_t` לא מבטל interrupts בפועל: הוא נועל rt_mutex (שתומך ב-priority inheritance ויכול לישון), ו-flags נשמר רק לתאימות API. זה מה שמקצר את ה-irqs-off sections ומשפר latency. קוד שבאמת חייב לרוץ עם interrupts כבויים, כמו handlers שמסומנים `IRQF_NO_THREAD`, קוד של scheduler או של interrupt controller, משתמש ב-`raw_spinlock_t`, שנשאר spinlock אמיתי שמבטל interrupts גם ב-RT. לכן יש לשמור קטעים כאלה קצרים מאוד, כי הם מוסיפים ישירות ל-worst case latency של המערכת.",
+        "rubric": [
+          "ב-RT handlers הם threads",
+          "spin_lock_irqsave על spinlock_t לא מבטל interrupts ב-RT",
+          "raw_spinlock_t לקוד שחייב interrupts כבויים",
+          "קטעי raw קצרים כי הם קובעים worst case"
+        ]
+      }
     }
   ]
 }

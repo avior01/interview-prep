@@ -388,7 +388,17 @@
         "נכון. cache maintenance עובד ברזולוציה של line שלם. אם באפר חולק line עם נתונים אחרים, invalidate יאבד כתיבות של ה-CPU ו-clean ידרוס נתוני DMA, ולכן מיישרים ומרפדים (ARCH_DMA_MINALIGN).",
         "שגוי. invalidate לפני TX זורק את הנתונים העדכניים שה-CPU כתב ועוד לא נכתבו ל-RAM, וההתקן יקרא נתונים ישנים. הבלבול נובע מהכיוון: invalidate שייך ל-RX, clean שייך ל-TX.",
         "נכון. dma_alloc_coherent מחזיר זיכרון שמתואם בין ה-CPU להתקן, ועל מערכת לא קוהרנטית הוא בדרך כלל ממופה כ-uncached. לכן אין צורך ב-sync, אבל גישת CPU אליו איטית."
-      ]
+      ],
+      "followUp": {
+        "prompt": "באפר RX של DMA הוא בתחום שבו ה-CPU רק קורא ולא כותב. האם יש הבדל בין clean+invalidate לבין invalidate בלבד לפני שמעבירים אותו להתקן? ומה העלות של cache maintenance על באפר של 1MB?",
+        "modelAnswer": "לפני שמעבירים באפר RX להתקן, אם יש בו lines מלוכלכים (למשל מאתחול קודם של ה-CPU), invalidate בלבד יזרוק אותם, וזה בסדר רק אם לא אכפת לנו מהתוכן הזה. הסכנה ההפוכה היא eviction של line מלוכלך באמצע ה-DMA שדורס את מה שההתקן כתב, ולכן מימושים רבים עושים clean+invalidate לפני העברה להתקן, ו-invalidate בלבד אחרי. העלות: פעולות cache maintenance פועלות line-by-line, כלומר 1MB / 64 בתים = 16384 הוראות, כל אחת יכולה לגרום לכתיבה ל-DRAM אם ה-line מלוכלך. זה עשרות עד מאות מיקרו-שניות, ולכן לבאפרים גדולים לפעמים זול יותר לבצע flush של כל ה-cache או להשתמש בזיכרון uncached. ב-Linux, `dma_sync_single_for_device` עם `DMA_FROM_DEVICE` מטפל בזה לפי הארכיטקטורה.",
+        "rubric": [
+          "line מלוכלך שמתפנה באמצע DMA דורס נתוני התקן",
+          "לפני: clean+invalidate (או invalidate), אחרי: invalidate",
+          "חישוב: 16384 lines ל-1MB, פעולה לכל line",
+          "לבאפר גדול לפעמים עדיף flush מלא או uncached"
+        ]
+      }
     },
     {
       "id": "sys.dma.q08",
@@ -409,7 +419,17 @@
         "שגוי. החומרה לא בודקת שיתוף של cache lines ולא מדווחת שגיאה. ההשחתה שקטה, ולכן הבאג קשה למצוא.",
         "נכון. maintenance עובד על line שלם: invalidate לפני קריאת הבאפר זורק גם את העדכון של rx_count שעוד לא נכתב ל-RAM, ו-write-back של ה-line דורס את מה שה-DMA כתב לבאפר. אין פעולה נכונה, ולכן מיישרים ומרפדים ל-line.",
         "שגוי. ברמת השפה אלה משתנים נפרדים, אבל ה-cache לא מכיר משתנים, רק lines. הטעות היא לחשוב על זיכרון ברזולוציית משתנה ולא ברזולוציית cache line."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית מגלה באג כזה בפועל? הוא מופיע פעם בכמה שעות, ורק תחת עומס. אילו כלים או טכניקות יחשפו אותו מהר יותר?",
+        "modelAnswer": "באג כזה תלוי בתזמון של evictions, ולכן נדיר. הצעד הראשון הוא סקירה סטטית: לבדוק שכל באפר DMA מוקצה בנפרד (kmalloc מבטיח `ARCH_DMA_MINALIGN`) ולא מוטמע ב-struct עם שדות אחרים. ב-Linux, `CONFIG_DMA_API_DEBUG` מזהה הפרות של ה-API, למשל sync לא תואם או גישה לא נכונה, אבל לא תמיד shared line. כדי לחשוף את הבאג מהר: להפעיל לחץ cache מקביל (thread שסורק זיכרון גדול) כדי להגדיל evictions, ולהכניס דפוס ידוע (canary) לפני ה-DMA ולבדוק אחריו. ב-ARM אפשר גם לבדוק עם `KASAN` או עם בדיקת alignment מפורשת (`WARN_ON` אם כתובת או אורך לא מיושרים ל-cache line).",
+        "rubric": [
+          "סקירה: באפר DMA לא חולק struct עם שדות CPU",
+          "CONFIG_DMA_API_DEBUG",
+          "הגברת לחץ cache כדי להגדיל evictions",
+          "canary/pattern ובדיקת alignment מפורשת"
+        ]
+      }
     },
     {
       "id": "sys.dma.q09",
@@ -430,7 +450,17 @@
         "נכון. coherent מתאים ל-descriptor rings ששני הצדדים קוראים וכותבים לסירוגין בלי sync (במחיר uncached על מערכת לא קוהרנטית). streaming (dma_map_single) מתאים לבאפרי נתונים שעוברים בעלות, עם sync רק בגבולות, כך שה-CPU נהנה מה-cache בעיבוד.",
         "שגוי. יש הבדל מהותי: coherent לא דורש sync אבל לרוב uncached, ו-streaming cacheable אבל מחייב map, sync ו-unmap. על x86 קוהרנטי ההבדל קטן, ולכן יש מי שחושב שאין הבדל.",
         "שגוי, ובדיוק הפוך. dma_alloc_coherent מקצה זיכרון חדש וממפה אותו. dma_map_single לא מקצה כלום, רק ממפה באפר קיים להתקן ומחזיר dma_addr_t."
-      ]
+      ],
+      "followUp": {
+        "prompt": "יש לך ring של 4096 descriptors של 16 בתים. ה-CPU כותב descriptor ואז קורא את ה-status שההתקן כתב. כמה עולה הגישה מה-CPU כשהזיכרון uncached על ARM, ומה הדרייברים המודרניים עושים כדי להקטין את העלות?",
+        "modelAnswer": "גישה ל-uncached היא ישירות ל-DRAM, כלומר בערך 100 ns או יותר לכל קריאה, בלי prefetch ובלי שימוש חוזר ב-line. בקריאת status של 4096 descriptors זה מאות מיקרו-שניות במקום קריאות זולות מה-cache. דרייברים מקטינים את זה בכמה דרכים: קוראים רק את השדה הרלוונטי (ה-status) ולא את כל ה-descriptor; מעבדים descriptors ב-batch ומעדכנים את ה-tail פעם אחת; משתמשים ב-writeback של ההתקן לאינדקס יחיד (head write-back) במקום לסרוק descriptors. כתיבות ל-write-combining יכולות להתאגד ל-burst. ועל מערכות קוהרנטיות (x86 או ARM עם ACE/CCI) הזיכרון הקוהרנטי הוא cacheable רגיל, והעלות נעלמת.",
+        "rubric": [
+          "uncached = גישה ל-DRAM בכל קריאה, ~100ns",
+          "batching של descriptors ועדכון tail אחד",
+          "head write-back של ההתקן במקום סריקה",
+          "במערכות קוהרנטיות הזיכרון cacheable"
+        ]
+      }
     },
     {
       "id": "sys.dma.q10",
@@ -451,7 +481,17 @@
         "שגוי. 10GbE מוגבל ל-10 Gb/s, ו-12.8 Gb/s של payload (בלי headers) לא נכנס. הטעות היא לחשב לערוץ אחד (6.4 Gb/s) ולשכוח להכפיל.",
         "שגוי. ה-X310 עושה בדיוק את זה ב-10GbE, ערוץ לכל port. 6.4 Gb/s לערוץ נכנס בנוחות בקישור אחד.",
         "שגוי. I ו-Q עוברים יחד כדגימה מרוכבת אחת של 4 בתים באותו stream. ה-4 בתים כבר כוללים את שניהם, ולכן אין סיבה לקישור נפרד לכל רכיב."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ה-payload נכנס ב-10GbE אחד, אבל מה עוד יכול להפיל את הקליטה של ערוץ אחד ב-200 MS/s, גם כשהקישור לא מלא? תן מספרים.",
+        "modelAnswer": "800 MB/s זה כ-200K חבילות בשנייה עם payload של כ-4000 בתים (jumbo frames), או כמעט 600K עם MTU של 1500. בכל מקרה ה-CPU צריך לעבד חבילה כל כמה מיקרו-שניות, ו-interrupt או syscall לכל חבילה כבר יקר. הבעיות הנפוצות: socket buffer קטן מדי (`net.core.rmem_max`), כך שכל עיכוב של כמה מילישניות ב-thread מפיל דגימות (800 MB/s × 10 ms = 8MB); ring של ה-NIC קטן מדי; IRQ ו-thread על socket NUMA אחר; ו-thread שלא מקבל CPU בזמן בגלל scheduler. בנוסף, ההמרה מ-sc16 ל-fc32 מכפילה את רוחב הפס לזיכרון. לכן מגדילים buffers, משתמשים ב-jumbo frames, מצמידים cores, ובוחנים DPDK.",
+        "rubric": [
+          "חישוב קצב חבילות (מאות אלפים בשנייה) ולא רק bits",
+          "חישוב buffer: 800MB/s × jitter של כמה ms",
+          "socket buffer/NIC ring קטנים, NUMA, scheduling",
+          "jumbo frames או DPDK כפתרונות"
+        ]
+      }
     },
     {
       "id": "sys.dma.q11",
@@ -475,7 +515,17 @@
         "שגוי. סוג ההקצאה של באפר הנתונים לא משנה את הסדר שבו ה-descriptor נראה. ה-descriptor כבר ב-coherent memory, ו-coherency לא מבטיח סדר בין כתיבות.",
         "שגוי. len של 16 ביט מספיק לבאפר RX רגיל, ורוחב השדה נקבע לפי פורמט ה-descriptor של החומרה. זה גם לא מסביר כתיבה לכתובת 0.",
         "שגוי. doorbell לפני מילוי ה-descriptor רק מחמיר: ההתקן יקרא descriptor ריק. בנוסף כאן ההתקן לא מחכה ל-doorbell אלא סורק בעצמו, ולכן ה-barrier שבתוך writel לא עוזר, וצריך barrier בין השדות ל-OWN."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הוספת `dma_wmb()` לפני כתיבת ה-flags. עכשיו בצד ה-RX completion: ההתקן כותב נתונים ואז מעדכן flags ל-DONE. מה ה-barrier שה-driver צריך כשהוא קורא, ואיפה בדיוק?",
+        "modelAnswer": "בצד הקריאה ה-driver קורא קודם את ה-flags כדי לבדוק שההתקן החזיר את ה-descriptor, ורק אז את `len` ואת הנתונים בבאפר. בלי barrier, ARM רשאי לבצע את קריאת `len` או הנתונים לפני קריאת ה-flags (load-load reordering או speculation), ולקבל ערכים ישנים. לכן שמים `dma_rmb()` אחרי בדיקת ה-flags ולפני קריאת שאר השדות. זה ה-pattern הסימטרי: `dma_wmb` בין כתיבת תוכן לכתיבת OWN בכתיבה, ו-`dma_rmb` בין קריאת OWN לקריאת תוכן בקריאה. אם הבאפר עצמו הוא streaming mapping, צריך גם `dma_sync_single_for_cpu` לפני שקוראים את הנתונים.",
+        "rubric": [
+          "קודם לקרוא flags/DONE ואז את התוכן",
+          "dma_rmb בין בדיקת ה-flag לקריאת השדות",
+          "ARM מאפשר load-load reordering",
+          "sync_for_cpu לבאפר streaming"
+        ]
+      }
     },
     {
       "id": "sys.dma.q12",
@@ -496,7 +546,17 @@
         "זה כן יתרון, ולכן לא התשובה. ה-IOMMU ממפה כתובות פיזיות גבוהות ל-IOVA מתחת ל-4GB, וחוסך bounce buffers של swiotlb להתקני 32 ביט.",
         "נכון, זה אינו יתרון. IOMMU מוסיף שלב תרגום: IOTLB miss דורש page walk שמוסיף latency, ו-map/unmap עולים CPU. לכן במצבי ביצועים משתמשים ב-mappings קבועים או ב-iommu=pt.",
         "זה כן יתרון, ולכן לא התשובה. בידוד הוא היתרון המרכזי: התקן ניגש רק למה שמופה לו, וזה הבסיס ל-VFIO ולהעברת התקן ל-VM או ל-user space."
-      ]
+      ],
+      "followUp": {
+        "prompt": "IOMMU מוסיף תרגום. כמה עולה IOTLB miss, ואיך מבני נתונים כמו page pool או mappings קבועים מקטינים את המחיר?",
+        "modelAnswer": "IOTLB miss גורם ל-IOMMU לבצע page walk בטבלאות שלו בזיכרון, כלומר כמה גישות DRAM, בסדר גודל של מאות ננו-שניות עד מיקרו-שנייה לגישה, וזה מוסיף latency ומקטין throughput כשה-working set של ההתקן מפוזר על דפים רבים. העלות הגדולה יותר היא לרוב ב-CPU: כל `dma_map` ו-`dma_unmap` מעדכנים טבלאות, ו-unmap במצב strict דורש invalidation של ה-IOTLB. page pool ב-Linux שומר דפים ממופים ומחזר אותם בלי unmap ו-map מחדש, כך שהעלות משולמת פעם אחת. גם huge pages ב-IOMMU מקטינים את מספר הרשומות ואת ה-misses. במקרים שבהם סומכים על ההתקן, `iommu=pt` מבטל את התרגום לגמרי.",
+        "rubric": [
+          "IOTLB miss = page walk של ה-IOMMU, מאות ns",
+          "עלות CPU של map/unmap ו-invalidation",
+          "page pool ממחזר mappings",
+          "huge pages ב-IOMMU או iommu=pt"
+        ]
+      }
     },
     {
       "id": "sys.dma.q13",
@@ -517,7 +577,17 @@
         "נכון. עם DDIO ה-NIC כותב ישירות ל-LLC, אבל רק לחלק מוגבל מה-ways. כשהאפליקציה מפגרת, חבילות חדשות מפנות חבילות שלא עובדו ל-DRAM (leaky DMA), והקריאה שלהן היא miss: גם יותר תעבורת זיכרון וגם יותר latency.",
         "שגוי. ירידת מהירות של קישור PCIe (link downtraining) לא תלויה בקצב העיבוד של האפליקציה, והייתה מורידה throughput במקום להגדיל את תעבורת הזיכרון.",
         "שגוי. ה-NIC לא יודע מה קצב העיבוד. הוא כותב לפי קצב הגעת החבילות, וכשה-ring מלא הוא מפיל חבילות, לא מאט. האטה גם הייתה מקטינה את רוחב הפס לזיכרון, לא מגדילה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "כמה ways של LLC מקבל DDIO כברירת מחדל, ואיך זה משפיע על גודל ה-ring שתבחר ל-NIC של 10GbE עם חבילות של 2KB?",
+        "modelAnswer": "כברירת מחדל ב-Xeon, DDIO מקבל 2 ways מתוך ה-LLC (למשל 2 מתוך 11 ways, פחות מחמישית), כלומר לרוב כמה MB בודדים על כל ה-socket, ומשותף לכל ההתקנים. ring של 4096 descriptors עם באפרים של 2KB הוא 8MB, שכבר גדול מהחלק של DDIO, ולכן חבילות עלולות להתפנות ל-DRAM לפני שנקראו. ring של 512 או 1024 (1-2MB) נכנס טוב יותר, אבל נותן פחות סבילות לעיכוב של ה-thread: ב-10GbE עם חבילות גדולות (כ-800K pps), 1024 חבילות הן בערך 1.2 ms של buffer. לכן מאזנים בין גודל ring קטן לבין thread צרכני שמגיב מהר ומוצמד ל-socket של ה-NIC. את מספר ה-ways אפשר לשנות דרך MSR לא מתועד היטב, ובמעבדים חדשים יש גם בקרה דרך CAT.",
+        "rubric": [
+          "DDIO מוגבל ל-2 ways כברירת מחדל",
+          "חישוב: 4096 × 2KB = 8MB > חלק DDIO",
+          "ring קטן מול סבילות לעיכוב (חישוב זמן buffer)",
+          "thread צרכן על ה-socket של ה-NIC"
+        ]
+      }
     },
     {
       "id": "sys.dma.q14",
@@ -533,7 +603,17 @@
         "זיהוי ודיווח overflow לפי timestamps"
       ],
       "explanation": "זו שאלת system design שמחוברת ישירות לפרויקט. מראיין יבדוק שהמספרים נכונים ושיש תוכנית למצב כשל.",
-      "lesson": "sys.dma"
+      "lesson": "sys.dma",
+      "followUp": {
+        "prompt": "התכנון שלך עובד, אבל פעם בכמה שעות יש overflow אחד. איך תמצא את הסיבה, ואילו מקורות jitter במערכת Linux רגילה הם החשודים הראשונים?",
+        "modelAnswer": "קודם צריך לדעת איפה הנתונים נפלו: מוני drops של ה-NIC (`ethtool -S`, למשל rx_missed או rx_no_buffer), מוני UDP של ה-kernel (`/proc/net/snmp` RcvbufErrors), או overflow שהספרייה של ה-SDR מדווחת. כל מיקום מצביע על שכבה אחרת. במקביל מתעדים timestamp של כל אירוע ומחפשים קורלציה. החשודים: interrupts אחרים או softirq על ה-core של ה-RX, ה-scheduler שמזיז את ה-thread, THP compaction או page faults (פתרון: `mlockall`), SMIs של ה-BIOS, C-states עמוקים ו-frequency scaling, ו-timer ticks. כלים: `perf sched`, `trace-cmd` או ftrace עם trigger בזמן ה-overflow, ו-`hwlatdetect` ל-SMIs. התיקונים: `isolcpus` ו-`nohz_full`, IRQ affinity, `mlockall`, ו-buffer גדול יותר כדי לבלוע את ה-jitter הנותר.",
+        "rubric": [
+          "לזהות באיזו שכבה הנפילה: מוני NIC, kernel, ספרייה",
+          "חשודים: IRQs, scheduler, page faults/THP, SMI, C-states",
+          "כלי tracing: ftrace/perf sched/hwlatdetect",
+          "isolcpus/nohz_full, IRQ affinity, mlockall"
+        ]
+      }
     },
     {
       "id": "sys.dma.q15",
@@ -554,7 +634,17 @@
         "שגוי. על מערכת לא קוהרנטית ה-DMA כותב ל-RAM ולא ל-cache. אילו היה כותב ל-cache, ה-CPU היה רואה נתונים עדכניים ולא ישנים.",
         "שגוי. invalidate עובד על ARM (למשל DC IVAC). הבעיה היא התזמון: invalidate בודד לפני ה-DMA לא מגן מפני lines שנטענים מחדש בזמן ה-DMA.",
         "נכון. המעבד רשאי לבצע speculative prefetch לכל כתובת cacheable, גם בזמן שה-DMA כותב, ולהביא ל-cache גרסה ישנה. לכן צריך invalidate גם אחרי סיום ה-DMA ולפני הקריאה, וזה בדיוק dma_sync_single_for_cpu."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אם ה-invalidate אחרי ה-DMA הוא זה שבאמת נדרש, למה לא לוותר על ה-invalidate שלפני? ומה מיוחד במקרה שבו גודל הבאפר אינו כפולה של cache line?",
+        "modelAnswer": "ה-invalidate או clean שלפני ה-DMA מטפל ב-lines מלוכלכים: אם ה-CPU כתב לבאפר לפני כן, ה-line יכול להתפנות באמצע ה-DMA (eviction טבעי) ולדרוס בזיכרון את מה שההתקן כבר כתב. invalidate אחרי ה-DMA לא יציל את זה, כי הנתונים של ההתקן כבר נדרסו בזיכרון. לכן שני הצעדים נחוצים: לפני, לנקות lines מלוכלכים; אחרי, לזרוק lines שנטענו ספקולטיבית. כשהבאפר לא מתחיל או לא מסתיים על גבול line, ה-line החלקי מכיל גם נתונים אחרים: invalidate יזרוק כתיבות של ה-CPU לשכנים, ו-clean עלול לדרוס נתוני DMA. זו הסיבה שבאפרי DMA חייבים להיות מיושרים ומרופדים ל-cache line.",
+        "rubric": [
+          "לפני: מונע eviction של line מלוכלך שדורס נתוני DMA",
+          "אחרי: זורק lines שנטענו ספקולטיבית",
+          "invalidate אחרי לא מציל נתונים שכבר נדרסו בזיכרון",
+          "line חלקי: אין פעולה נכונה, לכן alignment וריפוד"
+        ]
+      }
     },
     {
       "id": "sys.dma.q16",
@@ -575,7 +665,17 @@
         "שגוי. interrupts מטופלים בקרנל ולא שייכים ל-process מסוים, והילד לא יורש אותם. גם אילו כן, זה לא היה מסביר למה הנתונים לא מופיעים בבאפר של האב.",
         "נכון. fork סימן את הדפים כ-copy-on-write. בכתיבה הבאה של האב הוא קיבל דף פיזי חדש, וההתקן ממשיך לכתוב לדף הישן שנשאר אצל הילד. הפתרון: madvise(MADV_DONTFORK) על באפרי DMA, או posix_spawn.",
         "שגוי. ה-pin נשאר: ה-reference על הדף הפיזי לא משתחרר ב-fork. דווקא בגלל שהדף הישן נשאר נעול ההתקן ממשיך לכתוב אליו, בעוד שהאב עבר לעותק חדש."
-      ]
+      ],
+      "followUp": {
+        "prompt": "האפליקציה צריכה להריץ תהליך חיצוני. השווה בין `MADV_DONTFORK`, `posix_spawn` ו-`vfork`, ומה כל אחד מהם פותר או לא פותר.",
+        "modelAnswer": "`MADV_DONTFORK` מסמן את אזור הבאפר כך שהוא לא מועתק לילד בכלל, ולכן אין COW ואין בעיה, אבל אם הילד ייגש לכתובות האלה הוא יקבל SIGSEGV. `posix_spawn` מאפשר ל-libc ליצור את הילד בלי לשכפל את מרחב הכתובות, ב-glibc מודרני דרך `clone` עם `CLONE_VM` ו-`CLONE_VFORK`, כך שאין שלב COW בכלל, וזה גם מהיר בהרבה בתהליך עם הרבה זיכרון. `vfork` משתף את מרחב הכתובות ומשעה את האב עד `exec`, אבל מותר לילד לעשות כמעט כלום לפני `exec`, וקל לשבור אותו. ההמלצה: `posix_spawn` להרצת תהליך חיצוני, ו-`MADV_DONTFORK` כהגנה נוספת על באפרי DMA למקרה שמישהו (למשל ספרייה) קורא ל-`fork`.",
+        "rubric": [
+          "MADV_DONTFORK: האזור לא קיים בילד, אין COW",
+          "posix_spawn: אין שכפול מרחב כתובות (CLONE_VM/CLONE_VFORK)",
+          "vfork: האב מושעה, הילד מוגבל עד exec",
+          "שילוב: posix_spawn + MADV_DONTFORK כהגנה"
+        ]
+      }
     },
     {
       "id": "sys.dma.q17",
@@ -596,7 +696,17 @@
         "שגוי. dma_map_single קיים ונמצא בשימוש רחב. הבעיה היא בסוג הזיכרון שמועבר לו, לא בפונקציה.",
         "שגוי. גודל ה-stack לא קשור, ו-64 בתים זה זניח. stack overflow היה קורס גם בלי DMA, ולא היה תלוי ב-VMAP_STACK דווקא.",
         "שגוי. kernel stacks לא יוצאים ל-swap בכלל, עם או בלי VMAP_STACK. מי שבוחר בזה מעביר את הבעיה של באפרי user space (pinning) לזיכרון של הקרנל."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הבאפר הוא רק 64 בתים. האם `kmalloc(64)` בטוח לגמרי ל-DMA על ARM64 לא קוהרנטי? מה מבטיח את זה, ומה השתנה בקרנלים האחרונים בנושא?",
+        "modelAnswer": "באופן מסורתי, על ARM64 `ARCH_KMALLOC_MINALIGN` היה שווה ל-`ARCH_DMA_MINALIGN` (128 בתים), כך שכל הקצאת kmalloc התחילה על גבול line ותפסה lines שלמים, ולכן לא חלקה line עם הקצאה אחרת. המחיר: הקצאה של 8 בתים בזבזה 128. בקרנלים חדשים (6.5 ומעלה, בערך) ה-minimum alignment של kmalloc ב-ARM64 הוקטן, וכדי לשמור על בטיחות DMA הקרנל משתמש ב-bounce buffer דרך swiotlb כשבאפר קטן ולא מיושר ממופה על מערכת לא קוהרנטית. כלומר זה עדיין עובד נכון, אבל עלול לעלות העתקה. driver שצריך ביצועים יקצה באפר מיושר במפורש או ישתמש ב-`dma_alloc_coherent` או ב-page pool.",
+        "rubric": [
+          "ARCH_DMA_MINALIGN מבטיח line שלם להקצאה",
+          "ב-ARM64 זה היה 128 בתים",
+          "קרנלים חדשים: kmalloc קטן יותר + bounce דרך swiotlb",
+          "ל-ביצועים: הקצאה מיושרת במפורש"
+        ]
+      }
     },
     {
       "id": "sys.dma.q18",
@@ -730,7 +840,17 @@
         "נכון. עם DMA mask של 32 ביט ובלי IOMMU, הכרטיס לא מגיע לבאפרים מעל 4GB. swiotlb מעתיק ל-bounce buffer נמוך ב-map (TX) וממנו ב-unmap או sync_for_cpu (RX), כלומר memcpy בכל העברה.",
         "שגוי. swiotlb אכן נקרא software IO TLB, אבל הוא מעתיק רק כשצריך: כשהכתובת מחוץ ל-DMA mask או כשהוא נכפה (למשל ב-VM מוצפן). לבאפרים מתחת ל-4GB הוא מחזיר את הכתובת הישירה בלי העתקה.",
         "שגוי. התקן PCIe לא מבקש מה-CPU להעתיק. הוא כותב או קורא בעצמו, וכאן הוא פשוט ניגש לכתובת של ה-bounce buffer שהקרנל נתן לו."
-      ]
+      ],
+      "followUp": {
+        "prompt": "הצעת להקצות מ-`GFP_DMA32`. מה הסיכון בכך בשרת עמוס, ומה עדיף אם הכרטיס מאפשר ולו חלקית mask רחב יותר?",
+        "modelAnswer": "אזור ZONE_DMA32 הוא רק 4GB הראשונים, וחלק ממנו תפוס בידי ה-kernel, התקנים ו-MMIO, כך שבשרת עם 64GB והרבה drivers האזור הזה יכול להתמלא או להתפצל, וההקצאה תיכשל או תפעיל reclaim ו-compaction יקרים. בנוסף, זה מקבע זיכרון מתחת ל-4GB ומגביל drivers אחרים. אם הכרטיס תומך ב-mask רחב יותר (למשל 40 או 48 ביט), ה-driver צריך לקרוא ל-`dma_set_mask_and_coherent(dev, DMA_BIT_MASK(48))` ולבדוק הצלחה, ואז אין bounce buffers בכלל. אם אין ברירה, הפעלת IOMMU פותרת את הבעיה כי IOVA נמוך ממופה לכל כתובת פיזית. כדאי גם למדוד את ההשפעה: perf יראה את הזמן ב-swiotlb נעלם.",
+        "rubric": [
+          "ZONE_DMA32 קטן ומתפצל, הקצאות נכשלות או יקרות",
+          "dma_set_mask_and_coherent עם mask רחב",
+          "IOMMU כחלופה (IOVA נמוך)",
+          "אימות במדידה עם perf"
+        ]
+      }
     },
     {
       "id": "sys.dma.q25",
@@ -757,7 +877,17 @@
         "נכון. ב-x86, תחת TSO, stores רגילים כבר נראים בסדר התוכנית, ולכן ב-Linux dma_wmb מוגדר כ-barrier() בלבד: רק מונע מהקומפיילר לסדר מחדש.",
         "שגוי. coherency לא נותן להתקן גישה לכתובות וירטואליות: הוא עדיין צריך bus address, והדפים חייבים להיות pinned וממופים. הטעות היא לבלבל בין עקביות cache לבין תרגום כתובות.",
         "שגוי. NT stores (movnt) הם weakly ordered גם ב-x86 ועוקפים את ה-cache דרך write-combining buffers. צריך sfence (ש-wmb ו-writel מספקים) לפני ה-doorbell, אחרת ההתקן עלול לקרוא נתונים חלקיים."
-      ]
+      ],
+      "followUp": {
+        "prompt": "ב-x86 coherent, למה בכל זאת `writel` (ולא כתיבה רגילה דרך pointer) לרגיסטר ה-doorbell? מה היה נשבר אילו היית כותב `*db = tail` ישירות?",
+        "modelAnswer": "MMIO ב-x86 ממופה כ-uncached (UC), וכתיבה אליו כבר מסודרת ביחס ל-stores רגילים, אבל הבעיה היא בקומפיילר: כתיבה דרך pointer רגיל יכולה להיות מאוחדת, מושמטת או מוזזת לפני כתיבות ה-descriptor, כי הקומפיילר לא יודע שזה רגיסטר. `writel` כולל `volatile` ו-compiler barrier, ומבטיח הוראת store אחת בגודל הנכון (32 ביט), ובנוסף barrier ארכיטקטוני כשצריך (ב-ARM). כתיבה ישירה גם עלולה לשבור את ה-sparse annotations (`__iomem`) שמזהות גישות לא נכונות. כלומר ב-x86 החומרה סלחנית, אבל הקוד יישבר בקומפיילר אחר, באופטימיזציה אחרת, או בארכיטקטורה אחרת.",
+        "rubric": [
+          "הקומפיילר יכול להזיז/לאחד/להשמיט כתיבה רגילה",
+          "writel = volatile + compiler barrier + גודל גישה מוגדר",
+          "ב-ARM writel מוסיף barrier ארכיטקטוני",
+          "__iomem ו-sparse מזהים גישות שגויות"
+        ]
+      }
     },
     {
       "id": "sys.dma.q26",
@@ -778,7 +908,17 @@
         "שגוי. 3.2 GB/s מתקבל מקידוד 8b/10b (20% overhead), שהוא הקידוד של Gen1 ו-Gen2. Gen3 עבר ל-128b/130b, עם overhead של כ-1.5% בלבד.",
         "נכון. 8 GT/s × 128/130 ≈ 7.88 Gb/s ל-lane, כלומר כ-0.985 GB/s. כפול 4 lanes: כ-3.94 GB/s לכל כיוון, לפני overhead של TLP headers.",
         "שגוי. 7.9 GB/s הוא הקצב של Gen3 x8, כפול מ-x4. הטעות היא לקחת את המספר המוכר של x8 בלי להתאים למספר ה-lanes."
-      ]
+      ],
+      "followUp": {
+        "prompt": "האם Gen3 x4 מספיק לשני ערוצים של 200 MS/s sc16 שעוברים ב-DMA ל-host? ומה עוד מלבד ה-TLP headers מקטין את רוחב הפס האפקטיבי?",
+        "modelAnswer": "שני ערוצים הם 1.6 GB/s של payload, ו-Gen3 x4 נותן כ-3.94 GB/s גולמי, ובערך 3.2-3.5 GB/s אחרי TLP overhead, כך שיש מרווח של בערך פי 2. מה שמקטין עוד: Max Payload Size (MPS) קטן, למשל 128 בתים, מגדיל את חלק ה-headers ל-כ-15-20%; DLLP ו-flow control credits; קריאות DMA (Memory Read) דורשות round-trip ומוגבלות ב-Max Read Request Size ובמספר הבקשות הפתוחות, כך שהן חסומות ב-latency יותר מכתיבות; ותעבורת descriptors ו-completions שחולקת את אותו קישור. בנוסף, PCIe switch או root port משותף עם התקנים אחרים מוריד את הזמין. בודקים בפועל עם `lspci -vv` (LnkSta ו-MaxPayload) שהקישור באמת התאמן ל-Gen3 x4.",
+        "rubric": [
+          "חישוב: 1.6 GB/s מול ~3.2-3.5 GB/s אפקטיבי",
+          "MPS קטן מגדיל overhead",
+          "קריאות DMA חסומות ב-round trip ו-MRRS",
+          "lspci -vv לבדוק LnkSta/MaxPayload"
+        ]
+      }
     },
     {
       "id": "sys.dma.q27",
@@ -799,7 +939,17 @@
         "שגוי. zero-copy לא דורש IOMMU: ההתקן כותב לבאפר שהוקצה ומופה, עם או בלי תרגום. IOMMU רק מייקר את ה-refill (עדכון טבלאות), מה שמחזק את copybreak.",
         "נכון. זה copybreak: חבילה שעוברת zero-copy לוקחת את הבאפר מה-ring ומחייבת alloc ו-dma_map חדשים. memcpy של עשרות בתים שכבר ב-cache זול יותר, וגם לא מבזבז באפר של 2KB על חבילה קטנה. בחבילות גדולות ההעתקה יקרה מה-refill.",
         "שגוי. ה-NIC כותב כל חבילה לתחילת באפר מיושר (לרוב עם NET_IP_ALIGN), ללא קשר לגודל שלה. יישור לא שונה בין חבילות קטנות לגדולות, ולכן הוא לא הסיבה לסף."
-      ]
+      ],
+      "followUp": {
+        "prompt": "איך היית בוחר את ערך ה-copybreak בפועל (למה 256 ולא 1024)? ומה משתנה כשמפעילים IOMMU במצב strict?",
+        "modelAnswer": "את הסף בוחרים במדידה: מריצים עומס עם התפלגות גדלים ומשווים CPU לכל חבילה ו-throughput עבור כמה ערכי סף. נקודת האיזון היא המקום שבו עלות memcpy (שעולה ליניארית עם הגודל, בערך כמה עשרות GB/s מה-cache) משתווה לעלות ה-refill: הקצאת דף, `dma_map`, וכתיבת descriptor. ללא IOMMU, refill הוא בסדר גודל של מאות ns, ולכן סף של כמה מאות בתים הגיוני. עם IOMMU במצב strict כל `dma_unmap` כולל invalidation של ה-IOTLB, שעולה הרבה יותר, ולכן הסף האופטימלי עולה, ואולי כדאי להעתיק גם חבילות גדולות יותר או לעבור ל-page pool שלא עושה unmap בכלל. עוד שיקול: copybreak שומר את ה-ring מלא תמיד, וזה מקטין סיכון ל-drops תחת עומס.",
+        "rubric": [
+          "סף נבחר במדידה עם התפלגות גדלים",
+          "איזון: memcpy ליניארי מול עלות refill קבועה",
+          "IOMMU strict מייקר unmap → סף גבוה יותר או page pool",
+          "copybreak שומר את ה-ring מלא"
+        ]
+      }
     },
     {
       "id": "sys.dma.q28",
@@ -820,7 +970,17 @@
         "שגוי. DDIO הוא מנגנון של ה-LLC ב-Xeon ואינו תלוי במצב ה-invalidation של ה-IOMMU. ההבדל בין strict ל-lazy הוא רק בתזמון ביטול רשומות ה-IOTLB.",
         "שגוי. lazy עדיין מתרגם כל גישה ומגביל את ההתקן לדפים שמופו לו. הוא רק מאחר את הביטול של mappings ישנים, בניגוד ל-passthrough (iommu=pt) שמוותר על התרגום לגמרי.",
         "שגוי. bounce buffers הם מנגנון swiotlb למקרה שאין IOMMU או שההתקן לא מגיע לכתובת. עם IOMMU, strict או lazy, התרגום פותר את בעיית הכתובות בלי העתקה."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אתה מריץ שרת ענן מרובה-דיירים עם התקני PCIe שמועברים ל-VMs. איזה מצב IOMMU תבחר, ולמה `iommu=pt` לא אפשרי כאן?",
+        "modelAnswer": "ב-passthrough ל-VM, ה-IOMMU הוא מה שמגביל את ההתקן לזיכרון של ה-VM שלו; בלעדיו ה-VM יכול לתכנת את ההתקן לבצע DMA לכל זיכרון ה-host, כלומר בריחה מה-VM. `iommu=pt` נותן identity mapping רק להתקנים שנשארים ב-host, אבל התקנים שמוקצים ל-VFIO עדיין מקבלים domain מבודד, כך שזה לא מבטל את הבידוד שלהם. המצב strict מול lazy רלוונטי בעיקר להתקנים של ה-host: ל-VFIO המיפויים בדרך כלל קבועים (כל זיכרון ה-VM ממופה פעם אחת ו-pinned), ולכן אין unmap תכוף ואין קנס ביצועים. בסביבה מרובת-דיירים הייתי בוחר strict להתקני host חשופים, כי חלון ה-lazy הוא סיכון אבטחה, ומקבל את המחיר.",
+        "rubric": [
+          "IOMMU מונע מ-VM לבצע DMA לזיכרון ה-host",
+          "VFIO: מיפויים קבועים של זיכרון ה-VM, אין unmap תכוף",
+          "pt משפיע על התקני host, לא על בידוד VFIO",
+          "strict להתקני host ב-multi-tenant בגלל חלון ה-lazy"
+        ]
+      }
     },
     {
       "id": "sys.dma.q29",
@@ -844,7 +1004,17 @@
         "נכון. writel_relaxed לא מבטיח שכתיבות קודמות לזיכרון נראות לפני כתיבת ה-MMIO, וב-ARM כתיבות ל-Normal ול-Device memory לא מסודרות זו ביחס לזו. ההתקן מקבל doorbell וקורא descriptor ישן. writel מוסיף את ה-barrier הנדרש.",
         "שגוי. writel כבר כותב בפורמט little-endian לרגיסטר (המרת ה-endianness מובנית בו), ולכן cpu_to_le32 נוסף היה מיותר ואף שגוי ב-big-endian. זה גם לא מסביר descriptor ישן.",
         "שגוי. ב-TX רק thread אחד (בדרך כלל תחת lock של התור) כותב ל-tail, וההתקן לא קורא את המשתנה הזה אלא את הערך שנכתב ל-doorbell. atomic לא מוסיף סדר בין זיכרון ל-MMIO, וזו הבעיה כאן."
-      ]
+      ],
+      "followUp": {
+        "prompt": "אחרי התיקון ל-`writel`, ה-throughput ירד ב-5%. איך היית מקטין את מחיר ה-barrier בלי לחזור לבאג?",
+        "modelAnswer": "המחיר הוא barrier מלא (ב-ARM64 `dmb oshst` או `dsb`) לכל doorbell, ואם כותבים doorbell לכל חבילה, זה barrier לכל חבילה. הפתרון הוא batching: למלא כמה descriptors, ורק אחר כך לבצע `writel` אחד עם ה-tail האחרון, כך שה-barrier מתחלק על פני כל ה-batch. ב-Linux networking יש `xmit_more` (או `netdev_xmit_more()`) שמאותת ל-driver שמגיעות עוד חבילות, והוא דוחה את ה-doorbell. בנוסף, אפשר להחליף את `dma_wmb` לכל descriptor ב-barrier אחד לפני ה-OWN של הראשון, אם ההתקן קורא את ה-descriptors רק אחרי ה-doorbell (כמו בשאלה). ה-trade-off: batching מוסיף latency לחבילה הראשונה, ולכן מגבילים את גודל ה-batch.",
+        "rubric": [
+          "batching: doorbell אחד לכמה descriptors",
+          "xmit_more ב-Linux",
+          "ה-barrier מתחלק על ה-batch",
+          "trade-off: latency של החבילה הראשונה"
+        ]
+      }
     },
     {
       "id": "sys.dma.q30",
@@ -865,7 +1035,17 @@
         "שגוי. VM של confidential computing על x86 עדיין קוהרנטי מבחינת cache. ההבדל הוא שההתקן לא יכול לקרוא זיכרון פרטי מוצפן של ה-guest, ולכן כל DMA נכפה לעבור דרך bounce buffers משותפים.",
         "נכון. swiotlb מעתיק את buf ל-bounce buffer בזמן ה-map (DMA_TO_DEVICE). כתיבה ל-header אחרי ה-map נשארת בבאפר המקורי, וההתקן קורא את ה-bounce buffer שלא מכיל אותה. תיקון: למלא לפני ה-map או לקרוא ל-dma_sync_single_for_device אחרי הכתיבה.",
         "שגוי. ה-header כן נשלח, רק עם תוכן ישן (ריק). בעיית יישור הייתה מתבטאת בשגיאה או בהזזה של הנתונים, וגם לא הייתה תלויה בהפעלת swiotlb."
-      ]
+      ],
+      "followUp": {
+        "prompt": "למה בכלל VM מוצפן (למשל AMD SEV או Intel TDX) מכריח bounce buffers, ומה ההשלכה על ביצועים של I/O מהיר? איך מתמודדים?",
+        "modelAnswer": "בזיכרון של guest מוצפן, ה-host וההתקנים רואים רק ciphertext, כי ההצפנה נעשית ב-memory controller עם מפתח של ה-VM. כדי שהתקן יקרא או יכתוב נתונים, הם חייבים להיות בדפים שה-guest סימן כ-shared (לא מוצפנים), ולכן swiotlb מעתיק כל באפר בין הזיכרון הפרטי לאזור המשותף. המשמעות היא memcpy לכל I/O, כלומר צריכת CPU ורוחב פס זיכרון כפולים, ו-latency נוסף, ובקצבים גבוהים swiotlb עלול להפוך לצוואר בקבוק (גודל ה-pool ונעילות). התמודדות: להגדיל את swiotlb, להקצות באפרים שכבר ב-shared memory מראש כדי לחסוך את ההעתקה, ובטכנולוגיות חדשות (TDX Connect, SEV-TIO) לאפשר להתקנים מהימנים גישה ישירה לזיכרון מוצפן.",
+        "rubric": [
+          "ההתקן רואה רק ciphertext של זיכרון פרטי",
+          "נתונים חייבים לעבור לדפים shared, ומכאן העתקה",
+          "עלות: memcpy לכל I/O, CPU ורוחב פס",
+          "הגדלת pool או באפרים shared מראש"
+        ]
+      }
     },
     {
       "id": "sys.dma.q31",
@@ -881,7 +1061,17 @@
         "flow control בכיוון החוזר וטיפול ב-overflow"
       ],
       "explanation": "שאלה טיפוסית ל-NVIDIA: היא בודקת הבנה של PCIe, DMA, סדר ו-GPU באותו תכנון, ומודעות לכך שהטופולוגיה הפיזית קובעת אם zero-copy בכלל משתלם.",
-      "lesson": "sys.dma"
+      "lesson": "sys.dma",
+      "followUp": {
+        "prompt": "בחרת GPUDirect P2P. מתברר שה-FPGA וה-GPU נמצאים מתחת ל-root complex שונים (או סוקטים שונים). מה זה עושה לביצועים, ואיך תבדוק את הטופולוגיה?",
+        "modelAnswer": "P2P עובד הכי טוב כששני ההתקנים יושבים מתחת לאותו PCIe switch, כי התעבורה עוברת דרך ה-switch בלבד. כשהם מתחת ל-root ports שונים באותו socket, התעבורה עוברת דרך ה-root complex של ה-CPU, ובחלק מהפלטפורמות זה עובד אבל ברוחב פס נמוך יותר. כשהם בסוקטים שונים, התעבורה צריכה לחצות את ה-inter-socket link (UPI/QPI או Infinity Fabric), ושם P2P לרוב לא נתמך או איטי מאוד, ולכן staging דרך זיכרון host באותו NUMA node עשוי להיות מהיר יותר. בדיקה: `nvidia-smi topo -m` מראה את הקשר (PIX, PXB, PHB, SYS), ו-`lspci -tv` מראה את העץ. בנוסף צריך לבדוק שה-ACS של ה-switch לא מנתב P2P דרך ה-root, ושה-IOMMU מוגדר כך שמאפשר P2P. ההחלטה הסופית צריכה להתבסס על benchmark של רוחב פס בפועל.",
+        "rubric": [
+          "אותו switch = הכי טוב, root complex/סוקט שונה = איטי או לא נתמך",
+          "חציית UPI/QPI פוגעת ב-P2P",
+          "nvidia-smi topo -m ו-lspci -tv",
+          "ACS/IOMMU יכולים לנתב P2P דרך ה-root"
+        ]
+      }
     },
     {
       "id": "sys.dma.q32",
@@ -976,7 +1166,17 @@
         "https://www.glassdoor.com/Interview/Intel-Corporation-Interview-E1519-RVW3166757.htm"
       ],
       "problem": "Qualcomm / Intel: DMA and the IOMMU",
-      "lesson": "sys.dma"
+      "lesson": "sys.dma",
+      "followUp": {
+        "prompt": "ה-IOMMU פתר את בעיית הכתובות. מה המחיר כשה-driver ממפה ומבטל מיפוי לכל חבילה ב-10 Mpps, ומה המגבלה של מרחב ה-IOVA עצמו כש-mask הוא 32 ביט?",
+        "modelAnswer": "ב-10 Mpps זה 10 מיליון map ו-unmap בשנייה, כל אחד מעדכן את טבלאות ה-IOMMU ודורש הקצאת IOVA מתוך allocator משותף; unmap ב-strict דורש גם invalidation של ה-IOTLB. זה יכול לצרוך cores שלמים ולהפוך את ה-IOVA allocator לנקודת contention (ולכן יש לו cache פר-CPU). מבחינת מרחב: עם mask של 32 ביט, כל ה-IOVAs של ההתקן חייבים להיות מתחת ל-4GB, כלומר זה כל מה שההתקן יכול למפות בבת אחת. אם ה-driver מחזיק הרבה באפרים ממופים בו-זמנית, או אם ה-allocator מתפצל, map עלול להיכשל. הפתרונות: page pool עם mappings שנשמרים לאורך זמן, ו-mapping של אזורים גדולים פעם אחת.",
+        "rubric": [
+          "map/unmap לכל חבילה = עלות CPU ו-IOTLB invalidation",
+          "IOVA allocator כנקודת contention",
+          "mask 32 ביט מגביל את מרחב ה-IOVA ל-4GB",
+          "page pool / mappings קבועים"
+        ]
+      }
     },
     {
       "id": "sys.dma.q36",
@@ -997,7 +1197,17 @@
         "שגוי: בלי IOMMU זה נכון, ולכן VFIO דורש IOMMU (או מצב unsafe מפורש)."
       ],
       "explanation": "בלי IOMMU, כל התקן עם DMA הוא master שיכול לקרוא ולכתוב לכל הזיכרון הפיזי. ה-IOMMU מוסיף בידוד, וזה בסיס ל-VFIO, ל-device passthrough למכונות וירטואליות, ולהגנה מהתקנים זדוניים (Thunderbolt).",
-      "lesson": "sys.dma"
+      "lesson": "sys.dma",
+      "followUp": {
+        "prompt": "ה-IOMMU חוסם את הגישה, אבל מה קורה כשכמה התקנים נמצאים באותה IOMMU group? למה VFIO מחייב להעביר את כל הקבוצה, ומה זה אומר כשאתה בונה שרת?",
+        "modelAnswer": "IOMMU group היא קבוצת התקנים שה-IOMMU לא יכול להבדיל ביניהם בוודאות, למשל כי הם מאחורי PCIe bridge בלי ACS (Access Control Services), שמאפשר להם לדבר זה עם זה P2P בלי לעבור דרך ה-IOMMU. אם התקן אחד בקבוצה עובר ל-user space וחברו נשאר ב-kernel, ה-driver ב-user space יכול להשתמש בהתקן שלו כדי לבצע DMA להתקן השני ולעקוף את הבידוד. לכן VFIO דורש שכל ההתקנים בקבוצה יהיו שייכים ל-VFIO (או בלי driver). כשבונים שרת, בוחרים slots ו-switches עם ACS תקין, ובודקים את הקבוצות ב-`/sys/kernel/iommu_groups`. יש ACS override patch, אבל הוא מבטל את הבטחת הבידוד.",
+        "rubric": [
+          "group = התקנים שה-IOMMU לא יכול להפריד",
+          "בלי ACS התקנים יכולים P2P ולעקוף IOMMU",
+          "VFIO דורש את כל הקבוצה",
+          "/sys/kernel/iommu_groups, ACS override מסוכן"
+        ]
+      }
     },
     {
       "id": "sys.dma.q37",
@@ -1018,7 +1228,17 @@
         "שגוי: אין העתקה כזו. הבאפר יושב ב-DRAM רגיל."
       ],
       "explanation": "coherent mapping: פשוט, בלי sync, אבל גישה איטית מה-CPU על מערכות לא קוהרנטיות. streaming mapping: גישה מהירה מה-cache, אבל צריך sync בכל מעבר בעלות. בוחרים לפי מי ניגש כמה פעמים.",
-      "lesson": "sys.dma"
+      "lesson": "sys.dma",
+      "followUp": {
+        "prompt": "ה-CPU צריך לבצע FFT על באפר שה-DMA מילא. אם השתמשת ב-`dma_alloc_coherent` על המערכת הזו, כמה זה עולה לעומת streaming mapping, ואיך היית מחליט?",
+        "modelAnswer": "FFT קורא כל דגימה כמה פעמים (log2 N מעברים), ו-uncached פירושו שכל קריאה היא גישה ל-DRAM בלי cache ובלי prefetch, כך שעיבוד שלוקח מיקרו-שניות מתוך ה-cache יכול להאט בסדר גודל או יותר. ב-streaming mapping משלמים פעם אחת על invalidate של הבאפר (פעולה לכל line) ב-`dma_sync_single_for_cpu`, ואז כל הגישות הבאות מהירות. הכלל: אם ה-CPU ניגש לנתונים פעמים רבות או בקריאות גדולות, streaming mapping; אם זה מבנה קטן שגם ההתקן וגם ה-CPU כותבים וקוראים כל הזמן, כמו descriptors, coherent. חלופה זולה: להעתיק פעם אחת (memcpy רציף מ-uncached, שעדיין איטי אבל ליניארי) לבאפר cacheable ולעבד שם.",
+        "rubric": [
+          "FFT ניגש לכל דגימה כמה פעמים, uncached מאט בסדר גודל",
+          "streaming: invalidate אחד ואז גישות מה-cache",
+          "כלל: הרבה גישות CPU → streaming, descriptors → coherent",
+          "חלופה: העתקה חד-פעמית לבאפר cacheable"
+        ]
+      }
     }
   ]
 }
