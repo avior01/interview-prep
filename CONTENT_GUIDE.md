@@ -178,3 +178,50 @@ Rules:
   standard-lawyer C++, deep "why", design under constraints.
 - Company `tags` only with `sources` (see "Sourced questions"). Never tag a question because it seems typical for a company.
 - JSON must be valid: escape quotes and newlines (`\n`) inside strings.
+
+## Interviewer follow-ups (`followUp`)
+
+In a real interview a correct answer is followed by "why?", "what if...?", "what does it
+cost?". The app shows a question's `followUp` right after the learner answers it
+correctly (levels 3–5, every session mode) and in the mock-interview simulation. The
+learner answers out loud or in writing, then checks himself against `rubric`.
+
+```json
+"followUp": {
+  "prompt": "שאלת ההמשך, כמו שמראיין היה שואל אותה מיד אחרי התשובה",
+  "modelAnswer": "3–8 משפטים: מה תשובה חזקה אומרת, עם מספרים ונימוק",
+  "rubric": ["נקודה בדיקה קונקרטית 1", "נקודה 2", "..."]
+}
+```
+
+- Only on `mcq`, `multi`, `output`, `bug`, `oral` at levels 3–5.
+- It is shown together with the original question, so it may say "בקוד הזה" or "בתרחיש הזה".
+- Dig deeper, don't repeat: the reason behind the answer, a changed constraint, the cost
+  or trade-off, how to measure/debug it, how it scales, what breaks at the edge.
+- Answerable out loud in 1–3 minutes. No code blocks (inline `code` is fine).
+- `rubric`: 2–4 checkable points, each a concrete fact or step the answer must contain
+  (not "good explanation"). The learner ticks them to grade himself, so they must be
+  unambiguous.
+- Same depth as the question's level (level 5 = demanding senior).
+- Use only concepts the subtopic's lesson explains, or explain the new concept inside
+  `modelAnswer`.
+- Behavioral questions: the probe a real interviewer uses ("מה היית עושה אחרת?",
+  "איך מדדת הצלחה?"); `modelAnswer` describes what a strong answer contains.
+
+Staging: agents write `staging-fu/<domain>/<subtopic>.json` as
+`{ "<question id>": { "prompt", "modelAnswer", "rubric" } }`, check it with
+`node tools/merge-followups.mjs --check <domain>`, and the merge tool adds them.
+
+## Cheat sheets (`cheats/<domain>.json`)
+
+One page per domain for the last week before the interview: the things that must be
+remembered, not a lesson.
+
+```json
+{ "domain": "conc", "title": "מקביליות וזמן-אמת: דף לזכור",
+  "sections": [ { "title": "כותרת", "points": ["נקודה קצרה עם `term` ו-**הדגשה**", "..."] } ] }
+```
+
+- 5–9 sections, 4–9 points each. A point is one line (max ~25 words): a rule, a number,
+  a complexity, a contrast ("X מול Y: ..."), a classic trap, a phrase worth saying.
+- Cover every subtopic of the domain. Inline markdown only, no code blocks.

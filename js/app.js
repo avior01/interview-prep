@@ -1,9 +1,10 @@
 import { loadContent, content, subKey, hasContent } from './content.js';
 import * as store from './store.js';
-import { esc } from './md.js';
+import { esc, inlineMd } from './md.js';
 import { lessonHtml, lessonText } from './lesson.js';
-import { buildSession, counts, currentWeek, levelOf, PLAN, isDesktop } from './engine.js';
-import { startSession, renderSession, renderSummary, stopSessionTimer } from './session.js';
+import { buildSession, buildMock, counts, currentWeek, levelOf, PLAN, isDesktop, readiness, weakestSubs, MOCK_DEPTH } from './engine.js';
+import { startSession, renderSession, renderSummary, stopSessionTimer, renderMockResult, MODE_NAMES } from './session.js';
+import { renderStories, renderStoryEdit, renderStoryPractice, allStories } from './stories.js';
 import * as ai from './ai.js';
 import { COMPANIES, companyName } from './companies.js';
 import { syncNow, canSync } from './sync.js';
@@ -55,7 +56,8 @@ const ago = (ts) => {
   return h < 24 ? `לפני ${h} שע'` : `לפני ${Math.round(h / 24)} ימים`;
 };
 
-const MODE_TITLES = { continue: 'המשך', domain: 'תחום', sub: 'תת-נושא', exam: 'מבחן כולל', review: 'חזרות', interview: 'מראיין AI' };
+const MODE_TITLES = MODE_NAMES;
+const pct = (x) => `${Math.round(x * 100)}%`;
 // Sessions saved before titles existed get one from their mode and scope.
 const sessionTitle = (x) => x.title || [MODE_TITLES[x.mode], content.subById[x.scope]?.name || content.domainById[x.scope]?.name, x.level ? `רמה ${x.level}` : ''].filter(Boolean).join(' · ') || 'סשן';
 
@@ -98,22 +100,32 @@ function home() {
       </div>
     </div>
     <button class="btn primary big" id="go">המשך ← (${s.sessionLen} שאלות)</button>
-    <p class="small muted" style="margin-top:8px">הנושאים של השבוע: ${weekSubs.length ? weekSubs.map((n) => `<bdi>${esc(n)}</bdi>`).join(' · ') : 'חזרה ממוקדת על נקודות חלשות'}</p>
+    <p class="small muted" style="margin-top:8px">הנושאים של השבוע: ${weekSubs.length ? weekSubs.map((n) => `<bdi>${esc(n)}</bdi>`).join(' · ') : 'חזרה ממוקדת על נקודות חלשות'}${s.recall ? ' · מצב שליפה פעיל' : ''}</p>
     <div class="grid grid-3" style="margin-top:12px">
       <a class="btn" href="#/practice?m=exam">מבחן כולל</a>
+      <a class="btn" href="#/practice?m=mock">סימולציית ראיון</a>
       <a class="btn" href="#/practice?m=review">חזרות בלבד</a>
-      <a class="btn" href="#/practice?m=interview">מראיין AI</a>
     </div>
+    ${readinessCard(true)}
     ${installEvent ? '<button class="btn" id="install" style="margin-top:12px;width:100%">התקנת האפליקציה במכשיר (עובדת גם בלי אינטרנט)</button>' : ''}
     ${st().aiQueue.length ? `<p class="small muted" style="margin-top:12px">${st().aiQueue.length} תשובות מחכות לבדיקת המראיין (ייבדקו כשיהיה חיבור).</p>` : ''}
     ${!content.questions.length ? '<div class="feedback bad">לא נטען תוכן. בדוק חיבור בפעם הראשונה שפותחים את האפליקציה.</div>' : ''}`;
-  document.getElementById('go').onclick = () => begin({ mode: 'continue' });
+  document.getElementById('go').onclick = () => begin({ mode: 'continue', recall: s.recall, followUps: s.followUps });
+  bindReadiness();
   const inst = document.getElementById('install');
   if (inst) inst.onclick = async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; home(); };
   bindOpenSessions(home);
 }
 
 function begin(opts) {
+  if (opts.mode === 'mock') {
+    const items = buildMock(opts);
+    const qs = items.map((x) => content.questionById[x.qid]);
+    if (qs.length < 3) { toast('אין מספיק שאלות לסימולציה ברמה הזאת.'); return; }
+    startSession(opts, qs, Object.fromEntries(items.map((x) => [x.qid, x.section])));
+    navigate('#/session');
+    return;
+  }
   const qs = buildSession(opts);
   if (!qs.length) {
     toast(opts.mode === 'review' ? 'אין כרגע חזרות או שאלות חלשות. כל הכבוד.' : opts.mode === 'interview' && !isDesktop() ? 'אין מספיק שאלות בעל-פה ברמה הזאת.' : 'אין שאלות זמינות לבחירה הזאת.');
@@ -125,9 +137,9 @@ function begin(opts) {
 }
 
 function practice(params) {
-  const mode = params.get('m') || 'sub';
+  const mode = params.get('m') === 'interview' ? 'mock' : params.get('m') || 'sub';
   const scope = params.get('s') || '';
-  const modes = [['continue', 'המשך'], ['sub', 'תת-נושא'], ['domain', 'תחום'], ['exam', 'מבחן כולל'], ['review', 'חזרות'], ['interview', 'מראיין AI']];
+  const modes = [['continue', 'המשך'], ['sub', 'תת-נושא'], ['domain', 'תחום'], ['exam', 'מבחן כולל'], ['review', 'חזרות'], ['weak', 'חולשות'], ['mock', 'סימולציית ראיון']];
   const domainOpts = content.domains.map((d) => `<option value="${d.id}" ${scope === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
   const subOpts = content.domains.map((d) => `<optgroup label="${esc(d.name)}">${d.subtopics.map((s) => {
     const k = subKey(d.id, s.id);
@@ -139,6 +151,7 @@ function practice(params) {
       <div class="seg" role="group" aria-label="סוג סשן">${modes.map(([m, n]) => `<button class="btn small" data-mode="${m}" aria-pressed="${m === mode}">${n}</button>`).join('')}</div>
       <hr class="sep">
       <div id="opts"></div>
+      <div id="toggles"></div>
       <button class="btn primary big" id="start">התחל</button>
       <p class="small muted" style="margin-top:8px">סשן חדש לא מוחק סשנים פתוחים: כל אחד ממשיך מהמקום שבו עצרת.</p>
     </div>
@@ -157,11 +170,18 @@ function practice(params) {
     if (m === 'exam') h = `<p class="muted">שאלות אקראיות מכל התחומים, עם שעון. בסוף מקבלים ציון לכל תחום.</p>${levelSelect(false)}${lenSelect}
       ${st().settings.company ? `<label class="check"><input type="checkbox" id="co"> רק שאלות שמתאימות ל-${companyName(st().settings.company)}</label>` : ''}`;
     if (m === 'review') h = `<p class="muted">רק שאלות שטעית בהן וחזרות שהגיע זמנן.</p>${lenSelect}`;
-    if (m === 'interview') h = `<p class="muted">סימולציית ראיון: שאלות בעל-פה${isDesktop() ? ' ושאלות קוד' : ''} מתחומים שונים, עם שעון. המראיין בודק כל תשובה ושואל שאלת המשך.</p>
-      ${ai.hasKey() ? '' : '<p class="feedback bad small">לא הוגדר מפתח API בהגדרות, אז הבדיקה תהיה עצמית.</p>'}
-      ${levelSelect(false)}<label class="field"><span>מספר שאלות</span><select id="len"><option>3</option><option selected>5</option><option>7</option></select></label>`;
+    if (m === 'weak') h = `<p class="muted">השאלות החלשות שלך, ושאלות ברמה הנוכחית מתתי-הנושאים החלשים ביותר: ${weakestSubs(3).map((x) => `<bdi>${esc(content.subById[x.key].name)}</bdi>`).join(' · ') || 'עוד אין מספיק נתונים'}.</p>${lenSelect}`;
+    if (m === 'mock') h = `<p class="muted">ראיון מלא ברצף, בלי משוב עד הסוף, עם שעון אחד לכל הראיון (${isDesktop() ? '50' : '35'} דקות):
+      ${isDesktop() ? 'שאלת קוד' : 'זיהוי גישה ושאלת אלגוריתמים בעל-פה'}, שתי שאלות עומק, system design ושאלה התנהגותית. אחרי תשובה המראיין שואל שאלת המשך.
+      עונים בקול (הקלטה) או בכתב. בסוף משווים לתשובות הדוגמה, מסמנים מה כיסית ומקבלים ציון וחוות דעת.${ai.hasKey() ? ' יש מפתח API, אז אפשר גם לבקש בדיקה של המראיין AI.' : ''}</p>
+      <label class="field"><span>רמה</span><select id="lv">${[3, 4, 5].map((l) => `<option value="${l}" ${l === 4 ? 'selected' : ''}>${l} · ${['', '', '', 'mid', 'סניור', 'סניור חזק'][l]}</option>`).join('')}</select></label>
+      <label class="field"><span>שאלות העומק</span><select id="focus"><option value="auto">תערובת (C++, מקביליות, מערכות, DSP, באגים)</option>${MOCK_DEPTH.map((d) => `<option value="${d}">${esc(content.domainById[d]?.name || d)}</option>`).join('')}</select></label>`;
     opts.innerHTML = h;
     opts.dataset.sel = m;
+    const tg = document.getElementById('toggles');
+    tg.innerHTML = m === 'mock' ? '' : `<div class="toggles">
+      <label class="check"><input type="checkbox" id="recall" ${st().settings.recall ? 'checked' : ''}> <span><strong>מצב שליפה</strong> <span class="small muted">· ברמה 3 ומעלה האפשרויות מוסתרות עד שענית בראש</span></span></label>
+      <label class="check"><input type="checkbox" id="followUps" ${st().settings.followUps ? 'checked' : ''}> <span><strong>שאלות המשך</strong> <span class="small muted">· אחרי תשובה נכונה ברמה 3 ומעלה, המראיין שואל "ולמה?"</span></span></label></div>`;
   };
   draw(mode);
   app.querySelectorAll('button[data-mode]').forEach((b) => b.onclick = () => {
@@ -171,7 +191,9 @@ function practice(params) {
   document.getElementById('start').onclick = () => {
     const m = opts.dataset.sel;
     const val = (id) => document.getElementById(id)?.value;
-    begin({ mode: m, scope: val('scope') || '', level: +(val('lv') || 0), length: +(val('len') || st().settings.sessionLen), companyOnly: document.getElementById('co')?.checked });
+    const recall = document.getElementById('recall')?.checked, followUps = document.getElementById('followUps')?.checked;
+    if (m !== 'mock') { st().settings.recall = !!recall; st().settings.followUps = !!followUps; store.save(); }
+    begin({ mode: m, scope: val('scope') || '', level: +(val('lv') || 0), length: +(val('len') || st().settings.sessionLen), companyOnly: document.getElementById('co')?.checked, recall, followUps, focus: val('focus') });
   };
 }
 
@@ -193,7 +215,13 @@ function library(params) {
       return `<details class="card"><summary>${esc(d.name)}</summary><ul class="list">${subs}</ul></details>`;
     }).join('');
   }
+  const cheats = content.domains.filter((d) => content.cheats[d.id]);
   app.innerHTML = `<h1>ספרייה</h1>
+    <div class="grid grid-2">
+      <a class="card link-card" href="#/stories"><strong>📖 הסיפורים שלי</strong><span class="small muted">${allStories().length} סיפורים לשאלות התנהגותיות</span></a>
+      <a class="card link-card" href="#/notes"><strong>📝 מחברת הטעויות</strong><span class="small muted">${Object.values(st().notes).filter((n) => n.text).length} הערות שכתבת</span></a>
+    </div>
+    ${cheats.length ? `<details class="card"><summary>⚡ סיכומים לשבוע האחרון</summary><ul class="list">${cheats.map((d) => `<li><a class="list-btn" href="#/cheat/${d.id}"><span>${esc(d.name)}</span><span class="small muted">דף אחד</span></a></li>`).join('')}</ul></details>` : ''}
     <label class="field"><span>חיפוש</span><input type="text" id="search" dir="auto" value="${esc(params.get('q') || '')}" placeholder="למשל: sliding window, mutex, FFT"></label>
     ${body}`;
   const inp = document.getElementById('search');
@@ -237,17 +265,20 @@ function progress() {
       <div class="stat"><b>${Object.keys(s.lessonsRead).length}</b><span>שיעורים שנקראו</span></div>
       <div class="stat"><b>${s.sessions.length}</b><span>סשנים</span></div>
     </div>
+    ${readinessCard(false)}
     <h2>לפי תחום</h2>${domains}
     <h2>תוכנית 16 שבועות</h2>
     <div class="card"><ol>${PLAN.map((keys, i) => `<li ${i + 1 === week ? 'style="font-weight:700"' : ''}>${i + 1 === week ? '◀ ' : ''}${keys.length ? esc(keys.map((k) => content.subById[k]?.name).filter(Boolean).join(', ')) : 'חזרה ממוקדת לפי החברה ולפי נקודות חלשות'}</li>`).join('')}</ol></div>
+    ${s.mocks.length ? `<h2>סימולציות ראיון</h2><div class="card"><table class="tbl"><tbody>${[...s.mocks].reverse().slice(0, 10).map((m) => `<tr><td>${fmtDate(m.ts)}</td><td>רמה ${m.level}</td><td>${pct(m.score)}</td><td>${esc(m.verdict)}</td></tr>`).join('')}</tbody></table></div>` : ''}
     <h2>סשנים אחרונים</h2>
-    <div class="card">${recent.length ? `<table class="tbl"><tbody>${recent.map((x) => `<tr><td>${fmtDate(x.ts)}</td><td>${esc({ continue: 'המשך', domain: 'תחום', sub: 'תת-נושא', exam: 'מבחן כולל', review: 'חזרות', interview: 'מראיין AI' }[x.mode] || x.mode)}${x.level ? ` · רמה ${x.level}` : ''}</td><td>${x.correct}/${x.total}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">עוד אין סשנים.</p>'}</div>
+    <div class="card">${recent.length ? `<table class="tbl"><tbody>${recent.map((x) => `<tr><td>${fmtDate(x.ts)}</td><td>${esc(MODE_NAMES[x.mode] || x.mode)}${x.level ? ` · רמה ${x.level}` : ''}</td><td>${x.correct}/${x.total}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">עוד אין סשנים.</p>'}</div>
     <h2>בדיקות של המראיין</h2>
     <div class="card">${results.length ? results.map((r) => {
       const q = content.questionById[r.qid];
       return `<details><summary>${fmtDate(r.ts)} · ${esc(q ? content.subById[q.sub]?.name : r.qid)} · ציון ${r.score}/5</summary><div class="rich"><p>${esc(r.verdict)}</p>${r.missing?.length ? `<ul>${r.missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}</div></details>`;
     }).join('') : '<p class="muted">עוד אין.</p>'}
     ${s.aiQueue.length ? `<p class="small">${s.aiQueue.length} תשובות מחכות לבדיקה. <button class="btn small" id="drain">לבדוק עכשיו</button></p>` : ''}</div>`;
+  bindReadiness();
   const drain = document.getElementById('drain');
   if (drain) drain.onclick = async () => { drain.disabled = true; const n = await ai.drainQueue(); toast(n ? `נבדקו ${n} תשובות` : 'הבדיקה לא הצליחה. בדוק חיבור ומפתח API.'); progress(); };
 }
@@ -322,6 +353,55 @@ function settings() {
   };
 }
 
+// ---------- readiness ("what am I missing") ----------
+function readinessCard(compact) {
+  const r = readiness();
+  const s = st().settings;
+  const ivDays = s.interviewDate ? Math.ceil((Date.parse(s.interviewDate) - Date.now()) / 86400000) : null;
+  const weakest = weakestSubs(compact ? 3 : 6);
+  const bars = r.domains.map((d) => `<div class="ready-row"><span>${esc(d.name)}</span><span class="bar"><i style="width:${pct(d.r)}"></i></span><b>${pct(d.r)}</b></div>`).join('');
+  return `<div class="card readiness">
+    <div class="row spread"><h2>מוכנות לראיון</h2><span class="small muted">${ivDays !== null && ivDays >= 0 ? `${ivDays} ימים לראיון` : ''}</span></div>
+    <div class="ready-big"><b>${pct(r.overall)}</b><span class="bar"><i style="width:${pct(r.overall)}"></i></span></div>
+    ${compact ? '' : `${bars}<p class="small muted">מוכנות של תת-נושא: ההתקדמות שלך עד רמה 4 (סניור), פחות קנס קטן על שאלות חלשות. תחום = ממוצע תתי-הנושאים, והסה"כ משוקלל לפי החשיבות של התחום בראיון.</p>`}
+    ${weakest.length ? `<h3>מה הכי חסר עכשיו</h3><ul class="list">${weakest.map((w) => `<li><a class="list-btn" href="#/practice?m=sub&s=${w.key}"><span>${esc(content.subById[w.key].name)} <span class="small muted">· ${esc(content.domainById[content.subById[w.key].domain].name)}</span></span><span class="small">${pct(w.r)}${w.weak ? ` · ${w.weak} חלשות` : ''}</span></a></li>`).join('')}</ul>
+      <button class="btn" id="weakGo">תרגל את החולשות ←</button>` : ''}
+  </div>`;
+}
+function bindReadiness() {
+  const b = document.getElementById('weakGo');
+  if (b) b.onclick = () => begin({ mode: 'weak', recall: st().settings.recall, followUps: st().settings.followUps });
+}
+
+// ---------- cheat sheets and the mistake notebook ----------
+function cheat(domainId) {
+  const c = content.cheats[domainId];
+  if (!c) { app.innerHTML = '<p>הסיכום לא נמצא.</p>'; return; }
+  app.innerHTML = `<p><a href="#/library">→ לספרייה</a></p><h1>${esc(c.title)}</h1>
+    ${c.sections.map((sec) => `<div class="card cheat"><h2>${esc(sec.title)}</h2><ul>${sec.points.map((p) => `<li class="rich">${inlineMd(p)}</li>`).join('')}</ul></div>`).join('')}`;
+}
+
+function notebook() {
+  const notes = Object.entries(st().notes).filter(([id, n]) => n.text && content.questionById[id]).sort((a, b) => b[1].u - a[1].u);
+  app.innerHTML = `<p><a href="#/library">→ לספרייה</a></p><h1>מחברת הטעויות</h1>
+    <p class="muted">מה שכתבת לעצמך אחרי טעות. כל הערה מופיעה שוב כשהשאלה חוזרת.</p>
+    ${notes.length ? notes.map(([id, n]) => {
+      const q = content.questionById[id];
+      return `<div class="card"><p class="small muted">${esc(content.subById[q.sub]?.name)} · רמה ${q.level} · ${fmtDate(n.u)}</p>
+        <p><strong>${esc(n.text)}</strong></p>
+        <details><summary>השאלה</summary><div class="rich">${esc(q.prompt.slice(0, 600))}</div></details>
+        <a class="small" href="#/lesson/${encodeURIComponent(q.lesson)}">לשיעור ←</a></div>`;
+    }).join('') : '<div class="card"><p class="muted">עוד אין הערות. אחרי טעות אפשר לכתוב משפט אחד: למה טעיתי.</p></div>'}
+    ${notes.length ? '<button class="btn primary big" id="notesGo">תרגל את השאלות מהמחברת</button>' : ''}`;
+  const b = document.getElementById('notesGo');
+  if (b) b.onclick = () => {
+    const qs = notes.map(([id]) => content.questionById[id]).filter((q) => q.type !== 'code' || isDesktop());
+    const picked = qs.sort(() => Math.random() - 0.5).slice(0, 20);
+    startSession({ mode: 'review', recall: st().settings.recall, followUps: st().settings.followUps }, picked);
+    navigate('#/session');
+  };
+}
+
 // ---------- router ----------
 function route() {
   stopSessionTimer();
@@ -329,7 +409,7 @@ function route() {
   const params = new URLSearchParams(query || '');
   const parts = (path || '/').split('/').filter(Boolean);
   const top = parts[0] || 'home';
-  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (top === 'lesson' ? 'library' : ['session', 'summary'].includes(top) ? 'practice' : top)));
+  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (['lesson', 'stories', 'story', 'story-practice', 'cheat', 'notes'].includes(top) ? 'library' : ['session', 'summary', 'mock-result'].includes(top) ? 'practice' : top)));
   switch (top) {
     case 'home': home(); break;
     case 'practice': practice(params); break;
@@ -338,6 +418,12 @@ function route() {
       renderSession(app, { toast, navigate });
       break;
     case 'summary': renderSummary(app); break;
+    case 'mock-result': renderMockResult(app); break;
+    case 'stories': renderStories(app); break;
+    case 'story': renderStoryEdit(app, decodeURIComponent(parts[1] || 'new'), navigate, toast); break;
+    case 'story-practice': renderStoryPractice(app); break;
+    case 'cheat': cheat(parts[1]); break;
+    case 'notes': notebook(); break;
     case 'library': library(params); break;
     case 'lesson': lesson(decodeURIComponent(parts.slice(1).join('/'))); break;
     case 'progress': progress(); break;

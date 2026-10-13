@@ -1,0 +1,101 @@
+{
+  "domain": "bugs",
+  "title": "איתור באגים: דף לזכור",
+  "sections": [
+    {
+      "title": "איך לעבוד על באג בראיון",
+      "points": [
+        "לסווג קודם: off-by-one, lifetime, race, overflow, UB או leak. כל קטגוריה מכוונת לשאלה ולכלי אחר.",
+        "'עובד ב-O0 ונשבר ב-O2' = **UB**. 'רק על ARM' = memory ordering. 'פעם בשבוע' = race או lifetime. 'RSS עולה לאט' = leak או דליפה לוגית.",
+        "לפני תיקון: מה ה-invariant שנשבר, ואיפה הוא נשבר לראשונה, לא איפה זה קורס.",
+        "כלים: **ASan** (זיכרון, בערך x2), **UBSan** (זול, על כל הטסטים), **TSan** (races, x5–15), MSan (קריאה לא מאותחלת), Valgrind.",
+        "sanitizer מוצא רק מה שקרה בריצה שנבדקה: כיסוי טסטים, stress ו-fuzzing לקוד שמפרסר קלט.",
+        "תהליך סניור: `-Wall -Wextra` כ-errors, sanitizers ב-CI, `_GLIBCXX_ASSERTIONS` ב-debug, core dumps ו-rr לבאגים מ-production."
+      ]
+    },
+    {
+      "title": "Off-by-one",
+      "points": [
+        "Fencepost: מספר השלמים ב-`[a, b]` הוא `b - a + 1`. ב-`[a, b)` הוא `b - a`.",
+        "**Half-open** `[begin, end)` (STL, Python): אורך = הפרש, טווח ריק = `begin == end`, חלוקה לחלקים בלי חפיפות ובלי חורים.",
+        "`<=` במקום `<` על מערך: קריאה אחת מעבר לסוף היא **UB**, ולרוב לא קורסת. ASan תופס.",
+        "`for (size_t i = n - 1; i >= 0; --i)`: לולאה **אינסופית**; ו-`n - 1` על n=0 עוטף. `for (size_t i = n; i-- > 0;)`.",
+        "`strncpy(dst, src, sizeof dst)` לא מוסיף `'\\0'` כשהמקור ארוך. ב-Python `xs[-k:]` עם k=0 מחזיר **הכל**.",
+        "Frames באורך F עם hop H באות באורך n (n ≥ F): `floor((n - F) / H) + 1`.",
+        "Overlap-save עם FFT באורך N ומסנן באורך L: רק **N - L + 1** דגימות תקינות (1024, 129 → 896). `rfft` של N נותן **N/2 + 1** בינים.",
+        "`np.linspace(0, 1, 5)` כולל את הסוף: צעד 0.25. Ring buffer: להגדיר אם head הוא האחרון שנכתב או **המקום הבא**.",
+        "Binary search: לנסח invariant ולבדוק את המקרה שהמטרה לא קיימת או גדולה מכולם."
+      ]
+    },
+    {
+      "title": "Lifetime ו-dangling",
+      "points": [
+        "Dangling 'עובד' כי ה-allocator עוד לא מחזר את הזיכרון. בדיקה ידנית לא מוכיחה כלום; ASan: heap/stack-use-after-free/return/scope.",
+        "`std::string_view sv = makeString();` מצביע לזמני שנהרס בסוף השורה. אותו דבר `span` ו-`c_str()`.",
+        "`const int& r = std::max(a, 1);` dangling: lifetime extension לא עובר דרך פונקציה.",
+        "Range-for על `f().member()`: לפני C++23 הזמני מ-`f()` נהרס לפני הלולאה. C++23 (P2718) מאריך.",
+        "reference/pointer/iterator לאיבר ב-vector ואז `push_back`: reallocation **מבטל הכל**.",
+        "lambda עם `[&]` או `this` שנשמרת ב-callback/thread. לוכדים `weak_ptr` (`weak_from_this`) ובודקים `lock()`.",
+        "`weak_from_this()` בתוך constructor מחזיר **weak_ptr ריק**. רישום callback אחרי הבנייה, ב-factory.",
+        "Coroutine שמקבל `const T&`: ה-reference נשמר ב-frame, האובייקט לא. לקבל by value.",
+        "Use-after-move: מותר רק השמה או פעולות בלי preconditions. Python closures: late binding של משתנה הלולאה."
+      ]
+    },
+    {
+      "title": "Races",
+      "points": [
+        "**data race**: שתי גישות, לפחות כתיבה אחת, לפחות אחת לא atomic, בלי happens-before = **UB**. **race condition**: תוצאה תלויה בתזמון, גם עם atomics.",
+        "'רק counter לסטטיסטיקה' עדיין data race. כותב יחיד וקורא: `atomic` עם `relaxed` מספיק ולא עולה כלום ב-x86.",
+        "`++x` הוא read-modify-write: שלוש פעולות. check-then-act (`if (!p) p = create();`) דורש lock, CAS או `call_once`.",
+        "Publish: data ואז `flag.store(release)`; `load(acquire)` ואז data. 'עובד על x86' (TSO) ונשבר על ARM.",
+        "lock רק בצד הכותב לא מספיק: גם הקוראים חייבים lock או atomic.",
+        "cv: predicate שמשתנה בלי mutex (גם atomic) → lost wakeup ו-join שנתקע.",
+        "`shared_ptr`: ה-refcount אטומי, אבל המופע עצמו לא. ה-GIL של Python לא הופך `n += 1` לאטומי.",
+        "bitfields סמוכים הם **memory location אחד**: שני threads שכותבים לשדות שונים = race. משתנים נפרדים לא.",
+        "TSan שותק לא מוכיח כלום: race שלא קרה בריצה לא נמצא. להוסיף stress, הפרעות תזמון ו-assertions על invariants."
+      ]
+    },
+    {
+      "title": "Integer overflow",
+      "points": [
+        "**signed overflow = UB**; unsigned עוטף mod 2^N (מוגדר, אבל עדיין באג לוגי). NumPy עוטף **בשקט**; Python int לא מוגבל.",
+        "`if (a + b < a)` על signed: הקומפיילר רשאי **למחוק**. לבדוק לפני: `a > INT_MAX - b`, או `__builtin_add_overflow`.",
+        "`int64_t x = a * b;` עם a, b מסוג int: הכפל גולש **לפני** ההרחבה. `int64_t{a} * b`.",
+        "`n * sizeof(T)` מקלט חיצוני: overflow בחישוב גודל הקצאה = heap overflow וחולשת אבטחה.",
+        "`std::abs(INT_MIN)` ו-`INT_MIN / -1` הם UB. המרת float מחוץ לטווח ל-int היא UB.",
+        "השוואה `int < size_t`: ה-int מומר ל-unsigned, ו-`-1 < 0u` הוא **false**. `-Wsign-compare`.",
+        "Q15: `(-32768) * (-32768) >> 15 = 32768`, לא נכנס ב-int16. saturation (`_mm_adds_epi16`) או widening.",
+        "מונה 32 ביט ב-200 MHz עוטף כל **21.5 שניות**. הפרש `uint32_t(t1 - t0)` נכון גם בגלישה; השוואה: `int32_t(t1 - t0) > 0`.",
+        "Binary search: `lo + (hi - lo) / 2`, או `std::midpoint`."
+      ]
+    },
+    {
+      "title": "UB בקוד אמיתי",
+      "points": [
+        "האופטימייזר מניח ש-UB לא קורה: מוחק בדיקות, מקפל לולאות, מסדר מחדש. null check **אחרי** dereference נמחק.",
+        "Strict aliasing: לקרוא float דרך `uint32_t*` הוא UB. `std::bit_cast` או `memcpy` (אפס עלות אחרי אופטימיזציה).",
+        "union type punning חוקי ב-C, **לא ב-C++** (GCC מתיר כ-extension). `reinterpret_cast` של buffer ל-struct: alignment ו-aliasing.",
+        "comparator ל-`std::sort` שאינו strict weak ordering (`<=`, NaN) הוא UB: crash או קריאה מחוץ למערך.",
+        "shift בכמות ≥ רוחב: UB. ב-x86 `1u << 32` 'נותן 1' כי החומרה ממסכת, אבל הקומפיילר לא חייב לעשות shift בכלל.",
+        "`reserve` לא מגדיל את `size`: `v[i]` מעבר ל-size הוא UB. פונקציה לא-void בלי return בכל מסלול: UB (`-Wreturn-type`).",
+        "קריאת local לא מאותחל: UB עד C++23, erroneous behavior ב-C++26. MSan או Valgrind.",
+        "'עובד על x86' אינו הוכחה: vectorization עם הוראות שדורשות alignment שובר גם שם.",
+        "משפט סניור: 'UB קיים כדי לאפשר אופטימיזציות כמו vectorization ו-`i + 1 > i`; המדיניות שלי היא sanitizers ב-CI ו-checked arithmetic בגבולות'."
+      ]
+    },
+    {
+      "title": "Resource leaks",
+      "points": [
+        "חוק: **אין משאב בלי owner**. RAII ו-`unique_ptr` לכל זוג רכישה/שחרור: זיכרון, fd, lock, socket, זיכרון GPU.",
+        "`return` מוקדם או exception בין `new` ל-`delete`. שני `new` ב-constructor בלי RAII: אם השני זורק, הראשון דולף.",
+        "`p = realloc(p, n)`: אם נכשל, המקורי **אבד**. לשמור לתוך משתנה זמני.",
+        "`v.push_back(up.release())`: אם push_back זורק, האובייקט דולף. `v.push_back(std::move(up))`.",
+        "מעגל `shared_ptr` (parent/child, או lambda שלוכדת shared_ptr ל-this ונשמרת באובייקט): destructor לא רץ לעולם. `weak_ptr`.",
+        "delete דרך base בלי virtual destructor, ו-`delete` במקום `delete[]`: UB ודליפה.",
+        "fds: `EMFILE` ('Too many open files'). `O_CLOEXEC` כדי שילדים מ-exec לא ירשו fds.",
+        "LeakSanitizer לא מדווח על זיכרון **נגיש**: cache או map שגדלים בלי גבול. caches עם LRU/TTL ומדד גודל.",
+        "RSS עולה בלי leak: fragmentation של ה-allocator. חקירה: heap profiles משני זמנים והשוואה; ב-Python `tracemalloc`."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "domain": "design",
+  "title": "System design ו-pipelines: דף לזכור",
+  "sections": [
+    {
+      "title": "Producer-consumer",
+      "points": [
+        "תור לא מאיץ אף צד: הוא רק סופג bursts. **תמיד bounded**, ומדיניות מלא מוגדרת מראש: block, try_push, drop newest/oldest",
+        "תור חוסם MPMC: mutex אחד ו-**שני** condition variables (`not_full`, `not_empty`). `wait` תמיד עם predicate או בלולאה",
+        "cv אחד עם `notify_one`: producer מעיר producer, וה-consumer לא מתעורר. lost wakeup: שינוי state בלי mutex (גם אם הדגל atomic)",
+        "SPSC lock-free: data ואז `tail.store(release)`; consumer `load(acquire)`. `alignas(64)` ו-cached indices; volatile אינו סנכרון",
+        "Hot path: pool מוקצה מראש ו-mlock, full queue ו-free queue של מצביעים. מעבירים ownership, לא מעתיקים",
+        "Shutdown: poison pill **אחד לכל consumer**, או דגל closed עם `notify_all`, ו-pop מרוקן עד שהתור ריק",
+        "כמה consumers שוברים סדר: resequencing עם seq number (head-of-line blocking), round-robin דטרמיניסטי, או partitioning לפי key",
+        "Work stealing: owner עובד LIFO מהקצה התחתון (חם ב-cache), thieves גונבים מהעליון (משימות גדולות). Vyukov MPMC: seq לכל slot",
+        "תור מבוזר (SQS, Service Bus): visibility timeout = at-least-once, ולכן עיבוד idempotent, heartbeat ל-lease ו-DLQ"
+      ]
+    },
+    {
+      "title": "Queues, backpressure ו-retries",
+      "points": [
+        "**Little's law:** `L = λ·W`, לכל מערכת יציבה. concurrency של 200 ו-40 ms → לכל היותר 5,000 בקשות/שנייה",
+        "M/M/1: `W = S/(1-ρ)`. ב-ρ=0.5 זה 2S, ב-0.8 זה 5S, ב-0.9 זה 10S, ב-0.95 זה 20S. מ-80% ל-95%: פי 4",
+        "Burst נפתר בתור (`Δλ·T` מקומות); עומס יתר מתמשך רק ב-backpressure, load shedding, scaling או degradation",
+        "Concurrency limit עדיף על rate limit: כש-downstream מאט, rate limit מגדיל בקשות פתוחות (`L = λ·W`)",
+        "Retry amplification: r retries בכל שכבה → `(1+r)^layers`. 3 שכבות עם 2 retries: 27 קריאות. retries בשכבה אחת בלבד",
+        "Exponential backoff **עם jitter** (נגד thundering herd), retry budget של כ-10%, ו-deadline propagation",
+        "Timeout של client קצר מההמתנה בתור: throughput גבוה ו-goodput אפס. adaptive LIFO משרת קודם בקשות טריות",
+        "בין שירותים: credits (reactive streams), TCP window, pull (Kafka poll). reject עם 429/503 ו-Retry-After",
+        "Bufferbloat: buffer ענק = latency בלי throughput. CoDel מודד sojourn time (יעד כ-5 ms) ולא אורך תור"
+      ]
+    },
+    {
+      "title": "תקציב latency ו-throughput",
+      "points": [
+        "מודדים אחוזונים (p50/p99/p99.9) ב-HDR histogram, לא ממוצע. **אחוזונים לא מתחברים ולא מתמצעים** בין שרתים",
+        "Pipelining ו-batching מעלים throughput, לא מקצרים latency. זמן מילוי buffer של N דגימות הוא `N/fs`: 2048 ב-200 MS/s = 10.24 µs",
+        "Fan-out: `1 − (1−p)^N`. p=1% ו-100 shards → כ-63% מהבקשות פוגשות shard איטי; כדי להגיע ל-1% צריך p99.99",
+        "Hedged request אחרי p95: כ-5% עומס נוסף, רק ל-idempotent. tied requests מבטלים את ההעתק כשאחד מתחיל לבצע",
+        "מספרים: L1 ≈ 1 ns, RAM ≈ 100 ns, SSD אקראי 20-150 µs, RTT ב-datacenter ≈ 0.5 ms, בין יבשות 80-150 ms",
+        "Serialization: 1500 B ב-10 Gb/s = 1.2 µs. סיב: כ-5 µs לק״מ. BDP = קצב × RTT; חלון קטן חוסם ב-`window/RTT`",
+        "Coordinated omission: load tester ב-closed loop מסתיר stalls. open loop לפי לוח זמנים (wrk2)",
+        "Tail מגיע מהמתנה: micro-bursts, head-of-line blocking (תור נפרד לבקשות כבדות), GC ו-stalls",
+        "Amdahl: `1/((1−p) + p/n)`. p=0.9 על 8 cores ≈ 4.7, ועם אינסוף cores רק 10"
+      ]
+    },
+    {
+      "title": "Pipelines ו-streaming",
+      "points": [
+        "Throughput = min על השלבים של `workers/זמן לפריט`. workers לשלב = `⌈קצב × זמן⌉`: 2,000/s × 4 ms = 8",
+        "Stateless משכפלים חופשי; stateful מחלקים לפי key (`hash(key) mod N`). שלבים קלים וצמודים: fusion",
+        "Kafka: סדר רק בתוך partition; צרכנים פעילים ≤ partitions. 300 MB/s ו-20 MB/s לצרכן → לפחות 15 partitions",
+        "Hot key: pre-aggregation או salting (`key#0..k`), רק לפעולות שמתפרקות (sum, count, max; ממוצע כ-(sum, count))",
+        "At-most-once: commit לפני עיבוד. at-least-once: אחרי. **effectively-once** = at-least-once + sink אידמפוטנטי או טרנזקציה",
+        "Exactly-once לא מכסה side effects חיצוניים (email, תשלום): idempotency key בצד המקבל או outbox pattern",
+        "Event time מול processing time. watermark סוגר חלון; late data לפי allowed lateness. partition idle עוצר את ה-watermark",
+        "חלון שנפלט פעמיים: downstream עושה upsert לפי מפתח החלון, לא סכימה. max על sliding window: panes ו-monotonic deque",
+        "Poison message: מספר ניסיונות מוגבל ואז DLQ. מודדים consumer lag גם בשניות. GPU רק עם batching, pinned memory ו-streams"
+      ]
+    },
+    {
+      "title": "Scaling",
+      "points": [
+        "86,400 s ביום ≈ 10^5: מיליון בקשות ביום ≈ 12/s. peak פי 2-10 מהממוצע. מגדילים רק מה שהחשבון מראה",
+        "Compute stateless מאחורי LB; state ב-Redis, JWT, object storage או DB. sticky sessions הם פלסטר",
+        "Cache-aside: miss → DB → set עם TTL; בכתיבה מוחקים. 20,000 קריאות/s ו-DB של 2,000 → hit ratio ≥ 90%",
+        "Stampede: single-flight, רענון מוקדם הסתברותי, jitter על TTL. race של cache-aside נפתר ב-leases או versions",
+        "Replication מגדיל קריאות וזמינות, לא כתיבות. async lag של 300 ms ב-5,000 כתיבות/s → כ-1,500 כתיבות אובדות ב-failover",
+        "Quorum: `R + W > N` מבטיח חפיפה עם הכתיבה האחרונה. N=5 ועמידות ל-2 נפילות: W=3, R=3. sloppy quorum שובר זאת",
+        "CAP: בזמן partition בוחרים C או A. **PACELC**: גם בלי partition יש trade-off בין latency ל-consistency",
+        "`hash mod N` מזיז כמעט הכל; consistent hashing מזיז כ-1/N, ו-virtual nodes מאזנים. range על key מונוטוני = hot shard",
+        "Hot keys: sharded counters, שכפול ב-cache, feed היברידי (push לרגילים, pull לסלבריטאים). תשלומים: idempotency key"
+      ]
+    },
+    {
+      "title": "Observability",
+      "points": [
+        "Metrics עונים 'האם', traces 'איפה', logs 'למה'. counter (עולה), gauge (נוכחי), histogram (התפלגות, ניתן לחיבור)",
+        "RED לשירותים (Rate, Errors, Duration), USE למשאבים (Utilization, Saturation, Errors)",
+        "SLI = מה מודדים, SLO = יעד, SLA = חוזה. 99.9% על 30 יום = error budget של **43.2 דקות**; 99.99% = 4.32",
+        "Burn rate: 14.4 לשעה שורף 2% מה-budget. שגיאות 0.5% מול SLO של 99.9% = burn rate 5, budget נגמר תוך 6 ימים",
+        "מתריעים על סימפטומים (SLO burn), לא על סיבות (CPU גבוה). multi-window: חלון ארוך וחלון קצר יחד",
+        "Cardinality: מכפלת ערכי labels, histogram מוסיף bucket ועוד `_sum`/`_count`. `user_id` שייך ל-logs ול-traces, לא ל-labels",
+        "Tail-based sampling שומר שגיאות ובקשות איטיות; head-based זול אבל מפספס את הנדירים",
+        "RT: בלי printf בנתיב החם, `CLOCK_MONOTONIC` דרך vDSO (עשרות ns), histogram per-thread ו-seqlock, flight recorder",
+        "SLI בצד השרת לא רואה תקלת DNS או LB: מודדים קרוב למשתמש (LB logs, synthetic probes, RUM). 3 תלויות של 99.9% → כ-99.7%"
+      ]
+    },
+    {
+      "title": "תכנון מערכת זמן-אמת",
+      "points": [
+        "תוצאה נכונה שמגיעה מאוחר היא שגויה. המדד: **WCET ו-max** תחת עומס לאורך שעות, לא ממוצע של 10 דקות במעבדה",
+        "החמצת deadline: לא משלימים איטרציות (catch-up storm), מתיישרים לשעון. `clock_nanosleep` עם `TIMER_ABSTIME`",
+        "SCHED_FIFO: עדיפות 1-99 בלי time slice; RT throttling ברירת מחדל 950 ms מכל שנייה. SCHED_RR מחליף באותה עדיפות",
+        "RMS: Liu & Layland `n(2^(1/n) − 1)`: n=2 ≈ 82.8%, n=3 ≈ 78%, גבול ln 2 ≈ 69.3%. תנאי מספיק בלבד. EDF עד 100%",
+        "Priority inversion (Mars Pathfinder): priority inheritance או ceiling, ועדיף בכלל לא לחלוק locks עם threads בעדיפות נמוכה",
+        "Platform: `mlockall` ו-prefault, isolcpus, nohz_full, rcu_nocbs, IRQ affinity, ולבודד גם את ה-HT sibling. fork בתהליך RT = COW ו-TLB shootdown",
+        "הקצאות נסתרות: `std::string` מעבר ל-SSO, `push_back`, `std::function` גדול, `throw`, rehash של `unordered_map` (גם אחרי `reserve`, הצמתים מוקצים)",
+        "Config בזמן ריצה: אובייקט immutable חדש, מצביע atomic עם release, acquire פעם אחת לבלוק; שחרור הישן מחוץ ל-RT thread",
+        "Timed commands לפי שעון ה-radio הופכים jitter של host לבעיית margin. Fail-safe: TX כבוי כברירת מחדל, watchdog בלתי תלוי"
+      ]
+    }
+  ]
+}

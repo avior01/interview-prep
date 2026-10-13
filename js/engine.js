@@ -14,7 +14,7 @@ export const PLAN = [
   ['conc.threads', 'conc.mutex-locks', 'conc.condvars', 'conc.deadlock', 'sys.processes-threads', 'sys.syscalls', 'sys.ipc'],
   ['conc.atomics', 'conc.memory-order', 'conc.lock-free', 'sys.interrupts', 'sys.volatile-mmio', 'sys.dma'],
   ['alg.graphs', 'alg.intervals', 'cpp.templates', 'cpp.polymorphism'],
-  ['alg.dp', 'alg.backtracking', 'dsp.fft', 'dsp.ring-buffers', 'dsp.sampling'],
+  ['alg.dp', 'alg.backtracking', 'alg.patterns', 'dsp.fft', 'dsp.ring-buffers', 'dsp.sampling'],
   ['dsp.filters', 'dsp.fixed-point', 'dsp.simd', 'dsp.windows', 'py.data-model', 'py.generators', 'py.numpy'],
   ['design.producer-consumer', 'design.backpressure', 'design.latency-budget', 'design.pipelines', 'design.scaling', 'design.observability', 'design.rt-design', 'bugs.races', 'bugs.ub-bugs', 'bugs.overflow', 'cpp.ub'],
   ['cv.fft-rates', 'alg.greedy', 'alg.tries', 'alg.bits', 'sys.virtual-memory', 'sys.caches', 'sys.scheduling'],
@@ -193,6 +193,17 @@ export function buildSession({ mode, scope, level, length, companyOnly }) {
     return out;
   }
 
+  if (mode === 'weak') {
+    // Weak questions first, then the weakest subtopics at their current level.
+    takeUnique(out, shuffle(all.filter(isWeak)), Math.ceil(n * 0.5), used);
+    const keys = weakestSubs(3).map((x) => x.key);
+    const fresh = [];
+    for (const k of keys) fresh.push(...atLevel(k, levelOf(k)));
+    takeUnique(out, shuffle(fresh), n, used);
+    takeUnique(out, shuffle(all.filter(isWeak)), n, used);
+    return shuffle(out);
+  }
+
   if (mode === 'review') {
     takeUnique(out, shuffle(all.filter(isWeak)), n, used);
     takeUnique(out, shuffle(all.filter(isDue)), n, used);
@@ -238,6 +249,80 @@ export function buildSession({ mode, scope, level, length, companyOnly }) {
   }
   takeUnique(out, shuffle(all.filter(isDue)), n, used);
   return shuffle(out);
+}
+
+// ---------- Readiness ("what am I missing") ----------
+// A subtopic is ready at level 4 (senior). Progress inside a level counts too,
+// and weak questions pull it down a little.
+export function subReadiness(key) {
+  const rec = get().levels[key];
+  const level = rec?.level || 1;
+  const ok = (rec?.hist || []).filter(Boolean).length;
+  const steps = Math.min(3, level - 1 + (level < 4 ? Math.min(1, ok / 8) * 0.9 : 0));
+  const weak = (content.qBySub[key] || []).filter(isWeak).length;
+  return Math.max(0, (steps / 3) * (1 - Math.min(0.3, weak * 0.03)));
+}
+
+export function readiness() {
+  const domains = content.domains.map((d) => {
+    const keys = d.subtopics.map((s) => subKey(d.id, s.id)).filter((k) => (content.qBySub[k] || []).length);
+    const subs = keys.map((k) => ({ key: k, r: subReadiness(k) }));
+    const r = subs.length ? subs.reduce((a, x) => a + x.r, 0) / subs.length : 0;
+    return { id: d.id, name: d.name, weight: d.weight, r, subs };
+  }).filter((d) => d.subs.length);
+  const tw = domains.reduce((a, d) => a + d.weight, 0);
+  const overall = domains.reduce((a, d) => a + d.r * d.weight, 0) / (tw || 1);
+  return { overall, domains };
+}
+
+// The weakest subtopics among the ones already reached in the plan (or practiced).
+export function weakestSubs(n = 5) {
+  const week = currentWeek();
+  const reached = new Set(PLAN.slice(0, week).flat());
+  const items = get().items;
+  const cands = [];
+  for (const [key, qs] of Object.entries(content.qBySub)) {
+    if (!qs.length) continue;
+    const practiced = qs.some((q) => items[q.id]);
+    if (!reached.has(key) && !practiced) continue;
+    const weak = qs.filter(isWeak).length;
+    const dw = content.domainById[content.subById[key].domain].weight;
+    cands.push({ key, r: subReadiness(key), weak, score: subReadiness(key) - weak * 0.02 - dw * 0.002 });
+  }
+  return cands.sort((a, b) => a.score - b.score).slice(0, n);
+}
+
+// ---------- Interview simulation ----------
+// A realistic loop: coding (or approach recognition on a phone), two depth
+// questions, design and behavioral. Each question may bring its follow-up.
+export const MOCK_DEPTH = ['cpp', 'conc', 'sys', 'dsp', 'bugs', 'py', 'ai'];
+export function buildMock({ level, focus }) {
+  const all = content.questions;
+  const used = new Set();
+  const out = [];
+  const lv = Math.max(3, level || 3);
+  const pick = (pred, section, count = 1) => {
+    const exact = shuffle(all.filter((q) => !used.has(q.id) && pred(q) && q.level === lv));
+    const near = shuffle(all.filter((q) => !used.has(q.id) && pred(q) && q.level >= 3 && q.level <= lv));
+    const any = shuffle(all.filter((q) => !used.has(q.id) && pred(q)));
+    for (const q of [...exact, ...near, ...any]) {
+      if (count <= 0) break;
+      if (used.has(q.id)) continue;
+      used.add(q.id); out.push({ qid: q.id, section }); count--;
+    }
+  };
+  const oral = (q) => q.type === 'oral';
+  if (isDesktop()) pick((q) => q.type === 'code' && q.domain === 'alg', 'code');
+  else {
+    pick((q) => q.sub === 'alg.patterns' && q.type !== 'short', 'code', 2);
+    pick((q) => q.domain === 'alg' && oral(q), 'code');
+  }
+  const depth = focus && focus !== 'auto' ? [focus] : shuffle(MOCK_DEPTH.filter((d) => d !== 'ai' && d !== 'py')).slice(0, 2);
+  pick((q) => depth.includes(q.domain) && oral(q), 'depth', 1);
+  pick((q) => depth.includes(q.domain) && (oral(q) || (q.followUp && q.type !== 'short')), 'depth', 1);
+  pick((q) => q.domain === 'design' && oral(q), 'design');
+  pick((q) => q.domain === 'beh' && oral(q), 'beh');
+  return out;
 }
 
 export function counts() {

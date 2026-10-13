@@ -1,0 +1,131 @@
+{
+  "domain": "cpp",
+  "title": "C++: דף לזכור",
+  "sections": [
+    {
+      "title": "Pointers, references ו-const",
+      "points": [
+        "pointer הוא אובייקט: יכול להיות `nullptr` ולהצביע מחדש. reference הוא alias: חייב אתחול, בלי reseat, אין reference תקין ל-null.",
+        "חוזה פרמטרים: `T&` חובה, `T*` אופציונלי בלי בעלות, `unique_ptr<T>` העברת בעלות, `std::span<const T>` תצוגה על רצף.",
+        "`const int*` = pointer ל-const. `int* const` = pointer קבוע. `constexpr int* p` הוא **pointer קבוע**, לא pointer ל-const.",
+        "rvalue reference עם שם (`int&& r`) הוא **lvalue** בביטוי. לכן צריך `std::move` או `std::forward` כדי להעביר אותו הלאה.",
+        "Lifetime extension רק בקשירה **ישירה** של temporary ל-`const T&`/`T&&`. לא דרך פונקציה (`std::max`), לא ב-member initializer list.",
+        "`constexpr` על משתנה: ערך בזמן קומפילציה, גורר const. `consteval`: חייב לרוץ בקומפילציה. `constinit`: אתחול סטטי בלי const.",
+        "`const&` לא אומר שהאובייקט לא משתנה: alias או thread אחר יכולים לשנות. לכן const לא תמיד עוזר לאופטימיזציה.",
+        "הספרייה מניחה ש-**const = בטוח לקריאה מקבילית**. `mutable` cache מחייב mutex או atomic.",
+        "החזרת `const T` by value חוסמת move. `std::less<T*>` נותן total order; `<` בין pointers לאובייקטים שונים unspecified."
+      ]
+    },
+    {
+      "title": "RAII ו-exceptions",
+      "points": [
+        "RAII: constructor רוכש, destructor משחרר, אוטומטית גם ב-return מוקדם וגם ב-exception. בלי עלות ריצה נוספת.",
+        "מלכודת: `std::lock_guard<std::mutex>{m};` בלי שם הוא temporary שמשחרר **מיד**. `std::unique_lock<std::mutex>(m);` מצהיר משתנה בשם m.",
+        "destructors הם **noexcept במרומז**. exception שיוצא מ-destructor בזמן unwinding → `std::terminate`.",
+        "Guarantees: **nothrow**, **strong** (commit or rollback, למשל copy-and-swap), **basic** (invariants נשמרים, בלי leak).",
+        "catch by `const&` (by value גורם slicing). rethrow עם `throw;` ולא `throw e;` שמעתיק ו-slices.",
+        "noexcept שמופר → `std::terminate`. מ-C++17 noexcept הוא **חלק מטיפוס הפונקציה**.",
+        "Zero-cost exceptions: אפס בנתיב התקין, אבל throw עולה מיקרו-שניות ולא דטרמיניסטי. בזמן-אמת: error codes או `std::expected` (C++23).",
+        "exception שיוצא מפונקציית thread → `std::terminate`. `std::thread` joinable שנהרס → terminate; `std::jthread` עושה join.",
+        "Scope guard: `scope_fail` משווה את `std::uncaught_exceptions()` (מונה) בבנייה ובהריסה, לא את `uncaught_exception()` הישן."
+      ]
+    },
+    {
+      "title": "Smart pointers",
+      "points": [
+        "`unique_ptr` הוא ברירת המחדל: move-only, אפס overhead. `shared_ptr` רק לבעלות משותפת אמיתית. `weak_ptr` לשבירת מעגלים ו-observers.",
+        "`shared_ptr`: 16 בתים, control block, inc/dec **אטומי** בכל העתקה. להעביר `const&` או raw pointer לפונקציה שרק קוראת.",
+        "`make_shared`: הקצאה אחת. אבל `weak_ptr` שנשאר מחזיק את **כל הבלוק**, כולל זיכרון האובייקט (ה-destructor כבר רץ).",
+        "שני `shared_ptr` מאותו raw pointer = שני control blocks = **double delete**. מתוך האובייקט: `enable_shared_from_this`.",
+        "thread safety: ה-refcount אטומי, אבל אותו **מופע** `shared_ptr` שנכתב ונקרא מ-threads שונים הוא data race. C++20: `std::atomic<std::shared_ptr<T>>`.",
+        "Refcount: increment `relaxed`, decrement `acq_rel` (או release + fence acquire לפני delete).",
+        "ה-destructor של T רץ על ה-thread ששחרר את ה-reference האחרון, אולי ה-RT thread. ב-pipeline: pool + SPSC במקום shared_ptr.",
+        "pimpl עם `unique_ptr<Impl>`: להצהיר על destructor ב-header ולהגדיר `= default` ב-cpp, אחרת שגיאה על incomplete type.",
+        "רשימה של `unique_ptr<Node>` עם 10 מיליון צמתים: destructor רקורסיבי → **stack overflow**. לפרק בלולאה."
+      ]
+    },
+    {
+      "title": "Move semantics ו-rule of 5",
+      "points": [
+        "`std::move` **לא מזיז כלום**: רק cast ל-rvalue. המקור נשאר valid but unspecified: מותר להשים לו או להרוס אותו.",
+        "Rule of 0: members שהם RAII, לא כותבים כלום. Rule of 5: dtor, copy ctor/assign, move ctor/assign.",
+        "הצהרה על destructor (גם `= default`) **מבטלת את ה-move המרומז**, והמחלקה מעתיקה בשקט.",
+        "move ctor בלי **noexcept** → `vector` מעתיק ב-reallocation (`move_if_noexcept`), כדי לשמור strong guarantee.",
+        "`return std::move(local);` **חוסם NRVO** (`-Wpessimizing-move`). מ-C++17 copy elision של prvalue מובטח.",
+        "`std::move` על const object נותן `const T&&` שנקשר ל-**copy** constructor.",
+        "move של vector/string הוא O(1), אבל string קצר ב-**SSO** (עד 15 תווים ב-libstdc++) מועתק בתים.",
+        "Forwarding reference רק ב-`T&&` עם T מוסק (או `auto&&`). `std::forward<T>` שומר value category. `vector<T>&&` אינו forwarding.",
+        "Sink parameter: by value + move פשוט. ב-setter חם, overloads של `const&`/`&&` חוסכים הקצאה כי משתמשים ב-capacity הקיים."
+      ]
+    },
+    {
+      "title": "Templates ו-lambdas",
+      "points": [
+        "Templates הם static polymorphism: אפס עלות ריצה, inlining מלא. המחיר: זמן קומפילציה ו-**code bloat**; `extern template` מצמצם.",
+        "בקוד תלוי: `typename T::type` ו-`this->member` (dependent base). two-phase lookup.",
+        "**אין partial specialization לפונקציות**. explicit specialization לא משתתפת ב-overload resolution: עדיף overload.",
+        "CTAD: `std::vector w{v.begin(), v.end()}` יוצר **vector של iterators**. סוגריים עגולים נותנים את הטווח.",
+        "SFINAE / `enable_if` הוחלפו ב-**concepts** ו-`requires`. subsumption בוחר את ה-overload המוגבל יותר רק דרך concepts עם שם.",
+        "Lambda = closure class אנונימי. closure ריק: 1 בית. `std::function`: 32 בתים ב-libstdc++, קריאה עקיפה ואולי malloc.",
+        "`[=]` בתוך member function לוכד **`this`**, לא עותק של ה-members. עותק: `[*this]` (C++17).",
+        "`[&]` + detach/callback/החזרה מפונקציה = dangling. בקוד async לוכדים `weak_ptr` ובודקים `lock()`.",
+        "בזמן-אמת: templates או `inplace_function` במקום `std::function` שמקצה. lambda רקורסיבית: C++23 deducing this."
+      ]
+    },
+    {
+      "title": "virtual, vtable ופולימורפיזם",
+      "points": [
+        "כל אובייקט פולימורפי מחזיק **vptr** (8 בתים + padding) לטבלה סטטית אחת לכל class. קריאה: שתי טעינות + indirect branch.",
+        "העלות האמיתית: **אובדן inlining** ו-vectorization, ו-mispredictions ב-call site megamorphic. `final`, LTO ו-PGO מאפשרים devirtualization.",
+        "delete דרך base בלי **virtual destructor** הוא UB. חלופה: protected non-virtual destructor.",
+        "`vector<Base>` גורם **slicing**. משתמשים ב-`vector<unique_ptr<Base>>`.",
+        "virtual מתוך constructor/destructor נשלח לגרסה של **המחלקה הנבנית**, לא ל-derived. pure virtual משם → UB (בפועל abort).",
+        "default arguments נקבעים **סטטית** לפי טיפוס ה-pointer, גם כשהגוף נבחר דינמית.",
+        "תמיד `override`: חתימה שונה בטעות יוצרת פונקציה חדשה ו-name hiding.",
+        "`undefined reference to vtable`: ה-**key function** (הוירטואלית הראשונה שאינה inline) לא מוגדרת באף TU.",
+        "חלופות: CRTP (סטטי), `std::variant` + `std::visit` (קבוצה סגורה), type erasure. הוספת virtual ל-.so משוחרר = **ABI break**."
+      ]
+    },
+    {
+      "title": "STL containers ואלגוריתמים",
+      "points": [
+        "ברירת מחדל `std::vector`: רציף, ידידותי ל-cache. `std::list` כמעט תמיד איטי יותר בגלל cache misses.",
+        "map: red-black, `O(log n)`, סדר ו-range queries. unordered_map: O(1) בתוחלת, O(n) worst, node-based והקצאה לכל איבר.",
+        "Iterator invalidation: vector `push_back` עם reallocation מבטל **הכל**. unordered rehash מבטל iterators אבל לא references.",
+        "erase בלולאה: `it = c.erase(it)`. סינון: erase-remove או `std::erase_if` (C++20).",
+        "`sort` הוא `O(n log n)` worst (introsort, מ-C++11), לא יציב. `stable_sort` יציב עם זיכרון נוסף. `nth_element`: O(n) בממוצע.",
+        "comparator חייב **strict weak ordering**: `<=` או NaN עם `>` הם UB, ואפשר לקבל crash בתוך sort.",
+        "`vector<bool>` אינו container אמיתי: proxy references, וכתיבה מקבילה לביטים שונים היא data race.",
+        "`emplace_back(new T)` לוקטור של `unique_ptr` דולף אם ה-reallocation זורק. להשתמש ב-`make_unique`.",
+        "senior: sorted vector או `flat_map` (C++23) לקריאות רבות, heterogeneous lookup עם `std::less<>`, ו-pmr allocators לזמן-אמת."
+      ]
+    },
+    {
+      "title": "Undefined behavior",
+      "points": [
+        "UB = אין דרישה על **כל** התוכנית. הקומפיילר מניח שהוא לא קורה, ולכן עובד ב-O0 ונשבר ב-O2.",
+        "UB מול implementation-defined (מתועד, למשל `sizeof(long)`) מול unspecified (אחת מכמה אפשרויות, למשל סדר הערכת ארגומנטים).",
+        "Signed overflow הוא UB; unsigned עוטף mod 2^N. בדיקת `x + 1 < x` על signed נמחקת. להשתמש ב-`__builtin_add_overflow`.",
+        "null check **אחרי** dereference נמחק. shift ≥ רוחב הטיפוס UB. `-1 < 0u` הוא **false** (המרה ל-unsigned).",
+        "Strict aliasing: לקרוא float דרך `uint32_t*` הוא UB. `memcpy` או `std::bit_cast`. union punning חוקי ב-C, לא ב-C++.",
+        "data race על משתנה לא-atomic הוא UB, לא רק 'עדכון שהולך לאיבוד'.",
+        "C++26: קריאה ממשתנה לא מאותחל הפכה ל-**erroneous behavior**; לולאה אינסופית טריוויאלית כבר לא UB.",
+        "כלים: UBSan, ASan (בערך x2), TSan (בערך x5–15), MSan. מריצים ב-CI, לא ב-production. `constexpr` + `static_assert` תופסים UB בקומפילציה."
+      ]
+    },
+    {
+      "title": "Memory layout ו-alignment",
+      "points": [
+        "padding בין members ובסוף struct. `{char; int; char}` = 12 בתים, `{int; char; char}` = 8. מסדרים מהגדול לקטן.",
+        "`sizeof` תמיד כפולה של `alignof`. members באותו access נשמרים **בסדר ההצהרה** בכתובות עולות (מ-C++23 כולם). הקומפיילר לא מסדר מחדש.",
+        "`memcmp` על structs: ה-padding מכיל זבל. `#pragma pack(1)`: גישות לא מיושרות ו-pointers ל-members שאסור להשתמש בהם.",
+        "`reinterpret_cast` של buffer ל-struct: alignment, aliasing, endianness ו-padding. לפענח עם `memcpy` שדה-שדה.",
+        "cache line הוא **64 בתים**. מונים של threads שונים באותו line = **false sharing**, האטה פי 10 ויותר. `alignas(64)` או `hardware_destructive_interference_size`.",
+        "AoS מול SoA: SoA טוב ל-SIMD ול-coalesced access על GPU, ומנצל רוחב פס כשמשתמשים רק בחלק מהשדות.",
+        "EBO ו-`[[no_unique_address]]`: member ריק לא תופס מקום. aligned new (C++17) לטיפוסים over-aligned.",
+        "NUMA **first-touch**: הדף מוקצה פיזית ב-node של ה-thread שכתב אליו ראשון, לא של מי שקרא ל-malloc.",
+        "Segments: `.text` קוד, `.rodata` קבועים, `.data` גלובלים מאותחלים, `.bss` מאותחלים לאפס (לא תופס מקום בקובץ)."
+      ]
+    }
+  ]
+}

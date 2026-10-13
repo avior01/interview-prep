@@ -1,0 +1,129 @@
+{
+  "domain": "sys",
+  "title": "מערכות, Linux ו-embedded: דף לזכור",
+  "sections": [
+    {
+      "title": "Processes מול threads",
+      "points": [
+        "process = בידוד (מרחב כתובות, fds, הרשאות). thread = יחידת ביצוע בתוכו. ב-Linux שניהם נוצרים ב-`clone()`; ההבדל הוא מה משותף.",
+        "יצירת thread: עשרות µs. fork: עשרות עד מאות µs, וגדל עם ה-page tables. context switch: 1–5µs ועוד cache/TLB קרים.",
+        "`fork` עושה **copy-on-write**: מעתיק page tables, לא דפים. עם `overcommit_memory = 2` fork של process ענק נכשל.",
+        "בלי `wait` → **zombies**. הורה שמת → orphan שמאומץ ע״י init או subreaper. PID 1 בקונטיינר חייב לאסוף ולטפל ב-SIGTERM (tini).",
+        "`printf` בלי newline לפני fork: הבאפר של stdio משוכפל ומודפס **פעמיים**. בילד אחרי exec שנכשל: `_exit`, לא `exit`.",
+        "fork בתוכנית multithreaded: רק ה-thread הקורא משוכפל. עד `exec` רק async-signal-safe. חלופה: `posix_spawn` או `vfork`.",
+        "מצבי task: R רץ/מוכן, S שינה, **D** שינה לא-ניתנת-להפרעה (I/O, גם `kill -9` לא עוזר), Z zombie, T stopped.",
+        "`exit()` כש-threads עדיין רצים מריץ destructors של גלובלים מתחת לרגליהם → crash ביציאה."
+      ]
+    },
+    {
+      "title": "Virtual memory",
+      "points": [
+        "MMU מתרגם לפי page tables, דף 4KB. x86-64: 4 רמות (PML4, PDPT, PD, PT), 48 ביט. huge pages: 2MB ו-1GB.",
+        "**TLB reach** = entries × page size: 1536 × 4KB = 6MB מול 1536 × 2MB = 3GB. TLB miss = page walk של עשרות עד מאות מחזורים.",
+        "minor fault: 0.5–2µs (כולל איפוס דף). major fault (מדיסק): **מילי-שניות**.",
+        "demand paging: malloc גדול 'מצליח' בלי זיכרון פיזי. **VSZ** הוא מרחב כתובות, **RSS** הוא זיכרון פיזי בפועל.",
+        "malloc מעל `M_MMAP_THRESHOLD` (128KB ברירת מחדל, דינמי) משתמש ב-mmap; free מחזיר munmap ו-**TLB shootdown** לכל ה-threads.",
+        "זמן-אמת: `mlockall` + prefault (`MAP_POPULATE`), huge pages מ-hugetlbfs. **THP** עלול לגרום compaction ואיפוס 2MB בתוך fault.",
+        "NUMA **first-touch**: הדף נוחת ב-node של מי שכתב ראשון. לאתחל באותו thread שישתמש, או `numactl`/`mbind`.",
+        "`MADV_DONTNEED` על זיכרון אנונימי פרטי: הקריאה הבאה מחזירה **אפסים**, התוכן נמחק.",
+        "VIPT L1: גודל ≤ ways × 4KB, לכן 32KB עם 8 ways או 48KB עם 12 ways."
+      ]
+    },
+    {
+      "title": "Syscalls",
+      "points": [
+        "syscall: מעבר user→kernel דרך הוראה ייעודית. ריק: בערך 50–100ns בלי mitigations, יותר עם **KPTI**. vDSO `clock_gettime`: כ-20ns.",
+        "`errno` תקף רק **אחרי** שהקריאה החזירה כישלון. signal handler שקורא syscall חייב לשמור ולשחזר errno.",
+        "`read`/`write` יכולים להחזיר **short count**: תמיד בלולאה. `EINTR`: לחזור על הקריאה (או `SA_RESTART`).",
+        "`O_NONBLOCK` על **קובץ רגיל** לא עוזר: epoll תמיד מדווח מוכן ו-read חוסם על הדיסק. משתמשים ב-io_uring או thread pool.",
+        "epoll: level-triggered מדווח כל עוד יש נתונים; edge-triggered רק בשינוי, וחובה לקרוא עד `EAGAIN`.",
+        "**io_uring** עם SQPOLL: thread בקרנל אוסף בקשות מה-ring, ובמצב יציב אפס syscalls.",
+        "batching: `readv`/`writev`, `recvmmsg`/`sendmmsg`, `sendfile`/`splice`. kernel bypass (DPDK) לאפס מעברים.",
+        "strace (ptrace) מאט כל syscall פי עשרות; `perf trace` ו-bpftrace זולים בהרבה. ב-VM בלי TSC יציב vDSO נופל ל-syscall אמיתי.",
+        "החלפת קובץ אטומית: לכתוב לקובץ זמני, `fsync`, ואז `rename` על המקור."
+      ]
+    },
+    {
+      "title": "OS scheduling",
+      "points": [
+        "Linux preemptive. SCHED_OTHER: הוגנות לפי משקל (nice); RT (FIFO/RR): עדיפות קשיחה שתמיד גוברת על OTHER.",
+        "CFS: בוחר את ה-task עם ה-**vruntime** הנמוך, עץ red-black, `O(log n)`. מקרנל 6.6: **EEVDF** (lag, eligible, virtual deadline).",
+        "nice: כל דרגה בערך 10% CPU (יחס משקלים ~1.25). nice לא נותן latency קשיח.",
+        "**load average** ב-Linux כולל tasks במצב D. load גבוה יכול להיות I/O, לא CPU.",
+        "קונטיינרים: `cpu.max` (quota/period, 100ms ברירת מחדל). threads רבים גומרים את ה-quota מוקדם → **throttling** ארוך ו-p99 spikes.",
+        "`sched_yield` ב-SCHED_OTHER לא מבטיח שמישהו אחר ירוץ; אינו מנגנון המתנה.",
+        "affinity שמצמיד כמה threads עמוסים לאותו core בזמן ש-cores אחרים פנויים: latency בלי סיבה נראית.",
+        "כלים: `perf sched`, `/proc/<pid>/sched`, `runqlat`, voluntary מול nonvoluntary context switches."
+      ]
+    },
+    {
+      "title": "IPC",
+      "points": [
+        "Round trip ב-pipe או UDS: 5–20µs (syscalls + wake-up). shared memory עם polling: 100–300ns (העברת cache line).",
+        "pipe: כתיבה עד `PIPE_BUF` (4096 ב-Linux) **אטומית**. קיבולת ברירת מחדל 64KB. כתיבה לצד סגור → **SIGPIPE**.",
+        "Deadlock קלאסי: האב כותב הרבה ל-stdin של הילד לפני שהוא קורא את ה-stdout שלו, והבאפרים מתמלאים.",
+        "Shared memory: `shm_open` + `mmap(MAP_SHARED)` או `memfd_create`. **בלי pointers** בתוכו, רק offsets.",
+        "process שמת עם mutex בזיכרון משותף תוקע את כולם: `PTHREAD_PROCESS_SHARED` + **robust mutex** (`EOWNERDEAD`).",
+        "futex בין processes **בלי** `FUTEX_PRIVATE_FLAG`. atomics שאינם lock-free לא עובדים בין processes.",
+        "UDS: `SCM_RIGHTS` להעברת fds, `SO_PEERCRED` לזהות. eventfd להתראה בלי נתונים. `ftruncate` שמקטין קובץ ממופה → **SIGBUS**.",
+        "seqlock לכותב יחיד שלא נחסם: קוראים בודקים מונה זוגי ולא שהשתנה, ומנסים שוב."
+      ]
+    },
+    {
+      "title": "Caches ו-false sharing",
+      "points": [
+        "cache line **64 בתים**. L1 ~4–5 מחזורים (~1ns), L2 ~14, L3 ~40–70 מחזורים, DRAM 80–100ns.",
+        "העברת line בין cores (HITM): 50–100ns, ובין sockets יותר. כתיבה דורשת **RFO** (Read For Ownership).",
+        "MESI: Modified, Exclusive, Shared, Invalid. הסבר למחיר של atomics ושל כתיבות משותפות.",
+        "**False sharing**: threads כותבים למשתנים שונים באותו line. padding ל-64, ובחלק מ-Intel ל-**128** בגלל adjacent-line prefetcher.",
+        "Misses: compulsory, capacity, conflict. מעבר על מטריצה row-major **לפי עמודות** הורס spatial locality.",
+        "Blocking/tiling: working set שנכנס ב-cache. AoS מול SoA לפי השדות שבשימוש.",
+        "**4K aliasing**: load ו-store שה-12 ביטים התחתונים של הכתובות שלהם כמעט זהים (הפרש mod 4096 קטן): המעבד חושד בתלות ומשהה.",
+        "Non-temporal stores עוקפים cache; חובה `sfence` לפני פרסום הדגל ל-thread אחר.",
+        "למדוד: `perf stat` (cache-misses, LLC-load-misses), **`perf c2c`** ל-false sharing, cachegrind."
+      ]
+    },
+    {
+      "title": "Interrupts",
+      "points": [
+        "ISR קצר: בלי sleep, malloc, printf או mutex. **top half** מאשר ומתזמן; **bottom half** (softirq, tasklet, workqueue, threaded IRQ) עושה את העבודה.",
+        "**Level-triggered**: חובה לנקות את המקור לפני החזרה, אחרת interrupt storm. **Edge-triggered**: אירוע שמתפספס אבד; לרוקן FIFO בלולאה.",
+        "ניקוי סטטוס ב-PCIe הוא **posted write**: לקרוא חזרה (read-back) לפני החזרה מה-ISR, אחרת ה-ISR נקרא שוב.",
+        "`irq N: nobody cared`: handler החזיר `IRQ_NONE` שוב ושוב, והקרנל כיבה את הקו.",
+        "משתנה משותף ל-ISR: `volatile` (MCU) או atomic; קריאה של 64 ביט על מעבד 32 ביט נקרעת (torn read).",
+        "Kernel: lock משותף ל-process context ול-ISR דורש `spin_lock_irqsave`. בתוך ISR רק `GFP_ATOMIC`.",
+        "NAPI: interrupt ראשון ואז polling עם budget. coalescing ו-busy polling: trade-off בין latency ל-CPU.",
+        "Cortex-M: latency של **12 מחזורים** עד ה-ISR. PRIMASK חוסם הכל; BASEPRI חוסם רק מתחת לעדיפות. FreeRTOS: רק `FromISR`.",
+        "זמן-אמת: IRQ affinity ו-`irqbalance` כבוי כדי ש-IRQs לא ינחתו על ה-core המבודד."
+      ]
+    },
+    {
+      "title": "DMA",
+      "points": [
+        "ההתקן כותב/קורא זיכרון בעצמו לפי **descriptors** ב-ring. ה-CPU מכין, כותב ל-doorbell, ומקבל interrupt (MSI-X) בסיום.",
+        "ההתקן רואה **bus address/IOVA**, לא כתובות וירטואליות. IOMMU מתרגם ומבודד; IOTLB miss עולה.",
+        "**OWN bit** נכתב אחרון, אחרי `dma_wmb()`, ורק אז doorbell. אחרת ההתקן קורא descriptor חצי-מוכן.",
+        "ARM לא קוהרנטי: TX → **clean** לפני DMA. RX → **invalidate לפני ואחרי** (speculative prefetch מחזיר נתונים ישנים).",
+        "באפר DMA חייב לתפוס cache lines שלמים; שיתוף line עם משתנה אחר משחית אותו. `ARCH_DMA_MINALIGN`.",
+        "`dma_map_single` רק על זיכרון מה-linear map: לא vmalloc ולא stack (`VMAP_STACK`). לכתוב לבאפר **לפני** ה-map.",
+        "באפר user space ש-pinned ל-DMA ואז `fork`: COW מזיז את הדף של האב. `MADV_DONTFORK`.",
+        "מספרים: X310 ב-200 MS/s ב-sc16 = 800 MB/s = **6.4 Gb/s** לערוץ. PCIe Gen3 x8: כ-7.9 GB/s.",
+        "Overhead קבוע לכל העברה: באפרים קטנים מדי לא יעילים. DDIO: ה-NIC כותב ישר ל-LLC."
+      ]
+    },
+    {
+      "title": "volatile ו-memory-mapped IO",
+      "points": [
+        "`volatile`: כל גישה נצפית; הקומפיילר לא מבטל, לא מאחד ולא מסדר גישות volatile **זו מול זו**. זה הכל.",
+        "volatile **לא** atomic, **לא** barrier חומרה, ולא מסדר מול גישות רגילות. בין threads: `std::atomic`.",
+        "polling על רגיסטר בלי volatile: הקומפיילר מוציא את הקריאה מהלולאה → לולאה אינסופית.",
+        "`reg |= BIT` על רגיסטר **W1C** מנקה את כל הדגלים שהיו דלוקים. כותבים רק את הביט: `reg = BIT`.",
+        "RMW על רגיסטר משותף ל-main ול-ISR מאבד עדכונים. set/clear registers (BSRR) או לחסום interrupts.",
+        "PCIe: קריאת MMIO **non-posted**, 0.5–1µs. כתיבה posted. read-to-clear: גם קריאה מהדיבאגר מוחקת.",
+        "מונה 64 ביט משני רגיסטרים בלי latch: **hi-lo-hi**: לקרוא hi, lo, ושוב hi; אם hi השתנה, לחזור.",
+        "bitfields על רגיסטרים: רוחב גישה לא מובטח. ARM Device-nGnRE: סדר בין גישות לאותו התקן, אבל לא מול Normal memory של באפרי DMA: צריך barrier.",
+        "C++20 הוציא ל-deprecation compound assignment על volatile; C++23 (P2327) החזיר `|=`, `&=`, `^=`. `++reg` עדיין deprecated."
+      ]
+    }
+  ]
+}

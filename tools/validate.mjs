@@ -78,6 +78,11 @@ for (const domain of taxonomy.domains) {
         // One note per choice: why that exact choice is right or wrong.
         if (!Array.isArray(q.notes) || !Array.isArray(q.choices) || q.notes.length !== q.choices.length || !q.notes.every(isStr)) qerr('notes must have one non-empty string per choice');
       }
+      if (q.followUp !== undefined) {
+        const f = q.followUp;
+        if (!['mcq', 'multi', 'output', 'bug', 'oral'].includes(q.type) || q.level < 3) qerr('followUp only on mcq/multi/output/bug/oral at levels 3-5');
+        if (!f || !isStr(f.prompt) || !isStr(f.modelAnswer) || !isStrArr(f.rubric, 2) || f.rubric.length > 5) qerr('followUp needs prompt, modelAnswer and 2-5 rubric strings');
+      }
       const needLang = () => { if (!['cpp', 'python'].includes(q.lang)) qerr('lang must be cpp or python'); };
       const choiceAnswer = (n) => {
         if (!isStrArr(q.choices, n)) qerr(`choices must have at least ${n} strings`);

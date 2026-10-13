@@ -1,0 +1,132 @@
+{
+  "domain": "dsp",
+  "title": "DSP למתכנתים: דף לזכור",
+  "sections": [
+    {
+      "title": "Sampling, קצבים וזמן",
+      "points": [
+        "IQ ב-fs: רוחב סרט fs (מ-fs/2- עד fs/2+), התדר הוא `f mod fs`. ממשי: רק fs/2, ומתקפל כמו מראה סביב כפולות של fs/2",
+        "קצב נתונים = fs × bytes × ערוצים. sc8 = 2B, sc16 = 4B, fc32 = 8B. 200 MS/s sc16 = 800 MB/s = **6.4 Gb/s**",
+        "10GbE נושא כ-9.5 Gb/s של payload, ולכן 2×200 MS/s sc16 (12.8 Gb/s) לא נכנס בקישור אחד. **MB/s מול Mb/s: פי 8**",
+        "Undersampling: אזור Nyquist זוגי הופך את הספקטרום, ו-`conj` מתקן. תנאי: `2fH/n ≤ fs ≤ 2fL/(n-1)`",
+        "Jitter: `SNR = -20·log10(2π·f·σ)` עם f של הכניסה האנלוגית, לא של ה-alias. 70 MHz ו-1 ps rms: כ-67 dB",
+        "SQNR אידיאלי לסינוס full-scale: `6.02·B + 1.76` dB, כלומר 16 ביט ≈ 98 dB. כל 6 dB של backoff עולים ביט",
+        "זמן כ-int64 (ticks או אינדקס דגימה), לא float: ב-1000 שניות ה-ulp של float הוא 61 µs. הפרשי זמן מחשבים ב-signed",
+        "X310: DDC עושה decimation שלם מה-master clock. ביקשת 30 MS/s מ-200 MHz, קיבלת 28.571. תמיד `get_rx_rate()`",
+        "UHD: `O` overflow ב-RX, `U` underflow ב-TX, `D` חבילות שאבדו, `L` late. 10 MHz ref נועל תדר, PPS מיישר זמן"
+      ]
+    },
+    {
+      "title": "FFT ו-throughput",
+      "points": [
+        "FFT הוא O(N log N) מול O(N²) של DFT. עלות ≈ `5·N·log2(N)` flops, כלומר `5·log2(N)` לדגימה (N=4096: 60)",
+        "bin spacing = fs/N. bin k ≥ N/2 מייצג `(k-N)·fs/N`. ב-C++ `%` של שלילי נשאר שלילי: `((k%N)+N)%N`",
+        "רזולוציה נקבעת באורך ההקלטה ובחלון. **zero padding** רק מצפף את הדגימה של אותו DTFT. `rfft` מחזיר N/2+1 bins בכחצי עבודה",
+        "Forward לא מנורמל ב-FFTW וב-NumPy: DC של N אחדות הוא N. ב-FFTW forward ואז backward מחזיר `N·x`",
+        "Processing gain: טון יציב מול רעש ל-bin משתפר ב-`10·log10(N)`. Welch עם K frames רק מקטין את פיזור הרעש, לא את היחס",
+        "Latency של frame ≥ N/fs, בלי קשר ל-overlap. overlap משפר רק את קצב העדכון `fs/hop`",
+        "FFT הוא memory-bound (כ-3 flop/byte). כשה-working set יוצא מה-cache (2^16 complex<float> = 512 KB) הזמן קופץ: four-step/six-step",
+        "FFTW: plan פעם אחת (`MEASURE` דורס buffers ולוקח זמן), `fftw_malloc`, wisdom. **execute thread-safe, ה-planner לא**",
+        "cuFFT: FFT בודד לכל launch הוא אסון. batch גדול (`cufftPlanMany`), pinned memory ו-streams; המחיר הוא latency של ה-batch"
+      ]
+    },
+    {
+      "title": "Windows ונרמול",
+      "points": [
+        "Rect: sidelobe ראשון 13.3 dB-, דעיכה 6 dB/oct, mainlobe של 2 bins. Hann: 31.5 dB-, דעיכה 18 dB/oct, mainlobe של 4 bins",
+        "Hamming: 43 dB- אבל דועך רק 6 dB/oct. Blackman-Harris 4-term: 92 dB-, ENBW 2.0. flat-top: למדידת amplitude מדויקת",
+        "Coherent gain = `Σw/N` (ל-Hann 0.5, כלומר 6.02 dB-). כדי לשחזר amplitude של טון מחלקים ב-`Σw`, לא ב-N",
+        "רעש: `PSD = |X|²/(fs·Σw²)`. `ENBW = N·Σw²/(Σw)²`; ל-Hann 1.5 bins (1.76 dB). אין נרמול אחד לטון ולרעש",
+        "Scalloping בחצי bin: rect 3.92 dB, Hann 1.42, flat-top ≈ 0.01. worst-case processing loss: Hann 3.18 dB טוב מ-rect 3.92",
+        "**periodic** (חלוקה ב-N) ל-STFT, **symmetric** (N-1) ל-FIR. `np.hanning` הוא symmetric, `get_window('hann', N)` הוא periodic",
+        "COLA: Hann periodic ב-50% מסתכם ל-1, ב-75% ל-2. WOLA עם אותו חלון בניתוח ובסינתזה: sqrt-Hann ב-50%",
+        "Welch: ממוצע ב-linear ורק אז dB (ממוצע ב-dB מוטה כ-2.5 dB למטה). ל-Hann 50% overlap מספיק, ל-Blackman-Harris צריך 66-75%",
+        "Q15: מקדם המרכז של Hann הוא 1.0, ו-32768 לא נכנס ב-int16. fusion: חלון, המרת sc16 ונרמול במעבר אחד על הזיכרון"
+      ]
+    },
+    {
+      "title": "FIR / IIR ו-multirate",
+      "points": [
+        "FIR ישיר: L MACs לפלט; stream מרוכב עם taps ממשיים: 2 כפלים ל-tap. linear phase: group delay של `(L-1)/2` דגימות",
+        "אורך FIR ≈ `A/(22·Δf/fs)`: דחייה של 60 dB עם transition של 2% מ-fs דורשת כ-136 taps",
+        "State בין blocks: L-1 דגימות קלט (FIR) או state של כל biquad (IIR). הפלט חייב להיות זהה לכל חלוקה ל-blocks",
+        "overlap-save: כל בלוק נותן N-L+1 דגימות תקינות וזורקים L-1. חיתוך מול direct: עשרות עד כ-100 taps; N בערך 4L-8L",
+        "IIR מסדר גבוה: cascade של biquads (SOS), לא `b, a` אחד. DF-II transposed ב-float, DF-I עם accumulator רחב ב-fixed point",
+        "Denormals (מתחת ל-1.18e-38): האטה פי עשרות כשה-IIR דועך. FTZ/DAZ ב-MXCSR הם **per-thread**: להגדיר בתוך thread ה-DSP",
+        "Polyphase decimation: `L/M` MACs לדגימת קלט. resampling רציונלי מצמצמים ב-gcd (100→61.44 MS/s = 384/625). יחס משתנה: Farrow",
+        "Multistage ו-halfband זולים פי כמה משלב אחד. CIC בלי כפלים ל-FPGA: growth של `N·log2(R·M)` ביטים, וה-wrap תקין",
+        "PFB channelizer: K ענפים של T taps ו-FFT באורך K, כ-T MACs לדגימה במקום K·T. oversampled פי 2 שומר אותות על גבול"
+      ]
+    },
+    {
+      "title": "Fixed-point",
+      "points": [
+        "Qm.n: ערך = `int·2^-n`. Q15: טווח [-1, 1-2^-15], LSB ≈ 3.05e-5. ה-1.0 לא ייצוגי",
+        "Q15×Q15 = Q30 ב-int32. חזרה: `(p + (1<<14)) >> 15` ואז saturation. המקרה היחיד שגולש: `-1 × -1`",
+        "סכום K מכפלות: `log2(K)` guard bits (מכאן accumulator של 40 ביט ב-DSP). חסם הדוק ל-FIR: `ceil(log2(Σ|h|))`",
+        "Rounding: floor מוטה בחצי LSB, MSE של LSB²/3 (פי 4 מ-round). half-up מוטה רק ב-ties; convergent (half-to-even) לא מוטה",
+        "Signed overflow הוא **UB**; wrap מכוון עושים ב-unsigned. מ-C++20 shift ימינה של שלילי אריתמטי, והמרה מצמצמת מודולרית",
+        "Integral promotion: `int16 + int16` מחושב ב-int. `uint16_t` 65535 כפול עצמו מחושב ב-int וגולש: UB",
+        "FFT fixed: radix-2 מגדיל עד ביט לשלב. 1/2 לשלב: NSR ∝ N; 1/N מראש: NSR ∝ N². BFP הכי טוב לאותות חלשים",
+        "CIC: ה-wrap הוא חלק מהאלגוריתם, saturation שובר אותו. `Bout = Bin + N·log2(R·M)`: N=4, R=64, 16 ביט → 40 ביט",
+        "`_mm256_mulhrs_epi16` הוא Q15 עם rounding, אבל `-1×-1` עוטף. NumPy int16 כפול סקלר עוטף בשקט: `astype(int64)` במודל bit-exact"
+      ]
+    },
+    {
+      "title": "NCO",
+      "points": [
+        "Phase accumulator ב-`uint32`/`uint64`: ה-wrap של 2π חינם ממודולו 2^N. signed הוא UB, float צובר drift",
+        "`FTW = round(f/fs · 2^N)`. רזולוציה `fs/2^N` (100 MHz ו-32 ביט ≈ 0.023 Hz). שגיאת תדר עד חצי LSB",
+        "LUT עם P ביטים עליונים: SFDR ≈ `6.02·P` dBc. P=12 → 72; ל-96 dBc צריך P=16. הגדלת N לא משפרת spurs",
+        "בלי טבלה ענקית: תיקון Taylor מסדר 1, dither, רבע-גל. פולינום minimax: רק FMAs, מתווקטר, 100+ dBc",
+        "Recursive rotation `z *= w`: כפל מרוכב אחד לדגימה, אבל ה-amplitude נסחף. לנרמל או לאתחל מהפאזה השלמה כל בלוק",
+        "שינוי תדר: משנים רק FTW ולא נוגעים בפאזה. חישוב `2π·f_new·n/fs` מחדש = קפיצת פאזה ו-splatter",
+        "gather מ-LUT עולה כמו טעינה לכל lane. `sin`/`cos` מ-libm לכל דגימה לא נכנס בתקציב של 10 ns (100 MS/s)",
+        "סיבוב Q15: `|I+jQ|` מגיע עד `32767·√2 ≈ 46340`. backoff של 3 dB לפני הסיבוב ו-saturation אחריו",
+        "NCO מול retune של LO: NCO מיידי ו-phase-continuous רק בתוך ±fs/2; LO מכסה טווח רחב, עם settling ופאזה אקראית"
+      ]
+    },
+    {
+      "title": "SIMD",
+      "points": [
+        "Lanes של float: SSE/NEON 4, AVX2 8, AVX-512 16; int16 פי 2. `ymm` הוא שני חצאים של 128 ביט: `hadd` עובד בתוך חצי",
+        "Auto-vectorize: `-O3 -march=...`, `__restrict`, בלי calls ו-branches מסובכים. לבדוק `-fopt-info-vec-missed` וב-assembly `ps` מול `ss`",
+        "Reduction של float לא מווקטר בלי היתר (חיבור לא אסוציאטיבי). 'loop vectorized' בלי fast-math יכול להיות in-order, בלי רווח",
+        "FMA עם latency 4 ו-2 ports: צריך 8 accumulators בלתי תלויים. accumulator יחיד נותן 1/8 מה-peak",
+        "SoA נותן פעולות אנכיות בלבד. complex interleaved דורש `moveldup`/`movehdup`/permute ו-`fmaddsub`; port ה-shuffle הוא הצוואר",
+        "FIR: outer-loop vectorization, 8 פלטים במקביל עם broadcast של tap, בלי horizontal sum לכל פלט",
+        "Roofline: saxpy ≈ 0.17 flop/byte הוא memory-bound, ורגיסטר רחב לא יעזור. עוזרים fusion, blocking ו-int16",
+        "`_mm256_load_ps` על כתובת לא מיושרת = crash; `loadu` עולה אותו דבר על נתונים מיושרים. זנב: לולאת scalar או mask",
+        "`-march=native` נותן SIGILL על מעבד ישן: runtime dispatch (`target_clones`). AVX-512 ב-Skylake-SP מוריד תדר"
+      ]
+    },
+    {
+      "title": "Ring buffers",
+      "points": [
+        "N חזקה של 2: `i & (N-1)`. מונים רצים unsigned: `count = head - tail`, נכון גם אחרי wrap של המונה",
+        "N שאינו חזקה של 2 עם מונה 32 ביט: glitch כל `2^32/fs`, כלומר כל 42.9 שניות ב-100 MS/s",
+        "מונים `uint16_t` עוברים promotion ל-int, ו-`head - tail` יוצא שלילי אחרי wrap. מונה signed: overflow הוא UB",
+        "Full מול empty: slot ריק תמיד (קיבולת N-1), מונה count (contention), או מונים רצים: full כש-`head - tail == N`",
+        "SPSC: כותבים data ואז `head.store(release)`; ה-consumer `head.load(acquire)`. אותו דבר ל-tail. בלי CAS, seq_cst מיותר",
+        "relaxed 'עובד' על x86 (TSO) ונשבר על ARM. שני producers על SPSC: slot נדרס ודגימה אובדת. MPMC: Vyukov עם seq לכל slot",
+        "`alignas(64)` ל-head ול-tail נגד false sharing, cached index של הצד השני, ו-batching: אינדקס אחד לבלוק",
+        "גודל = קצב × stall מקסימלי + batch, מעוגל לחזקה של 2. latency של באפר מלא = מילוי/קצב (2^20 ב-100 MS/s = 10.49 ms)",
+        "RX real-time לא חוסם את ה-producer: drop, counter ו-discontinuity. mirrored mapping: `memfd` ממופה פעמיים עם `MAP_SHARED|MAP_FIXED`"
+      ]
+    },
+    {
+      "title": "שאלות ראיון RF/SDR: מספרים ומלכודות",
+      "points": [
+        "רעש תרמי: `-174 dBm/Hz + 10·log10(BW) + NF`. ב-20 MHz: 101 dBm-, ועם NF של 7 dB: 94 dBm-",
+        "FSPL = `20·log10(4πd/λ)`: 2.4 GHz ו-1 km ≈ 100 dB. Friis: ה-LNA הראשון עם הגבר גבוה קובע את ה-NF",
+        "dB של הספק הוא 10log, של amplitude 20log. EVM של 5% ≈ 26 dB. מקורות בלתי תלויים: `EVM² = Σ EVM_i²`",
+        "CFO מקורלציית CP: חד-ערכי רק ל-|ε| < 0.5 subcarrier (±7.5 kHz ב-15 kHz). Schmidl-Cox מרחיב ל-±1",
+        "Timing מוקדם אבל בתוך ה-CP: רמפת פאזה ב-k שהערכת הערוץ בולעת. מעבר ל-CP: ISI. SFO: רמפה שגדלה עם k ועם הזמן",
+        "ZF מגביר רעש ב-deep fade; MMSE הוא `H*/(|H|²+σ²)`, וב-SNR גבוה הם מתכנסים. ב-MIMO: O(n³) לכל subcarrier",
+        "IQ imbalance: תמונת מראה ב-f-, `y = μx + νx*`. תלוי-תדר דורש מסנן, לא מקדם. DC/LO leakage: LO offset tuning",
+        "Doppler `f_d = v·fc/c`: 120 קמ״ש ב-3.5 GHz ≈ 389 Hz. coherence time ≈ `0.423/f_d`, כאן כ-1 ms",
+        "GPU (Aerial): slot של 0.5 ms ב-30 kHz SCS. batch של כל הסימבולים והאנטנות ב-launch אחד, CUDA graphs, למדוד tail latency"
+      ]
+    }
+  ]
+}

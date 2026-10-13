@@ -10,6 +10,7 @@ export const content = {
   questions: [],        // all questions, each with .domain and .sub
   questionById: {},
   qBySub: {},           // subKey -> [question]
+  cheats: {},           // domainId -> { title, sections: [{ title, points }] }
 };
 
 export const subKey = (domainId, subId) => `${domainId}.${subId}`;
@@ -29,9 +30,11 @@ export async function loadContent() {
       content.qBySub[key] = [];
     }
   }
-  const files = await Promise.all(
-    index.files.map((f) => fetch(`content/${f}`).then((r) => r.json()).catch(() => null)),
-  );
+  const [files, cheats] = await Promise.all([
+    Promise.all(index.files.map((f) => fetch(`content/${f}`).then((r) => r.json()).catch(() => null))),
+    Promise.all((index.cheats || []).map((f) => fetch(`cheats/${f}`).then((r) => r.json()).catch(() => null))),
+  ]);
+  for (const c of cheats) if (c?.domain) content.cheats[c.domain] = c;
   for (const file of files) {
     if (!file) continue;
     const key = subKey(file.domain, file.subtopic);

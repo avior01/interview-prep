@@ -1,0 +1,88 @@
+{
+  "domain": "py",
+  "title": "Python: דף לזכור",
+  "sections": [
+    {
+      "title": "Data model: שמות, השוואה ו-hash",
+      "points": [
+        "משתנה הוא **שם** שקשור לאובייקט: `b = a` לא מעתיק. `copy()` הוא shallow; עותק עמוק רק עם `copy.deepcopy`",
+        "`is` בודק identity, `==` קורא ל-`__eq__`. `is` רק מול singletons כמו `None`; caching של ints קטנים הוא פרט מימוש",
+        "ברירת מחדל מחושבת **פעם אחת** בהגדרה: `def f(x, acc=[])` משתף רשימה. הדפוס: `acc=None` ובגוף `if acc is None`",
+        "משתנה מחלקה mutable משותף לכל המופעים. `self.items.append` משנה את המשותף; `self.items = ...` יוצר attribute במופע",
+        "חוזה: `a == b` מחייב `hash(a) == hash(b)`. הגדרת `__eq__` בלי `__hash__` קובעת `__hash__ = None` (unhashable)",
+        "`@dataclass` רגיל אינו hashable; `frozen=True` מייצר `__hash__`. hash על שדה שמשתנה אחרי הכנסה ל-dict: האובייקט 'נעלם'",
+        "`a + b`: `__add__`, ואם החזיר `NotImplemented` (לא `False`!) מנסים `b.__radd__`. תת-מחלקה שדורסת `__radd__` מקבלת עדיפות",
+        "`t[0] += [2]` על tuple: הרשימה משתנה in-place **וגם** נזרק TypeError על ההשמה חזרה",
+        "Lookup: data descriptor (`property`) > `__dict__` של המופע > non-data (מתודות) > משתנה מחלקה > `__getattr__` כ-fallback. `super()` הולך לבא ב-MRO (C3)"
+      ]
+    },
+    {
+      "title": "Generators ו-iterators",
+      "points": [
+        "iterable נותן iterator חדש ב-`__iter__`; iterator הוא **חד-פעמי** (`__next__`, `StopIteration`). מעבר שני על generator מחזיר כלום",
+        "קריאה ל-generator function לא מריצה שורה; הגוף רץ עד ה-`yield` הראשון רק ב-`next()` הראשון",
+        "Generator expression: ה-iterable החיצוני מחושב **מיד**, כל השאר בעצלות. משתנים חופשיים נקראים בזמן האיטרציה (late binding)",
+        "`sum(x*x for x in range(10**8))` בזיכרון O(1); עם `[...]` נבנית רשימה מלאה. pipeline של generators: O(batch)",
+        "`send(v)` רק אחרי `next()` ראשון; `close()` זורק `GeneratorExit` כדי ש-`finally` ירוץ. `yield from` מחזיר את ה-`return` של ה-sub",
+        "PEP 479 (3.7+): `StopIteration` שדולף מגוף generator הופך ל-`RuntimeError`. להשתמש ב-`next(it, default)`",
+        "`yield` מתוך `with lock:` מחזיק את ה-lock כל זמן שהצרכן מעבד; לאסוף תחת ה-lock ולעשות yield מחוצה לו",
+        "`groupby` מקבץ רק רצפים סמוכים: למיין לפי ה-key קודם. `tee` שמרוקן ענף אחד לפני השני אוגר את כל הרצף",
+        "itertools: `islice`, `chain`, `pairwise` (3.10), `batched` (3.12). חלון נע: `deque(maxlen=n)`"
+      ]
+    },
+    {
+      "title": "GIL",
+      "points": [
+        "GIL: רק thread אחד מריץ **bytecode** בכל רגע, כדי להגן על reference counting. זה פרט מימוש של CPython, לא של השפה",
+        "החלפה לפי זמן: switch interval של **5 ms** (`sys.getswitchinterval`), דרך `gil_drop_request` ב-eval breaker. I/O חוסם משחרר מרצון",
+        "Threads עוזרים ל-I/O ולקוד C ששחרר GIL (NumPy, zlib, hashlib מעל כ-2 KB). לקוד Python טהור CPU-bound: לא",
+        "**ה-GIL לא הופך קוד ל-thread-safe**: `x += 1` ו-check-then-act צריכים `Lock`. `Lock` אינו reentrant, `RLock` כן",
+        "Convoy effect: thread חישובי גורם ל-thread של I/O לחכות עד 5 ms על כל סבב רשת. פתרון: להוציא את החישוב לתהליך",
+        "הרחבת C: לשחרר עם `Py_BEGIN_ALLOW_THREADS` סביב חישוב טהור, בלי לגעת ב-PyObject, ולקרוא ל-`PyErr_CheckSignals` בחישוב ארוך",
+        "Free-threaded (PEP 703): ניסיוני ב-3.13t, נתמך רשמית ב-3.14t אבל לא ברירת מחדל. races שה-GIL הסתיר צצים",
+        "Free-threaded עובד עם biased refcounting, immortal objects, mimalloc ו-locks לכל אובייקט. הרחבה בלי `Py_mod_gil` מדליקה את ה-GIL מחדש",
+        "Subinterpreters: GIL לכל interpreter מ-3.12 (PEP 684); `InterpreterPoolExecutor` ב-3.14, בלי שיתוף אובייקטים"
+      ]
+    },
+    {
+      "title": "multiprocessing ובחירת מודל",
+      "points": [
+        "I/O-bound: threads או asyncio. CPU-bound ב-Python טהור: `ProcessPoolExecutor`. CPU-bound ב-C ששחרר GIL: threads מספיקים",
+        "כל ארגומנט ותוצאה עוברים **pickle**: lambda ופונקציה מקומית לא עובדות. מערך של 200 MB לכל משימה: ה-pickle שולט",
+        "נתונים גדולים: להעביר נתיב ו-offset, `shared_memory` או `np.memmap`. משימות קטנות: `chunksize`",
+        "`spawn` (Windows, macOS) מייבא מחדש את ה-main: חובה `if __name__ == '__main__'`, אחרת `BrokenProcessPool`",
+        "`fork` עם threads: lock שהיה מוחזק (למשל של logging) נשאר נעול לנצח בילד. ב-3.14 ברירת המחדל ב-Linux היא forkserver",
+        "fork של מודל 4 GB ל-8 workers: refcount שמתעדכן כותב לדפים ושובר copy-on-write, והזיכרון מתנפח",
+        "Threads מעל BLAS שכבר מרובה-threads: oversubscription. 'פעם אחת לכל key': dict של `Future` תחת lock קצר, compute מחוץ ל-lock"
+      ]
+    },
+    {
+      "title": "NumPy vectorization",
+      "points": [
+        "ndarray = מצביע + `dtype` + `shape` + `strides`. int32 בצורה (2,3) ב-C-order: strides `(12, 4)`. `a.T` רק מחליף strides",
+        "Broadcasting: מיישרים **מימין**, ממד שווה או 1. `(3,1)+(4,)` → `(3,4)`. `(2,3)` מול `(2,)` נכשל: `keepdims=True`",
+        "View: basic slicing, `.T`, `None`. אולי view: `reshape`, `ravel`. תמיד copy: fancy indexing, boolean mask, `flatten`, `astype`",
+        "`a[idx] += 1` עם אינדקסים חוזרים מעדכן כל אינדקס פעם אחת: `np.add.at` או `np.bincount`",
+        "מערכים שלמים עוטפים בשקט: int16 `30000+30000 = -5536`. `x /= 32768` על int16 נכשל (same_kind casting)",
+        "NEP 50 (NumPy 2): סקלר Python הוא 'weak'. `int8 + 100` עוטף, `int8 + 300` זורק OverflowError, `float32 + 1.0` נשאר float32",
+        "float32: מעל `2^24` הוספת 1 לא משנה כלום. `cumsum` סדרתי נתקע; `np.sum` הוא pairwise (שגיאה O(log n)). לצבור ב-float64",
+        "`a*b + c*d` על מערכים ענקיים: temporaries ו-memory bandwidth. `out=`, in-place, chunks, numexpr או Numba. `np.vectorize` לא מאיץ",
+        "תלות בין איטרציות (NCO, IIR) לא נפתרת בביטוי איבר-איבר: `cumsum`, `lfilter`, נוסחה סגורה או Numba. מעבר על עמודות ב-C-order איטי"
+      ]
+    },
+    {
+      "title": "asyncio",
+      "points": [
+        "Thread אחד ו-event loop, cooperative: `await` מוותר על השליטה רק על Future שלא הושלם. `sleep(0)` מוותר בכוונה",
+        "קריאה ל-coroutine בלי `await` לא מריצה כלום ('never awaited'). `create_task` מתחיל רק ב-await הבא; **לשמור הפניה** (weak ref)",
+        "`gather` מחזיר בסדר הארגומנטים; exception ראשון עולה, **השאר לא מבוטלים**. `TaskGroup` (3.11+) מבטל אחים וזורק ExceptionGroup",
+        "קוד חוסם (`time.sleep`, `requests`, חישוב כבד) מקפיא את כל ה-loop. `to_thread` ל-I/O, `ProcessPoolExecutor` ל-CPU-bound",
+        "`CancelledError` יורש מ-`BaseException` מ-3.8: לא לבלוע אותו, אחרת timeouts ו-TaskGroup נשברים",
+        "`wait_for` מחכה שהביטול **יסתיים בפועל** לפני TimeoutError. `asyncio.wait` לא מבטל את ה-pending. `shield` מגן על הפנימי",
+        "Backpressure: `Queue(maxsize)` עם N workers; `Semaphore` להגבלת concurrency. check-then-act דרך await דורש `asyncio.Lock`",
+        "מ-thread אחר (callback של driver): `run_coroutine_threadsafe` או `call_soon_threadsafe`. `asyncio.run` מתוך loop רץ: RuntimeError",
+        "אבחון p99: `debug=True` ו-`slow_callback_duration`, ובייצור מדידת **loop lag**. uvloop לא מתקן קוד חוסם"
+      ]
+    }
+  ]
+}

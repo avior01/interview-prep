@@ -15,6 +15,8 @@ const defaults = () => ({
     company: '',            // '' or a key of COMPANIES (companies.js)
     sessionLen: 10,
     timer: true,            // timer in regular sessions at levels 4–5 (exam: always on)
+    recall: false,          // last choice of "recall mode" (choices hidden until you answer in your head), levels 3+
+    followUps: true,        // last choice of interviewer follow-ups after correct answers, levels 3+
     theme: 'auto',
     device: 'auto',         // 'auto', 'phone', 'desktop'
     apiKey: '',
@@ -31,6 +33,9 @@ const defaults = () => ({
   open: [],         // in-progress sessions, each resumable where it stopped: { sid, title, updatedAt, ... }
   activeSid: null,  // the open session currently shown (per device, not synced)
   closedSids: {},   // sid -> when it was finished/closed, so other devices drop it on sync
+  notes: {},        // qid -> { text, u }: the learner's own "why I got it wrong" line
+  stories: {},      // id -> { id, title, kinds: [], s, t, a, r, u, deleted? }: behavioral story bank
+  mocks: [],        // finished interview simulations: { ts, level, score, verdict, sections }
   streak: { day: 0, count: 0 },
   u: 0,
 });
@@ -135,6 +140,11 @@ export function merge(remote) {
   };
   state.items = pick(state.items, remote.items);
   state.levels = pick(state.levels, remote.levels);
+  state.notes = pick(state.notes, remote.notes);
+  state.stories = pick(state.stories, remote.stories);
+  const mockTs = new Map(state.mocks.map((m) => [m.ts, m]));
+  for (const m of remote.mocks || []) mockTs.set(m.ts, m);
+  state.mocks = [...mockTs.values()].sort((a, b) => a.ts - b.ts).slice(-100);
   for (const [k, v] of Object.entries(remote.lessonsRead || {})) {
     state.lessonsRead[k] = Math.max(state.lessonsRead[k] || 0, v);
   }

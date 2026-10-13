@@ -16,7 +16,10 @@ for (const d of readdirSync(contentDir)) {
   for (const f of readdirSync(p)) if (f.endsWith('.json')) files.push(`${d}/${f}`);
 }
 files.sort();
-writeFileSync(join(contentDir, 'index.json'), JSON.stringify({ files }, null, 1) + '\n');
+// Last-week cheat sheets: cheats/<domain>.json
+const cheatsDir = join(root, 'cheats');
+const cheats = existsSync(cheatsDir) ? readdirSync(cheatsDir).filter((f) => f.endsWith('.json')).sort() : [];
+writeFileSync(join(contentDir, 'index.json'), JSON.stringify({ files, cheats }, null, 1) + '\n');
 
 const walk = (dir) => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f);
@@ -28,6 +31,7 @@ const appFiles = [
   ...walk(join(root, 'icons')).map((p) => relative(root, p)),
   'content/taxonomy.json', 'content/index.json',
   ...files.map((f) => `content/${f}`),
+  ...cheats.map((f) => `cheats/${f}`),
 ].map((p) => p.split('\\').join('/')).filter((p) => existsSync(join(root, p)));
 
 const hash = createHash('sha256');

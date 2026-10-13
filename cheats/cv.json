@@ -1,0 +1,90 @@
+{
+  "domain": "cv",
+  "title": "פרויקט ה-SDR לעומק: דף לזכור",
+  "sections": [
+    {
+      "title": "ה-pipeline והמספרים המעגנים",
+      "points": [
+        "C++ על USRP X310 דרך UHD, 50 MS/s: RX thread → תור → צמצום ×4 ו-FFT של 2048 → decision → TX streaming",
+        "buffer של 8192 דגימות מתמלא כל `8192 / 50e6 = 163.84 µs`: זה **תקציב העיבוד** לכל buffer",
+        "פורמטים: sc16 על החוט = 4 bytes לדגימה; fc32 בזיכרון = 8 bytes, כלומר 64 KiB לכל buffer",
+        "Config ב-JSON (gain ברירת מחדל 0 dB) נטען מחדש כשה-mtime משתנה, בבדיקת polling. CMake, unit tests ומודל ייחוס ב-Python",
+        "Safety by default: מסלול ה-TX מנוטרל לגמרי אלא אם הועבר `--arm` מפורש",
+        "שינוי תדר ב-main הוא retune של ה-LO; ה-NCO התוכנתי קיים רק בכלי ה-file playback",
+        "פתיחה בראיון: דיאגרמת בלוקים ומספר מעוגן אחד. NVIDIA יחפור ב-performance וב-hot path, Microsoft ב-design, testing ו-trade-offs"
+      ]
+    },
+    {
+      "title": "קצב FFT: 6,103.5 ולא 24,414",
+      "points": [
+        "**קצב FFT = קצב קלט / דגימות קלט שכל FFT צורך** = `50e6 / 8192 ≈ 6,103.5` FFT/s, כלומר כ-6,100",
+        "`50e6 / 2048 = 24,414` שגוי: מבלבל בין **גודל** ה-FFT (2048) לבין מספר **דגימות הקלט** שהוא צורך (8192)",
+        "שלושה מושגים נפרדים: FFT מחושבים לשנייה, ספקטרומים לשנייה, ודגימות קלט לכל ספקטרום (8192)",
+        "6,103.5 הוא **חסם עליון מחושב**, לא נמדד. ה-RX עיוור כשה-TX פעיל: TX פעיל 20% מהזמן → כ-4,883 FFT/s",
+        "FFT של 2048 על דגימות גולמיות עם overlap: 50% → `50e6/1024 ≈ 48,828`/s, ו-75% → `50e6/512 ≈ 97,656`/s",
+        "אירוע שמתחיל בזמן אקראי מחכה עד סוף ה-buffer: בין 0 ל-163.84 µs, בממוצע כ-82 µs, לפני transport ועיבוד"
+      ]
+    },
+    {
+      "title": "מה 'צמצום פי 4' עושה לספקטרום",
+      "points": [
+        "חובה לדעת מהקוד איזה פירוש של 'averaging' מומש: לכל אחד השלכה ספקטרלית אחרת",
+        "Boxcar (ממוצע של 4 דגימות סמוכות): 12.5 MS/s, span של 12.5 MHz, bin ≈ 6.1 kHz. anti-alias גרוע: 3.7 dB- בקצה הפס, sidelobes ≈ 13 dB-",
+        "Folding (סכום 4 בלוקים של 2048 ואז FFT): שקול לכל bin רביעי של FFT ב-8192, וה-span נשאר 50 MHz",
+        "Folding בלי חלון: טון ב-offset של ¼, ½ או ¾ bin מהמרכז מתבטל לגמרי (**nulls**)",
+        "התיקון ל-folding: WOLA / polyphase filterbank, חלון prototype לפני הסכימה, באותה עלות FFT",
+        "Welch (power averaging) הוא 4 FFTs לכל buffer, לא אחד, ולכן זה לא מה שה-pipeline הזה עושה"
+      ]
+    },
+    {
+      "title": "Compute מול I/O ורוחב פס",
+      "points": [
+        "FFT של 2048 ≈ `5·2048·11 = 112,640` flops; כפול 6,103.5 ≈ **0.69 GFLOP/s**: זניח לליבה אחת",
+        "המסקנה: הצוואר הוא I/O, רוחב פס זיכרון ו-jitter, לא compute. זו השערה שמאמתים במדידה",
+        "sc16 ב-50 MS/s = 200 MB/s = **1.6 Gb/s**, יותר מ-1 GbE. תיאורטית sc16 על 1 GbE ≤ `1e9/32 ≈ 31` MS/s, בפועל 25-30",
+        "50 MS/s מתמשך **לא אומת**: יש underruns מתועדים במעבדה. קצב מלא דורש 10 GbE, שה-X310 תומך בו",
+        "ב-200 MS/s עם אותו buffer: תקציב של 40.96 µs ל-buffer, ו-sc16 של 6.4 Gb/s לערוץ",
+        "GPU לא מוצדק כאן: ב-0.69 GFLOP/s ה-CPU מספיק, וה-copy מוסיף latency. שווה רק עם batch גדול, pinned memory ו-streams",
+        "האצה לפי צוואר מוכח: FFTW plan פעם אחת עם `FFTW_MEASURE` ו-wisdom, `float`, buffers מיושרים, fusion של צמצום ו-magnitude, `plan_many`"
+      ]
+    },
+    {
+      "title": "Real-time hygiene ב-hot path",
+      "points": [
+        "אסור ב-hot path: `new`/`malloc` לכל buffer, logging או I/O חוסם, ו-mutex שמשותף עם thread בעדיפות נמוכה (priority inversion)",
+        "`deque<vector>` עם `push_back` של vector חדש לכל buffer = הקצאה ב-hot path. פתרון: pool מוקצה מראש ותור של אינדקסים",
+        "SPSC lock-free: כותבים data ואז `head.store(release)`; ה-consumer קורא ב-acquire. head ו-tail ב-`alignas(64)` נגד false sharing",
+        "Config reload בלי mutex ב-hot path: snapshot עקבי שנלקח פעם אחת בתחילת כל buffer",
+        "SCHED_FIFO, CPU pinning, buffers מוקצים מראש; counters אטומיים ל-overflow ש-thread אחר מדווח פעם בשנייה",
+        "Backpressure: ספייק של 300 µs נספג בתור אם הממוצע (60 µs) מתחת ל-163.84 µs. מה שקובע הוא ה-tail, לא הממוצע",
+        "כשהתור מלא: drop מבוקר עם counter וסימון discontinuity, לא תור שגדל בלי גבול"
+      ]
+    },
+    {
+      "title": "מימוש ה-NCO",
+      "points": [
+        "`Δφ = 2π·f/fs`. כפל ב-`e^{jφ}` מרוכב מזיז את כל הספקטרום ב-f בלי תמונה; `cos` ממשי נותן שני העתקים ב-±f",
+        "`uint32` accumulator: wrap חינם, רזולוציה `50e6/2^32 ≈ 0.0116 Hz`, ו-tuning word ל-1 MHz הוא 85,899,346",
+        "פאזה ב-float בלי wrap: אחרי שנייה ב-1 MHz φ ≈ 6.3e6 רדיאן, וה-ulp שם הוא 0.5 רדיאן",
+        "תקציב של 20 ns לדגימה. recursive rotation: כפל מרוכב אחד (4 כפלים, 2 חיבורים), בלי libm ובלי `fmod`; לנרמל את `|p|` כל block",
+        "SIMD לרקורסיה: L נתיבים עם offsets וצעד `w^L`. integer accumulator כמקור אמת, ו-sincos אחד לכל block",
+        "int16: `|z|` עד `32767·√2 ≈ 46,339`. backoff של `1/√2` (≈3 dB) ואז saturating cast, כי `0.7071f` מעוגל",
+        "`static_cast<int16_t>` מ-float מחוץ לטווח (או NaN) הוא **UB**, לא wrap ולא saturation. clipping גם יוצר spectral regrowth",
+        "רציפות פאזה: לשמור את ה-accumulator בין chunks ובשינוי תדר. איפוס = קפיצת פאזה ו-splatter",
+        "Hybrid: NCO מיידי ו-phase-continuous בתוך ±fs/2; LO מכסה טווח רחב עם settling. Streaming בחלקים תיקן underruns (10 s = 2 GB)"
+      ]
+    },
+    {
+      "title": "מדידה, בדיקות ומשפטים של סניור",
+      "points": [
+        "**'זה מספר מחושב, לא נמדד; הנה איך הייתי מודד'**: המשפט שמבדיל סניור מג'וניור",
+        "Timestamps מ-`steady_clock` לכל buffer, histogram מול 163.84 µs עם p50/p99/p99.9/max. overflow נובע מה-tail",
+        "ספירת buffers לא מוכיחה שאין אובדן: overflow זורק דגימות במכשיר. רואים קפיצה ב-`time_spec` או error code ב-metadata",
+        "קריטריון ל-50 MS/s מתמשך: ריצה ארוכה על 10 GbE, אפס overflow ו-time_spec רציף לאורך כל הריצה",
+        "Throughput (לעמוד ב-6,103.5 buffers/s) מול latency (מקליטה ועד תגובה): שניהם לא נמדדו, ולכן מציגים תוכנית מדידה",
+        "בדיקות NCO: טון ב-bin צפוי, זהות בין עיבוד ב-chunks לעיבוד חד-פעמי, קצוות saturation, ריצה ארוכה ל-drift, השוואה ל-Python",
+        "אופטימיזציה לפי צוואר בקבוק מוכח, לא לפי טרנד: 'קודם הייתי מודד, ורק אז מחליט על GPU או threads'"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "domain": "conc",
+  "title": "מקביליות וזמן-אמת: דף לזכור",
+  "sections": [
+    {
+      "title": "Threads",
+      "points": [
+        "thread חולק heap, גלובלים, fds ו-signal handlers; יש לו stack, רגיסטרים ו-TID משלו. ב-Linux כל thread הוא task נפרד ל-scheduler.",
+        "יצירת thread: עשרות µs. context switch: 1–5µs ישירות, ועוד cache ו-TLB קרים. משימות קטנות → **thread pool** בגודל קרוב למספר ה-cores.",
+        "`std::thread` שנהרס כשהוא joinable → `std::terminate`. `std::jthread` עושה join ומספק `stop_token`.",
+        "`[&]` + `detach` = dangling. detach כמעט אף פעם אינו התשובה. create ו-join יוצרים **happens-before**.",
+        "`sleep` אינו סנכרון: קריאה של משתנה לא-atomic אחרי sleep היא עדיין data race ו-UB.",
+        "`fork()` בתוכנית multithreaded משכפל רק את ה-thread הקורא. lock שהוחזק נשאר נעול בילד: רק async-signal-safe עד `exec`.",
+        "SCHED_FIFO דרך `pthread_attr` דורש **`PTHREAD_EXPLICIT_SCHED`**, אחרת ה-policy נורשת בשקט. צריך גם `CAP_SYS_NICE` או `RLIMIT_RTPRIO`.",
+        "Oversubscription (יותר threads פעילים מ-cores, במיוחד עם busy-wait) = context switches ו-latency לא צפוי."
+      ]
+    },
+    {
+      "title": "Mutex ו-locks",
+      "points": [
+        "mutex נותן גם הדדיות וגם **נראות**: כל מה שנכתב לפני `unlock` נראה למי שעושה אחר כך `lock` על אותו mutex.",
+        "lock+unlock בלי תחרות: בערך 15–30ns (שתי פעולות אטומיות, בלי syscall). עם תחרות: מאות ns עד µs. **התחרות** יקרה, לא ה-mutex.",
+        "futex: fast path ב-user space; syscall רק כשיש ממתינים. מצבים 0/1/2 כדי ש-unlock יקרא ל-`FUTEX_WAKE` רק במצב 2.",
+        "RAII תמיד: `lock_guard`, `unique_lock` (לגמישות ול-cv), `scoped_lock` לכמה mutexes בלי deadlock.",
+        "נעילה חוזרת של `std::mutex` מאותו thread היא **UB** (בפועל deadlock). `recursive_mutex` לרוב מסתיר בעיית תכנון.",
+        "לא להחזיק lock בזמן I/O, הקצאה או callback חיצוני. granularity: lock גלובלי → lock striping → lock-free.",
+        "`shared_mutex` לא תמיד מהיר יותר: גם קוראים עושים RMW על counter משותף, ויש writer starvation.",
+        "spinlock רק לקטעים קצרים מאוד ועל cores נפרדים. על uniprocessor או עם oversubscription הוא מבזבז את ה-quantum.",
+        "Double-checked locking עם pointer לא-atomic הוא data race. להשתמש ב-**magic statics** (static מקומי) או `std::call_once`."
+      ]
+    },
+    {
+      "title": "Condition variables",
+      "points": [
+        "cv תמיד עם mutex ו-**predicate**. אין לו זיכרון: notify כשאף אחד לא מחכה הולך לאיבוד.",
+        "`while`, לא `if` (או `wait(lk, pred)`): **spurious wakeup** ו-stolen wakeup.",
+        "**Lost wakeup**: שינוי ה-predicate בלי להחזיק את ה-mutex, גם אם הוא atomic. כותבים תחת lock; notify מותר אחרי unlock.",
+        "predicate חייב לכלול **דגל shutdown**, אחרת join נתקע לנצח.",
+        "cv אחד ל-not_full ול-not_empty עם `notify_one` עלול להעיר את הצד הלא נכון. שני cvs, או `notify_all` (thundering herd).",
+        "wake-up דרך cv: בערך 5–50µs עד שה-thread באמת רץ. זול ב-CPU, יקר ולא דטרמיניסטי ב-latency.",
+        "`wait_until` עם `steady_clock`, לא `system_clock`. timer slack של SCHED_OTHER הוא 50µs כברירת מחדל.",
+        "חלופות: semaphore (יש זיכרון), `std::latch` (חד-פעמי) מול `std::barrier` (מחזורי), `promise`/`future`, ובזמן-אמת busy-poll או eventfd."
+      ]
+    },
+    {
+      "title": "Deadlock",
+      "points": [
+        "4 תנאי Coffman: mutual exclusion, hold-and-wait, no preemption, **circular wait**. שוברים אחד ואין deadlock; בפועל שוברים את המעגל.",
+        "deadlock: 0% CPU. livelock: 100% CPU בלי התקדמות. starvation: thread אחד לא מתקדם. priority inversion: גבוה מחכה לנמוך.",
+        "`transfer(a, b)` מול `transfer(b, a)`: **lock ordering** קבוע (לפי id או `std::less` על כתובות), או `std::scoped_lock(a, b)`.",
+        "Deadlock בלי שני locks: join על עצמך, משימה ב-pool שמחכה למשימה באותו pool, upgrade מ-shared ל-exclusive.",
+        "Signal handler שקורא ל-`printf` או `malloc` יכול לתקוע thread **יחיד**. רק async-signal-safe; עדיף `signalfd` או self-pipe.",
+        "Kernel: spinlock שנלקח גם ב-process context וגם ב-ISR בלי `spin_lock_irqsave` = deadlock על אותו CPU.",
+        "גילוי: מעגל בגרף wait-for, `O(V+E)`. כלים: lockdep, TSan `detect_deadlocks`, Helgrind, gdb על `__owner`.",
+        "נעילות שמתגלות תוך כדי ריצה: try_lock + backoff, או wait-die / wound-wait עם timestamps."
+      ]
+    },
+    {
+      "title": "Atomics",
+      "points": [
+        "**אטומיות** (אין tearing, אין עדכון אבוד) שונה מ-**ordering** (מה רואים מסביב). כל פעולה atomic נושאת memory order.",
+        "RMW אטומי לא תלוי ב-memory order: גם `fetch_add(relaxed)` לא מאבד עדכונים.",
+        "check-then-act (`load` ואז `fetch_sub`) הוא race. צריך **CAS loop**. `compare_exchange_weak` מותר להיכשל spuriously (LL/SC ב-ARM), ולכן בלולאה.",
+        "בלי תחרות: RMW בערך 20 מחזורים. עם תחרות ה-cache line קופץ בין cores: עשרות עד מאות ns, ולא מתרחב.",
+        "מונה חם: **sharded counters** עם padding ל-64 בתים, וה-reader מסכם.",
+        "atomic נפרד לכל שדה לא מספיק כשה-invariant כולל כמה שדות. mutex, או לארוז למילה אחת.",
+        "`volatile` אינו atomic ולא נותן סדר בין threads.",
+        "`is_lock_free() == false` (למשל struct של 16 בתים בלי `-mcx16`): מימוש עם lock, **לא בטוח** ל-signal handlers ולזיכרון משותף בין processes.",
+        "CAS משווה **bits**: `-0.0 != 0.0`, ו-NaN יכול להיות שווה לעצמו."
+      ]
+    },
+    {
+      "title": "Memory order",
+      "points": [
+        "גם הקומפיילר וגם המעבד מסדרים מחדש. memory order יוצר **happens-before**; בלעדיו גישה מתנגשת ללא-atomic היא data race ו-UB.",
+        "**Message passing**: כתיבת data → `flag.store(release)`; `flag.load(acquire)` → קריאת data. relaxed על הדגל = באג.",
+        "acquire/release לא נותנים סדר כולל: ב-SB ו-IRIW עדיין רואים תוצאות מפתיעות. Dekker/Peterson דורשים **seq_cst**.",
+        "x86 הוא **TSO**: מסדר מחדש רק StoreLoad (store buffer). acquire/release הם `mov` רגיל; seq_cst store הוא `xchg` או `mfence`.",
+        "ARMv8 חלש: `ldar`/`stlr` ל-acquire/release, `dmb ish` ל-fence מלא. 'עובד על x86' לא מוכיח כלום.",
+        "Reference counting: `fetch_sub(release)`, ואם הגיע ל-0: `atomic_thread_fence(acquire)` ואז delete.",
+        "`memory_order_consume`: כל הקומפיילרים מתייחסים אליו כ-acquire, לא להשתמש. release על load או acquire על store חסרי משמעות.",
+        "זמן אמיתי (sleep, timestamps) לא יוצר סדר. רק synchronizes-with: atomics, mutex, create/join."
+      ]
+    },
+    {
+      "title": "Lock-free ו-SPSC queue",
+      "points": [
+        "**lock-free**: המערכת מתקדמת גם אם thread נעצר. **wait-free**: כל thread מסיים בצעדים חסומים. SPSC ring buffer הוא wait-free.",
+        "SPSC: כותבים slot ואז `head.store(release)`; הצרכן `head.load(acquire)`. אותו דבר הפוך ל-`tail`. עדכון head לפני הכתיבה = קריאת זבל.",
+        "head ו-tail ב-**cache lines נפרדים** (padding), ו-cached index של הצד השני כדי לחסוך cache misses.",
+        "מונים רצים: קיבולת **חזקה של 2**, אחרת `counter % N` קופץ בגלישה של `uint32_t`. ריק: `head == tail`, מלא: `head - tail == N`.",
+        "SPSC push/pop: בערך 5–20ns עם cache חם. מבני CAS לא בהכרח מהירים מ-mutex תחת תחרות.",
+        "**ABA**: CAS מצליח כי הערך חזר לאותה כתובת. Treiber stack ש-pop קורא `old->next` אחרי ש-old שוחרר = use-after-free.",
+        "Reclamation: tagged pointers/DWCAS, hazard pointers, epoch-based, RCU. lock-free בלי reclamation נכון הוא באג.",
+        "malloc בתוך push מחזיר lock מהדלת האחורית. מסלול zero-allocation: pool עם שני SPSC queues (free ו-full).",
+        "משפט סניור: 'היתרון של lock-free הוא progress guarantee ובלי priority inversion, לא בהכרח מהירות'."
+      ]
+    },
+    {
+      "title": "RT scheduling ו-priority inversion",
+      "points": [
+        "SCHED_FIFO: עדיפות קבועה 1–99, רץ עד שנחסם או נדחק ע״י גבוה ממנו. SCHED_RR: כמו FIFO עם time slice בין שווי עדיפות.",
+        "SCHED_DEADLINE: runtime/deadline/period, EDF + CBS. חריגה מה-runtime → **throttle** עד המחזור הבא.",
+        "Rate-monotonic: מובטח אם `U ≤ n(2^(1/n) - 1)`: 0.828 לשתיים, שואף ל-**ln 2 ≈ 0.693**. תנאי מספיק, לא הכרחי; periods הרמוניים עד 1.",
+        "EDF על core יחיד: schedulable **אם ורק אם U ≤ 1** (deadline = period). בעומס יתר EDF קורס ב-domino; RM מפיל את הנמוכים.",
+        "**Priority inversion**: H מחכה ל-L שמחזיק lock, ו-M דוחק את L. **Mars Pathfinder** (1997) נפתר בהפעלת priority inheritance.",
+        "PI מול ceiling: PI מוריש עדיפות רק בזמן חסימה; ceiling מעלה מיד ומונע chained blocking ו-deadlock.",
+        "`std::mutex` ב-Linux **אינו PI** כברירת מחדל: `PTHREAD_PRIO_INHERIT`. ל-semaphore ול-cv אין בעלים, לכן אין למי להוריש.",
+        "RT throttling: ברירת מחדל 950ms מתוך כל 1s ל-RT. FIFO שמסתובב על core מרעיב IRQ threads (FIFO 50 ב-PREEMPT_RT).",
+        "`sched_yield` ב-FIFO מוותר רק לשווי עדיפות; thread SCHED_OTHER על אותו core לא ירוץ."
+      ]
+    },
+    {
+      "title": "Latency ו-jitter",
+      "points": [
+        "בזמן-אמת קובע **worst case / p99.99**, לא ממוצע. overflow אחד ב-RX מאבד דגימות לתמיד.",
+        "מספרים: L1 ~1ns, DRAM 80–100ns, context switch 1–5µs, minor fault 0.5–2µs, major fault ms, יציאה מ-C-state עמוק עשרות עד מאות µs.",
+        "לולאה מחזורית: `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)` לזמן פקיעה מוחלט. `sleep_for` יחסי **סוחף**.",
+        "RT loop: בלי printf, malloc/free גדולים (mmap/munmap), syscalls חוסמים. `mlockall(MCL_CURRENT | MCL_FUTURE)` + prefault.",
+        "בידוד core: `isolcpus`, `nohz_full`, `rcu_nocbs`, IRQ affinity, C-states כבויים, ובלי עומס על ה-**SMT sibling**.",
+        "מקורות jitter מחוץ לקוד: SMI, TLB shootdown (munmap של thread אחר באותו process), THP compaction, AVX-512 frequency.",
+        "מדידה: `cyclictest`, ftrace, osnoise/hwlat/timerlat, HdrHistogram. להיזהר מ-**coordinated omission**.",
+        "PREEMPT_RT מכוון היטב: max wakeup latency של עשרות µs. poll מול block: latency מול CPU, להגיד את ה-trade-off במפורש."
+      ]
+    }
+  ]
+}
